@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>pgsql-23 锁机制详解 - xingliuhua博客</title><meta name="Description" content="系统讲解 PostgreSQL 锁机制：表级锁的8种模式与冲突矩阵、行级锁（FOR UPDATE/SHARE）、死锁检测、咨询锁，排查锁等待的方法，并对比 MySQL 锁模型"><meta property="og:title" content="pgsql-23 锁机制详解" />
+<meta property="og:description" content="系统讲解 PostgreSQL 锁机制：表级锁的8种模式与冲突矩阵、行级锁（FOR UPDATE/SHARE）、死锁检测、咨询锁，排查锁等待的方法，并对比 MySQL 锁模型" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/pgsql/pgsql_23_%E9%94%81%E6%9C%BA%E5%88%B6%E8%AF%A6%E8%A7%A3/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2025-09-25T09:20:00+08:00" />
+<meta property="article:modified_time" content="2025-09-25T09:20:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="pgsql-23 锁机制详解"/>
+<meta name="twitter:description" content="系统讲解 PostgreSQL 锁机制：表级锁的8种模式与冲突矩阵、行级锁（FOR UPDATE/SHARE）、死锁检测、咨询锁，排查锁等待的方法，并对比 MySQL 锁模型"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/pgsql/pgsql_23_%E9%94%81%E6%9C%BA%E5%88%B6%E8%AF%A6%E8%A7%A3/" /><link rel="prev" href="https://xingliuhua.github.io/posts/pgsql/pgsql_24_%E7%B4%A2%E5%BC%95%E5%8E%9F%E7%90%86%E4%B8%8E%E7%B1%BB%E5%9E%8B/" /><link rel="next" href="https://xingliuhua.github.io/posts/pgsql/pgsql_22_mvcc%E5%A4%9A%E7%89%88%E6%9C%AC%E5%B9%B6%E5%8F%91%E6%8E%A7%E5%88%B6/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "pgsql-23 锁机制详解",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/pgsql\/pgsql_23_%E9%94%81%E6%9C%BA%E5%88%B6%E8%AF%A6%E8%A7%A3\/"
+        },"genre": "posts","keywords": "pgsql","wordcount":  2219 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/pgsql\/pgsql_23_%E9%94%81%E6%9C%BA%E5%88%B6%E8%AF%A6%E8%A7%A3\/","datePublished": "2025-09-25T09:20:00+08:00","dateModified": "2025-09-25T09:20:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "系统讲解 PostgreSQL 锁机制：表级锁的8种模式与冲突矩阵、行级锁（FOR UPDATE/SHARE）、死锁检测、咨询锁，排查锁等待的方法，并对比 MySQL 锁模型"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">pgsql-23 锁机制详解</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2025-09-25">2025-09-25</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 2219 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 5 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-概述">1. 概述</a></li>
+    <li><a href="#2-表级锁">2. 表级锁</a>
+      <ol>
+        <li><a href="#21-八种锁模式">2.1 八种锁模式</a></li>
+        <li><a href="#22-冲突要点面试">2.2 冲突要点（面试）</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-行级锁">3. 行级锁</a>
+      <ol>
+        <li><a href="#31-四种行锁模式">3.1 四种行锁模式</a></li>
+        <li><a href="#32-行锁与-mvcc-的关系">3.2 行锁与 MVCC 的关系</a></li>
+        <li><a href="#33-处理锁等待">3.3 处理锁等待</a></li>
+      </ol>
+    </li>
+    <li><a href="#4-死锁deadlock">4. 死锁（Deadlock）</a></li>
+    <li><a href="#5-咨询锁advisory-lock">5. 咨询锁（Advisory Lock）</a></li>
+    <li><a href="#6-排查锁问题运维必备">6. 排查锁问题（运维必备）</a></li>
+    <li><a href="#7-postgresql-vs-mysql-锁对比">7. PostgreSQL vs MySQL 锁对比</a></li>
+    <li><a href="#8-面试高频问答">8. 面试高频问答</a></li>
+    <li><a href="#9-下一步">9. 下一步</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><h1 id="1-概述">1. 概述</h1>
+<p>MVCC 让&quot;读写不互相阻塞&quot;，但<strong>写与写之间、以及 DDL 操作仍然需要锁</strong>来保证一致性。理解锁机制是排查线上&quot;卡住/超时/死锁&quot;问题的必备能力，也是面试常考点。</p>
+<p>PostgreSQL 的锁分为几个层次：</p>
+<ul>
+<li><strong>表级锁（Table-level Lock）</strong>：保护整张表，8 种模式。</li>
+<li><strong>行级锁（Row-level Lock）</strong>：保护单行，<code>SELECT FOR UPDATE</code> 等。</li>
+<li><strong>页级锁</strong>：内部使用，通常无需关心。</li>
+<li><strong>咨询锁（Advisory Lock）</strong>：应用层自定义语义的锁。</li>
+</ul>
+<blockquote>
+<p>与 MySQL 的关键差异：PostgreSQL <strong>没有 MySQL 那样的间隙锁（Gap Lock）/ Next-Key Lock</strong>（因为 PG 靠快照隔离防幻读，不需要锁间隙）。这是两者锁模型最本质的区别之一。</p>
+</blockquote>
+<h1 id="2-表级锁">2. 表级锁</h1>
+<h2 id="21-八种锁模式">2.1 八种锁模式</h2>
+<p>从弱到强（数字越大冲突越多）：</p>
+<table>
+<thead>
+<tr>
+<th>锁模式</th>
+<th>典型触发语句</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>ACCESS SHARE</td>
+<td><code>SELECT</code></td>
+<td>最弱，只与最强的 8 冲突</td>
+</tr>
+<tr>
+<td>ROW SHARE</td>
+<td><code>SELECT FOR UPDATE/SHARE</code></td>
+<td></td>
+</tr>
+<tr>
+<td>ROW EXCLUSIVE</td>
+<td><code>INSERT / UPDATE / DELETE</code></td>
+<td><strong>DML 常见</strong></td>
+</tr>
+<tr>
+<td>SHARE UPDATE EXCLUSIVE</td>
+<td><code>VACUUM</code>、<code>CREATE INDEX CONCURRENTLY</code>、<code>ANALYZE</code></td>
+<td></td>
+</tr>
+<tr>
+<td>SHARE</td>
+<td><code>CREATE INDEX</code>（非 CONCURRENTLY）</td>
+<td></td>
+</tr>
+<tr>
+<td>SHARE ROW EXCLUSIVE</td>
+<td>少见</td>
+<td></td>
+</tr>
+<tr>
+<td>EXCLUSIVE</td>
+<td></td>
+<td>阻塞除 ACCESS SHARE 外几乎所有</td>
+</tr>
+<tr>
+<td>ACCESS EXCLUSIVE</td>
+<td><code>DROP/TRUNCATE</code>、多数 <code>ALTER TABLE</code>、<code>VACUUM FULL</code></td>
+<td><strong>最强，阻塞一切，包括 SELECT</strong></td>
+</tr>
+</tbody>
+</table>
+<h2 id="22-冲突要点面试">2.2 冲突要点（面试）</h2>
+<ul>
+<li>普通 <code>SELECT</code>（ACCESS SHARE）与 <code>INSERT/UPDATE/DELETE</code>（ROW EXCLUSIVE）<strong>不冲突</strong> —— 这就是 MVCC 读写不阻塞的体现。</li>
+<li><strong><code>ALTER TABLE</code> 等 DDL 会申请 ACCESS EXCLUSIVE 锁，阻塞该表所有读写</strong>。这是生产事故重灾区：一个 <code>ALTER TABLE ADD COLUMN</code> 若排在长事务后面，会把后续所有查询全部堵住形成&quot;锁队列雪崩&quot;。</li>
+<li>大多数 <code>ALTER TABLE</code> 虽持有最强锁但执行极快（如加可空列不重写表）；但加带默认值的列、改类型可能重写整表，持锁时间长。</li>
+</ul>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="c1">-- 手动加表锁（一般不建议）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">LOCK</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">accounts</span><span class="w"> </span><span class="k">IN</span><span class="w"> </span><span class="k">SHARE</span><span class="w"> </span><span class="k">MODE</span><span class="p">;</span><span class="w">
+</span></span></span></code></pre></div><h1 id="3-行级锁">3. 行级锁</h1>
+<h2 id="31-四种行锁模式">3.1 四种行锁模式</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="k">SELECT</span><span class="w"> </span><span class="p">...</span><span class="w"> </span><span class="k">FOR</span><span class="w"> </span><span class="k">UPDATE</span><span class="p">;</span><span class="w">         </span><span class="c1">-- 最强行锁，阻止其他事务更新/删除/加锁该行
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="p">...</span><span class="w"> </span><span class="k">FOR</span><span class="w"> </span><span class="k">NO</span><span class="w"> </span><span class="k">KEY</span><span class="w"> </span><span class="k">UPDATE</span><span class="p">;</span><span class="w">  </span><span class="c1">-- 稍弱，UPDATE 非键列时用
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="p">...</span><span class="w"> </span><span class="k">FOR</span><span class="w"> </span><span class="k">SHARE</span><span class="p">;</span><span class="w">          </span><span class="c1">-- 共享行锁，允许别人读但不能改
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="p">...</span><span class="w"> </span><span class="k">FOR</span><span class="w"> </span><span class="k">KEY</span><span class="w"> </span><span class="k">SHARE</span><span class="p">;</span><span class="w">      </span><span class="c1">-- 最弱，保护键，外键检查用
+</span></span></span></code></pre></div><table>
+<thead>
+<tr>
+<th>场景</th>
+<th>用法</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>悲观锁扣库存</td>
+<td><code>SELECT stock FROM goods WHERE id=1 FOR UPDATE;</code></td>
+</tr>
+<tr>
+<td>只读一致性、防止被改</td>
+<td><code>FOR SHARE</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="32-行锁与-mvcc-的关系">3.2 行锁与 MVCC 的关系</h2>
+<p>行级锁<strong>不影响读</strong>（其他事务仍能通过 MVCC 读到该行的旧版本），只阻塞其他&quot;写/加锁&quot;操作。行锁信息主要记录在元组头（<code>xmax</code>）和内存中，不像某些数据库把行锁单独存表。</p>
+<h2 id="33-处理锁等待">3.3 处理锁等待</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="c1">-- 拿不到锁就立刻报错，不干等（避免请求堆积）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">goods</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="n">id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="k">FOR</span><span class="w"> </span><span class="k">UPDATE</span><span class="w"> </span><span class="n">NOWAIT</span><span class="p">;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 跳过被锁住的行（典型：任务队列，多个 worker 抢任务）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">jobs</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="n">status</span><span class="o">=</span><span class="s1">&#39;pending&#39;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">ORDER</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="n">id</span><span class="w"> </span><span class="k">FOR</span><span class="w"> </span><span class="k">UPDATE</span><span class="w"> </span><span class="n">SKIP</span><span class="w"> </span><span class="n">LOCKED</span><span class="w"> </span><span class="k">LIMIT</span><span class="w"> </span><span class="mi">10</span><span class="p">;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 全局设置锁等待超时
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SET</span><span class="w"> </span><span class="n">lock_timeout</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;5s&#39;</span><span class="p">;</span><span class="w">
+</span></span></span></code></pre></div><blockquote>
+<p><code>FOR UPDATE SKIP LOCKED</code> 是实现&quot;数据库任务队列&quot;的利器，多个消费者并发抢任务而不互相阻塞。</p>
+</blockquote>
+<h1 id="4-死锁deadlock">4. 死锁（Deadlock）</h1>
+<p>两个事务互相持有对方需要的锁，形成循环等待。</p>
+<pre tabindex="0"><code>事务A: 锁住 行1 → 等待 行2
+事务B: 锁住 行2 → 等待 行1     ← 死锁
+</code></pre><p>PostgreSQL 有<strong>自动死锁检测</strong>：<code>deadlock_timeout</code>（默认 1s）后检查是否成环，若成环则<strong>主动 abort 其中一个事务</strong>并报错 <code>deadlock detected</code>，另一个继续。</p>
+<p><strong>避免死锁的实践：</strong></p>
+<ol>
+<li><strong>多事务以固定顺序访问资源</strong>（如都先锁小 id 再锁大 id）。</li>
+<li>尽量缩短事务、减少持锁时间。</li>
+<li>用 <code>NOWAIT</code> / <code>lock_timeout</code> 快速失败重试。</li>
+</ol>
+<h1 id="5-咨询锁advisory-lock">5. 咨询锁（Advisory Lock）</h1>
+<p>应用层自定义语义的锁，PG 只负责加/解，锁的&quot;含义&quot;由业务决定。常用于<strong>分布式互斥</strong>（如保证某个定时任务全局只有一个实例在跑）。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="c1">-- 会话级：直到 unlock 或断开连接
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="n">pg_advisory_lock</span><span class="p">(</span><span class="mi">12345</span><span class="p">);</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">SELECT</span><span class="w"> </span><span class="n">pg_advisory_unlock</span><span class="p">(</span><span class="mi">12345</span><span class="p">);</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 事务级：事务结束自动释放（更安全，推荐）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="n">pg_advisory_xact_lock</span><span class="p">(</span><span class="mi">12345</span><span class="p">);</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 尝试获取，拿不到立即返回 false（不阻塞）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="n">pg_try_advisory_lock</span><span class="p">(</span><span class="mi">12345</span><span class="p">);</span><span class="w">
+</span></span></span></code></pre></div><h1 id="6-排查锁问题运维必备">6. 排查锁问题（运维必备）</h1>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="c1">-- 查看当前的锁与阻塞关系（谁在等谁）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="n">blocked</span><span class="p">.</span><span class="n">pid</span><span class="w">          </span><span class="k">AS</span><span class="w"> </span><span class="n">blocked_pid</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="n">blocked</span><span class="p">.</span><span class="n">query</span><span class="w">        </span><span class="k">AS</span><span class="w"> </span><span class="n">blocked_query</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="n">blocking</span><span class="p">.</span><span class="n">pid</span><span class="w">         </span><span class="k">AS</span><span class="w"> </span><span class="n">blocking_pid</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="n">blocking</span><span class="p">.</span><span class="n">query</span><span class="w">       </span><span class="k">AS</span><span class="w"> </span><span class="n">blocking_query</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">FROM</span><span class="w"> </span><span class="n">pg_stat_activity</span><span class="w"> </span><span class="n">blocked</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">JOIN</span><span class="w"> </span><span class="n">pg_stat_activity</span><span class="w"> </span><span class="n">blocking</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">     </span><span class="k">ON</span><span class="w"> </span><span class="n">blocking</span><span class="p">.</span><span class="n">pid</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">ANY</span><span class="p">(</span><span class="n">pg_blocking_pids</span><span class="p">(</span><span class="n">blocked</span><span class="p">.</span><span class="n">pid</span><span class="p">))</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">WHERE</span><span class="w"> </span><span class="n">blocked</span><span class="p">.</span><span class="n">wait_event_type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;Lock&#39;</span><span class="p">;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 查看所有锁
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">pg_locks</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">granted</span><span class="p">;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 紧急处理：终止某个持锁进程
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="n">pg_cancel_backend</span><span class="p">(</span><span class="n">pid</span><span class="p">);</span><span class="w">     </span><span class="c1">-- 温和：取消当前查询
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="n">pg_terminate_backend</span><span class="p">(</span><span class="n">pid</span><span class="p">);</span><span class="w">  </span><span class="c1">-- 强制：断开整个连接
+</span></span></span></code></pre></div><p><code>pg_blocking_pids(pid)</code> 是排查阻塞链的利器，直接告诉你某进程在等哪些进程。</p>
+<h1 id="7-postgresql-vs-mysql-锁对比">7. PostgreSQL vs MySQL 锁对比</h1>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>PostgreSQL</th>
+<th>MySQL (InnoDB)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>间隙锁/Next-Key</strong></td>
+<td>❌ 无（快照隔离防幻读）</td>
+<td>✅ RR 下用间隙锁防幻读</td>
+</tr>
+<tr>
+<td><strong>行锁实现</strong></td>
+<td>元组头 xmax + 内存</td>
+<td>索引记录上的锁</td>
+</tr>
+<tr>
+<td><strong>无索引的 UPDATE</strong></td>
+<td>锁命中的行</td>
+<td>可能升级为锁大量行（锁加在索引上）</td>
+</tr>
+<tr>
+<td><strong>死锁检测</strong></td>
+<td>自动，abort 一个</td>
+<td>自动，回滚代价小的</td>
+</tr>
+<tr>
+<td><strong>DDL 锁</strong></td>
+<td>多数 ACCESS EXCLUSIVE</td>
+<td>8.0+ 支持部分 Online DDL</td>
+</tr>
+<tr>
+<td><strong>咨询锁</strong></td>
+<td>✅ 内置 pg_advisory_*</td>
+<td>需用 GET_LOCK() 函数</td>
+</tr>
+</tbody>
+</table>
+<p><strong>面试要点</strong>：MySQL 在可重复读下靠间隙锁防幻读，容易在&quot;范围更新+并发插入&quot;时产生间隙锁冲突甚至死锁；PostgreSQL 靠 MVCC 快照防幻读，没有间隙锁概念，锁模型更简单直观。</p>
+<h1 id="8-面试高频问答">8. 面试高频问答</h1>
+<p><strong>Q1：PostgreSQL 有间隙锁吗？和 MySQL 有什么不同？</strong>
+没有。PG 靠 MVCC 快照隔离防幻读，不需要锁间隙；MySQL InnoDB 在 RR 下用 Next-Key（记录锁+间隙锁）防幻读。</p>
+<p><strong>Q2：SELECT 会阻塞 UPDATE 吗？</strong>
+普通 SELECT 持 ACCESS SHARE，UPDATE 持 ROW EXCLUSIVE，两者不冲突，互不阻塞（MVCC）。但 <code>ALTER TABLE</code> 等 DDL 持 ACCESS EXCLUSIVE 会阻塞 SELECT。</p>
+<p><strong>Q3：怎么实现悲观锁扣减库存？</strong>
+<code>SELECT ... FOR UPDATE</code> 锁定该行，其他事务的更新/加锁会阻塞，直到本事务提交。</p>
+<p><strong>Q4：PostgreSQL 如何处理死锁？</strong>
+deadlock_timeout 后检测等待图是否成环，成环则自动 abort 其中一个事务并报 deadlock detected。避免方法是固定资源访问顺序、缩短事务。</p>
+<p><strong>Q5：FOR UPDATE SKIP LOCKED 有什么用？</strong>
+跳过已被其他事务锁定的行，常用于数据库任务队列，让多个消费者并发抢任务而不互相阻塞。</p>
+<p><strong>Q6：线上查询突然全部卡住怎么排查？</strong>
+用 pg_stat_activity 看 wait_event_type=&lsquo;Lock&rsquo; 的会话，用 pg_blocking_pids() 找到阻塞源头，常见是长事务或 DDL 持有 ACCESS EXCLUSIVE，必要时 pg_terminate_backend 终止。</p>
+<h1 id="9-下一步">9. 下一步</h1>
+<p>学习 <a href="https://xingliuhua.github.io/posts/pgsql/pgsql_24_%E7%B4%A2%E5%BC%95%E5%8E%9F%E7%90%86%E4%B8%8E%E7%B1%BB%E5%9E%8B/" rel="">索引原理与类型</a>，掌握 PG 丰富的索引家族。</p>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2025-09-25</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/pgsql/">pgsql</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/pgsql/pgsql_24_%E7%B4%A2%E5%BC%95%E5%8E%9F%E7%90%86%E4%B8%8E%E7%B1%BB%E5%9E%8B/" class="prev" rel="prev" title="pgsql-24 索引原理与类型"><i class="fas fa-angle-left fa-fw"></i>pgsql-24 索引原理与类型</a>
+            <a href="/posts/pgsql/pgsql_22_mvcc%E5%A4%9A%E7%89%88%E6%9C%AC%E5%B9%B6%E5%8F%91%E6%8E%A7%E5%88%B6/" class="next" rel="next" title="pgsql-22 MVCC多版本并发控制">pgsql-22 MVCC多版本并发控制<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2025-09-25T09:20:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"pgsql-23 锁机制详解"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

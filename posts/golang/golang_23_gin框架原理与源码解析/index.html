@@ -1,0 +1,788 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>Go-23 Gin框架原理与源码解析 - xingliuhua博客</title><meta name="Description" content="net/http标准库服务模型、HTTP请求流入gin.Engine.ServeHTTP的完整链路、gin路由基数树(radix tree)的插入与查找源码、节点分裂与通配符处理、中间件洋葱模型与Context的sync.Pool复用"><meta property="og:title" content="Go-23 Gin框架原理与源码解析" />
+<meta property="og:description" content="net/http标准库服务模型、HTTP请求流入gin.Engine.ServeHTTP的完整链路、gin路由基数树(radix tree)的插入与查找源码、节点分裂与通配符处理、中间件洋葱模型与Context的sync.Pool复用" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/golang/golang_23_gin%E6%A1%86%E6%9E%B6%E5%8E%9F%E7%90%86%E4%B8%8E%E6%BA%90%E7%A0%81%E8%A7%A3%E6%9E%90/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2026-01-02T00:05:00+08:00" />
+<meta property="article:modified_time" content="2026-01-02T00:05:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="Go-23 Gin框架原理与源码解析"/>
+<meta name="twitter:description" content="net/http标准库服务模型、HTTP请求流入gin.Engine.ServeHTTP的完整链路、gin路由基数树(radix tree)的插入与查找源码、节点分裂与通配符处理、中间件洋葱模型与Context的sync.Pool复用"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/golang/golang_23_gin%E6%A1%86%E6%9E%B6%E5%8E%9F%E7%90%86%E4%B8%8E%E6%BA%90%E7%A0%81%E8%A7%A3%E6%9E%90/" /><link rel="prev" href="https://xingliuhua.github.io/posts/golang/golang_24_rpc%E4%B8%8Egrpc%E5%AE%9E%E8%B7%B5/" /><link rel="next" href="https://xingliuhua.github.io/posts/golang/golang_22_%E6%B5%8B%E8%AF%95%E4%B8%8E%E5%B7%A5%E7%A8%8B%E5%8C%96%E5%AE%9E%E8%B7%B5/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Go-23 Gin框架原理与源码解析",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/golang\/golang_23_gin%E6%A1%86%E6%9E%B6%E5%8E%9F%E7%90%86%E4%B8%8E%E6%BA%90%E7%A0%81%E8%A7%A3%E6%9E%90\/"
+        },"genre": "posts","keywords": "golang","wordcount":  7871 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/golang\/golang_23_gin%E6%A1%86%E6%9E%B6%E5%8E%9F%E7%90%86%E4%B8%8E%E6%BA%90%E7%A0%81%E8%A7%A3%E6%9E%90\/","datePublished": "2026-01-02T00:05:00+08:00","dateModified": "2026-01-02T00:05:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "net/http标准库服务模型、HTTP请求流入gin.Engine.ServeHTTP的完整链路、gin路由基数树(radix tree)的插入与查找源码、节点分裂与通配符处理、中间件洋葱模型与Context的sync.Pool复用"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">Go-23 Gin框架原理与源码解析</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2026-01-02">2026-01-02</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 7871 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 16 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-从-nethttp-说起标准库的服务模型">1. 从 net/http 说起：标准库的服务模型</a>
+      <ol>
+        <li><a href="#11-最小的-web-服务">1.1 最小的 Web 服务</a></li>
+        <li><a href="#12-handler-接口与-servemux">1.2 Handler 接口与 ServeMux</a></li>
+        <li><a href="#13-从-listenandserve-到-accept-循环">1.3 从 ListenAndServe 到 Accept 循环</a></li>
+        <li><a href="#14-请求分发servemuxservehttp">1.4 请求分发：ServeMux.ServeHTTP</a></li>
+      </ol>
+    </li>
+    <li><a href="#2-http-请求如何流入-ginengine">2. HTTP 请求如何流入 gin.Engine</a>
+      <ol>
+        <li><a href="#21-ginrun-的底层依然是-httplistenandserve">2.1 gin.Run 的底层依然是 http.ListenAndServe</a></li>
+        <li><a href="#22-engine-实现了-httphandler接口的动态派发">2.2 Engine 实现了 http.Handler：接口的动态派发</a></li>
+        <li><a href="#23-engineservehttp-全貌">2.3 Engine.ServeHTTP 全貌</a></li>
+        <li><a href="#24-handlehttprequest从树到-contextnext">2.4 handleHTTPRequest：从树到 Context.Next</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-gin-路由的核心基数树radix-tree">3. gin 路由的核心：基数树（Radix Tree）</a>
+      <ol>
+        <li><a href="#31-为什么不用朴素-trie-树">3.1 为什么不用朴素 Trie 树</a></li>
+        <li><a href="#32-methodtree-与-node-的数据结构">3.2 methodTree 与 node 的数据结构</a></li>
+        <li><a href="#33-插入addroute-与节点分裂">3.3 插入：addRoute 与节点分裂</a></li>
+        <li><a href="#34-通配符节点param-与-catchall">3.4 通配符节点：:param 与 *catchAll</a></li>
+        <li><a href="#35-查找getvalue-与回溯-skippednodes">3.5 查找：getValue 与回溯 skippedNodes</a></li>
+      </ol>
+    </li>
+    <li><a href="#4-中间件洋葱模型与-context-复用">4. 中间件洋葱模型与 Context 复用</a>
+      <ol>
+        <li><a href="#41-handlerschain-是如何拼装的">4.1 HandlersChain 是如何拼装的</a></li>
+        <li><a href="#42-nextabort洋葱模型的源码实现">4.2 Next/Abort：洋葱模型的源码实现</a></li>
+        <li><a href="#43-syncpoolcontext-对象复用">4.3 sync.Pool：Context 对象复用</a></li>
+        <li><a href="#44-一次请求的完整链路小结">4.4 一次请求的完整链路小结</a></li>
+      </ol>
+    </li>
+    <li><a href="#5-小结">5. 小结</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><p>Gin 是 Go 生态里最流行的 Web 框架之一，<code>r.GET(&quot;/ping&quot;, handler)</code> 一行代码就能跑起一个服务。但它并不是重新发明了一套网络模型，而是在标准库 <code>net/http</code> 之上做了一层「更聪明的路由 + 更好用的 Context」。本文从 <code>net/http</code> 的服务模型出发，沿着一次 HTTP 请求的真实路径，一路走到 gin 路由树的插入/查找源码，最后落到中间件洋葱模型与 <code>Context</code> 的对象复用，把 gin 的核心机制串成一条线。全文源码版本对应 <code>gin-gonic/gin v1.10.0</code>。</p>
+<hr>
+<h1 id="1-从-nethttp-说起标准库的服务模型">1. 从 net/http 说起：标准库的服务模型</h1>
+<h2 id="11-最小的-web-服务">1.1 最小的 Web 服务</h2>
+<p>Go 标准库把 Web Server 的门槛降到了极低：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">main</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">http</span><span class="p">.</span><span class="nf">HandleFunc</span><span class="p">(</span><span class="s">&#34;/&#34;</span><span class="p">,</span> <span class="kd">func</span><span class="p">(</span><span class="nx">w</span> <span class="nx">http</span><span class="p">.</span><span class="nx">ResponseWriter</span><span class="p">,</span> <span class="nx">r</span> <span class="o">*</span><span class="nx">http</span><span class="p">.</span><span class="nx">Request</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">w</span><span class="p">.</span><span class="nf">Write</span><span class="p">([]</span><span class="nb">byte</span><span class="p">(</span><span class="s">&#34;Hello World&#34;</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl">    <span class="p">})</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">http</span><span class="p">.</span><span class="nf">ListenAndServe</span><span class="p">(</span><span class="s">&#34;:8000&#34;</span><span class="p">,</span> <span class="kc">nil</span><span class="p">);</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">fmt</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="s">&#34;start http server fail:&#34;</span><span class="p">,</span> <span class="nx">err</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>也可以显式创建一个 <code>ServeMux</code> 自己管理路由，效果等价：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="nx">mux</span> <span class="o">:=</span> <span class="nx">http</span><span class="p">.</span><span class="nf">NewServeMux</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl"><span class="nx">mux</span><span class="p">.</span><span class="nf">HandleFunc</span><span class="p">(</span><span class="s">&#34;/&#34;</span><span class="p">,</span> <span class="nx">handler</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="nx">http</span><span class="p">.</span><span class="nf">ListenAndServe</span><span class="p">(</span><span class="s">&#34;:8000&#34;</span><span class="p">,</span> <span class="nx">mux</span><span class="p">)</span>
+</span></span></code></pre></div><p><code>http.HandleFunc</code> 内部把闭包注册到了包级变量 <code>DefaultServeMux</code> 上；<code>ListenAndServe</code> 的第二个参数传 <code>nil</code> 时，也会退化为使用 <code>DefaultServeMux</code>。</p>
+<h2 id="12-handler-接口与-servemux">1.2 Handler 接口与 ServeMux</h2>
+<p><code>net/http</code> 里只有一个核心契约——<code>Handler</code> 接口：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">type</span> <span class="nx">Handler</span> <span class="kd">interface</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nf">ServeHTTP</span><span class="p">(</span><span class="nx">ResponseWriter</span><span class="p">,</span> <span class="o">*</span><span class="nx">Request</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>无论是 <code>http.HandleFunc</code> 注册的普通函数，还是自定义的路由器，只要实现了 <code>ServeHTTP(ResponseWriter, *Request)</code>，就能被当作 Handler 使用。为了让一个普通函数也能满足这个接口，标准库定义了一个函数类型适配器：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">type</span> <span class="nx">HandlerFunc</span> <span class="kd">func</span><span class="p">(</span><span class="nx">ResponseWriter</span><span class="p">,</span> <span class="o">*</span><span class="nx">Request</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// ServeHTTP calls f(w, r).
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kd">func</span> <span class="p">(</span><span class="nx">f</span> <span class="nx">HandlerFunc</span><span class="p">)</span> <span class="nf">ServeHTTP</span><span class="p">(</span><span class="nx">w</span> <span class="nx">ResponseWriter</span><span class="p">,</span> <span class="nx">r</span> <span class="o">*</span><span class="nx">Request</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nf">f</span><span class="p">(</span><span class="nx">w</span><span class="p">,</span> <span class="nx">r</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>这是 Go 里非常经典的写法：把函数类型本身变成一个实现了接口的类型，从而让「一个函数」和「一个实现了接口的对象」可以互换使用。<code>ServeMux.HandleFunc</code> 正是靠这一层转换，把用户传入的普通函数包装成 <code>Handler</code>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="p">(</span><span class="nx">mux</span> <span class="o">*</span><span class="nx">ServeMux</span><span class="p">)</span> <span class="nf">HandleFunc</span><span class="p">(</span><span class="nx">pattern</span> <span class="kt">string</span><span class="p">,</span> <span class="nx">handler</span> <span class="kd">func</span><span class="p">(</span><span class="nx">ResponseWriter</span><span class="p">,</span> <span class="o">*</span><span class="nx">Request</span><span class="p">))</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">handler</span> <span class="o">==</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nb">panic</span><span class="p">(</span><span class="s">&#34;http: nil handler&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">mux</span><span class="p">.</span><span class="nf">Handle</span><span class="p">(</span><span class="nx">pattern</span><span class="p">,</span> <span class="nf">HandlerFunc</span><span class="p">(</span><span class="nx">handler</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="p">(</span><span class="nx">mux</span> <span class="o">*</span><span class="nx">ServeMux</span><span class="p">)</span> <span class="nf">Handle</span><span class="p">(</span><span class="nx">pattern</span> <span class="kt">string</span><span class="p">,</span> <span class="nx">handler</span> <span class="nx">Handler</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">mux</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nf">Lock</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">    <span class="k">defer</span> <span class="nx">mux</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nf">Unlock</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">pattern</span> <span class="o">==</span> <span class="s">&#34;&#34;</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nb">panic</span><span class="p">(</span><span class="s">&#34;http: invalid pattern&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">handler</span> <span class="o">==</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nb">panic</span><span class="p">(</span><span class="s">&#34;http: nil handler&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">_</span><span class="p">,</span> <span class="nx">exist</span> <span class="o">:=</span> <span class="nx">mux</span><span class="p">.</span><span class="nx">m</span><span class="p">[</span><span class="nx">pattern</span><span class="p">];</span> <span class="nx">exist</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nb">panic</span><span class="p">(</span><span class="s">&#34;http: multiple registrations for &#34;</span> <span class="o">+</span> <span class="nx">pattern</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">mux</span><span class="p">.</span><span class="nx">m</span> <span class="o">==</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">mux</span><span class="p">.</span><span class="nx">m</span> <span class="p">=</span> <span class="nb">make</span><span class="p">(</span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="nx">muxEntry</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">mux</span><span class="p">.</span><span class="nx">m</span><span class="p">[</span><span class="nx">pattern</span><span class="p">]</span> <span class="p">=</span> <span class="nx">muxEntry</span><span class="p">{</span><span class="nx">h</span><span class="p">:</span> <span class="nx">handler</span><span class="p">,</span> <span class="nx">pattern</span><span class="p">:</span> <span class="nx">pattern</span><span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><code>ServeMux</code> 的路由表本质就是一个 <code>map[string]muxEntry</code>，查找是字符串精确匹配（外加前缀匹配的兜底逻辑），非常简陋——这也正是 gin、echo、iris 这类第三方框架能够发挥价值的地方：<strong>只要实现 <code>Handler</code> 接口，就可以完全替换掉标准库的路由能力，而 <code>net/http</code> 剩下的连接管理、协议解析全部照常复用</strong>。</p>
+<h2 id="13-从-listenandserve-到-accept-循环">1.3 从 ListenAndServe 到 Accept 循环</h2>
+<p><code>http.ListenAndServe</code> 只是对 <code>Server</code> 结构体的一层封装：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="p">(</span><span class="nx">srv</span> <span class="o">*</span><span class="nx">Server</span><span class="p">)</span> <span class="nf">ListenAndServe</span><span class="p">()</span> <span class="kt">error</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">ln</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">net</span><span class="p">.</span><span class="nf">Listen</span><span class="p">(</span><span class="s">&#34;tcp&#34;</span><span class="p">,</span> <span class="nx">addr</span><span class="p">)</span> <span class="c1">// 完成 socket、bind、listen
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">if</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="nx">err</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="nx">srv</span><span class="p">.</span><span class="nf">Serve</span><span class="p">(</span><span class="nx">tcpKeepAliveListener</span><span class="p">{</span><span class="nx">ln</span><span class="p">.(</span><span class="o">*</span><span class="nx">net</span><span class="p">.</span><span class="nx">TCPListener</span><span class="p">)})</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="p">(</span><span class="nx">srv</span> <span class="o">*</span><span class="nx">Server</span><span class="p">)</span> <span class="nf">Serve</span><span class="p">(</span><span class="nx">l</span> <span class="nx">net</span><span class="p">.</span><span class="nx">Listener</span><span class="p">)</span> <span class="kt">error</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">for</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">rw</span><span class="p">,</span> <span class="nx">e</span> <span class="o">:=</span> <span class="nx">l</span><span class="p">.</span><span class="nf">Accept</span><span class="p">()</span> <span class="c1">// 阻塞等待客户端连接
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="k">if</span> <span class="nx">e</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="c1">// ... 省略重试逻辑
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>            <span class="k">return</span> <span class="nx">e</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">c</span> <span class="o">:=</span> <span class="nx">srv</span><span class="p">.</span><span class="nf">newConn</span><span class="p">(</span><span class="nx">rw</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">c</span><span class="p">.</span><span class="nf">setState</span><span class="p">(</span><span class="nx">c</span><span class="p">.</span><span class="nx">rwc</span><span class="p">,</span> <span class="nx">StateNew</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="k">go</span> <span class="nx">c</span><span class="p">.</span><span class="nf">serve</span><span class="p">(</span><span class="nx">ctx</span><span class="p">)</span> <span class="c1">// 每个连接一个 goroutine
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>这里体现了 Go 网络编程最典型的模型：<strong>主 goroutine 专职 <code>Accept</code>，每来一个连接就 <code>go c.serve(ctx)</code> 甩给一个新的 goroutine 去处理</strong>，从而在不阻塞新连接接入的前提下并发处理成千上万个请求。</p>
+<h2 id="14-请求分发servemuxservehttp">1.4 请求分发：ServeMux.ServeHTTP</h2>
+<p><code>c.serve(ctx)</code> 内部读取完请求报文后，最终会走到一个统一的入口 <code>serverHandler.ServeHTTP</code>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="p">(</span><span class="nx">c</span> <span class="o">*</span><span class="nx">conn</span><span class="p">)</span> <span class="nf">serve</span><span class="p">(</span><span class="nx">ctx</span> <span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// ... 省略读取请求等代码
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">serverHandler</span><span class="p">{</span><span class="nx">c</span><span class="p">.</span><span class="nx">server</span><span class="p">}.</span><span class="nf">ServeHTTP</span><span class="p">(</span><span class="nx">w</span><span class="p">,</span> <span class="nx">w</span><span class="p">.</span><span class="nx">req</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">w</span><span class="p">.</span><span class="nf">cancelCtx</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">c</span><span class="p">.</span><span class="nf">hijacked</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">w</span><span class="p">.</span><span class="nf">finishRequest</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="p">(</span><span class="nx">sh</span> <span class="nx">serverHandler</span><span class="p">)</span> <span class="nf">ServeHTTP</span><span class="p">(</span><span class="nx">rw</span> <span class="nx">ResponseWriter</span><span class="p">,</span> <span class="nx">req</span> <span class="o">*</span><span class="nx">Request</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">handler</span> <span class="o">:=</span> <span class="nx">sh</span><span class="p">.</span><span class="nx">srv</span><span class="p">.</span><span class="nx">Handler</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">handler</span> <span class="o">==</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">handler</span> <span class="p">=</span> <span class="nx">DefaultServeMux</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">req</span><span class="p">.</span><span class="nx">RequestURI</span> <span class="o">==</span> <span class="s">&#34;*&#34;</span> <span class="o">&amp;&amp;</span> <span class="nx">req</span><span class="p">.</span><span class="nx">Method</span> <span class="o">==</span> <span class="s">&#34;OPTIONS&#34;</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">handler</span> <span class="p">=</span> <span class="nx">globalOptionsHandler</span><span class="p">{}</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">handler</span><span class="p">.</span><span class="nf">ServeHTTP</span><span class="p">(</span><span class="nx">rw</span><span class="p">,</span> <span class="nx">req</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><code>sh.srv.Handler</code> 就是我们调用 <code>http.ListenAndServe(addr, handler)</code> 时传入的第二个参数：不传（<code>nil</code>）就退化为 <code>DefaultServeMux</code>；传了自定义 Handler，就会调用它自己的 <code>ServeHTTP</code>。<code>DefaultServeMux.ServeHTTP</code> 的实现很直接——查表拿到对应 <code>Handler</code> 再转发：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="p">(</span><span class="nx">mux</span> <span class="o">*</span><span class="nx">ServeMux</span><span class="p">)</span> <span class="nf">ServeHTTP</span><span class="p">(</span><span class="nx">w</span> <span class="nx">ResponseWriter</span><span class="p">,</span> <span class="nx">r</span> <span class="o">*</span><span class="nx">Request</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">r</span><span class="p">.</span><span class="nx">RequestURI</span> <span class="o">==</span> <span class="s">&#34;*&#34;</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="nx">r</span><span class="p">.</span><span class="nf">ProtoAtLeast</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">w</span><span class="p">.</span><span class="nf">Header</span><span class="p">().</span><span class="nf">Set</span><span class="p">(</span><span class="s">&#34;Connection&#34;</span><span class="p">,</span> <span class="s">&#34;close&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">w</span><span class="p">.</span><span class="nf">WriteHeader</span><span class="p">(</span><span class="nx">StatusBadRequest</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">h</span><span class="p">,</span> <span class="nx">_</span> <span class="o">:=</span> <span class="nx">mux</span><span class="p">.</span><span class="nf">Handler</span><span class="p">(</span><span class="nx">r</span><span class="p">)</span> <span class="c1">// 遍历/匹配 mux.m，拿到注册的 handler
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">h</span><span class="p">.</span><span class="nf">ServeHTTP</span><span class="p">(</span><span class="nx">w</span><span class="p">,</span> <span class="nx">r</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>整条链路可以归纳为一句话：<strong><code>net.Listen</code> 完成监听 → <code>Accept</code> 拿到连接并起 goroutine → 读完请求后统一调用 <code>sh.srv.Handler.ServeHTTP</code> → 由具体的 Handler（默认是 <code>ServeMux</code>，也可以是自定义路由器）完成匹配与分发</strong>。gin 要做的，就是把自己实现的 <code>Engine</code> 塞进这个 <code>sh.srv.Handler</code> 里。</p>
+<hr>
+<h1 id="2-http-请求如何流入-ginengine">2. HTTP 请求如何流入 gin.Engine</h1>
+<h2 id="21-ginrun-的底层依然是-httplistenandserve">2.1 gin.Run 的底层依然是 http.ListenAndServe</h2>
+<p>日常写 gin 的方式非常统一：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kn">package</span> <span class="nx">main</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kn">import</span> <span class="s">&#34;github.com/gin-gonic/gin&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">main</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">r</span> <span class="o">:=</span> <span class="nx">gin</span><span class="p">.</span><span class="nf">Default</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">r</span><span class="p">.</span><span class="nf">GET</span><span class="p">(</span><span class="s">&#34;/ping&#34;</span><span class="p">,</span> <span class="kd">func</span><span class="p">(</span><span class="nx">c</span> <span class="o">*</span><span class="nx">gin</span><span class="p">.</span><span class="nx">Context</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">c</span><span class="p">.</span><span class="nf">JSON</span><span class="p">(</span><span class="mi">200</span><span class="p">,</span> <span class="nx">gin</span><span class="p">.</span><span class="nx">H</span><span class="p">{</span><span class="s">&#34;message&#34;</span><span class="p">:</span> <span class="s">&#34;pong&#34;</span><span class="p">})</span>
+</span></span><span class="line"><span class="cl">    <span class="p">})</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">r</span><span class="p">.</span><span class="nf">Run</span><span class="p">()</span> <span class="c1">// listen and serve on 0.0.0.0:8080
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span></code></pre></div><p><code>gin.Default()</code> 内部调用 <code>gin.New()</code> 创建 <code>Engine</code>，再挂上 <code>Logger</code> 和 <code>Recovery</code> 两个默认中间件；<code>r.GET</code> 把路由和 handler 注册进路由树（第 3 节详解）；<code>r.Run()</code> 的实现其实只是又绕回了 <code>net/http</code>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="p">(</span><span class="nx">engine</span> <span class="o">*</span><span class="nx">Engine</span><span class="p">)</span> <span class="nf">Run</span><span class="p">(</span><span class="nx">addr</span> <span class="o">...</span><span class="kt">string</span><span class="p">)</span> <span class="p">(</span><span class="nx">err</span> <span class="kt">error</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">defer</span> <span class="kd">func</span><span class="p">()</span> <span class="p">{</span> <span class="nf">debugPrintError</span><span class="p">(</span><span class="nx">err</span><span class="p">)</span> <span class="p">}()</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="nx">trustedCIDRs</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">engine</span><span class="p">.</span><span class="nf">prepareTrustedCIDRs</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="nx">err</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">engine</span><span class="p">.</span><span class="nx">trustedCIDRs</span> <span class="p">=</span> <span class="nx">trustedCIDRs</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">address</span> <span class="o">:=</span> <span class="nf">resolveAddress</span><span class="p">(</span><span class="nx">addr</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="nf">debugPrint</span><span class="p">(</span><span class="s">&#34;Listening and serving HTTP on %s\n&#34;</span><span class="p">,</span> <span class="nx">address</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">err</span> <span class="p">=</span> <span class="nx">http</span><span class="p">.</span><span class="nf">ListenAndServe</span><span class="p">(</span><span class="nx">address</span><span class="p">,</span> <span class="nx">engine</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>注意最后一行：<code>http.ListenAndServe(address, engine)</code>——<strong>第二个参数直接把 <code>engine</code> 自己传了进去</strong>。也就是说，gin 建立 socket、<code>Accept</code> 连接、起 goroutine 的过程与第 1 节讲的 <code>net/http</code> 完全一致，唯一的区别就在于第 1.4 节里 <code>sh.srv.Handler</code> 这个变量的动态类型，从 <code>*ServeMux</code> 换成了 <code>*gin.Engine</code>。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">r.Run(addr)
+</span></span><span class="line"><span class="cl">  └─▶ http.ListenAndServe(addr, engine)      // engine 作为 Handler 传入
+</span></span><span class="line"><span class="cl">        └─▶ net/http: Listen → Accept → 每条连接起一个 goroutine
+</span></span><span class="line"><span class="cl">              └─▶ serverHandler.ServeHTTP → sh.srv.Handler.ServeHTTP(rw, req)
+</span></span><span class="line"><span class="cl">                    └─▶ (*gin.Engine).ServeHTTP(w, req)   // Handler 的动态类型
+</span></span></code></pre></div><h2 id="22-engine-实现了-httphandler接口的动态派发">2.2 Engine 实现了 http.Handler：接口的动态派发</h2>
+<p><code>sh.srv.Handler</code> 的静态类型是接口 <code>http.Handler</code>，调用 <code>handler.ServeHTTP(rw, req)</code> 时，Go 运行时会根据它的动态类型去查找方法表——由于实际赋进去的是 <code>*gin.Engine</code>，只要 <code>Engine</code> 实现了 <code>ServeHTTP(ResponseWriter, *Request)</code>，调用就会精确落到 <code>gin.Engine.ServeHTTP</code> 上。这正是 Go「面向接口编程」在框架扩展点上的典型应用：<strong>标准库不需要知道 gin 的存在，只需要一个满足 <code>Handler</code> 接口的类型即可</strong>。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">   http.Handler（接口 · 静态类型）
+</span></span><span class="line"><span class="cl">        │   handler.ServeHTTP(rw, req)
+</span></span><span class="line"><span class="cl">        │   运行时按「动态类型」查方法表
+</span></span><span class="line"><span class="cl">        ▼
+</span></span><span class="line"><span class="cl">   *gin.Engine（动态类型）  ──▶  gin.Engine.ServeHTTP(w, req)
+</span></span></code></pre></div><h2 id="23-engineservehttp-全貌">2.3 Engine.ServeHTTP 全貌</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="p">(</span><span class="nx">engine</span> <span class="o">*</span><span class="nx">Engine</span><span class="p">)</span> <span class="nf">ServeHTTP</span><span class="p">(</span><span class="nx">w</span> <span class="nx">http</span><span class="p">.</span><span class="nx">ResponseWriter</span><span class="p">,</span> <span class="nx">req</span> <span class="o">*</span><span class="nx">http</span><span class="p">.</span><span class="nx">Request</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">c</span> <span class="o">:=</span> <span class="nx">engine</span><span class="p">.</span><span class="nx">pool</span><span class="p">.</span><span class="nf">Get</span><span class="p">().(</span><span class="o">*</span><span class="nx">Context</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">c</span><span class="p">.</span><span class="nx">writermem</span><span class="p">.</span><span class="nf">reset</span><span class="p">(</span><span class="nx">w</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">c</span><span class="p">.</span><span class="nx">Request</span> <span class="p">=</span> <span class="nx">req</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">c</span><span class="p">.</span><span class="nf">reset</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="nx">engine</span><span class="p">.</span><span class="nf">handleHTTPRequest</span><span class="p">(</span><span class="nx">c</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="nx">engine</span><span class="p">.</span><span class="nx">pool</span><span class="p">.</span><span class="nf">Put</span><span class="p">(</span><span class="nx">c</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>短短几行，但信息密度很高：</p>
+<ol>
+<li>从 <code>engine.pool</code>（<code>sync.Pool</code>）里取出一个 <code>*Context</code>，而不是每次请求 <code>new</code> 一个——这是 gin 高性能的关键手段之一，第 4.3 节会展开讲；</li>
+<li>对拿到的 <code>Context</code> 做初始化（<code>writermem.reset</code>、<code>c.reset()</code>），避免复用带来的字段污染；</li>
+<li>调用 <code>handleHTTPRequest(c)</code>，这是真正的路由匹配与中间件执行入口；</li>
+<li>请求处理完毕后，把这块内存归还给 <code>sync.Pool</code>，供下一次请求复用。</li>
+</ol>
+<h2 id="24-handlehttprequest从树到-contextnext">2.4 handleHTTPRequest：从树到 Context.Next</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="p">(</span><span class="nx">engine</span> <span class="o">*</span><span class="nx">Engine</span><span class="p">)</span> <span class="nf">handleHTTPRequest</span><span class="p">(</span><span class="nx">c</span> <span class="o">*</span><span class="nx">Context</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">httpMethod</span> <span class="o">:=</span> <span class="nx">c</span><span class="p">.</span><span class="nx">Request</span><span class="p">.</span><span class="nx">Method</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">rPath</span> <span class="o">:=</span> <span class="nx">c</span><span class="p">.</span><span class="nx">Request</span><span class="p">.</span><span class="nx">URL</span><span class="p">.</span><span class="nx">Path</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">unescape</span> <span class="o">:=</span> <span class="kc">false</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">engine</span><span class="p">.</span><span class="nx">UseRawPath</span> <span class="o">&amp;&amp;</span> <span class="nb">len</span><span class="p">(</span><span class="nx">c</span><span class="p">.</span><span class="nx">Request</span><span class="p">.</span><span class="nx">URL</span><span class="p">.</span><span class="nx">RawPath</span><span class="p">)</span> <span class="p">&gt;</span> <span class="mi">0</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">rPath</span> <span class="p">=</span> <span class="nx">c</span><span class="p">.</span><span class="nx">Request</span><span class="p">.</span><span class="nx">URL</span><span class="p">.</span><span class="nx">RawPath</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">unescape</span> <span class="p">=</span> <span class="nx">engine</span><span class="p">.</span><span class="nx">UnescapePathValues</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// 按 HTTP method 找到对应的那棵基数树
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">t</span> <span class="o">:=</span> <span class="nx">engine</span><span class="p">.</span><span class="nx">trees</span>
+</span></span><span class="line"><span class="cl">    <span class="k">for</span> <span class="nx">i</span><span class="p">,</span> <span class="nx">tl</span> <span class="o">:=</span> <span class="mi">0</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="nx">t</span><span class="p">);</span> <span class="nx">i</span> <span class="p">&lt;</span> <span class="nx">tl</span><span class="p">;</span> <span class="nx">i</span><span class="o">++</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="nx">t</span><span class="p">[</span><span class="nx">i</span><span class="p">].</span><span class="nx">method</span> <span class="o">!=</span> <span class="nx">httpMethod</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="k">continue</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">root</span> <span class="o">:=</span> <span class="nx">t</span><span class="p">[</span><span class="nx">i</span><span class="p">].</span><span class="nx">root</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">value</span> <span class="o">:=</span> <span class="nx">root</span><span class="p">.</span><span class="nf">getValue</span><span class="p">(</span><span class="nx">rPath</span><span class="p">,</span> <span class="nx">c</span><span class="p">.</span><span class="nx">params</span><span class="p">,</span> <span class="nx">c</span><span class="p">.</span><span class="nx">skippedNodes</span><span class="p">,</span> <span class="nx">unescape</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="nx">value</span><span class="p">.</span><span class="nx">params</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">c</span><span class="p">.</span><span class="nx">Params</span> <span class="p">=</span> <span class="o">*</span><span class="nx">value</span><span class="p">.</span><span class="nx">params</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="nx">value</span><span class="p">.</span><span class="nx">handlers</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">c</span><span class="p">.</span><span class="nx">handlers</span> <span class="p">=</span> <span class="nx">value</span><span class="p">.</span><span class="nx">handlers</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">c</span><span class="p">.</span><span class="nx">fullPath</span> <span class="p">=</span> <span class="nx">value</span><span class="p">.</span><span class="nx">fullPath</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">c</span><span class="p">.</span><span class="nf">Next</span><span class="p">()</span> <span class="c1">// 驱动中间件链 + 最终 handler
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>            <span class="nx">c</span><span class="p">.</span><span class="nx">writermem</span><span class="p">.</span><span class="nf">WriteHeaderNow</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">            <span class="k">return</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="nx">httpMethod</span> <span class="o">!=</span> <span class="nx">http</span><span class="p">.</span><span class="nx">MethodConnect</span> <span class="o">&amp;&amp;</span> <span class="nx">rPath</span> <span class="o">!=</span> <span class="s">&#34;/&#34;</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="k">if</span> <span class="nx">value</span><span class="p">.</span><span class="nx">tsr</span> <span class="o">&amp;&amp;</span> <span class="nx">engine</span><span class="p">.</span><span class="nx">RedirectTrailingSlash</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">                <span class="nf">redirectTrailingSlash</span><span class="p">(</span><span class="nx">c</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">                <span class="k">return</span>
+</span></span><span class="line"><span class="cl">            <span class="p">}</span>
+</span></span><span class="line"><span class="cl">            <span class="k">if</span> <span class="nx">engine</span><span class="p">.</span><span class="nx">RedirectFixedPath</span> <span class="o">&amp;&amp;</span> <span class="nf">redirectFixedPath</span><span class="p">(</span><span class="nx">c</span><span class="p">,</span> <span class="nx">root</span><span class="p">,</span> <span class="nx">engine</span><span class="p">.</span><span class="nx">RedirectFixedPath</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">                <span class="k">return</span>
+</span></span><span class="line"><span class="cl">            <span class="p">}</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">        <span class="k">break</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// 命中了别的 method 但没命中当前 method -&gt; 405；否则 -&gt; 404
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">if</span> <span class="nx">engine</span><span class="p">.</span><span class="nx">HandleMethodNotAllowed</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="c1">// ... 遍历其它 method 的树，尝试匹配，命中则返回 405
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">c</span><span class="p">.</span><span class="nx">handlers</span> <span class="p">=</span> <span class="nx">engine</span><span class="p">.</span><span class="nx">allNoRoute</span>
+</span></span><span class="line"><span class="cl">    <span class="nf">serveError</span><span class="p">(</span><span class="nx">c</span><span class="p">,</span> <span class="nx">http</span><span class="p">.</span><span class="nx">StatusNotFound</span><span class="p">,</span> <span class="nx">default404Body</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>可以看到，<code>handleHTTPRequest</code> 做的事情非常聚焦：<strong>按 method 选树 → 在树里查找 path 对应的 handler 链 → 把结果挂到 <code>Context</code> 上 → 调用 <code>c.Next()</code> 把控制权交给中间件链</strong>。真正「快」在哪里，取决于 <code>root.getValue</code> 这一步——也就是 gin 路由的核心数据结构：基数树。</p>
+<hr>
+<h1 id="3-gin-路由的核心基数树radix-tree">3. gin 路由的核心：基数树（Radix Tree）</h1>
+<h2 id="31-为什么不用朴素-trie-树">3.1 为什么不用朴素 Trie 树</h2>
+<p>Trie 树（字典树）是一种专门处理字符串前缀匹配的树形结构：把一组字符串按照公共前缀合并存储，查找时逐字符往下走。例如 how、hi、her、hello、so、see 这 6 个字符串，构造出的 Trie 树大致如下：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">(root)
+</span></span><span class="line"><span class="cl"> ├─ h
+</span></span><span class="line"><span class="cl"> │   ├─ i            → hi
+</span></span><span class="line"><span class="cl"> │   ├─ e
+</span></span><span class="line"><span class="cl"> │   │   ├─ r        → her
+</span></span><span class="line"><span class="cl"> │   │   └─ l ─ l ─ o → hello
+</span></span><span class="line"><span class="cl"> │   └─ o ─ w        → how
+</span></span><span class="line"><span class="cl"> └─ s
+</span></span><span class="line"><span class="cl">     ├─ o            → so
+</span></span><span class="line"><span class="cl">     └─ e ─ e        → see
+</span></span></code></pre></div><p>（每个字符都单独占一个节点，指针跳转多、缓存不友好——这正是朴素 Trie 的痛点。）</p>
+<p>但朴素 Trie 树直接搬到路由匹配场景并不划算：</p>
+<ul>
+<li><strong>字符集不能太大</strong>：一旦字符集膨胀，子节点数组/映射就会浪费大量空间；</li>
+<li><strong>要求前缀重合度高</strong>：否则空间开销远大于收益，退化成普通链表式结构；</li>
+<li><strong>单字符一个节点，指针跳转多</strong>：对 CPU 缓存不友好，逐字符比较也拖慢查找；</li>
+<li>对精确字符串匹配问题，散列表/红黑树往往比自研 Trie 树更省心。</li>
+</ul>
+<p>gin（复用自 <code>julienschmidt/httprouter</code> 的实现）采用的是 Trie 树的一个改良版——<strong>基数树（Radix Tree，压缩前缀树）</strong>：把只有一个子节点、没有分叉的连续路径压缩成一条边（一个 <code>node.path</code> 字符串），而不是每个字符都单独开一个节点。这样既保留了「利用公共前缀省空间、支持前缀匹配」的优点，又大幅减少了节点数量和指针跳转次数，更贴合 URL path 这种「段与段之间前缀重合度高、字符集适中（字母数字加少量符号）」的场景。</p>
+<h2 id="32-methodtree-与-node-的数据结构">3.2 methodTree 与 node 的数据结构</h2>
+<p><code>Engine</code> 里维护了一个 <code>methodTrees</code>，每种 HTTP method 对应一棵独立的基数树：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">type</span> <span class="nx">Engine</span> <span class="kd">struct</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">RouterGroup</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">trees</span>       <span class="nx">methodTrees</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">maxParams</span>   <span class="kt">uint16</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">maxSections</span> <span class="kt">uint16</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// ... 省略其余字段
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">type</span> <span class="nx">methodTree</span> <span class="kd">struct</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">method</span> <span class="kt">string</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">root</span>   <span class="o">*</span><span class="nx">node</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">type</span> <span class="nx">methodTrees</span> <span class="p">[]</span><span class="nx">methodTree</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="p">(</span><span class="nx">trees</span> <span class="nx">methodTrees</span><span class="p">)</span> <span class="nf">get</span><span class="p">(</span><span class="nx">method</span> <span class="kt">string</span><span class="p">)</span> <span class="o">*</span><span class="nx">node</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">for</span> <span class="nx">_</span><span class="p">,</span> <span class="nx">tree</span> <span class="o">:=</span> <span class="k">range</span> <span class="nx">trees</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="nx">tree</span><span class="p">.</span><span class="nx">method</span> <span class="o">==</span> <span class="nx">method</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="k">return</span> <span class="nx">tree</span><span class="p">.</span><span class="nx">root</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="kc">nil</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>也就是说，GET、POST 各自的路由是完全独立的两棵树，互不干扰。树上的节点定义如下（v1.10.0 源码）：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">type</span> <span class="nx">node</span> <span class="kd">struct</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">path</span>      <span class="kt">string</span>       <span class="c1">// 当前节点代表的路径片段（压缩后的公共前缀）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">indices</span>   <span class="kt">string</span>        <span class="c1">// children 各首字符组成的索引串，用于快速定位子节点
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">wildChild</span> <span class="kt">bool</span>           <span class="c1">// 是否有通配符类型的子节点
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">nType</span>     <span class="nx">nodeType</span>       <span class="c1">// 节点类型：root/static/param/catchAll
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">priority</span>  <span class="kt">uint32</span>         <span class="c1">// 经过该节点的路由数量，用于子节点排序
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">children</span>  <span class="p">[]</span><span class="o">*</span><span class="nx">node</span>        <span class="c1">// 子节点列表（至多一个 :param/*catchAll 子节点，且必须排在末尾）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">handlers</span>  <span class="nx">HandlersChain</span>  <span class="c1">// 命中该节点时执行的处理链
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">fullPath</span>  <span class="kt">string</span>         <span class="c1">// 从根到当前节点的完整路径
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span></code></pre></div><blockquote>
+<p>与旧版本笔记的一处出入：早期 gin 会在 <code>node</code> 上直接存一个 <code>maxParams uint8</code> 字段。当前版本把这个统计上移到了 <code>Engine.maxParams</code> / <code>Engine.maxSections</code>，在 <code>addRoute</code> 注册路由时顺带更新（取所有已注册路径里通配符数量、<code>/</code> 段数量的最大值），并在 <code>allocateContext</code> 时用来预分配 <code>Context.params</code> 和 <code>skippedNodes</code> 的容量，避免运行期反复扩容。<code>node</code> 本身不再关心这两个统计值。</p>
+</blockquote>
+<p><code>indices</code> 是这棵树能做到「常数级子节点定位」的关键：它是一个字符串，每个字符对应一个子节点 <code>path</code> 的首字符，两者下标一一对应。查找时先在 <code>indices</code> 里做一次字符比较（等价于线性扫描，但子节点数通常很少，实际开销极小），命中后直接用下标取出对应的 <code>*node</code>，不需要遍历整个子节点做字符串比较。</p>
+<h2 id="33-插入addroute-与节点分裂">3.3 插入：addRoute 与节点分裂</h2>
+<p>以旧笔记里的例子说明插入过程——依次注册 4 条路由：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="nx">engine</span> <span class="o">:=</span> <span class="nx">gin</span><span class="p">.</span><span class="nf">Default</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl"><span class="nx">helloGroup</span> <span class="o">:=</span> <span class="nx">engine</span><span class="p">.</span><span class="nf">Group</span><span class="p">(</span><span class="s">&#34;/hello&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">helloGroup</span><span class="p">.</span><span class="nf">GET</span><span class="p">(</span><span class="s">&#34;/aaa/aa&#34;</span><span class="p">,</span> <span class="nx">h1</span><span class="p">)</span>   <span class="c1">// ① /hello/aaa/aa
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">helloGroup</span><span class="p">.</span><span class="nf">GET</span><span class="p">(</span><span class="s">&#34;/aaa2/bb&#34;</span><span class="p">,</span> <span class="nx">h2</span><span class="p">)</span>  <span class="c1">// ② /hello/aaa2/bb
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">helloGroup</span><span class="p">.</span><span class="nf">GET</span><span class="p">(</span><span class="s">&#34;/bbb/aa&#34;</span><span class="p">,</span> <span class="nx">h3</span><span class="p">)</span>   <span class="c1">// ③ /hello/bbb/aa
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">helloGroup</span><span class="p">.</span><span class="nf">GET</span><span class="p">(</span><span class="s">&#34;/bbb/a/ccc&#34;</span><span class="p">,</span> <span class="nx">h4</span><span class="p">)</span><span class="c1">// ④ /hello/bbb/a/ccc
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span></code></pre></div><p><code>addRoute</code> 的核心是 <code>longestCommonPrefix</code>：每插入一条新路径，都先和当前节点的 <code>path</code> 求最长公共前缀，根据比较结果决定是「继续往下走」还是「把当前节点从公共前缀处切开」。</p>
+<p><strong>① 插入 <code>/hello/aaa/aa</code></strong>：此时树为空，直接把整条路径挂成根节点的 <code>path</code>。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">[/hello/aaa/aa]  → h1
+</span></span></code></pre></div><p><strong>② 插入 <code>/hello/aaa2/bb</code></strong>：与已有节点 <code>path</code> 求公共前缀，命中到 <code>/hello/aaa</code>，超出部分 <code>2/bb</code> 与已有节点剩余部分 <code>/aa</code> 不再相同，于是触发<strong>节点分裂</strong>：原节点在公共前缀处被切断，多出的 <code>/aa</code> 下沉为一个子节点，新路径剩余的 <code>2/bb</code> 也作为一个新的兄弟子节点插入，两者的首字符（<code>/</code> 和 <code>2</code>）被记录进父节点的 <code>indices</code>。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">[/hello/aaa]  indices=&#34;/2&#34;
+</span></span><span class="line"><span class="cl">   ├─ [/aa]     → h1
+</span></span><span class="line"><span class="cl">   └─ [2/bb]    → h2
+</span></span></code></pre></div><p><strong>③ 插入 <code>/hello/bbb/aa</code></strong>：与根节点 <code>/hello/aaa</code> 的公共前缀只到 <code>/hello/</code>，于是再次分裂，<code>aaa...</code> 整体下沉为一个子节点，新增的 <code>bbb/aa</code> 作为另一个子节点，父节点 <code>indices</code> 记录 <code>a</code>、<code>b</code> 两个首字符。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">[/hello/]  indices=&#34;ab&#34;
+</span></span><span class="line"><span class="cl">   ├─ [aaa]  indices=&#34;/2&#34;
+</span></span><span class="line"><span class="cl">   │    ├─ [/aa]   → h1
+</span></span><span class="line"><span class="cl">   │    └─ [2/bb]  → h2
+</span></span><span class="line"><span class="cl">   └─ [bbb/aa]     → h3
+</span></span></code></pre></div><p><strong>④ 插入 <code>/hello/bbb/a/ccc</code></strong>：与节点 <code>bbb/aa</code> 求公共前缀得到 <code>bbb/a</code>，剩余的 <code>a</code> 与新路径剩余的 <code>/ccc</code> 不同，继续分裂出 <code>a</code> 与 <code>/ccc</code> 两个子节点。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">[/hello/]  indices=&#34;ab&#34;
+</span></span><span class="line"><span class="cl">   ├─ [aaa]  indices=&#34;/2&#34;
+</span></span><span class="line"><span class="cl">   │    ├─ [/aa]   → h1
+</span></span><span class="line"><span class="cl">   │    └─ [2/bb]  → h2
+</span></span><span class="line"><span class="cl">   └─ [bbb/a]  indices=&#34;a/&#34;
+</span></span><span class="line"><span class="cl">        ├─ [a]     → h3
+</span></span><span class="line"><span class="cl">        └─ [/ccc]  → h4
+</span></span></code></pre></div><p><code>addRoute</code> 的分裂逻辑用代码表达如下（节选自 <code>tree.go</code>）：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="p">(</span><span class="nx">n</span> <span class="o">*</span><span class="nx">node</span><span class="p">)</span> <span class="nf">addRoute</span><span class="p">(</span><span class="nx">path</span> <span class="kt">string</span><span class="p">,</span> <span class="nx">handlers</span> <span class="nx">HandlersChain</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">fullPath</span> <span class="o">:=</span> <span class="nx">path</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">n</span><span class="p">.</span><span class="nx">priority</span><span class="o">++</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="nx">n</span><span class="p">.</span><span class="nx">path</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span> <span class="o">&amp;&amp;</span> <span class="nb">len</span><span class="p">(</span><span class="nx">n</span><span class="p">.</span><span class="nx">children</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">n</span><span class="p">.</span><span class="nf">insertChild</span><span class="p">(</span><span class="nx">path</span><span class="p">,</span> <span class="nx">fullPath</span><span class="p">,</span> <span class="nx">handlers</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">n</span><span class="p">.</span><span class="nx">nType</span> <span class="p">=</span> <span class="nx">root</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="nx">walk</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">    <span class="k">for</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">i</span> <span class="o">:=</span> <span class="nf">longestCommonPrefix</span><span class="p">(</span><span class="nx">path</span><span class="p">,</span> <span class="nx">n</span><span class="p">.</span><span class="nx">path</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">        <span class="c1">// 公共前缀比当前节点 path 短 -&gt; 必须把当前节点切开
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="k">if</span> <span class="nx">i</span> <span class="p">&lt;</span> <span class="nb">len</span><span class="p">(</span><span class="nx">n</span><span class="p">.</span><span class="nx">path</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">child</span> <span class="o">:=</span> <span class="nx">node</span><span class="p">{</span>
+</span></span><span class="line"><span class="cl">                <span class="nx">path</span><span class="p">:</span>      <span class="nx">n</span><span class="p">.</span><span class="nx">path</span><span class="p">[</span><span class="nx">i</span><span class="p">:],</span>
+</span></span><span class="line"><span class="cl">                <span class="nx">wildChild</span><span class="p">:</span> <span class="nx">n</span><span class="p">.</span><span class="nx">wildChild</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">                <span class="nx">nType</span><span class="p">:</span>     <span class="nx">static</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">                <span class="nx">indices</span><span class="p">:</span>   <span class="nx">n</span><span class="p">.</span><span class="nx">indices</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">                <span class="nx">children</span><span class="p">:</span>  <span class="nx">n</span><span class="p">.</span><span class="nx">children</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">                <span class="nx">handlers</span><span class="p">:</span>  <span class="nx">n</span><span class="p">.</span><span class="nx">handlers</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">                <span class="nx">priority</span><span class="p">:</span>  <span class="nx">n</span><span class="p">.</span><span class="nx">priority</span> <span class="o">-</span> <span class="mi">1</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">                <span class="nx">fullPath</span><span class="p">:</span>  <span class="nx">n</span><span class="p">.</span><span class="nx">fullPath</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">            <span class="p">}</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">n</span><span class="p">.</span><span class="nx">children</span> <span class="p">=</span> <span class="p">[]</span><span class="o">*</span><span class="nx">node</span><span class="p">{</span><span class="o">&amp;</span><span class="nx">child</span><span class="p">}</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">n</span><span class="p">.</span><span class="nx">indices</span> <span class="p">=</span> <span class="nb">string</span><span class="p">([]</span><span class="kt">byte</span><span class="p">{</span><span class="nx">n</span><span class="p">.</span><span class="nx">path</span><span class="p">[</span><span class="nx">i</span><span class="p">]})</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">n</span><span class="p">.</span><span class="nx">path</span> <span class="p">=</span> <span class="nx">path</span><span class="p">[:</span><span class="nx">i</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">n</span><span class="p">.</span><span class="nx">handlers</span> <span class="p">=</span> <span class="kc">nil</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">n</span><span class="p">.</span><span class="nx">wildChild</span> <span class="p">=</span> <span class="kc">false</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="nx">i</span> <span class="p">&lt;</span> <span class="nb">len</span><span class="p">(</span><span class="nx">path</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">path</span> <span class="p">=</span> <span class="nx">path</span><span class="p">[</span><span class="nx">i</span><span class="p">:]</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">c</span> <span class="o">:=</span> <span class="nx">path</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">            <span class="c1">// 已存在以 c 开头的子节点，沿 indices 定位后继续 walk
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>            <span class="k">for</span> <span class="nx">idx</span><span class="p">,</span> <span class="nx">max</span> <span class="o">:=</span> <span class="mi">0</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="nx">n</span><span class="p">.</span><span class="nx">indices</span><span class="p">);</span> <span class="nx">idx</span> <span class="p">&lt;</span> <span class="nx">max</span><span class="p">;</span> <span class="nx">idx</span><span class="o">++</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">                <span class="k">if</span> <span class="nx">c</span> <span class="o">==</span> <span class="nx">n</span><span class="p">.</span><span class="nx">indices</span><span class="p">[</span><span class="nx">idx</span><span class="p">]</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">                    <span class="nx">idx</span> <span class="p">=</span> <span class="nx">n</span><span class="p">.</span><span class="nf">incrementChildPrio</span><span class="p">(</span><span class="nx">idx</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">                    <span class="nx">n</span> <span class="p">=</span> <span class="nx">n</span><span class="p">.</span><span class="nx">children</span><span class="p">[</span><span class="nx">idx</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">                    <span class="k">continue</span> <span class="nx">walk</span>
+</span></span><span class="line"><span class="cl">                <span class="p">}</span>
+</span></span><span class="line"><span class="cl">            <span class="p">}</span>
+</span></span><span class="line"><span class="cl">            <span class="c1">// 否则新增一个子节点
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>            <span class="nx">n</span><span class="p">.</span><span class="nx">indices</span> <span class="o">+=</span> <span class="nb">string</span><span class="p">([]</span><span class="kt">byte</span><span class="p">{</span><span class="nx">c</span><span class="p">})</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">child</span> <span class="o">:=</span> <span class="o">&amp;</span><span class="nx">node</span><span class="p">{</span><span class="nx">fullPath</span><span class="p">:</span> <span class="nx">fullPath</span><span class="p">}</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">n</span><span class="p">.</span><span class="nf">addChild</span><span class="p">(</span><span class="nx">child</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">n</span> <span class="p">=</span> <span class="nx">child</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">n</span><span class="p">.</span><span class="nf">insertChild</span><span class="p">(</span><span class="nx">path</span><span class="p">,</span> <span class="nx">fullPath</span><span class="p">,</span> <span class="nx">handlers</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">            <span class="k">return</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">n</span><span class="p">.</span><span class="nx">handlers</span> <span class="p">=</span> <span class="nx">handlers</span> <span class="c1">// 公共前缀等于 path，直接把 handlers 挂在当前节点
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="k">return</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>值得一提的是 <code>priority</code> 字段：每条路由经过某节点都会让它的 <code>priority++</code>，<code>incrementChildPrio</code> 会在子节点数组里把「命中次数更多」的节点往前挪。这是一种简单的启发式优化——<strong>高频命中的分支排在 <code>indices</code> 更靠前的位置，平均查找路径更短</strong>。</p>
+<h2 id="34-通配符节点param-与-catchall">3.4 通配符节点：:param 与 *catchAll</h2>
+<p>gin 支持两种通配符：<code>:name</code>（匹配单个路径段）和 <code>*name</code>（匹配剩余全部路径，包括 <code>/</code>）。它们对应 <code>node.nType</code> 的 <code>param</code> 和 <code>catchAll</code> 两种类型，由 <code>insertChild</code> 负责识别与插入：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="p">(</span><span class="nx">n</span> <span class="o">*</span><span class="nx">node</span><span class="p">)</span> <span class="nf">insertChild</span><span class="p">(</span><span class="nx">path</span> <span class="kt">string</span><span class="p">,</span> <span class="nx">fullPath</span> <span class="kt">string</span><span class="p">,</span> <span class="nx">handlers</span> <span class="nx">HandlersChain</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">for</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">wildcard</span><span class="p">,</span> <span class="nx">i</span><span class="p">,</span> <span class="nx">valid</span> <span class="o">:=</span> <span class="nf">findWildcard</span><span class="p">(</span><span class="nx">path</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="nx">i</span> <span class="p">&lt;</span> <span class="mi">0</span> <span class="p">{</span> <span class="c1">// 没有通配符了，剩余部分作为普通静态节点插入
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>            <span class="k">break</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="p">!</span><span class="nx">valid</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="nb">panic</span><span class="p">(</span><span class="s">&#34;only one wildcard per path segment is allowed, has: &#39;&#34;</span> <span class="o">+</span> <span class="nx">wildcard</span> <span class="o">+</span> <span class="s">&#34;&#39;&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="nx">wildcard</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">==</span> <span class="sc">&#39;:&#39;</span> <span class="p">{</span> <span class="c1">// :param
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>            <span class="k">if</span> <span class="nx">i</span> <span class="p">&gt;</span> <span class="mi">0</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">                <span class="nx">n</span><span class="p">.</span><span class="nx">path</span> <span class="p">=</span> <span class="nx">path</span><span class="p">[:</span><span class="nx">i</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">                <span class="nx">path</span> <span class="p">=</span> <span class="nx">path</span><span class="p">[</span><span class="nx">i</span><span class="p">:]</span>
+</span></span><span class="line"><span class="cl">            <span class="p">}</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">child</span> <span class="o">:=</span> <span class="o">&amp;</span><span class="nx">node</span><span class="p">{</span><span class="nx">nType</span><span class="p">:</span> <span class="nx">param</span><span class="p">,</span> <span class="nx">path</span><span class="p">:</span> <span class="nx">wildcard</span><span class="p">,</span> <span class="nx">fullPath</span><span class="p">:</span> <span class="nx">fullPath</span><span class="p">}</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">n</span><span class="p">.</span><span class="nf">addChild</span><span class="p">(</span><span class="nx">child</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">n</span><span class="p">.</span><span class="nx">wildChild</span> <span class="p">=</span> <span class="kc">true</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">n</span> <span class="p">=</span> <span class="nx">child</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">            <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="nx">wildcard</span><span class="p">)</span> <span class="p">&lt;</span> <span class="nb">len</span><span class="p">(</span><span class="nx">path</span><span class="p">)</span> <span class="p">{</span> <span class="c1">// 通配符后面还有子路径，比如 /:name/age
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>                <span class="nx">path</span> <span class="p">=</span> <span class="nx">path</span><span class="p">[</span><span class="nb">len</span><span class="p">(</span><span class="nx">wildcard</span><span class="p">):]</span>
+</span></span><span class="line"><span class="cl">                <span class="nx">child</span> <span class="o">:=</span> <span class="o">&amp;</span><span class="nx">node</span><span class="p">{</span><span class="nx">priority</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span> <span class="nx">fullPath</span><span class="p">:</span> <span class="nx">fullPath</span><span class="p">}</span>
+</span></span><span class="line"><span class="cl">                <span class="nx">n</span><span class="p">.</span><span class="nf">addChild</span><span class="p">(</span><span class="nx">child</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">                <span class="nx">n</span> <span class="p">=</span> <span class="nx">child</span>
+</span></span><span class="line"><span class="cl">                <span class="k">continue</span>
+</span></span><span class="line"><span class="cl">            <span class="p">}</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">n</span><span class="p">.</span><span class="nx">handlers</span> <span class="p">=</span> <span class="nx">handlers</span>
+</span></span><span class="line"><span class="cl">            <span class="k">return</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">        <span class="c1">// wildcard[0] == &#39;*&#39;，catchAll 之后不能再有子路径，直接终结这条链
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="c1">// ... 省略校验与挂载逻辑
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">n</span><span class="p">.</span><span class="nx">path</span> <span class="p">=</span> <span class="nx">path</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">n</span><span class="p">.</span><span class="nx">handlers</span> <span class="p">=</span> <span class="nx">handlers</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>例如路由 <code>/user/:name/:age</code> 会形成一条「静态节点 → param(:name) → param(:age)」的链：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">[/user/] ──▶ [:name] ──▶ [:age]
+</span></span><span class="line"><span class="cl"> static       param        param
+</span></span></code></pre></div><p>路由 <code>/user/:name/*age</code>（一个 <code>:param</code> 加一个 <code>*catchAll</code>）则形成「静态节点 → param(:name) → catchAll(*age)」：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">[/user/] ──▶ [:name] ──▶ [*age]
+</span></span><span class="line"><span class="cl"> static       param       catchAll
+</span></span></code></pre></div><p>有几个关键约束要注意：</p>
+<ul>
+<li>同一层只能有一个通配符子节点（<code>n.wildChild</code> 为真时会去检查是否和已有通配符冲突，冲突直接 <code>panic</code>），所以 <code>/user/:name</code> 和 <code>/user/:id</code> 不能同时注册；</li>
+<li><code>addChild</code> 会保证通配符子节点始终排在 <code>children</code> 数组末尾，静态节点优先匹配，通配符兜底；</li>
+<li><code>*catchAll</code> 之后不能再挂子路径，因为它会贪婪匹配剩余的所有内容。</li>
+</ul>
+<h2 id="35-查找getvalue-与回溯-skippednodes">3.5 查找：getValue 与回溯 skippedNodes</h2>
+<p>查找的入口是 <code>handleHTTPRequest</code> 里调用的 <code>root.getValue</code>。主体逻辑是沿着 <code>path</code> 不断消耗前缀、下钻子节点：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="p">(</span><span class="nx">n</span> <span class="o">*</span><span class="nx">node</span><span class="p">)</span> <span class="nf">getValue</span><span class="p">(</span><span class="nx">path</span> <span class="kt">string</span><span class="p">,</span> <span class="nx">params</span> <span class="o">*</span><span class="nx">Params</span><span class="p">,</span> <span class="nx">skippedNodes</span> <span class="o">*</span><span class="p">[]</span><span class="nx">skippedNode</span><span class="p">,</span> <span class="nx">unescape</span> <span class="kt">bool</span><span class="p">)</span> <span class="p">(</span><span class="nx">value</span> <span class="nx">nodeValue</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl"><span class="nx">walk</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">    <span class="k">for</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">prefix</span> <span class="o">:=</span> <span class="nx">n</span><span class="p">.</span><span class="nx">path</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="nx">path</span><span class="p">)</span> <span class="p">&gt;</span> <span class="nb">len</span><span class="p">(</span><span class="nx">prefix</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="k">if</span> <span class="nx">path</span><span class="p">[:</span><span class="nb">len</span><span class="p">(</span><span class="nx">prefix</span><span class="p">)]</span> <span class="o">==</span> <span class="nx">prefix</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">                <span class="nx">path</span> <span class="p">=</span> <span class="nx">path</span><span class="p">[</span><span class="nb">len</span><span class="p">(</span><span class="nx">prefix</span><span class="p">):]</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">                <span class="c1">// 优先按 indices 匹配静态子节点
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>                <span class="nx">idxc</span> <span class="o">:=</span> <span class="nx">path</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">                <span class="k">for</span> <span class="nx">i</span><span class="p">,</span> <span class="nx">c</span> <span class="o">:=</span> <span class="k">range</span> <span class="p">[]</span><span class="nb">byte</span><span class="p">(</span><span class="nx">n</span><span class="p">.</span><span class="nx">indices</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">                    <span class="k">if</span> <span class="nx">c</span> <span class="o">==</span> <span class="nx">idxc</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">                        <span class="k">if</span> <span class="nx">n</span><span class="p">.</span><span class="nx">wildChild</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">                            <span class="c1">// 记录一个可回溯的分支点：万一静态分支走不通，还能退回来试通配符
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>                            <span class="o">*</span><span class="nx">skippedNodes</span> <span class="p">=</span> <span class="nb">append</span><span class="p">(</span><span class="o">*</span><span class="nx">skippedNodes</span><span class="p">,</span> <span class="nx">skippedNode</span><span class="p">{</span>
+</span></span><span class="line"><span class="cl">                                <span class="nx">path</span><span class="p">:</span> <span class="nx">prefix</span> <span class="o">+</span> <span class="nx">path</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">                                <span class="nx">node</span><span class="p">:</span> <span class="o">&amp;</span><span class="nx">node</span><span class="p">{</span> <span class="cm">/* 复制当前节点关键字段 */</span> <span class="p">},</span>
+</span></span><span class="line"><span class="cl">                            <span class="p">})</span>
+</span></span><span class="line"><span class="cl">                        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">                        <span class="nx">n</span> <span class="p">=</span> <span class="nx">n</span><span class="p">.</span><span class="nx">children</span><span class="p">[</span><span class="nx">i</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">                        <span class="k">continue</span> <span class="nx">walk</span>
+</span></span><span class="line"><span class="cl">                    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">                <span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">                <span class="k">if</span> <span class="p">!</span><span class="nx">n</span><span class="p">.</span><span class="nx">wildChild</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">                    <span class="c1">// 静态分支和通配符都没有 -&gt; 尝试回退到最近一个 skippedNode 重新尝试
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>                    <span class="c1">// 都失败则返回「未命中」，并给出 tsr（trailing slash redirect）建议
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>                    <span class="nx">value</span><span class="p">.</span><span class="nx">tsr</span> <span class="p">=</span> <span class="nx">path</span> <span class="o">==</span> <span class="s">&#34;/&#34;</span> <span class="o">&amp;&amp;</span> <span class="nx">n</span><span class="p">.</span><span class="nx">handlers</span> <span class="o">!=</span> <span class="kc">nil</span>
+</span></span><span class="line"><span class="cl">                    <span class="k">return</span> <span class="nx">value</span>
+</span></span><span class="line"><span class="cl">                <span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">                <span class="c1">// 走通配符子节点：param 截取到下一个 &#39;/&#39;，catchAll 吞掉剩余全部
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>                <span class="nx">n</span> <span class="p">=</span> <span class="nx">n</span><span class="p">.</span><span class="nx">children</span><span class="p">[</span><span class="nb">len</span><span class="p">(</span><span class="nx">n</span><span class="p">.</span><span class="nx">children</span><span class="p">)</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">                <span class="c1">// ... 省略 param/catchAll 分支的参数写入逻辑
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>                <span class="k">continue</span> <span class="nx">walk</span>
+</span></span><span class="line"><span class="cl">            <span class="p">}</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="nx">path</span> <span class="o">==</span> <span class="nx">prefix</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">value</span><span class="p">.</span><span class="nx">handlers</span> <span class="p">=</span> <span class="nx">n</span><span class="p">.</span><span class="nx">handlers</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">value</span><span class="p">.</span><span class="nx">fullPath</span> <span class="p">=</span> <span class="nx">n</span><span class="p">.</span><span class="nx">fullPath</span>
+</span></span><span class="line"><span class="cl">            <span class="k">return</span> <span class="nx">value</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">        <span class="c1">// path 与 prefix 都不匹配 -&gt; 同样走 tsr 判断与 skippedNodes 回溯
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="k">return</span> <span class="nx">value</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>这里最容易被旧版本笔记忽略的，是 <code>skippedNodes</code> 这个<strong>显式回溯栈</strong>：因为静态节点优先于通配符节点匹配，当某一层的 <code>indices</code> 里恰好有一个字符匹配上了，但沿着这条静态分支往下却走不通（比如 <code>/user/list</code> 里 <code>list</code> 恰好和某个静态子节点前缀撞车，但真正想命中的其实是 <code>/user/:id</code>）时，就需要退回来改走通配符分支。gin 用一个 <code>[]skippedNode</code> 切片保存「本可以走通配符，但先尝试了静态分支」的这些节点快照，一旦静态分支彻底走入死胡同，就从栈顶弹出最近的快照重新 <code>continue walk</code>。这个切片的初始容量正是第 3.2 节提到的 <code>engine.maxSections</code>（路由里 <code>/</code> 分段数的最大值），由 <code>allocateContext</code> 预分配，避免运行期扩容。</p>
+<p>至此，路由树部分的全貌已经清楚：<strong>插入时按最长公共前缀做压缩与分裂，查找时按 <code>indices</code> 做常数级子节点定位，静态节点优先、通配符兜底，走不通就用 <code>skippedNodes</code> 回溯</strong>。找到 <code>handlers</code> 之后，剩下的事情就交给了 <code>Context.Next()</code>。</p>
+<hr>
+<h1 id="4-中间件洋葱模型与-context-复用">4. 中间件洋葱模型与 Context 复用</h1>
+<h2 id="41-handlerschain-是如何拼装的">4.1 HandlersChain 是如何拼装的</h2>
+<p><code>r.Use(mw)</code> 只是把中间件追加到 <code>RouterGroup.Handlers</code> 里；真正定义一条路由时，会把「分组累积的中间件」和「这条路由自己的 handler」拼成一条完整的 <code>HandlersChain</code>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="p">(</span><span class="nx">group</span> <span class="o">*</span><span class="nx">RouterGroup</span><span class="p">)</span> <span class="nf">Use</span><span class="p">(</span><span class="nx">middleware</span> <span class="o">...</span><span class="nx">HandlerFunc</span><span class="p">)</span> <span class="nx">IRoutes</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">group</span><span class="p">.</span><span class="nx">Handlers</span> <span class="p">=</span> <span class="nb">append</span><span class="p">(</span><span class="nx">group</span><span class="p">.</span><span class="nx">Handlers</span><span class="p">,</span> <span class="nx">middleware</span><span class="o">...</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="nx">group</span><span class="p">.</span><span class="nf">returnObj</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="p">(</span><span class="nx">group</span> <span class="o">*</span><span class="nx">RouterGroup</span><span class="p">)</span> <span class="nf">handle</span><span class="p">(</span><span class="nx">httpMethod</span><span class="p">,</span> <span class="nx">relativePath</span> <span class="kt">string</span><span class="p">,</span> <span class="nx">handlers</span> <span class="nx">HandlersChain</span><span class="p">)</span> <span class="nx">IRoutes</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">absolutePath</span> <span class="o">:=</span> <span class="nx">group</span><span class="p">.</span><span class="nf">calculateAbsolutePath</span><span class="p">(</span><span class="nx">relativePath</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">handlers</span> <span class="p">=</span> <span class="nx">group</span><span class="p">.</span><span class="nf">combineHandlers</span><span class="p">(</span><span class="nx">handlers</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">group</span><span class="p">.</span><span class="nx">engine</span><span class="p">.</span><span class="nf">addRoute</span><span class="p">(</span><span class="nx">httpMethod</span><span class="p">,</span> <span class="nx">absolutePath</span><span class="p">,</span> <span class="nx">handlers</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="nx">group</span><span class="p">.</span><span class="nf">returnObj</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="p">(</span><span class="nx">group</span> <span class="o">*</span><span class="nx">RouterGroup</span><span class="p">)</span> <span class="nf">combineHandlers</span><span class="p">(</span><span class="nx">handlers</span> <span class="nx">HandlersChain</span><span class="p">)</span> <span class="nx">HandlersChain</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">finalSize</span> <span class="o">:=</span> <span class="nb">len</span><span class="p">(</span><span class="nx">group</span><span class="p">.</span><span class="nx">Handlers</span><span class="p">)</span> <span class="o">+</span> <span class="nb">len</span><span class="p">(</span><span class="nx">handlers</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="nf">assert1</span><span class="p">(</span><span class="nx">finalSize</span> <span class="p">&lt;</span> <span class="nb">int</span><span class="p">(</span><span class="nx">abortIndex</span><span class="p">),</span> <span class="s">&#34;too many handlers&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">mergedHandlers</span> <span class="o">:=</span> <span class="nb">make</span><span class="p">(</span><span class="nx">HandlersChain</span><span class="p">,</span> <span class="nx">finalSize</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">copy</span><span class="p">(</span><span class="nx">mergedHandlers</span><span class="p">,</span> <span class="nx">group</span><span class="p">.</span><span class="nx">Handlers</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">copy</span><span class="p">(</span><span class="nx">mergedHandlers</span><span class="p">[</span><span class="nb">len</span><span class="p">(</span><span class="nx">group</span><span class="p">.</span><span class="nx">Handlers</span><span class="p">):],</span> <span class="nx">handlers</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="nx">mergedHandlers</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>也就是说，<strong>中间件的执行顺序在注册阶段就已经被「拍平」成一个有序切片</strong>，挂在路由树叶子节点的 <code>handlers</code> 字段上（第 3 节里的 <code>n.handlers</code>）；路由匹配命中之后，<code>c.handlers = value.handlers</code>，剩下的事情就是按下标依次执行这个切片。</p>
+<h2 id="42-nextabort洋葱模型的源码实现">4.2 Next/Abort：洋葱模型的源码实现</h2>
+<p>「洋葱模型」指的是中间件像洋葱的层一样，从外到内依次进入，再从内到外依次退出——前置逻辑、<code>c.Next()</code>、后置逻辑刚好对称。它的全部实现只有几行：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">const</span> <span class="nx">abortIndex</span> <span class="kt">int8</span> <span class="p">=</span> <span class="nx">math</span><span class="p">.</span><span class="nx">MaxInt8</span> <span class="o">&gt;&gt;</span> <span class="mi">1</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="p">(</span><span class="nx">c</span> <span class="o">*</span><span class="nx">Context</span><span class="p">)</span> <span class="nf">Next</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">c</span><span class="p">.</span><span class="nx">index</span><span class="o">++</span>
+</span></span><span class="line"><span class="cl">    <span class="k">for</span> <span class="nx">c</span><span class="p">.</span><span class="nx">index</span> <span class="p">&lt;</span> <span class="nb">int8</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="nx">c</span><span class="p">.</span><span class="nx">handlers</span><span class="p">))</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">c</span><span class="p">.</span><span class="nx">handlers</span><span class="p">[</span><span class="nx">c</span><span class="p">.</span><span class="nx">index</span><span class="p">](</span><span class="nx">c</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">c</span><span class="p">.</span><span class="nx">index</span><span class="o">++</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="p">(</span><span class="nx">c</span> <span class="o">*</span><span class="nx">Context</span><span class="p">)</span> <span class="nf">IsAborted</span><span class="p">()</span> <span class="kt">bool</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="nx">c</span><span class="p">.</span><span class="nx">index</span> <span class="o">&gt;=</span> <span class="nx">abortIndex</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="p">(</span><span class="nx">c</span> <span class="o">*</span><span class="nx">Context</span><span class="p">)</span> <span class="nf">Abort</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">c</span><span class="p">.</span><span class="nx">index</span> <span class="p">=</span> <span class="nx">abortIndex</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><code>Context.index</code> 是当前执行到 <code>handlers</code> 切片的第几个位置。每个中间件写法通常是：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">Logger</span><span class="p">()</span> <span class="nx">gin</span><span class="p">.</span><span class="nx">HandlerFunc</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="kd">func</span><span class="p">(</span><span class="nx">c</span> <span class="o">*</span><span class="nx">gin</span><span class="p">.</span><span class="nx">Context</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">start</span> <span class="o">:=</span> <span class="nx">time</span><span class="p">.</span><span class="nf">Now</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">c</span><span class="p">.</span><span class="nf">Next</span><span class="p">()</span>                     <span class="c1">// 把控制权交给下一个 handler，自己在这里“挂起”
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="nx">latency</span> <span class="o">:=</span> <span class="nx">time</span><span class="p">.</span><span class="nf">Since</span><span class="p">(</span><span class="nx">start</span><span class="p">)</span> <span class="c1">// c.Next() 返回后，后续所有 handler 都已经跑完
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="nx">log</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="nx">c</span><span class="p">.</span><span class="nx">Request</span><span class="p">.</span><span class="nx">URL</span><span class="p">.</span><span class="nx">Path</span><span class="p">,</span> <span class="nx">latency</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><code>c.Next()</code> 内部是一个 <code>for</code> 循环而不是简单的递归调用一次，这一点很容易被忽略：如果某个中间件<strong>没有主动调用 <code>c.Next()</code></strong>，循环会在它返回后继续 <code>c.index++</code>，直接跳去执行下一个 handler——这正是为什么「忘记调用 <code>c.Next()</code>」不会卡死请求，而「显式调用 <code>c.Abort()</code>」（把 <code>index</code> 直接拨到 <code>abortIndex</code>）才能真正中断后续所有 handler：因为 <code>for c.index &lt; int8(len(c.handlers))</code> 这个循环条件不再成立。<code>handleHTTPRequest</code> 里第一次调用 <code>c.Next()</code>，就相当于点燃了整条洋葱链的执行。</p>
+<h2 id="43-syncpoolcontext-对象复用">4.3 sync.Pool：Context 对象复用</h2>
+<p>回到第 2.3 节的 <code>Engine.ServeHTTP</code>：每个请求都要用到 <code>*Context</code>，如果每次都 <code>new(Context)</code>，在高并发场景下会给 GC 带来明显压力。gin 的做法是用 <code>sync.Pool</code> 复用：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">New</span><span class="p">(</span><span class="nx">opts</span> <span class="o">...</span><span class="nx">OptionFunc</span><span class="p">)</span> <span class="o">*</span><span class="nx">Engine</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">engine</span> <span class="o">:=</span> <span class="o">&amp;</span><span class="nx">Engine</span><span class="p">{</span> <span class="cm">/* ... */</span> <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">engine</span><span class="p">.</span><span class="nx">RouterGroup</span><span class="p">.</span><span class="nx">engine</span> <span class="p">=</span> <span class="nx">engine</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">engine</span><span class="p">.</span><span class="nx">pool</span><span class="p">.</span><span class="nx">New</span> <span class="p">=</span> <span class="kd">func</span><span class="p">()</span> <span class="nx">any</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="nx">engine</span><span class="p">.</span><span class="nf">allocateContext</span><span class="p">(</span><span class="nx">engine</span><span class="p">.</span><span class="nx">maxParams</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="nx">engine</span><span class="p">.</span><span class="nf">With</span><span class="p">(</span><span class="nx">opts</span><span class="o">...</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="p">(</span><span class="nx">engine</span> <span class="o">*</span><span class="nx">Engine</span><span class="p">)</span> <span class="nf">allocateContext</span><span class="p">(</span><span class="nx">maxParams</span> <span class="kt">uint16</span><span class="p">)</span> <span class="o">*</span><span class="nx">Context</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">v</span> <span class="o">:=</span> <span class="nb">make</span><span class="p">(</span><span class="nx">Params</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="nx">maxParams</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">skippedNodes</span> <span class="o">:=</span> <span class="nb">make</span><span class="p">([]</span><span class="nx">skippedNode</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="nx">engine</span><span class="p">.</span><span class="nx">maxSections</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="o">&amp;</span><span class="nx">Context</span><span class="p">{</span><span class="nx">engine</span><span class="p">:</span> <span class="nx">engine</span><span class="p">,</span> <span class="nx">params</span><span class="p">:</span> <span class="o">&amp;</span><span class="nx">v</span><span class="p">,</span> <span class="nx">skippedNodes</span><span class="p">:</span> <span class="o">&amp;</span><span class="nx">skippedNodes</span><span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><code>pool.New</code> 只在池子为空、需要新建对象时才会被调用，且此时预分配的 <code>Params</code>/<code>skippedNodes</code> 容量正是全部路由里出现过的最大通配符数量、最大路径段数——这就是第 3.2、3.5 节埋下的伏笔：<strong>路由注册阶段统计出的 <code>maxParams</code>/<code>maxSections</code>，最终服务于运行阶段的内存预分配，让复用对象的切片尽量不发生扩容</strong>。</p>
+<p>拿到（新建或复用的）<code>Context</code> 之后，<code>reset()</code> 负责把上一次请求残留的状态清空，防止串数据：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="p">(</span><span class="nx">c</span> <span class="o">*</span><span class="nx">Context</span><span class="p">)</span> <span class="nf">reset</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">c</span><span class="p">.</span><span class="nx">Writer</span> <span class="p">=</span> <span class="o">&amp;</span><span class="nx">c</span><span class="p">.</span><span class="nx">writermem</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">c</span><span class="p">.</span><span class="nx">Params</span> <span class="p">=</span> <span class="nx">c</span><span class="p">.</span><span class="nx">Params</span><span class="p">[:</span><span class="mi">0</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">c</span><span class="p">.</span><span class="nx">handlers</span> <span class="p">=</span> <span class="kc">nil</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">c</span><span class="p">.</span><span class="nx">index</span> <span class="p">=</span> <span class="o">-</span><span class="mi">1</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">c</span><span class="p">.</span><span class="nx">fullPath</span> <span class="p">=</span> <span class="s">&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">c</span><span class="p">.</span><span class="nx">Keys</span> <span class="p">=</span> <span class="kc">nil</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">c</span><span class="p">.</span><span class="nx">Errors</span> <span class="p">=</span> <span class="nx">c</span><span class="p">.</span><span class="nx">Errors</span><span class="p">[:</span><span class="mi">0</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="o">*</span><span class="nx">c</span><span class="p">.</span><span class="nx">params</span> <span class="p">=</span> <span class="p">(</span><span class="o">*</span><span class="nx">c</span><span class="p">.</span><span class="nx">params</span><span class="p">)[:</span><span class="mi">0</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="o">*</span><span class="nx">c</span><span class="p">.</span><span class="nx">skippedNodes</span> <span class="p">=</span> <span class="p">(</span><span class="o">*</span><span class="nx">c</span><span class="p">.</span><span class="nx">skippedNodes</span><span class="p">)[:</span><span class="mi">0</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>注意 <code>c.index = -1</code>：<code>Next()</code> 一进来就 <code>c.index++</code>，从 <code>0</code> 开始执行第一个 handler，这与 <code>abortIndex</code>（<code>math.MaxInt8 &gt;&gt; 1</code>，一个远大于正常 handler 数量的哨兵值）配合，构成了整套洋葱模型 + 熔断机制的基础。请求处理完毕、<code>handleHTTPRequest</code> 返回后，<code>engine.pool.Put(c)</code> 把这块内存还回池子，等待下一次 <code>Get()</code> 复用。</p>
+<h2 id="44-一次请求的完整链路小结">4.4 一次请求的完整链路小结</h2>
+<p>把前四节串起来，一次 <code>GET /hello/bbb/a/ccc</code> 请求的完整旅程是：</p>
+<ol>
+<li><code>net.Listen</code> 已监听端口，<code>Server.Serve</code> 的 <code>Accept</code> 循环拿到新连接，<code>go c.serve(ctx)</code> 起一个 goroutine；</li>
+<li>读完请求报文后统一走 <code>serverHandler.ServeHTTP</code> → 动态派发到 <code>gin.Engine.ServeHTTP</code>；</li>
+<li><code>engine.pool.Get()</code> 取出（或新建）一个 <code>*Context</code>，重置状态；</li>
+<li><code>handleHTTPRequest</code> 按 <code>GET</code> 方法选中对应的基数树，<code>root.getValue</code> 沿着压缩前缀 + <code>indices</code> 索引逐层下钻，必要时靠 <code>skippedNodes</code> 回溯，最终定位到叶子节点的 <code>HandlersChain</code>；</li>
+<li><code>c.Next()</code> 按下标依次执行中间件与业务 handler，形成洋葱模型的进入/退出；</li>
+<li>响应写出后，<code>engine.pool.Put(c)</code> 把 <code>Context</code> 归还池子，等待复用。</li>
+</ol>
+<hr>
+<h1 id="5-小结">5. 小结</h1>
+<ul>
+<li><strong>网络层</strong>：gin 完全复用 <code>net/http</code> 的连接管理、<code>Accept</code>/goroutine-per-connection 模型，自己只替换了 <code>Handler</code> 这一个扩展点；</li>
+<li><strong>路由层</strong>：基数树用「压缩公共前缀」换空间，用 <code>indices</code> 换查找速度，用 <code>priority</code> 做启发式排序，用 <code>skippedNodes</code> 支持静态/通配符的回溯匹配；</li>
+<li><strong>执行层</strong>：中间件在注册期被拍平成一条 <code>HandlersChain</code>，<code>Context.index</code> + <code>abortIndex</code> 用一个整数就实现了洋葱模型和熔断；</li>
+<li><strong>性能层</strong>：<code>sync.Pool</code> 复用 <code>Context</code>，配合注册期统计出的 <code>maxParams</code>/<code>maxSections</code> 做精确的容量预分配，减少 GC 压力与切片扩容开销。</li>
+</ul>
+<p>理解了这四层，再去看 gin 的中间件源码（<code>Logger</code>、<code>Recovery</code>、<code>CORS</code> 等）或者自己写一个中间件，都会清楚地知道它在整条链路的哪个位置、能拿到什么、能改变什么。</p>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2026-01-02</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/golang/">golang</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/golang/golang_24_rpc%E4%B8%8Egrpc%E5%AE%9E%E8%B7%B5/" class="prev" rel="prev" title="Go-24 RPC与gRPC实践"><i class="fas fa-angle-left fa-fw"></i>Go-24 RPC与gRPC实践</a>
+            <a href="/posts/golang/golang_22_%E6%B5%8B%E8%AF%95%E4%B8%8E%E5%B7%A5%E7%A8%8B%E5%8C%96%E5%AE%9E%E8%B7%B5/" class="next" rel="next" title="Go-22 测试与工程化实践">Go-22 测试与工程化实践<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2026-01-02T00:05:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Go-23 Gin框架原理与源码解析"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

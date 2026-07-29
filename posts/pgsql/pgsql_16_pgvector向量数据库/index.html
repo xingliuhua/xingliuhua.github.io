@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>pgsql-16 pgvector向量数据库 - xingliuhua博客</title><meta name="Description" content="深入讲解pgvector扩展：向量类型、距离运算、IVFFlat与HNSW索引原理、相似度检索、RAG实战，以及与专用向量数据库和MySQL的对比"><meta property="og:title" content="pgsql-16 pgvector向量数据库" />
+<meta property="og:description" content="深入讲解pgvector扩展：向量类型、距离运算、IVFFlat与HNSW索引原理、相似度检索、RAG实战，以及与专用向量数据库和MySQL的对比" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/pgsql/pgsql_16_pgvector%E5%90%91%E9%87%8F%E6%95%B0%E6%8D%AE%E5%BA%93/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2025-09-25T09:27:00+08:00" />
+<meta property="article:modified_time" content="2025-09-25T09:27:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="pgsql-16 pgvector向量数据库"/>
+<meta name="twitter:description" content="深入讲解pgvector扩展：向量类型、距离运算、IVFFlat与HNSW索引原理、相似度检索、RAG实战，以及与专用向量数据库和MySQL的对比"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/pgsql/pgsql_16_pgvector%E5%90%91%E9%87%8F%E6%95%B0%E6%8D%AE%E5%BA%93/" /><link rel="prev" href="https://xingliuhua.github.io/posts/pgsql/pgsql_17_%E6%89%A9%E5%B1%95%E6%8F%92%E4%BB%B6%E6%80%BB%E8%A7%88/" /><link rel="next" href="https://xingliuhua.github.io/posts/pgsql/pgsql_15_postgis%E5%9C%B0%E7%90%86%E6%95%B0%E6%8D%AE/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "pgsql-16 pgvector向量数据库",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/pgsql\/pgsql_16_pgvector%E5%90%91%E9%87%8F%E6%95%B0%E6%8D%AE%E5%BA%93\/"
+        },"genre": "posts","keywords": "pgsql","wordcount":  3928 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/pgsql\/pgsql_16_pgvector%E5%90%91%E9%87%8F%E6%95%B0%E6%8D%AE%E5%BA%93\/","datePublished": "2025-09-25T09:27:00+08:00","dateModified": "2025-09-25T09:27:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "深入讲解pgvector扩展：向量类型、距离运算、IVFFlat与HNSW索引原理、相似度检索、RAG实战，以及与专用向量数据库和MySQL的对比"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">pgsql-16 pgvector向量数据库</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2025-09-25">2025-09-25</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 3928 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 8 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-概述">1. 概述</a>
+      <ol>
+        <li><a href="#11-典型应用场景">1.1 典型应用场景</a></li>
+        <li><a href="#12-为什么用-pgvector-而不是专用向量库">1.2 为什么用 pgvector 而不是专用向量库？</a></li>
+      </ol>
+    </li>
+    <li><a href="#2-安装-pgvector">2. 安装 pgvector</a></li>
+    <li><a href="#3-向量类型与基础操作">3. 向量类型与基础操作</a>
+      <ol>
+        <li><a href="#31-三种向量类型">3.1 三种向量类型</a></li>
+        <li><a href="#32-距离运算符核心">3.2 距离运算符（核心）</a></li>
+      </ol>
+    </li>
+    <li><a href="#4-向量索引ivfflat-vs-hnsw">4. 向量索引：IVFFlat vs HNSW</a>
+      <ol>
+        <li><a href="#41-ivfflat倒排文件--平面">4.1 IVFFlat（倒排文件 + 平面）</a></li>
+        <li><a href="#42-hnsw分层可导航小世界图">4.2 HNSW（分层可导航小世界图）</a></li>
+        <li><a href="#43-两者对比面试高频">4.3 两者对比（面试高频）</a></li>
+        <li><a href="#44-关键坑过滤--向量检索">4.4 关键坑：过滤 + 向量检索</a></li>
+      </ol>
+    </li>
+    <li><a href="#5-rag-实战从文本到检索">5. RAG 实战：从文本到检索</a>
+      <ol>
+        <li><a href="#51-表设计">5.1 表设计</a></li>
+        <li><a href="#52-检索查询相似度--阈值--过滤">5.2 检索查询（相似度 + 阈值 + 过滤）</a></li>
+        <li><a href="#53-混合检索hybrid-search进阶">5.3 混合检索（Hybrid Search，进阶）</a></li>
+      </ol>
+    </li>
+    <li><a href="#6-性能与调优">6. 性能与调优</a></li>
+    <li><a href="#7-面试高频问答">7. 面试高频问答</a></li>
+    <li><a href="#8-下一步">8. 下一步</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><h1 id="1-概述">1. 概述</h1>
+<p>在大模型（LLM）时代，<strong>向量检索</strong>成为 AI 应用的核心能力：把文本、图片、音频通过 Embedding 模型编码成高维向量（如 1536 维），然后通过&quot;向量相似度&quot;找到语义最接近的内容。这类需求催生了一批专用向量数据库（Milvus、Pinecone、Qdrant、Weaviate）。</p>
+<p>而 <strong>pgvector</strong> 是 PostgreSQL 的一个开源扩展，它让 PostgreSQL 直接具备&quot;存储向量 + 相似度检索 + 建立向量索引&quot;的能力。这意味着你<strong>无需引入一套独立的向量数据库</strong>，就能在熟悉的关系型数据库里同时管理业务数据和向量数据。</p>
+<h2 id="11-典型应用场景">1.1 典型应用场景</h2>
+<ol>
+<li><strong>RAG（检索增强生成）</strong>：把知识库文档切片、向量化存入 PG，用户提问时检索最相关的片段喂给 LLM。</li>
+<li><strong>语义搜索</strong>：不再是关键词匹配，而是&quot;意思相近&quot;就能搜到。</li>
+<li><strong>推荐系统</strong>：用户向量 × 物品向量，找最相似的物品。</li>
+<li><strong>图片/音频检索</strong>：以图搜图、听歌识曲。</li>
+<li><strong>去重 / 异常检测</strong>：相似度过高判定为重复，过低判定为异常。</li>
+</ol>
+<h2 id="12-为什么用-pgvector-而不是专用向量库">1.2 为什么用 pgvector 而不是专用向量库？</h2>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>pgvector (PostgreSQL)</th>
+<th>专用向量库 (Milvus/Pinecone)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>数据统一</strong></td>
+<td>向量与业务数据同库，可 JOIN、可事务</td>
+<td>向量单独存储，需两套系统同步</td>
+</tr>
+<tr>
+<td><strong>事务/一致性</strong></td>
+<td>完整 ACID</td>
+<td>大多最终一致</td>
+</tr>
+<tr>
+<td><strong>过滤查询</strong></td>
+<td>天然支持 SQL 条件过滤 + 向量检索</td>
+<td>需专门的 metadata filtering</td>
+</tr>
+<tr>
+<td><strong>运维成本</strong></td>
+<td>复用现有 PG 运维</td>
+<td>额外一套系统</td>
+</tr>
+<tr>
+<td><strong>超大规模（亿级+）</strong></td>
+<td>索引构建/内存有压力</td>
+<td>专门优化，更强</td>
+</tr>
+<tr>
+<td><strong>极致检索性能</strong></td>
+<td>好，但略逊</td>
+<td>更快（GPU、分布式）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>结论</strong>：中小规模（百万~千万级向量）、需要与业务数据强关联、希望少维护一套系统 → 首选 pgvector；亿级以上、追求极致 QPS/延迟 → 考虑专用向量库。</p>
+<blockquote>
+<p>对比 MySQL：MySQL 8.x 长期不支持向量类型，直到 MySQL 9.0（2024）才引入实验性的 <code>VECTOR</code> 类型和 <code>DISTANCE()</code> 函数，但缺乏成熟的向量索引（HNSW/IVFFlat）生态，检索只能全表扫描。PostgreSQL + pgvector 在这方面<strong>领先 MySQL 数年</strong>，这也是 AI 应用大量选型 PG 的原因之一。</p>
+</blockquote>
+<h1 id="2-安装-pgvector">2. 安装 pgvector</h1>
+<p>pgvector 不是 PostgreSQL 内置扩展，需要单独编译安装（或用云厂商已集成的版本，如 AWS RDS、阿里云 RDS、Supabase 均已内置）。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 源码编译安装（Linux）</span>
+</span></span><span class="line"><span class="cl">git clone --branch v0.8.0 https://github.com/pgvector/pgvector.git
+</span></span><span class="line"><span class="cl"><span class="nb">cd</span> pgvector
+</span></span><span class="line"><span class="cl">make
+</span></span><span class="line"><span class="cl">make install   <span class="c1"># 需要 pg_config 在 PATH 中</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># macOS (Homebrew 安装的 PG)</span>
+</span></span><span class="line"><span class="cl">brew install pgvector
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="c1">-- 在目标数据库中启用扩展
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">CREATE</span><span class="w"> </span><span class="n">EXTENSION</span><span class="w"> </span><span class="k">IF</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">EXISTS</span><span class="w"> </span><span class="n">vector</span><span class="p">;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 查看版本
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="n">extversion</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">pg_extension</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="n">extname</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;vector&#39;</span><span class="p">;</span><span class="w">
+</span></span></span></code></pre></div><h1 id="3-向量类型与基础操作">3. 向量类型与基础操作</h1>
+<h2 id="31-三种向量类型">3.1 三种向量类型</h2>
+<p>pgvector 提供多种类型，权衡精度与存储：</p>
+<table>
+<thead>
+<tr>
+<th>类型</th>
+<th>说明</th>
+<th>每维字节</th>
+<th>适用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>vector(n)</code></td>
+<td>单精度浮点，最常用</td>
+<td>4 字节</td>
+<td>通用（OpenAI/BGE 等 Embedding）</td>
+</tr>
+<tr>
+<td><code>halfvec(n)</code></td>
+<td>半精度浮点（0.7.0+）</td>
+<td>2 字节</td>
+<td>省一半空间，精度损失小</td>
+</tr>
+<tr>
+<td><code>bit(n)</code></td>
+<td>二值向量</td>
+<td>1 bit</td>
+<td>汉明距离场景</td>
+</tr>
+<tr>
+<td><code>sparsevec(n)</code></td>
+<td>稀疏向量（0.7.0+）</td>
+<td>仅存非零</td>
+<td>高维稀疏（如 SPLADE）</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="c1">-- 创建带向量列的表（1536 维，对应 OpenAI text-embedding-3-small）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">documents</span><span class="w"> </span><span class="p">(</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="n">id</span><span class="w">          </span><span class="n">BIGSERIAL</span><span class="w"> </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="n">content</span><span class="w">     </span><span class="nb">TEXT</span><span class="p">,</span><span class="w">               </span><span class="c1">-- 原始文本
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="w">    </span><span class="n">category</span><span class="w">    </span><span class="nb">VARCHAR</span><span class="p">(</span><span class="mi">50</span><span class="p">),</span><span class="w">        </span><span class="c1">-- 业务字段，可用于过滤
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="w">    </span><span class="n">embedding</span><span class="w">   </span><span class="n">vector</span><span class="p">(</span><span class="mi">1536</span><span class="p">)</span><span class="w">        </span><span class="c1">-- 向量列
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">);</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 插入向量（用字符串字面量，方括号包裹）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">INSERT</span><span class="w"> </span><span class="k">INTO</span><span class="w"> </span><span class="n">documents</span><span class="w"> </span><span class="p">(</span><span class="n">content</span><span class="p">,</span><span class="w"> </span><span class="n">category</span><span class="p">,</span><span class="w"> </span><span class="n">embedding</span><span class="p">)</span><span class="w"> </span><span class="k">VALUES</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="p">(</span><span class="s1">&#39;PostgreSQL 是强大的开源数据库&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;db&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;[0.1, 0.2, 0.3, ...]&#39;</span><span class="p">),</span><span class="w">   </span><span class="c1">-- 实际是1536个数
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="w">    </span><span class="p">(</span><span class="s1">&#39;向量检索是 RAG 的核心&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;ai&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;[0.2, 0.1, 0.4, ...]&#39;</span><span class="p">);</span><span class="w">
+</span></span></span></code></pre></div><h2 id="32-距离运算符核心">3.2 距离运算符（核心）</h2>
+<p>pgvector 用特殊运算符计算两个向量的&quot;距离/相似度&quot;，<strong>运算符决定了检索语义，也决定了索引怎么建</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>运算符</th>
+<th>距离类型</th>
+<th>含义</th>
+<th>常用场景</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>&lt;-&gt;</code></td>
+<td>L2（欧氏）距离</td>
+<td>空间直线距离，越小越近</td>
+<td>图像特征</td>
+</tr>
+<tr>
+<td><code>&lt;#&gt;</code></td>
+<td>负内积</td>
+<td>返回 <code>-(a·b)</code>，越小越相似</td>
+<td>需要归一化向量</td>
+</tr>
+<tr>
+<td><code>&lt;=&gt;</code></td>
+<td>余弦距离</td>
+<td><code>1 - cos(θ)</code>，越小越相似</td>
+<td><strong>文本 Embedding 最常用</strong></td>
+</tr>
+<tr>
+<td><code>&lt;+&gt;</code></td>
+<td>L1（曼哈顿）距离</td>
+<td>各维差绝对值之和</td>
+<td>0.7.0+</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="c1">-- 计算两个向量的余弦距离
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="s1">&#39;[1,2,3]&#39;</span><span class="p">::</span><span class="n">vector</span><span class="w"> </span><span class="o">&lt;=&gt;</span><span class="w"> </span><span class="s1">&#39;[4,5,6]&#39;</span><span class="p">::</span><span class="n">vector</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">cosine_distance</span><span class="p">;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 找出与给定向量最相似的 5 条（KNN 检索）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="n">id</span><span class="p">,</span><span class="w"> </span><span class="n">content</span><span class="p">,</span><span class="w"> </span><span class="n">embedding</span><span class="w"> </span><span class="o">&lt;=&gt;</span><span class="w"> </span><span class="s1">&#39;[0.1,0.2,...]&#39;</span><span class="p">::</span><span class="n">vector</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">distance</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">FROM</span><span class="w"> </span><span class="n">documents</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">ORDER</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="n">embedding</span><span class="w"> </span><span class="o">&lt;=&gt;</span><span class="w"> </span><span class="s1">&#39;[0.1,0.2,...]&#39;</span><span class="p">::</span><span class="n">vector</span><span class="w">   </span><span class="c1">-- 按距离升序 = 最相似在前
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">LIMIT</span><span class="w"> </span><span class="mi">5</span><span class="p">;</span><span class="w">
+</span></span></span></code></pre></div><blockquote>
+<p><strong>关键点</strong>：<code>ORDER BY ... LIMIT k</code> 这种&quot;取最近的 k 个&quot;就是 <strong>KNN（K 近邻）检索</strong>，也是向量索引唯一能加速的查询形态。索引类型必须与运算符匹配（余弦距离 → <code>vector_cosine_ops</code>）。</p>
+</blockquote>
+<h1 id="4-向量索引ivfflat-vs-hnsw">4. 向量索引：IVFFlat vs HNSW</h1>
+<p>向量列上如果没有索引，KNN 检索会<strong>全表扫描 + 逐个算距离</strong>（暴力检索），百万级数据就会很慢。pgvector 支持两种 <strong>ANN（近似最近邻）索引</strong>，用少量精度换取巨大的速度提升。</p>
+<h2 id="41-ivfflat倒排文件--平面">4.1 IVFFlat（倒排文件 + 平面）</h2>
+<p><strong>原理</strong>：先用 K-means 把所有向量聚成 <code>lists</code> 个簇（每簇一个中心点）。检索时只在最近的 <code>probes</code> 个簇里找，而不是全表。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="c1">-- 建 IVFFlat 索引（必须指定运算符类，且 lists 需调优）
+</span></span></span><span class="line"><span class="cl"><span class="c1">-- 经验值：lists = rows / 1000（百万级），或 sqrt(rows)
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">documents</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="k">USING</span><span class="w"> </span><span class="n">ivfflat</span><span class="w"> </span><span class="p">(</span><span class="n">embedding</span><span class="w"> </span><span class="n">vector_cosine_ops</span><span class="p">)</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="k">WITH</span><span class="w"> </span><span class="p">(</span><span class="n">lists</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1000</span><span class="p">);</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 检索时设置探测簇数（越大越准越慢），仅当前会话生效
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SET</span><span class="w"> </span><span class="n">ivfflat</span><span class="p">.</span><span class="n">probes</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">10</span><span class="p">;</span><span class="w">
+</span></span></span></code></pre></div><p><strong>特点</strong>：</p>
+<ul>
+<li>构建快、内存占用小。</li>
+<li>⚠️ <strong>必须在有数据后再建索引</strong>（需要数据来聚类），空表建索引效果差。</li>
+<li>数据大量变化后需要重建以保持召回率。</li>
+</ul>
+<h2 id="42-hnsw分层可导航小世界图">4.2 HNSW（分层可导航小世界图）</h2>
+<p><strong>原理</strong>：构建一个多层图结构，上层稀疏（快速跳转），下层稠密（精细搜索），像&quot;高速公路 + 乡间小路&quot;逐层逼近目标。是目前<strong>综合最优</strong>的向量索引。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="c1">-- 建 HNSW 索引
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">documents</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="k">USING</span><span class="w"> </span><span class="n">hnsw</span><span class="w"> </span><span class="p">(</span><span class="n">embedding</span><span class="w"> </span><span class="n">vector_cosine_ops</span><span class="p">)</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="k">WITH</span><span class="w"> </span><span class="p">(</span><span class="n">m</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">16</span><span class="p">,</span><span class="w"> </span><span class="n">ef_construction</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">64</span><span class="p">);</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 检索时设置搜索候选数（越大越准越慢）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SET</span><span class="w"> </span><span class="n">hnsw</span><span class="p">.</span><span class="n">ef_search</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">40</span><span class="p">;</span><span class="w">
+</span></span></span></code></pre></div><p>参数含义：</p>
+<ul>
+<li><code>m</code>：每个节点的最大连接数（默认 16），越大图越密、召回越高、内存越大。</li>
+<li><code>ef_construction</code>：构建时的候选队列大小（默认 64），越大索引质量越高、构建越慢。</li>
+<li><code>ef_search</code>：查询时候选队列，控制精度/速度权衡。</li>
+</ul>
+<h2 id="43-两者对比面试高频">4.3 两者对比（面试高频）</h2>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>IVFFlat</th>
+<th>HNSW</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>查询速度</strong></td>
+<td>快</td>
+<td><strong>更快</strong></td>
+</tr>
+<tr>
+<td><strong>召回率（准确度）</strong></td>
+<td>中</td>
+<td><strong>高</strong></td>
+</tr>
+<tr>
+<td><strong>索引构建速度</strong></td>
+<td><strong>快</strong></td>
+<td>慢</td>
+</tr>
+<tr>
+<td><strong>内存占用</strong></td>
+<td><strong>低</strong></td>
+<td>高</td>
+</tr>
+<tr>
+<td><strong>是否需要预先有数据</strong></td>
+<td>是（要聚类）</td>
+<td>否（可空表建）</td>
+</tr>
+<tr>
+<td><strong>增量插入友好度</strong></td>
+<td>差（易退化）</td>
+<td><strong>好</strong></td>
+</tr>
+<tr>
+<td><strong>推荐场景</strong></td>
+<td>内存紧张、数据静态</td>
+<td><strong>绝大多数生产场景首选</strong></td>
+</tr>
+</tbody>
+</table>
+<h2 id="44-关键坑过滤--向量检索">4.4 关键坑：过滤 + 向量检索</h2>
+<p>业务中常见&quot;先按条件过滤再向量检索&quot;，比如&quot;只在 category=&lsquo;ai&rsquo; 的文档里找最相似&quot;：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="k">SELECT</span><span class="w"> </span><span class="n">id</span><span class="p">,</span><span class="w"> </span><span class="n">content</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">FROM</span><span class="w"> </span><span class="n">documents</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">WHERE</span><span class="w"> </span><span class="n">category</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;ai&#39;</span><span class="w">                              </span><span class="c1">-- 条件过滤
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">ORDER</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="n">embedding</span><span class="w"> </span><span class="o">&lt;=&gt;</span><span class="w"> </span><span class="s1">&#39;[...]&#39;</span><span class="p">::</span><span class="n">vector</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">LIMIT</span><span class="w"> </span><span class="mi">5</span><span class="p">;</span><span class="w">
+</span></span></span></code></pre></div><p>问题：向量索引和普通索引<strong>无法同时高效使用</strong>。若过滤后剩余行很少，向量索引可能被放弃（退化为暴力检索）；若过滤条件命中很多行才用向量索引，可能因过滤丢掉近邻导致<strong>召回不足</strong>。</p>
+<p>解决方案：</p>
+<ol>
+<li><strong>分区表</strong>：按 category 分区，让向量索引在分区内生效。</li>
+<li><strong>调大 <code>hnsw.ef_search</code> / <code>ivfflat.probes</code></strong>：补偿过滤带来的召回损失。</li>
+<li>pgvector 0.8.0+ 引入 <strong>迭代扫描（iterative scan）</strong>，能在过滤场景下持续从索引取候选直到凑够 <code>LIMIT</code>：</li>
+</ol>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="k">SET</span><span class="w"> </span><span class="n">hnsw</span><span class="p">.</span><span class="n">iterative_scan</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">strict_order</span><span class="p">;</span><span class="w">   </span><span class="c1">-- 或 relaxed_order
+</span></span></span></code></pre></div><h1 id="5-rag-实战从文本到检索">5. RAG 实战：从文本到检索</h1>
+<p>下面演示一个完整的 RAG 数据层：文档切片 → 向量化 → 存储 → 检索。向量化通常由应用层（Python/Go 调 Embedding 模型）完成，这里聚焦 PG 侧。</p>
+<h2 id="51-表设计">5.1 表设计</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">knowledge_chunks</span><span class="w"> </span><span class="p">(</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="n">id</span><span class="w">          </span><span class="n">BIGSERIAL</span><span class="w"> </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="n">doc_id</span><span class="w">      </span><span class="nb">BIGINT</span><span class="p">,</span><span class="w">                    </span><span class="c1">-- 所属文档
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="w">    </span><span class="n">chunk_text</span><span class="w">  </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span><span class="w">             </span><span class="c1">-- 切片文本
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="w">    </span><span class="n">token_count</span><span class="w"> </span><span class="nb">INT</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="n">metadata</span><span class="w">    </span><span class="n">JSONB</span><span class="p">,</span><span class="w">                     </span><span class="c1">-- 来源、页码等元信息
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="w">    </span><span class="n">embedding</span><span class="w">   </span><span class="n">vector</span><span class="p">(</span><span class="mi">1536</span><span class="p">),</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="n">created_at</span><span class="w">  </span><span class="n">TIMESTAMPTZ</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="n">now</span><span class="p">()</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="p">);</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- HNSW 索引（余弦距离）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">idx_chunks_embedding</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">knowledge_chunks</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="k">USING</span><span class="w"> </span><span class="n">hnsw</span><span class="w"> </span><span class="p">(</span><span class="n">embedding</span><span class="w"> </span><span class="n">vector_cosine_ops</span><span class="p">);</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 元信息用 GIN 索引，支持过滤
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">idx_chunks_metadata</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">knowledge_chunks</span><span class="w"> </span><span class="k">USING</span><span class="w"> </span><span class="n">GIN</span><span class="w"> </span><span class="p">(</span><span class="n">metadata</span><span class="p">);</span><span class="w">
+</span></span></span></code></pre></div><h2 id="52-检索查询相似度--阈值--过滤">5.2 检索查询（相似度 + 阈值 + 过滤）</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="c1">-- 返回相似度（1 - 余弦距离），过滤低相关结果，并限定数据来源
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="n">id</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="n">chunk_text</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="mi">1</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="p">(</span><span class="n">embedding</span><span class="w"> </span><span class="o">&lt;=&gt;</span><span class="w"> </span><span class="p">:</span><span class="n">query_vec</span><span class="p">)</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">similarity</span><span class="w">   </span><span class="c1">-- 转为&#34;相似度&#34;更直观
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">FROM</span><span class="w"> </span><span class="n">knowledge_chunks</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">WHERE</span><span class="w"> </span><span class="n">metadata</span><span class="o">-&gt;&gt;</span><span class="s1">&#39;source&#39;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;handbook&#39;</span><span class="w">             </span><span class="c1">-- 只搜手册
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="w">  </span><span class="k">AND</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="p">(</span><span class="n">embedding</span><span class="w"> </span><span class="o">&lt;=&gt;</span><span class="w"> </span><span class="p">:</span><span class="n">query_vec</span><span class="p">)</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">0</span><span class="p">.</span><span class="mi">75</span><span class="w">        </span><span class="c1">-- 相似度阈值
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">ORDER</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="n">embedding</span><span class="w"> </span><span class="o">&lt;=&gt;</span><span class="w"> </span><span class="p">:</span><span class="n">query_vec</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">LIMIT</span><span class="w"> </span><span class="mi">5</span><span class="p">;</span><span class="w">
+</span></span></span></code></pre></div><h2 id="53-混合检索hybrid-search进阶">5.3 混合检索（Hybrid Search，进阶）</h2>
+<p>纯向量检索对&quot;专有名词/精确关键词&quot;不敏感，工业界常把**全文搜索（关键词）<strong>与</strong>向量检索（语义）**结果融合（RRF，倒数排名融合）。这正是 pgvector 相对专用向量库的独特优势——同库即可实现：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="c1">-- 关键词检索结果 与 向量检索结果 用 RRF 融合排序
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">WITH</span><span class="w"> </span><span class="n">semantic</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="p">(</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="k">SELECT</span><span class="w"> </span><span class="n">id</span><span class="p">,</span><span class="w"> </span><span class="n">ROW_NUMBER</span><span class="p">()</span><span class="w"> </span><span class="n">OVER</span><span class="w"> </span><span class="p">(</span><span class="k">ORDER</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="n">embedding</span><span class="w"> </span><span class="o">&lt;=&gt;</span><span class="w"> </span><span class="p">:</span><span class="n">query_vec</span><span class="p">)</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">rank</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="k">FROM</span><span class="w"> </span><span class="n">knowledge_chunks</span><span class="w"> </span><span class="k">ORDER</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="n">embedding</span><span class="w"> </span><span class="o">&lt;=&gt;</span><span class="w"> </span><span class="p">:</span><span class="n">query_vec</span><span class="w"> </span><span class="k">LIMIT</span><span class="w"> </span><span class="mi">20</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="p">),</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="n">keyword</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="p">(</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="k">SELECT</span><span class="w"> </span><span class="n">id</span><span class="p">,</span><span class="w"> </span><span class="n">ROW_NUMBER</span><span class="p">()</span><span class="w"> </span><span class="n">OVER</span><span class="w"> </span><span class="p">(</span><span class="k">ORDER</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="n">ts_rank</span><span class="p">(</span><span class="n">to_tsvector</span><span class="p">(</span><span class="s1">&#39;simple&#39;</span><span class="p">,</span><span class="w"> </span><span class="n">chunk_text</span><span class="p">),</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">                                                    </span><span class="n">plainto_tsquery</span><span class="p">(:</span><span class="n">q</span><span class="p">))</span><span class="w"> </span><span class="k">DESC</span><span class="p">)</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">rank</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="k">FROM</span><span class="w"> </span><span class="n">knowledge_chunks</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="k">WHERE</span><span class="w"> </span><span class="n">to_tsvector</span><span class="p">(</span><span class="s1">&#39;simple&#39;</span><span class="p">,</span><span class="w"> </span><span class="n">chunk_text</span><span class="p">)</span><span class="w"> </span><span class="o">@@</span><span class="w"> </span><span class="n">plainto_tsquery</span><span class="p">(:</span><span class="n">q</span><span class="p">)</span><span class="w"> </span><span class="k">LIMIT</span><span class="w"> </span><span class="mi">20</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="p">)</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">SELECT</span><span class="w"> </span><span class="n">COALESCE</span><span class="p">(</span><span class="n">s</span><span class="p">.</span><span class="n">id</span><span class="p">,</span><span class="w"> </span><span class="n">k</span><span class="p">.</span><span class="n">id</span><span class="p">)</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">id</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">       </span><span class="n">COALESCE</span><span class="p">(</span><span class="mi">1</span><span class="p">.</span><span class="mi">0</span><span class="o">/</span><span class="p">(</span><span class="mi">60</span><span class="o">+</span><span class="n">s</span><span class="p">.</span><span class="n">rank</span><span class="p">),</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">COALESCE</span><span class="p">(</span><span class="mi">1</span><span class="p">.</span><span class="mi">0</span><span class="o">/</span><span class="p">(</span><span class="mi">60</span><span class="o">+</span><span class="n">k</span><span class="p">.</span><span class="n">rank</span><span class="p">),</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">rrf_score</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">FROM</span><span class="w"> </span><span class="n">semantic</span><span class="w"> </span><span class="n">s</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">FULL</span><span class="w"> </span><span class="k">OUTER</span><span class="w"> </span><span class="k">JOIN</span><span class="w"> </span><span class="n">keyword</span><span class="w"> </span><span class="n">k</span><span class="w"> </span><span class="k">USING</span><span class="w"> </span><span class="p">(</span><span class="n">id</span><span class="p">)</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">ORDER</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="n">rrf_score</span><span class="w"> </span><span class="k">DESC</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">LIMIT</span><span class="w"> </span><span class="mi">5</span><span class="p">;</span><span class="w">
+</span></span></span></code></pre></div><blockquote>
+<p>全文搜索部分详见 <a href="https://xingliuhua.github.io/posts/pgsql/pgsql_14_%E5%85%A8%E6%96%87%E6%90%9C%E7%B4%A2/" rel="">全文搜索</a>。</p>
+</blockquote>
+<h1 id="6-性能与调优">6. 性能与调优</h1>
+<ol>
+<li><strong>优先选 HNSW</strong>：生产环境绝大多数场景默认用 HNSW。</li>
+<li><strong>归一化向量 + 内积</strong>：若向量已归一化，用 <code>&lt;#&gt;</code>（内积）比 <code>&lt;=&gt;</code>（余弦）更快，结果等价。</li>
+<li><strong>控制维度</strong>：维度越高越慢越占空间。可用 <code>text-embedding-3-small</code>（1536）而非 <code>large</code>（3072），或用 <code>halfvec</code> 半精度减半存储。</li>
+<li><strong><code>maintenance_work_mem</code></strong>：建 HNSW 索引很吃内存，临时调大（如 <code>SET maintenance_work_mem = '2GB'</code>）能显著加速构建。</li>
+<li><strong>并行构建</strong>：<code>SET max_parallel_maintenance_workers = 4;</code> 加速索引构建。</li>
+<li><strong>监控召回率</strong>：ANN 是近似检索，用一批已知答案对比暴力检索结果，评估召回率，据此调 <code>ef_search</code>/<code>probes</code>。</li>
+</ol>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="c1">-- 用 EXPLAIN ANALYZE 确认是否走了向量索引
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">EXPLAIN</span><span class="w"> </span><span class="k">ANALYZE</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">SELECT</span><span class="w"> </span><span class="n">id</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">knowledge_chunks</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">ORDER</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="n">embedding</span><span class="w"> </span><span class="o">&lt;=&gt;</span><span class="w"> </span><span class="s1">&#39;[...]&#39;</span><span class="p">::</span><span class="n">vector</span><span class="w"> </span><span class="k">LIMIT</span><span class="w"> </span><span class="mi">5</span><span class="p">;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 看到 &#34;Index Scan using idx_chunks_embedding&#34; 即命中索引
+</span></span></span><span class="line"><span class="cl"><span class="c1">-- 若是 &#34;Seq Scan&#34; 则是暴力检索，需检查运算符类是否匹配
+</span></span></span></code></pre></div><h1 id="7-面试高频问答">7. 面试高频问答</h1>
+<p><strong>Q1：为什么可以用关系型数据库做向量检索？</strong>
+向量本质是浮点数组，pgvector 提供了 <code>vector</code> 类型、距离运算符和 ANN 索引（IVFFlat/HNSW），把&quot;最近邻搜索&quot;变成可被索引加速的 <code>ORDER BY 距离 LIMIT k</code> 查询。</p>
+<p><strong>Q2：IVFFlat 和 HNSW 怎么选？</strong>
+HNSW 召回率高、查询快、支持增量插入、可空表建索引，是默认首选；IVFFlat 构建快、省内存，适合内存紧张或数据静态的场景。（见 4.3 对比表）</p>
+<p><strong>Q3：什么是 ANN？为什么不用精确检索？</strong>
+ANN 是近似最近邻。精确 KNN 需要和全部向量算距离（O(n)），亿级数据不可行。ANN 用图/聚类结构把复杂度降到近似对数级，牺牲极小召回率换取数量级的速度提升。</p>
+<p><strong>Q4：余弦距离、内积、L2 距离有什么区别？</strong>
+L2 是几何直线距离；内积同时受夹角和模长影响；余弦只看夹角（方向），对文本 Embedding 最常用。若向量已归一化，三者可相互转化。</p>
+<p><strong>Q5：pgvector 和专用向量库（Milvus/Pinecone）的取舍？</strong>
+pgvector 数据统一、支持事务与 SQL 过滤、运维简单，适合中小规模且需与业务数据关联；专用库在亿级规模、极致 QPS、分布式与 GPU 加速上更强。（见 1.2）</p>
+<p><strong>Q6：向量检索 + 条件过滤为什么会有坑？</strong>
+向量索引与普通索引难以同时高效使用，过滤可能导致召回不足或索引失效。解决：分区、调大候选参数、或用 0.8.0+ 的迭代扫描。</p>
+<h1 id="8-下一步">8. 下一步</h1>
+<p>学习 <a href="https://xingliuhua.github.io/posts/pgsql/pgsql_17_%E6%89%A9%E5%B1%95%E6%8F%92%E4%BB%B6%E6%80%BB%E8%A7%88/" rel="">扩展插件总览</a>，系统了解 PostgreSQL 强大的插件生态。</p>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2025-09-25</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/pgsql/">pgsql</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/pgsql/pgsql_17_%E6%89%A9%E5%B1%95%E6%8F%92%E4%BB%B6%E6%80%BB%E8%A7%88/" class="prev" rel="prev" title="pgsql-17 扩展插件总览"><i class="fas fa-angle-left fa-fw"></i>pgsql-17 扩展插件总览</a>
+            <a href="/posts/pgsql/pgsql_15_postgis%E5%9C%B0%E7%90%86%E6%95%B0%E6%8D%AE/" class="next" rel="next" title="pgsql-15 PostGIS地理数据">pgsql-15 PostGIS地理数据<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2025-09-25T09:27:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"pgsql-16 pgvector向量数据库"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

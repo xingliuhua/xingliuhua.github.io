@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>Go-26 优雅重启与信号处理 - xingliuhua博客</title><meta name="Description" content="进程信号基础SIGTERM/SIGHUP/SIGUSR2、Go中的signal.Notify、基于http.Server.Shutdown的优雅关闭、fork子进程继承listener fd实现优雅重启、endless/overseer源码剖析，以及云原生场景下的适用性再讨论"><meta property="og:title" content="Go-26 优雅重启与信号处理" />
+<meta property="og:description" content="进程信号基础SIGTERM/SIGHUP/SIGUSR2、Go中的signal.Notify、基于http.Server.Shutdown的优雅关闭、fork子进程继承listener fd实现优雅重启、endless/overseer源码剖析，以及云原生场景下的适用性再讨论" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/golang/golang_26_%E4%BC%98%E9%9B%85%E9%87%8D%E5%90%AF%E4%B8%8E%E4%BF%A1%E5%8F%B7%E5%A4%84%E7%90%86/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2026-01-02T00:02:00+08:00" />
+<meta property="article:modified_time" content="2026-01-02T00:02:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="Go-26 优雅重启与信号处理"/>
+<meta name="twitter:description" content="进程信号基础SIGTERM/SIGHUP/SIGUSR2、Go中的signal.Notify、基于http.Server.Shutdown的优雅关闭、fork子进程继承listener fd实现优雅重启、endless/overseer源码剖析，以及云原生场景下的适用性再讨论"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/golang/golang_26_%E4%BC%98%E9%9B%85%E9%87%8D%E5%90%AF%E4%B8%8E%E4%BF%A1%E5%8F%B7%E5%A4%84%E7%90%86/" /><link rel="prev" href="https://xingliuhua.github.io/posts/golang/golang_27_%E6%96%87%E4%BB%B6io%E4%B8%8E%E8%AF%BB%E5%86%99%E6%80%A7%E8%83%BD%E5%AF%B9%E6%AF%94/" /><link rel="next" href="https://xingliuhua.github.io/posts/golang/golang_25_zap%E6%97%A5%E5%BF%97%E5%BA%93%E4%B8%8E%E5%B7%A5%E7%A8%8B%E5%8C%96%E6%97%A5%E5%BF%97%E5%AE%9E%E8%B7%B5/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Go-26 优雅重启与信号处理",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/golang\/golang_26_%E4%BC%98%E9%9B%85%E9%87%8D%E5%90%AF%E4%B8%8E%E4%BF%A1%E5%8F%B7%E5%A4%84%E7%90%86\/"
+        },"genre": "posts","keywords": "golang","wordcount":  2932 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/golang\/golang_26_%E4%BC%98%E9%9B%85%E9%87%8D%E5%90%AF%E4%B8%8E%E4%BF%A1%E5%8F%B7%E5%A4%84%E7%90%86\/","datePublished": "2026-01-02T00:02:00+08:00","dateModified": "2026-01-02T00:02:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "进程信号基础SIGTERM/SIGHUP/SIGUSR2、Go中的signal.Notify、基于http.Server.Shutdown的优雅关闭、fork子进程继承listener fd实现优雅重启、endless/overseer源码剖析，以及云原生场景下的适用性再讨论"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">Go-26 优雅重启与信号处理</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2026-01-02">2026-01-02</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 2932 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 6 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-从一个问题说起">1. 从一个问题说起</a></li>
+    <li><a href="#2-进程信号基础">2. 进程信号基础</a></li>
+    <li><a href="#3-go-中的-signalnotify">3. Go 中的 signal.Notify</a></li>
+    <li><a href="#4-优雅关闭httpservershutdown">4. 优雅关闭：http.Server.Shutdown</a></li>
+    <li><a href="#5-优雅重启原理fork-子进程--继承-listener-fd">5. 优雅重启原理：fork 子进程 + 继承 listener fd</a></li>
+    <li><a href="#6-endless-源码剖析">6. endless 源码剖析</a></li>
+    <li><a href="#7-overseer更进一步">7. overseer：更进一步</a></li>
+    <li><a href="#8-云原生时代平滑重启还需要吗">8. 云原生时代：平滑重启还需要吗？</a></li>
+    <li><a href="#9-小结">9. 小结</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><h1 id="1-从一个问题说起">1. 从一个问题说起</h1>
+<p>服务要发新版本，最粗暴的做法是 <code>kill</code> 掉旧进程再启动新的。但这中间存在一个空窗期：</p>
+<ol>
+<li>进程被杀，正在处理的请求被硬生生中断，客户端收到连接重置；</li>
+<li>新进程尚未 <code>Listen</code> 成功，这段时间内到达的请求全部失败。</li>
+</ol>
+<p>我们希望做到两件事：<strong>优雅关闭（graceful shutdown）</strong>——退出前把手头的请求处理完；以及<strong>优雅重启（graceful restart / 平滑重启）</strong>——升级过程中服务不中断、连接不丢。二者都建立在「进程信号」这块基石之上。</p>
+<h1 id="2-进程信号基础">2. 进程信号基础</h1>
+<p>信号（signal）是操作系统通知进程「发生了某件事」的软中断机制。进程收到信号后，会中断正常流程，转去执行对应的信号处理函数，处理完再回到中断点。与服务治理相关的常用信号：</p>
+<table>
+<thead>
+<tr>
+<th>信号</th>
+<th>编号</th>
+<th>默认行为</th>
+<th>典型用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>SIGINT</code></td>
+<td>2</td>
+<td>终止</td>
+<td>终端 <code>Ctrl+C</code></td>
+</tr>
+<tr>
+<td><code>SIGTERM</code></td>
+<td>15</td>
+<td>终止</td>
+<td><code>kill</code>、K8s 停止容器的默认信号，<strong>优雅关闭的入口</strong></td>
+</tr>
+<tr>
+<td><code>SIGKILL</code></td>
+<td>9</td>
+<td>强制终止</td>
+<td><code>kill -9</code>，<strong>不可捕获、不可忽略</strong></td>
+</tr>
+<tr>
+<td><code>SIGHUP</code></td>
+<td>1</td>
+<td>终止</td>
+<td>终端挂断；常被约定为「重载配置/平滑重启」</td>
+</tr>
+<tr>
+<td><code>SIGUSR1</code>/<code>SIGUSR2</code></td>
+<td>10/12</td>
+<td>终止</td>
+<td>用户自定义，<code>overseer</code> 用 <code>SIGUSR2</code> 触发重启</td>
+</tr>
+</tbody>
+</table>
+<p>关键点：<code>SIGKILL</code> 和 <code>SIGSTOP</code> 无法被捕获，所以 <code>kill -9</code> 一定会让进程立即消失——优雅逻辑对它无效。这也是 K8s 先发 <code>SIGTERM</code>、宽限期（<code>terminationGracePeriodSeconds</code>）过后才补 <code>SIGKILL</code> 的原因。</p>
+<h1 id="3-go-中的-signalnotify">3. Go 中的 signal.Notify</h1>
+<p>Go 通过在 channel 上投递 <code>os.Signal</code> 来传递信号。<code>signal.Notify</code> 把指定信号「订阅」到一个 channel：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">main</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">sigs</span> <span class="o">:=</span> <span class="nb">make</span><span class="p">(</span><span class="kd">chan</span> <span class="nx">os</span><span class="p">.</span><span class="nx">Signal</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span> <span class="c1">// 带缓冲，避免信号丢失
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">done</span> <span class="o">:=</span> <span class="nb">make</span><span class="p">(</span><span class="kd">chan</span> <span class="kt">bool</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// 监听 SIGINT 和 SIGTERM
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">signal</span><span class="p">.</span><span class="nf">Notify</span><span class="p">(</span><span class="nx">sigs</span><span class="p">,</span> <span class="nx">syscall</span><span class="p">.</span><span class="nx">SIGINT</span><span class="p">,</span> <span class="nx">syscall</span><span class="p">.</span><span class="nx">SIGTERM</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="k">go</span> <span class="kd">func</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">sig</span> <span class="o">:=</span> <span class="o">&lt;-</span><span class="nx">sigs</span> <span class="c1">// 阻塞等待信号
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="nx">fmt</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="s">&#34;\n收到信号:&#34;</span><span class="p">,</span> <span class="nx">sig</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">done</span> <span class="o">&lt;-</span> <span class="kc">true</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}()</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="nx">fmt</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="s">&#34;awaiting signal&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="o">&lt;-</span><span class="nx">done</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">fmt</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="s">&#34;exiting&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>当操作系统把信号投递给进程，Go runtime 会把对应的 <code>os.Signal</code> 值写入 <code>sigs</code> channel。<strong>channel 一定要带缓冲</strong>（容量至少 1），否则在没有接收者就绪的瞬间信号可能被丢弃。现代写法更推荐 <code>signal.NotifyContext</code>，它把信号直接转成 context 取消，与下面的 <code>Shutdown</code> 天然契合。</p>
+<h1 id="4-优雅关闭httpservershutdown">4. 优雅关闭：http.Server.Shutdown</h1>
+<p>Go 1.8 起，<code>net/http</code> 的 <code>Server</code> 自带 <code>Shutdown</code> 方法，实现优雅关闭：它<strong>停止接收新连接</strong>，但<strong>等待已建立的连接把当前请求处理完</strong>（在给定的超时内），再返回。</p>
+<p>标准范式是「主 goroutine 起服务，等信号后调 Shutdown」：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">main</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">srv</span> <span class="o">:=</span> <span class="o">&amp;</span><span class="nx">http</span><span class="p">.</span><span class="nx">Server</span><span class="p">{</span><span class="nx">Addr</span><span class="p">:</span> <span class="s">&#34;:8080&#34;</span><span class="p">,</span> <span class="nx">Handler</span><span class="p">:</span> <span class="nf">newHandler</span><span class="p">()}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// 用 context 承接信号，收到 SIGINT/SIGTERM 即取消
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">ctx</span><span class="p">,</span> <span class="nx">stop</span> <span class="o">:=</span> <span class="nx">signal</span><span class="p">.</span><span class="nf">NotifyContext</span><span class="p">(</span><span class="nx">context</span><span class="p">.</span><span class="nf">Background</span><span class="p">(),</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">syscall</span><span class="p">.</span><span class="nx">SIGINT</span><span class="p">,</span> <span class="nx">syscall</span><span class="p">.</span><span class="nx">SIGTERM</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">defer</span> <span class="nf">stop</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// 在独立 goroutine 中启动服务
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">go</span> <span class="kd">func</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">srv</span><span class="p">.</span><span class="nf">ListenAndServe</span><span class="p">();</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="o">&amp;&amp;</span> <span class="nx">err</span> <span class="o">!=</span> <span class="nx">http</span><span class="p">.</span><span class="nx">ErrServerClosed</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">log</span><span class="p">.</span><span class="nf">Fatalf</span><span class="p">(</span><span class="s">&#34;listen: %v&#34;</span><span class="p">,</span> <span class="nx">err</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}()</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">log</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="s">&#34;server started on :8080&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="o">&lt;-</span><span class="nx">ctx</span><span class="p">.</span><span class="nf">Done</span><span class="p">()</span> <span class="c1">// 阻塞直到收到信号
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">log</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="s">&#34;shutting down...&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// 给正在处理的请求最多 10s 收尾
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">shutdownCtx</span><span class="p">,</span> <span class="nx">cancel</span> <span class="o">:=</span> <span class="nx">context</span><span class="p">.</span><span class="nf">WithTimeout</span><span class="p">(</span><span class="nx">context</span><span class="p">.</span><span class="nf">Background</span><span class="p">(),</span> <span class="mi">10</span><span class="o">*</span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">defer</span> <span class="nf">cancel</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">srv</span><span class="p">.</span><span class="nf">Shutdown</span><span class="p">(</span><span class="nx">shutdownCtx</span><span class="p">);</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">log</span><span class="p">.</span><span class="nf">Printf</span><span class="p">(</span><span class="s">&#34;forced shutdown: %v&#34;</span><span class="p">,</span> <span class="nx">err</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">log</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="s">&#34;server exited&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>注意 <code>ListenAndServe</code> 在被 <code>Shutdown</code> 后会返回 <code>http.ErrServerClosed</code>，这是<strong>正常退出</strong>，需要显式排除，不能当错误处理。至此我们解决了「退出前不丢在途请求」，但升级期间仍有服务空窗——这需要优雅重启。</p>
+<h1 id="5-优雅重启原理fork-子进程--继承-listener-fd">5. 优雅重启原理：fork 子进程 + 继承 listener fd</h1>
+<p>优雅重启的核心诉求是：<strong>升级过程中监听端口一刻都不中断</strong>。做不到「先关端口再重开」，因为中间会拒绝连接。答案是让<strong>新旧两个进程在一段时间内共用同一个监听 socket</strong>。</p>
+<p>Linux 下，子进程可以继承父进程打开的文件描述符（fd），而监听 socket 本质就是一个 fd。于是流程是：</p>
+<ol>
+<li>父进程收到重启信号（约定用 <code>SIGHUP</code> 或 <code>SIGUSR2</code>）；</li>
+<li>父进程 <code>fork</code> 出子进程（用相同的启动命令），通过 <code>ExtraFiles</code> 把监听 socket 的 fd 传给子进程；</li>
+<li>子进程用继承来的 fd 直接 <code>Listen</code>——此时<strong>父子进程同时在同一端口收请求</strong>；</li>
+<li>子进程启动就绪后给父进程发 <code>SIGTERM</code>，父进程停止接收新连接、等旧连接处理完（即优雅关闭）后退出；</li>
+<li>升级完成，端口全程可用。</li>
+</ol>
+<p>传递 fd 的关键代码：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// netListener 是当前的 *net.TCPListener
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">file</span><span class="p">,</span> <span class="nx">_</span> <span class="o">:=</span> <span class="nx">netListener</span><span class="p">.</span><span class="nf">File</span><span class="p">()</span> <span class="c1">// 返回该 socket 的一份 dup 副本
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl"><span class="nx">cmd</span> <span class="o">:=</span> <span class="nx">exec</span><span class="p">.</span><span class="nf">Command</span><span class="p">(</span><span class="nx">os</span><span class="p">.</span><span class="nx">Args</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="s">&#34;-graceful&#34;</span><span class="p">)</span> <span class="c1">// 相同启动命令
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">cmd</span><span class="p">.</span><span class="nx">Stdout</span> <span class="p">=</span> <span class="nx">os</span><span class="p">.</span><span class="nx">Stdout</span>
+</span></span><span class="line"><span class="cl"><span class="nx">cmd</span><span class="p">.</span><span class="nx">Stderr</span> <span class="p">=</span> <span class="nx">os</span><span class="p">.</span><span class="nx">Stderr</span>
+</span></span><span class="line"><span class="cl"><span class="nx">cmd</span><span class="p">.</span><span class="nx">ExtraFiles</span> <span class="p">=</span> <span class="p">[]</span><span class="o">*</span><span class="nx">os</span><span class="p">.</span><span class="nx">File</span><span class="p">{</span><span class="nx">file</span><span class="p">}</span> <span class="c1">// 子进程可通过约定的 fd 号访问它
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl"><span class="k">if</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">cmd</span><span class="p">.</span><span class="nf">Start</span><span class="p">();</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">log</span><span class="p">.</span><span class="nf">Fatalf</span><span class="p">(</span><span class="s">&#34;重启失败: %v&#34;</span><span class="p">,</span> <span class="nx">err</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><code>ExtraFiles</code> 里的文件会依次排在标准输入/输出/错误（fd 0/1/2）之后，也就是从 <strong>fd 3</strong> 开始，子进程用 <code>os.NewFile(3, &quot;&quot;)</code> 即可拿回这个监听 socket。</p>
+<p><code>netListener.File()</code> 底层通过 <code>dup</code> 系统调用复制出一份 fd：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">Dup</span><span class="p">(</span><span class="nx">oldfd</span> <span class="kt">int</span><span class="p">)</span> <span class="p">(</span><span class="nx">fd</span> <span class="kt">int</span><span class="p">,</span> <span class="nx">err</span> <span class="kt">error</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">r0</span><span class="p">,</span> <span class="nx">_</span><span class="p">,</span> <span class="nx">e1</span> <span class="o">:=</span> <span class="nf">Syscall</span><span class="p">(</span><span class="nx">SYS_DUP</span><span class="p">,</span> <span class="nb">uintptr</span><span class="p">(</span><span class="nx">oldfd</span><span class="p">),</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">fd</span> <span class="p">=</span> <span class="nb">int</span><span class="p">(</span><span class="nx">r0</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">e1</span> <span class="o">!=</span> <span class="mi">0</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">err</span> <span class="p">=</span> <span class="nf">errnoErr</span><span class="p">(</span><span class="nx">e1</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><h1 id="6-endless-源码剖析">6. endless 源码剖析</h1>
+<p><code>github.com/fvbock/endless</code> 把上面这套流程封装成了 <code>gin</code>/<code>http</code> 的替代入口。用法几乎零成本——把 <code>http.ListenAndServe</code> 换成 <code>endless.ListenAndServe</code> 即可：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">main</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">engine</span> <span class="o">:=</span> <span class="nx">gin</span><span class="p">.</span><span class="nf">Default</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">engine</span><span class="p">.</span><span class="nf">GET</span><span class="p">(</span><span class="s">&#34;/hello&#34;</span><span class="p">,</span> <span class="kd">func</span><span class="p">(</span><span class="nx">c</span> <span class="o">*</span><span class="nx">gin</span><span class="p">.</span><span class="nx">Context</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">time</span><span class="p">.</span><span class="nf">Sleep</span><span class="p">(</span><span class="mi">40</span> <span class="o">*</span> <span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">)</span> <span class="c1">// 模拟长耗时请求
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="nx">c</span><span class="p">.</span><span class="nf">JSON</span><span class="p">(</span><span class="nx">http</span><span class="p">.</span><span class="nx">StatusOK</span><span class="p">,</span> <span class="s">&#34;v1&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="p">})</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">endless</span><span class="p">.</span><span class="nf">ListenAndServe</span><span class="p">(</span><span class="s">&#34;localhost:8080&#34;</span><span class="p">,</span> <span class="nx">engine</span><span class="p">);</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">log</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="nx">err</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">log</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="s">&#34;Server on 8080 stopped&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>验证平滑重启：请求进入后（长耗时未返回时）改代码重新 <code>go build</code>，再 <code>kill -1 &lt;pid&gt;</code>（发 <code>SIGHUP</code>），旧请求仍返回旧结果 <code>v1</code>，之后的新请求由新进程返回 <code>v2</code>，端口全程不中断。</p>
+<p><strong>入口逻辑</strong>：<code>ListenAndServe</code> 里异步起信号处理，拿到监听后判断自己是不是子进程——是则立刻通知父进程可以退了：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="p">(</span><span class="nx">srv</span> <span class="o">*</span><span class="nx">endlessServer</span><span class="p">)</span> <span class="nf">ListenAndServe</span><span class="p">()</span> <span class="p">(</span><span class="nx">err</span> <span class="kt">error</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">go</span> <span class="nx">srv</span><span class="p">.</span><span class="nf">handleSignals</span><span class="p">()</span>            <span class="c1">// 异步处理信号
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">l</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">srv</span><span class="p">.</span><span class="nf">getListener</span><span class="p">(</span><span class="nx">srv</span><span class="p">.</span><span class="nx">Addr</span><span class="p">)</span> <span class="c1">// 子进程会从继承的 fd 取 listener
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">if</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="nx">err</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">srv</span><span class="p">.</span><span class="nx">EndlessListener</span> <span class="p">=</span> <span class="nf">newEndlessListener</span><span class="p">(</span><span class="nx">l</span><span class="p">,</span> <span class="nx">srv</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">srv</span><span class="p">.</span><span class="nx">isChild</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="c1">// 子进程就绪，通知父进程优雅退出
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="nx">syscall</span><span class="p">.</span><span class="nf">Kill</span><span class="p">(</span><span class="nx">syscall</span><span class="p">.</span><span class="nf">Getppid</span><span class="p">(),</span> <span class="nx">syscall</span><span class="p">.</span><span class="nx">SIGTERM</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">srv</span><span class="p">.</span><span class="nf">BeforeBegin</span><span class="p">(</span><span class="nx">srv</span><span class="p">.</span><span class="nx">Addr</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="nx">srv</span><span class="p">.</span><span class="nf">Serve</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><strong>信号分发</strong>：<code>handleSignals</code> 是一个 <code>for</code> 循环，按信号类型分派——<code>SIGHUP</code> 触发 <code>fork</code>，<code>SIGINT</code>/<code>SIGTERM</code> 触发 <code>shutdown</code>，处理前后还留了 hook 扩展点：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="p">(</span><span class="nx">srv</span> <span class="o">*</span><span class="nx">endlessServer</span><span class="p">)</span> <span class="nf">handleSignals</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">signal</span><span class="p">.</span><span class="nf">Notify</span><span class="p">(</span><span class="nx">srv</span><span class="p">.</span><span class="nx">sigChan</span><span class="p">,</span> <span class="nx">hookableSignals</span><span class="o">...</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">pid</span> <span class="o">:=</span> <span class="nx">syscall</span><span class="p">.</span><span class="nf">Getpid</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">    <span class="k">for</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">sig</span> <span class="o">:=</span> <span class="o">&lt;-</span><span class="nx">srv</span><span class="p">.</span><span class="nx">sigChan</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">srv</span><span class="p">.</span><span class="nf">signalHooks</span><span class="p">(</span><span class="nx">PRE_SIGNAL</span><span class="p">,</span> <span class="nx">sig</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="k">switch</span> <span class="nx">sig</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">case</span> <span class="nx">syscall</span><span class="p">.</span><span class="nx">SIGHUP</span><span class="p">:</span> <span class="c1">// 平滑重启
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>            <span class="nx">log</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="nx">pid</span><span class="p">,</span> <span class="s">&#34;Received SIGHUP. forking.&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">            <span class="k">if</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">srv</span><span class="p">.</span><span class="nf">fork</span><span class="p">();</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">                <span class="nx">log</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="s">&#34;Fork err:&#34;</span><span class="p">,</span> <span class="nx">err</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">            <span class="p">}</span>
+</span></span><span class="line"><span class="cl">        <span class="k">case</span> <span class="nx">syscall</span><span class="p">.</span><span class="nx">SIGINT</span><span class="p">,</span> <span class="nx">syscall</span><span class="p">.</span><span class="nx">SIGTERM</span><span class="p">:</span> <span class="c1">// 优雅停机
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>            <span class="nx">log</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="nx">pid</span><span class="p">,</span> <span class="s">&#34;Received&#34;</span><span class="p">,</span> <span class="nx">sig</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">srv</span><span class="p">.</span><span class="nf">shutdown</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">srv</span><span class="p">.</span><span class="nf">signalHooks</span><span class="p">(</span><span class="nx">POST_SIGNAL</span><span class="p">,</span> <span class="nx">sig</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><code>shutdown</code> 内部正是调用了 <code>http.Server</code> 的优雅关闭并等待在途连接，与第 4 节一脉相承。</p>
+<h1 id="7-overseer更进一步">7. overseer：更进一步</h1>
+<p><code>github.com/jpillora/overseer</code> 思路类似但更完善：它引入一个<strong>常驻的 master 进程</strong>专门管理 <code>fork/exec</code>，业务代码跑在被它监督的 slave 进程里；重启用 <code>SIGUSR2</code> 触发，还支持从远端拉取新二进制做自升级、失败自动回滚。相比 endless「进程自己 fork 自己」，overseer 的 master/slave 模型让升级与回滚更可控。</p>
+<h1 id="8-云原生时代平滑重启还需要吗">8. 云原生时代：平滑重启还需要吗？</h1>
+<p>必须客观说明：<strong>fork+继承 fd 这套平滑重启，是「单机、进程原地升级」时代的产物</strong>，它解决的是「同一台机器上换二进制不断服」。而在 K8s / 云原生下，主流做法已经变了：</p>
+<ul>
+<li><strong>滚动更新（Rolling Update）</strong>：K8s 不在原 Pod 内换二进制，而是<strong>新建新版本 Pod、就绪后再销毁旧 Pod</strong>，配合 Service/负载均衡把流量平滑迁移。多副本天然保证升级期间总有实例在服务，根本不需要单进程内的 fork 重启。</li>
+<li><strong>优雅关闭仍然关键</strong>：滚动更新时，旧 Pod 会收到 <code>SIGTERM</code>，此时第 4 节的 <code>Shutdown</code> 逻辑至关重要——它保证旧 Pod 在 <code>terminationGracePeriodSeconds</code> 宽限期内把在途请求处理完再退出，配合 <code>preStop</code> 钩子和就绪探针摘流量，实现零丢包升级。</li>
+</ul>
+<p><strong>结论</strong>：在容器编排环境里，<strong>优雅关闭是标配、平滑重启已非必需</strong>——负载均衡 + 多副本滚动更新在集群层面提供了同等甚至更强的无损升级能力。<code>endless</code>/<code>overseer</code> 这类方案的适用场景，如今更多收敛到<strong>裸机/虚拟机单实例部署、不便引入编排</strong>的存量系统。理解其原理仍有价值（fd 继承、信号协作是操作系统级的通用知识），但技术选型时要认清它所处的时代背景。</p>
+<h1 id="9-小结">9. 小结</h1>
+<ul>
+<li>信号是进程级软中断；<code>SIGTERM</code> 是优雅关闭入口，<code>SIGKILL</code> 不可捕获。</li>
+<li>Go 用 <code>signal.Notify</code>（带缓冲 channel）或 <code>signal.NotifyContext</code> 接收信号。</li>
+<li><strong>优雅关闭</strong>：<code>http.Server.Shutdown</code> 停收新连接、等在途请求完成，<code>ErrServerClosed</code> 是正常退出。</li>
+<li><strong>优雅重启</strong>：<code>fork</code> 子进程并通过 <code>ExtraFiles</code> 继承监听 socket 的 fd，父子共用端口交接，<code>endless</code>/<code>overseer</code> 是其封装。</li>
+<li>云原生下，<strong>滚动更新 + 优雅关闭</strong>已取代单机平滑重启成为主流；平滑重启主要留给非编排的单实例部署。</li>
+</ul>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2026-01-02</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/golang/">golang</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/golang/golang_27_%E6%96%87%E4%BB%B6io%E4%B8%8E%E8%AF%BB%E5%86%99%E6%80%A7%E8%83%BD%E5%AF%B9%E6%AF%94/" class="prev" rel="prev" title="Go-27 文件IO与读写性能对比"><i class="fas fa-angle-left fa-fw"></i>Go-27 文件IO与读写性能对比</a>
+            <a href="/posts/golang/golang_25_zap%E6%97%A5%E5%BF%97%E5%BA%93%E4%B8%8E%E5%B7%A5%E7%A8%8B%E5%8C%96%E6%97%A5%E5%BF%97%E5%AE%9E%E8%B7%B5/" class="next" rel="next" title="Go-25 zap日志库与工程化日志实践">Go-25 zap日志库与工程化日志实践<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2026-01-02T00:02:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Go-26 优雅重启与信号处理"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

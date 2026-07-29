@@ -1,0 +1,1219 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>Go-16 sync 并发原语与原子操作 - xingliuhua博客</title><meta name="Description" content="Mutex/RWMutex原理与饥饿模式、WaitGroup、Once、Cond、sync.Pool、sync.Map原理、atomic原子操作、内存模型与data race检测"><meta property="og:title" content="Go-16 sync 并发原语与原子操作" />
+<meta property="og:description" content="Mutex/RWMutex原理与饥饿模式、WaitGroup、Once、Cond、sync.Pool、sync.Map原理、atomic原子操作、内存模型与data race检测" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/golang/golang_16_sync%E5%B9%B6%E5%8F%91%E5%8E%9F%E8%AF%AD/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2026-01-02T00:12:00+08:00" />
+<meta property="article:modified_time" content="2026-01-02T00:12:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="Go-16 sync 并发原语与原子操作"/>
+<meta name="twitter:description" content="Mutex/RWMutex原理与饥饿模式、WaitGroup、Once、Cond、sync.Pool、sync.Map原理、atomic原子操作、内存模型与data race检测"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/golang/golang_16_sync%E5%B9%B6%E5%8F%91%E5%8E%9F%E8%AF%AD/" /><link rel="prev" href="https://xingliuhua.github.io/posts/golang/golang_17_context%E4%B8%8A%E4%B8%8B%E6%96%87/" /><link rel="next" href="https://xingliuhua.github.io/posts/golang/golang_15_channel%E4%B8%8Eselect%E5%8E%9F%E7%90%86/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Go-16 sync 并发原语与原子操作",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/golang\/golang_16_sync%E5%B9%B6%E5%8F%91%E5%8E%9F%E8%AF%AD\/"
+        },"genre": "posts","keywords": "golang","wordcount":  10866 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/golang\/golang_16_sync%E5%B9%B6%E5%8F%91%E5%8E%9F%E8%AF%AD\/","datePublished": "2026-01-02T00:12:00+08:00","dateModified": "2026-01-02T00:12:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "Mutex/RWMutex原理与饥饿模式、WaitGroup、Once、Cond、sync.Pool、sync.Map原理、atomic原子操作、内存模型与data race检测"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">Go-16 sync 并发原语与原子操作</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2026-01-02">2026-01-02</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 10866 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 22 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-数据竞争与--race-检测">1. 数据竞争与 -race 检测</a>
+      <ol>
+        <li><a href="#11-什么是数据竞争">1.1 什么是数据竞争</a></li>
+        <li><a href="#12-用--race-检测">1.2 用 -race 检测</a></li>
+        <li><a href="#13--race-原理简述">1.3 -race 原理简述</a></li>
+      </ol>
+    </li>
+    <li><a href="#2-syncmutex-互斥锁">2. sync.Mutex 互斥锁</a>
+      <ol>
+        <li><a href="#21-基本用法">2.1 基本用法</a></li>
+        <li><a href="#22-底层-state-字段位含义">2.2 底层 state 字段位含义</a></li>
+        <li><a href="#23-正常模式-vs-饥饿模式">2.3 正常模式 vs 饥饿模式</a></li>
+        <li><a href="#24-自旋spin">2.4 自旋（spin）</a></li>
+        <li><a href="#25-不可重入">2.5 不可重入</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-syncrwmutex-读写锁">3. sync.RWMutex 读写锁</a>
+      <ol>
+        <li><a href="#31-用法">3.1 用法</a></li>
+        <li><a href="#32-并发规则">3.2 并发规则</a></li>
+        <li><a href="#33-写优先防止写饥饿">3.3 写优先，防止写饥饿</a></li>
+        <li><a href="#34-适用场景与注意">3.4 适用场景与注意</a></li>
+      </ol>
+    </li>
+    <li><a href="#4-syncwaitgroup">4. sync.WaitGroup</a>
+      <ol>
+        <li><a href="#41-用法">4.1 用法</a></li>
+        <li><a href="#42-内部原理">4.2 内部原理</a></li>
+        <li><a href="#43-常见误用">4.3 常见误用</a></li>
+        <li><a href="#44-go-125-的-waitgroupgo">4.4 Go 1.25 的 WaitGroup.Go</a></li>
+      </ol>
+    </li>
+    <li><a href="#5-synconce">5. sync.Once</a>
+      <ol>
+        <li><a href="#50-从零推导单例模式的五次演进">5.0 从零推导：单例模式的五次演进</a></li>
+        <li><a href="#51-单例场景">5.1 单例场景</a></li>
+        <li><a href="#52-do-的原理double-check--atomic--mutex">5.2 Do 的原理：double-check + atomic + mutex</a></li>
+        <li><a href="#53-go-121-的-oncefunc--oncevalue">5.3 Go 1.21 的 OnceFunc / OnceValue</a></li>
+      </ol>
+    </li>
+    <li><a href="#6-synccond-条件变量">6. sync.Cond 条件变量</a>
+      <ol>
+        <li><a href="#61-概念">6.1 概念</a></li>
+        <li><a href="#62-使用示例">6.2 使用示例</a></li>
+        <li><a href="#63-关键注意点">6.3 关键注意点</a></li>
+      </ol>
+    </li>
+    <li><a href="#7-syncpool-对象复用">7. sync.Pool 对象复用</a>
+      <ol>
+        <li><a href="#71-用途">7.1 用途</a></li>
+        <li><a href="#72-gc-时清理">7.2 GC 时清理</a></li>
+        <li><a href="#73-p-本地池--victim-cache-原理">7.3 P 本地池 + victim cache 原理</a></li>
+        <li><a href="#74-标准库中的应用">7.4 标准库中的应用</a></li>
+        <li><a href="#75-注意事项">7.5 注意事项</a></li>
+      </ol>
+    </li>
+    <li><a href="#8-syncmap">8. sync.Map</a>
+      <ol>
+        <li><a href="#81-为什么需要它">8.1 为什么需要它</a></li>
+        <li><a href="#82-用法">8.2 用法</a></li>
+        <li><a href="#83-readdirty-双-map--amended-原理">8.3 read/dirty 双 map + amended 原理</a></li>
+        <li><a href="#84-适用场景与对比">8.4 适用场景与对比</a></li>
+      </ol>
+    </li>
+    <li><a href="#9-atomic-原子操作">9. atomic 原子操作</a>
+      <ol>
+        <li><a href="#91-基本操作">9.1 基本操作</a></li>
+        <li><a href="#92-go-119-新类型">9.2 Go 1.19 新类型</a></li>
+        <li><a href="#93-无锁编程与-cas-自旋">9.3 无锁编程与 CAS 自旋</a></li>
+        <li><a href="#94-aba-问题">9.4 ABA 问题</a></li>
+      </ol>
+    </li>
+    <li><a href="#10-go-内存模型简介">10. Go 内存模型简介</a>
+      <ol>
+        <li><a href="#101-为什么需要同步">10.1 为什么需要同步</a></li>
+        <li><a href="#102-happens-before">10.2 happens-before</a></li>
+        <li><a href="#103-修正示例">10.3 修正示例</a></li>
+      </ol>
+    </li>
+    <li><a href="#11-优化与最佳实践">11. 优化与最佳实践</a>
+      <ol>
+        <li><a href="#111-锁粒度">11.1 锁粒度</a></li>
+        <li><a href="#112-读写锁选择">11.2 读写锁选择</a></li>
+        <li><a href="#113-channel-还是-mutex">11.3 channel 还是 mutex</a></li>
+        <li><a href="#114-atomic-vs-mutex-性能">11.4 atomic vs mutex 性能</a></li>
+        <li><a href="#115-用-syncpool-减少-gc">11.5 用 sync.Pool 减少 GC</a></li>
+      </ol>
+    </li>
+    <li><a href="#12-高频面试题">12. 高频面试题</a></li>
+    <li><a href="#小结">小结</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><p>Go 的并发哲学是「不要通过共享内存来通信，而要通过通信来共享内存」。channel 是首选，但当我们确实需要共享状态时，<code>sync</code> 与 <code>sync/atomic</code> 包提供的并发原语就是绕不开的基础设施。本章系统梳理 Mutex、RWMutex、WaitGroup、Once、Cond、Pool、Map 以及原子操作的用法与底层原理，并结合 Go 内存模型讲清「为什么需要同步」。</p>
+<hr>
+<h1 id="1-数据竞争与--race-检测">1. 数据竞争与 -race 检测</h1>
+<h2 id="11-什么是数据竞争">1.1 什么是数据竞争</h2>
+<p>数据竞争（data race）是指：<strong>两个及以上的 goroutine 并发访问同一内存地址，其中至少有一个是写操作，且没有任何同步机制保护</strong>。数据竞争的行为是未定义的（undefined behavior），可能导致脏读、数据错乱甚至程序崩溃。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kn">package</span> <span class="nx">main</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kn">import</span> <span class="s">&#34;sync&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">main</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="kd">var</span> <span class="nx">counter</span> <span class="kt">int</span>
+</span></span><span class="line"><span class="cl">	<span class="kd">var</span> <span class="nx">wg</span> <span class="nx">sync</span><span class="p">.</span><span class="nx">WaitGroup</span>
+</span></span><span class="line"><span class="cl">	<span class="k">for</span> <span class="nx">i</span> <span class="o">:=</span> <span class="mi">0</span><span class="p">;</span> <span class="nx">i</span> <span class="p">&lt;</span> <span class="mi">1000</span><span class="p">;</span> <span class="nx">i</span><span class="o">++</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">		<span class="nx">wg</span><span class="p">.</span><span class="nf">Add</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">		<span class="k">go</span> <span class="kd">func</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">			<span class="k">defer</span> <span class="nx">wg</span><span class="p">.</span><span class="nf">Done</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">			<span class="nx">counter</span><span class="o">++</span> <span class="c1">// 数据竞争：读-改-写三步操作非原子
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>		<span class="p">}()</span>
+</span></span><span class="line"><span class="cl">	<span class="p">}</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">wg</span><span class="p">.</span><span class="nf">Wait</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">	<span class="c1">// counter 大概率小于 1000，且每次运行结果不同
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="nb">println</span><span class="p">(</span><span class="nx">counter</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><code>counter++</code> 看似一条语句，实际对应「读取 counter → 加 1 → 写回」三个步骤。多个 goroutine 交叉执行时，会互相覆盖对方的写入，导致丢失更新。</p>
+<h2 id="12-用--race-检测">1.2 用 -race 检测</h2>
+<p>Go 内置了竞争检测器（Race Detector），只需在编译或运行时加 <code>-race</code> 标志：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">go run -race main.go     <span class="c1"># 运行时检测</span>
+</span></span><span class="line"><span class="cl">go <span class="nb">test</span> -race ./...      <span class="c1"># 测试时检测（最常用）</span>
+</span></span><span class="line"><span class="cl">go build -race           <span class="c1"># 构建带检测的二进制</span>
+</span></span></code></pre></div><p>输出示例：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">==================
+</span></span><span class="line"><span class="cl">WARNING: DATA RACE
+</span></span><span class="line"><span class="cl">Read at 0x00c000012028 by goroutine 8:
+</span></span><span class="line"><span class="cl">  main.main.func1()
+</span></span><span class="line"><span class="cl">      /path/main.go:12 +0x3c
+</span></span><span class="line"><span class="cl">Previous write at 0x00c000012028 by goroutine 7:
+</span></span><span class="line"><span class="cl">  main.main.func1()
+</span></span><span class="line"><span class="cl">      /path/main.go:12 +0x56
+</span></span><span class="line"><span class="cl">==================
+</span></span></code></pre></div><p>它会精确指出竞争发生的内存地址、涉及的 goroutine 以及读写的代码行。</p>
+<h2 id="13--race-原理简述">1.3 -race 原理简述</h2>
+<p>竞争检测基于 Google 的 <strong>ThreadSanitizer（TSan）</strong> 算法，采用「happens-before」有向图 + 影子内存（shadow memory）：</p>
+<ul>
+<li>编译器在每一处内存读写前后<strong>插桩</strong>（instrumentation），调用运行时函数记录访问。</li>
+<li>运行时为每个内存地址维护「影子状态」，记录最近访问它的 goroutine 和逻辑时钟（向量时钟）。</li>
+<li>若发现两次访问之间不存在 happens-before 关系（即没有同步原语建立顺序），则报告竞争。</li>
+</ul>
+<p>代价说明：</p>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>开销</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>内存</td>
+<td>5~10 倍</td>
+</tr>
+<tr>
+<td>CPU</td>
+<td>2~20 倍</td>
+</tr>
+<tr>
+<td>适用</td>
+<td>仅测试/预发环境，不要用于生产</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>注意：<code>-race</code> 只能检测<strong>实际发生</strong>的竞争。如果某条竞争路径在本次运行没被触发，检测器就发现不了。因此要配合充分的并发测试用例。</p>
+</blockquote>
+<hr>
+<h1 id="2-syncmutex-互斥锁">2. sync.Mutex 互斥锁</h1>
+<h2 id="21-基本用法">2.1 基本用法</h2>
+<p><code>sync.Mutex</code> 是最基础的互斥锁，保证同一时刻只有一个 goroutine 能进入临界区。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kn">package</span> <span class="nx">main</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kn">import</span> <span class="p">(</span>
+</span></span><span class="line"><span class="cl">	<span class="s">&#34;fmt&#34;</span>
+</span></span><span class="line"><span class="cl">	<span class="s">&#34;sync&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">type</span> <span class="nx">Counter</span> <span class="kd">struct</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">mu</span>    <span class="nx">sync</span><span class="p">.</span><span class="nx">Mutex</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">value</span> <span class="kt">int</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="p">(</span><span class="nx">c</span> <span class="o">*</span><span class="nx">Counter</span><span class="p">)</span> <span class="nf">Inc</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">c</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nf">Lock</span><span class="p">()</span>         <span class="c1">// 加锁
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="k">defer</span> <span class="nx">c</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nf">Unlock</span><span class="p">()</span> <span class="c1">// defer 确保解锁，即使 panic 也能释放
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="nx">c</span><span class="p">.</span><span class="nx">value</span><span class="o">++</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="p">(</span><span class="nx">c</span> <span class="o">*</span><span class="nx">Counter</span><span class="p">)</span> <span class="nf">Value</span><span class="p">()</span> <span class="kt">int</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">c</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nf">Lock</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">	<span class="k">defer</span> <span class="nx">c</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nf">Unlock</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">	<span class="k">return</span> <span class="nx">c</span><span class="p">.</span><span class="nx">value</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">main</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">c</span> <span class="o">:=</span> <span class="o">&amp;</span><span class="nx">Counter</span><span class="p">{}</span>
+</span></span><span class="line"><span class="cl">	<span class="kd">var</span> <span class="nx">wg</span> <span class="nx">sync</span><span class="p">.</span><span class="nx">WaitGroup</span>
+</span></span><span class="line"><span class="cl">	<span class="k">for</span> <span class="nx">i</span> <span class="o">:=</span> <span class="mi">0</span><span class="p">;</span> <span class="nx">i</span> <span class="p">&lt;</span> <span class="mi">1000</span><span class="p">;</span> <span class="nx">i</span><span class="o">++</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">		<span class="nx">wg</span><span class="p">.</span><span class="nf">Add</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">		<span class="k">go</span> <span class="kd">func</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">			<span class="k">defer</span> <span class="nx">wg</span><span class="p">.</span><span class="nf">Done</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">			<span class="nx">c</span><span class="p">.</span><span class="nf">Inc</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">		<span class="p">}()</span>
+</span></span><span class="line"><span class="cl">	<span class="p">}</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">wg</span><span class="p">.</span><span class="nf">Wait</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">fmt</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="nx">c</span><span class="p">.</span><span class="nf">Value</span><span class="p">())</span> <span class="c1">// 稳定输出 1000
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span></code></pre></div><p>要点：</p>
+<ul>
+<li><code>Mutex</code> 的零值即可用，无需初始化。</li>
+<li>通常将 <code>Mutex</code> 作为结构体字段，紧挨着它保护的数据。</li>
+<li><code>Mutex</code> <strong>不可复制</strong>（复制会带上锁状态），传递时应使用指针。<code>go vet</code> 会检测复制锁的行为。</li>
+</ul>
+<h2 id="22-底层-state-字段位含义">2.2 底层 state 字段位含义</h2>
+<p><code>sync.Mutex</code> 的结构非常精简：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">type</span> <span class="nx">Mutex</span> <span class="kd">struct</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">state</span> <span class="kt">int32</span>  <span class="c1">// 锁状态，多个标志位复用
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="nx">sema</span>  <span class="kt">uint32</span> <span class="c1">// 信号量，用于阻塞/唤醒 goroutine
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span></code></pre></div><p><code>state</code> 这个 32 位整数被拆成多个部分：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl"> 31                                3   2   1   0
+</span></span><span class="line"><span class="cl">+------------------------------------+---+---+---+
+</span></span><span class="line"><span class="cl">|      waiter 等待者数量（29 位）      | S | W | L |
+</span></span><span class="line"><span class="cl">+------------------------------------+---+---+---+
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">L (mutexLocked   = 1): 锁是否被持有
+</span></span><span class="line"><span class="cl">W (mutexWoken    = 2): 是否有 goroutine 被唤醒
+</span></span><span class="line"><span class="cl">S (mutexStarving = 4): 是否处于饥饿模式
+</span></span><span class="line"><span class="cl">高 29 位: 阻塞在这把锁上的等待者数量
+</span></span></code></pre></div><p>通过位运算，Go 用一个 int32 就表达了「是否上锁、是否有唤醒、是否饥饿、有多少等待者」四类信息，并配合 CAS 原子操作修改，极致省内存。</p>
+<h2 id="23-正常模式-vs-饥饿模式">2.3 正常模式 vs 饥饿模式</h2>
+<p>Go 1.9 之后 Mutex 引入了两种模式，用来平衡「吞吐量」和「公平性」。</p>
+<p><strong>正常模式（Normal）</strong>：</p>
+<ul>
+<li>等待者按 FIFO 排队，但新来的 goroutine 会先尝试抢锁（它正在 CPU 上运行，有优势）。</li>
+<li>被唤醒的等待者要和新来者竞争，往往抢不过 → 可能被反复插队。</li>
+<li>优点：减少上下文切换，吞吐量高。</li>
+</ul>
+<p><strong>饥饿模式（Starvation）</strong>：</p>
+<ul>
+<li>锁的所有权直接从解锁者<strong>移交</strong>给队首等待者。</li>
+<li>新来的 goroutine 不抢锁，直接排到队尾。</li>
+<li>保证公平，避免长尾延迟。</li>
+</ul>
+<p><strong>两种模式的切换条件</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">正常模式 ──&gt; 饥饿模式：当某个等待者等待时间超过 1ms（starvationThresholdNs）
+</span></span><span class="line"><span class="cl">饥饿模式 ──&gt; 正常模式：当队首等待者拿到锁后，发现自己是最后一个等待者，
+</span></span><span class="line"><span class="cl">                     或它的等待时间小于 1ms
+</span></span></code></pre></div><p>图示：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">                  wait &gt; 1ms
+</span></span><span class="line"><span class="cl">   ┌─────────┐  ───────────────&gt;  ┌─────────┐
+</span></span><span class="line"><span class="cl">   │ Normal  │                    │ Starve  │
+</span></span><span class="line"><span class="cl">   │ HiThru  │  &lt;───────────────  │ HiFair  │
+</span></span><span class="line"><span class="cl">   └─────────┘  queue empty/&lt;1ms  └─────────┘
+</span></span></code></pre></div><h2 id="24-自旋spin">2.4 自旋（spin）</h2>
+<p>在正常模式下，当一个 goroutine 尝试加锁但锁被占用时，如果满足条件，它会<strong>自旋</strong>而非立即阻塞：</p>
+<ul>
+<li>自旋即空转几十个 CPU 周期，期望锁很快被释放，避免昂贵的 goroutine 挂起/唤醒。</li>
+<li>自旋条件苛刻：多核 CPU、自旋次数小于 4、当前 P 的本地运行队列为空等。</li>
+<li>若自旋无果，才通过信号量 <code>sema</code> 真正挂起。</li>
+</ul>
+<p>自旋是「乐观」策略：赌锁马上就释放。适合临界区极短的场景。</p>
+<h2 id="25-不可重入">2.5 不可重入</h2>
+<p><strong>Go 的 Mutex 不可重入</strong>（不支持递归加锁）。同一个 goroutine 连续两次 Lock 会导致死锁：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">var</span> <span class="nx">mu</span> <span class="nx">sync</span><span class="p">.</span><span class="nx">Mutex</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">f</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">mu</span><span class="p">.</span><span class="nf">Lock</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">	<span class="k">defer</span> <span class="nx">mu</span><span class="p">.</span><span class="nf">Unlock</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">	<span class="nf">g</span><span class="p">()</span> <span class="c1">// 死锁！
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">g</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">mu</span><span class="p">.</span><span class="nf">Lock</span><span class="p">()</span> <span class="c1">// 已被 f 持有，且 Mutex 不记录持有者，永久阻塞
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="k">defer</span> <span class="nx">mu</span><span class="p">.</span><span class="nf">Unlock</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>原因：<code>Mutex</code> 不记录「谁持有了锁」，无法判断是否是同一个 goroutine 重入。设计者认为可重入锁会掩盖代码结构问题。正确做法是拆分出不加锁的内部函数：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">f</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">mu</span><span class="p">.</span><span class="nf">Lock</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">	<span class="k">defer</span> <span class="nx">mu</span><span class="p">.</span><span class="nf">Unlock</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">	<span class="nf">gLocked</span><span class="p">()</span> <span class="c1">// 调用不加锁版本
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">gLocked</span><span class="p">()</span> <span class="p">{</span> <span class="cm">/* 假设调用方已持锁 */</span> <span class="p">}</span>
+</span></span></code></pre></div><hr>
+<h1 id="3-syncrwmutex-读写锁">3. sync.RWMutex 读写锁</h1>
+<h2 id="31-用法">3.1 用法</h2>
+<p><code>sync.RWMutex</code> 是读写锁，允许<strong>多个读并发</strong>，但<strong>写独占</strong>。适合读多写少的场景。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">type</span> <span class="nx">Cache</span> <span class="kd">struct</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">mu</span>   <span class="nx">sync</span><span class="p">.</span><span class="nx">RWMutex</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">data</span> <span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kt">string</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="p">(</span><span class="nx">c</span> <span class="o">*</span><span class="nx">Cache</span><span class="p">)</span> <span class="nf">Get</span><span class="p">(</span><span class="nx">key</span> <span class="kt">string</span><span class="p">)</span> <span class="p">(</span><span class="kt">string</span><span class="p">,</span> <span class="kt">bool</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">c</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nf">RLock</span><span class="p">()</span>         <span class="c1">// 读锁，多个 goroutine 可同时持有
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="k">defer</span> <span class="nx">c</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nf">RUnlock</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">v</span><span class="p">,</span> <span class="nx">ok</span> <span class="o">:=</span> <span class="nx">c</span><span class="p">.</span><span class="nx">data</span><span class="p">[</span><span class="nx">key</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">	<span class="k">return</span> <span class="nx">v</span><span class="p">,</span> <span class="nx">ok</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="p">(</span><span class="nx">c</span> <span class="o">*</span><span class="nx">Cache</span><span class="p">)</span> <span class="nf">Set</span><span class="p">(</span><span class="nx">key</span><span class="p">,</span> <span class="nx">val</span> <span class="kt">string</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">c</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nf">Lock</span><span class="p">()</span>          <span class="c1">// 写锁，独占
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="k">defer</span> <span class="nx">c</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nf">Unlock</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">c</span><span class="p">.</span><span class="nx">data</span><span class="p">[</span><span class="nx">key</span><span class="p">]</span> <span class="p">=</span> <span class="nx">val</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>四个方法：</p>
+<table>
+<thead>
+<tr>
+<th>方法</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>RLock</code> / <code>RUnlock</code></td>
+<td>获取/释放读锁，可并发</td>
+</tr>
+<tr>
+<td><code>Lock</code> / <code>Unlock</code></td>
+<td>获取/释放写锁，独占</td>
+</tr>
+</tbody>
+</table>
+<h2 id="32-并发规则">3.2 并发规则</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">        读锁      写锁
+</span></span><span class="line"><span class="cl">读锁    兼容      互斥
+</span></span><span class="line"><span class="cl">写锁    互斥      互斥
+</span></span></code></pre></div><p>即：读与读兼容，读与写、写与写都互斥。</p>
+<h2 id="33-写优先防止写饥饿">3.3 写优先，防止写饥饿</h2>
+<p>RWMutex 内部基于一个 Mutex 加计数器实现：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">type</span> <span class="nx">RWMutex</span> <span class="kd">struct</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">w</span>           <span class="nx">Mutex</span>  <span class="c1">// 写锁复用 Mutex，保证写者之间互斥
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="nx">writerSem</span>   <span class="kt">uint32</span> <span class="c1">// 写者等待读者完成的信号量
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="nx">readerSem</span>   <span class="kt">uint32</span> <span class="c1">// 读者等待写者完成的信号量
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="nx">readerCount</span> <span class="nx">atomic</span><span class="p">.</span><span class="nx">Int32</span> <span class="c1">// 正在读的 reader 数量
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="nx">readerWait</span>  <span class="nx">atomic</span><span class="p">.</span><span class="nx">Int32</span> <span class="c1">// 写者需要等待的 reader 数量
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span></code></pre></div><p>关键设计：<strong>写者到达时会阻止后续新读者</strong>。</p>
+<ul>
+<li>当写者调用 <code>Lock</code>，它会先拿到内部 <code>w</code> 这把 Mutex，然后把 <code>readerCount</code> 减去一个大数（<code>rwmutexMaxReaders</code>），使其变负。</li>
+<li><code>readerCount</code> 为负，意味着「有写者在等待」，此后新来的 <code>RLock</code> 会被阻塞。</li>
+<li>写者只需等待<strong>它到达之前</strong>已经在读的那些 reader（<code>readerWait</code>）读完，即可获得写锁。</li>
+</ul>
+<p>这样保证了写者不会因为读者源源不断而永久饥饿，是一种「写优先」策略。</p>
+<h2 id="34-适用场景与注意">3.4 适用场景与注意</h2>
+<ul>
+<li><strong>适用</strong>：读操作远多于写操作，且临界区有一定耗时（比如查 map、解析）。</li>
+<li><strong>不适用</strong>：临界区极短时，RWMutex 的额外记账开销可能比普通 Mutex 还慢，直接用 Mutex 更快。</li>
+<li>RWMutex 同样<strong>不可重入</strong>、<strong>不可复制</strong>。</li>
+<li>读锁内不要升级为写锁（会死锁）。</li>
+</ul>
+<hr>
+<h1 id="4-syncwaitgroup">4. sync.WaitGroup</h1>
+<h2 id="41-用法">4.1 用法</h2>
+<p><code>WaitGroup</code> 用于等待一组 goroutine 全部完成。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">main</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="kd">var</span> <span class="nx">wg</span> <span class="nx">sync</span><span class="p">.</span><span class="nx">WaitGroup</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">urls</span> <span class="o">:=</span> <span class="p">[]</span><span class="kt">string</span><span class="p">{</span><span class="s">&#34;a&#34;</span><span class="p">,</span> <span class="s">&#34;b&#34;</span><span class="p">,</span> <span class="s">&#34;c&#34;</span><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">	<span class="k">for</span> <span class="nx">_</span><span class="p">,</span> <span class="nx">url</span> <span class="o">:=</span> <span class="k">range</span> <span class="nx">urls</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">		<span class="nx">wg</span><span class="p">.</span><span class="nf">Add</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="c1">// 每启动一个 goroutine 前 +1
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>		<span class="k">go</span> <span class="kd">func</span><span class="p">(</span><span class="nx">u</span> <span class="kt">string</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">			<span class="k">defer</span> <span class="nx">wg</span><span class="p">.</span><span class="nf">Done</span><span class="p">()</span> <span class="c1">// 完成时 -1，等价于 wg.Add(-1)
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>			<span class="nf">fetch</span><span class="p">(</span><span class="nx">u</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">		<span class="p">}(</span><span class="nx">url</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">	<span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">	<span class="nx">wg</span><span class="p">.</span><span class="nf">Wait</span><span class="p">()</span> <span class="c1">// 阻塞，直到 counter 归零
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="nx">fmt</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="s">&#34;全部完成&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">fetch</span><span class="p">(</span><span class="nx">u</span> <span class="kt">string</span><span class="p">)</span> <span class="p">{</span> <span class="cm">/* ... */</span> <span class="p">}</span>
+</span></span></code></pre></div><p>三个方法：</p>
+<table>
+<thead>
+<tr>
+<th>方法</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Add(delta int)</code></td>
+<td>计数器增加 delta（可负）</td>
+</tr>
+<tr>
+<td><code>Done()</code></td>
+<td>计数器减 1</td>
+</tr>
+<tr>
+<td><code>Wait()</code></td>
+<td>阻塞直到计数器为 0</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>Go 1.22 起，<code>for range</code> 每次迭代变量都是新的，<code>for _, url := range urls</code> 直接闭包捕获 <code>url</code> 也安全，无需再传参。上面显式传参是更保险的写法。</p>
+</blockquote>
+<h2 id="42-内部原理">4.2 内部原理</h2>
+<p>WaitGroup 内部用一个 64 位值同时存 counter（高 32 位）和 waiter 数（低 32 位），配合信号量实现：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">type</span> <span class="nx">WaitGroup</span> <span class="kd">struct</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">noCopy</span> <span class="nx">noCopy</span>      <span class="c1">// 标记不可复制，go vet 会检查
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="nx">state</span>  <span class="nx">atomic</span><span class="p">.</span><span class="nx">Uint64</span> <span class="c1">// 高 32 位 counter，低 32 位 waiter 数
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="nx">sema</span>   <span class="kt">uint32</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><code>Wait</code> 时若 counter 不为 0，就把 waiter 数加 1 并阻塞在 <code>sema</code> 上；<code>Done</code> 使 counter 归零后，唤醒所有 waiter。</p>
+<h2 id="43-常见误用">4.3 常见误用</h2>
+<p><strong>误用 1：Add 放在 goroutine 内部</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// 错误：Wait 可能在 Add 执行前就返回
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">for</span> <span class="nx">i</span> <span class="o">:=</span> <span class="mi">0</span><span class="p">;</span> <span class="nx">i</span> <span class="p">&lt;</span> <span class="mi">10</span><span class="p">;</span> <span class="nx">i</span><span class="o">++</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="k">go</span> <span class="kd">func</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">		<span class="nx">wg</span><span class="p">.</span><span class="nf">Add</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="c1">// 太晚了！
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>		<span class="k">defer</span> <span class="nx">wg</span><span class="p">.</span><span class="nf">Done</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">		<span class="nf">work</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">	<span class="p">}()</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="nx">wg</span><span class="p">.</span><span class="nf">Wait</span><span class="p">()</span>
+</span></span></code></pre></div><p><code>Add</code> 必须在 <code>go</code> 语句<strong>之前</strong>调用，否则 <code>Wait</code> 可能在 goroutine 还没来得及 <code>Add</code> 时就发现 counter 为 0 而提前返回。</p>
+<p><strong>误用 2：复制 WaitGroup</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">run</span><span class="p">(</span><span class="nx">wg</span> <span class="nx">sync</span><span class="p">.</span><span class="nx">WaitGroup</span><span class="p">)</span> <span class="p">{</span> <span class="c1">// 错误：值传递复制了内部状态
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="k">defer</span> <span class="nx">wg</span><span class="p">.</span><span class="nf">Done</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>WaitGroup 必须以指针传递。<code>go vet</code> 会报 &ldquo;passes lock by value&rdquo;。</p>
+<p><strong>误用 3：Add 的负数导致 counter 变负</strong></p>
+<p>counter 变为负数会直接 panic：<code>sync: negative WaitGroup counter</code>。通常是 <code>Done</code> 调用次数多于 <code>Add</code>。</p>
+<p><strong>误用 4：复用未 Wait 完成的 WaitGroup</strong></p>
+<p>一轮 <code>Wait</code> 未返回前又 <code>Add</code>，行为未定义。应等本轮结束后再复用。</p>
+<h2 id="44-go-125-的-waitgroupgo">4.4 Go 1.25 的 WaitGroup.Go</h2>
+<p>Go 1.25 新增了 <code>WaitGroup.Go</code> 方法，把「Add + go + Done」三步合一，减少误用：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// Go 1.25+
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kd">var</span> <span class="nx">wg</span> <span class="nx">sync</span><span class="p">.</span><span class="nx">WaitGroup</span>
+</span></span><span class="line"><span class="cl"><span class="k">for</span> <span class="nx">_</span><span class="p">,</span> <span class="nx">u</span> <span class="o">:=</span> <span class="k">range</span> <span class="nx">urls</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">wg</span><span class="p">.</span><span class="nf">Go</span><span class="p">(</span><span class="kd">func</span><span class="p">()</span> <span class="p">{</span> <span class="c1">// 内部自动 Add(1)，函数返回时自动 Done
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>		<span class="nf">fetch</span><span class="p">(</span><span class="nx">u</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">	<span class="p">})</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="nx">wg</span><span class="p">.</span><span class="nf">Wait</span><span class="p">()</span>
+</span></span></code></pre></div><p>它等价于：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="nx">wg</span><span class="p">.</span><span class="nf">Add</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="k">go</span> <span class="kd">func</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="k">defer</span> <span class="nx">wg</span><span class="p">.</span><span class="nf">Done</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">	<span class="nf">f</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl"><span class="p">}()</span>
+</span></span></code></pre></div><p>写法更简洁，也从根本上避免了 Add 位置错误和忘记 Done 的问题。</p>
+<hr>
+<h1 id="5-synconce">5. sync.Once</h1>
+<h2 id="50-从零推导单例模式的五次演进">5.0 从零推导：单例模式的五次演进</h2>
+<p>为什么单例最终要用 <code>sync.Once</code>？把演进过程走一遍就明白了——这是一道经典面试题。</p>
+<p><strong>饿汉式</strong>（程序启动即创建，天然并发安全）：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">var</span> <span class="nx">instance</span> <span class="p">=</span> <span class="nb">new</span><span class="p">(</span><span class="nx">singleton</span><span class="p">)</span>            <span class="c1">// 全局变量初始化
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kd">func</span> <span class="nf">GetInstance</span><span class="p">()</span> <span class="o">*</span><span class="nx">singleton</span> <span class="p">{</span> <span class="k">return</span> <span class="nx">instance</span> <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="c1">// 或用 init()：func init() { instance = new(singleton) }
+</span></span></span></code></pre></div><p>简单安全，但<strong>不管用不用都会创建</strong>，无法延迟。于是有了懒汉式（用到才创建），但要小心并发：</p>
+<p><strong>懒汉 v1——裸判断，❌ 不安全</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">GetInstance</span><span class="p">()</span> <span class="o">*</span><span class="nx">singleton</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="k">if</span> <span class="nx">instance</span> <span class="o">==</span> <span class="kc">nil</span> <span class="p">{</span>           <span class="c1">// 高并发下多个 goroutine 同时判 nil
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>		<span class="nx">instance</span> <span class="p">=</span> <span class="nb">new</span><span class="p">(</span><span class="nx">singleton</span><span class="p">)</span>  <span class="c1">// → 创建出多个实例
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="p">}</span>
+</span></span><span class="line"><span class="cl">	<span class="k">return</span> <span class="nx">instance</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><strong>懒汉 v2——整个方法加锁，安全但慢</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">GetInstance</span><span class="p">()</span> <span class="o">*</span><span class="nx">singleton</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">lock</span><span class="p">.</span><span class="nf">Lock</span><span class="p">();</span> <span class="k">defer</span> <span class="nx">lock</span><span class="p">.</span><span class="nf">Unlock</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">	<span class="k">if</span> <span class="nx">instance</span> <span class="o">==</span> <span class="kc">nil</span> <span class="p">{</span> <span class="nx">instance</span> <span class="p">=</span> <span class="nb">new</span><span class="p">(</span><span class="nx">singleton</span><span class="p">)</span> <span class="p">}</span>
+</span></span><span class="line"><span class="cl">	<span class="k">return</span> <span class="nx">instance</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="c1">// 每次获取都要加解锁，实例创建后仍在抢锁，性能被拖垮
+</span></span></span></code></pre></div><p><strong>懒汉 v3——锁移进 if 内，❌ 又不安全</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">GetInstance</span><span class="p">()</span> <span class="o">*</span><span class="nx">singleton</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="k">if</span> <span class="nx">instance</span> <span class="o">==</span> <span class="kc">nil</span> <span class="p">{</span>          <span class="c1">// 代码1
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>		<span class="nx">lock</span><span class="p">.</span><span class="nf">Lock</span><span class="p">()</span>               <span class="c1">// 代码2
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>		<span class="nx">instance</span> <span class="p">=</span> <span class="nb">new</span><span class="p">(</span><span class="nx">singleton</span><span class="p">)</span> <span class="c1">// 执行完代码1、进代码2前，别的 goroutine 可能已创建
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>		<span class="nx">lock</span><span class="p">.</span><span class="nf">Unlock</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">	<span class="p">}</span>
+</span></span><span class="line"><span class="cl">	<span class="k">return</span> <span class="nx">instance</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><strong>懒汉 v4——双重检查锁（DCL），✅ 安全又高效</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">GetInstance</span><span class="p">()</span> <span class="o">*</span><span class="nx">singleton</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="k">if</span> <span class="nx">instance</span> <span class="o">==</span> <span class="kc">nil</span> <span class="p">{</span>              <span class="c1">// 第一次检查：无锁，快
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>		<span class="nx">lock</span><span class="p">.</span><span class="nf">Lock</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">		<span class="k">if</span> <span class="nx">instance</span> <span class="o">==</span> <span class="kc">nil</span> <span class="p">{</span>          <span class="c1">// 第二次检查：拿锁后再确认
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>			<span class="nx">instance</span> <span class="p">=</span> <span class="nb">new</span><span class="p">(</span><span class="nx">singleton</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">		<span class="p">}</span>
+</span></span><span class="line"><span class="cl">		<span class="nx">lock</span><span class="p">.</span><span class="nf">Unlock</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">	<span class="p">}</span>
+</span></span><span class="line"><span class="cl">	<span class="k">return</span> <span class="nx">instance</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><strong>懒汉 v5——sync.Once，✅ 最终形态</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">GetInstance</span><span class="p">()</span> <span class="o">*</span><span class="nx">singleton</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">once</span><span class="p">.</span><span class="nf">Do</span><span class="p">(</span><span class="kd">func</span><span class="p">()</span> <span class="p">{</span> <span class="nx">instance</span> <span class="p">=</span> <span class="nb">new</span><span class="p">(</span><span class="nx">singleton</span><span class="p">)</span> <span class="p">})</span>
+</span></span><span class="line"><span class="cl">	<span class="k">return</span> <span class="nx">instance</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><code>sync.Once</code> 把 v4 的「double-check + 锁 + 原子标志」全部封装好，代码更短、语义更清晰。它内部正是 v4 的实现（见 5.2）。<strong>结论：单例的正确写法就是 v4（DCL）或 v5（Once），生产中优先 Once。</strong></p>
+<h2 id="51-单例场景">5.1 单例场景</h2>
+<p><code>sync.Once</code> 保证某段逻辑在整个程序生命周期内<strong>只执行一次</strong>，最常用于单例初始化。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">type</span> <span class="nx">DB</span> <span class="kd">struct</span><span class="p">{</span> <span class="cm">/* ... */</span> <span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">var</span> <span class="p">(</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">instance</span> <span class="o">*</span><span class="nx">DB</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">once</span>     <span class="nx">sync</span><span class="p">.</span><span class="nx">Once</span>
+</span></span><span class="line"><span class="cl"><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">GetDB</span><span class="p">()</span> <span class="o">*</span><span class="nx">DB</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">once</span><span class="p">.</span><span class="nf">Do</span><span class="p">(</span><span class="kd">func</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">		<span class="nx">instance</span> <span class="p">=</span> <span class="o">&amp;</span><span class="nx">DB</span><span class="p">{}</span> <span class="c1">// 无论多少 goroutine 并发调用，只初始化一次
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>		<span class="nx">fmt</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="s">&#34;init db&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">	<span class="p">})</span>
+</span></span><span class="line"><span class="cl">	<span class="k">return</span> <span class="nx">instance</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>无论多少个 goroutine 同时调用 <code>GetDB</code>，<code>Do</code> 里的函数只会执行一次，且其他 goroutine 会阻塞等待这一次执行完成后才返回，保证拿到已初始化的实例。</p>
+<h2 id="52-do-的原理double-check--atomic--mutex">5.2 Do 的原理：double-check + atomic + mutex</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">type</span> <span class="nx">Once</span> <span class="kd">struct</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">done</span> <span class="nx">atomic</span><span class="p">.</span><span class="nx">Uint32</span> <span class="c1">// 0 未执行，1 已执行
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="nx">m</span>    <span class="nx">Mutex</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="p">(</span><span class="nx">o</span> <span class="o">*</span><span class="nx">Once</span><span class="p">)</span> <span class="nf">Do</span><span class="p">(</span><span class="nx">f</span> <span class="kd">func</span><span class="p">())</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="c1">// 快路径：原子读，绝大多数调用走这里，无锁开销
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="k">if</span> <span class="nx">o</span><span class="p">.</span><span class="nx">done</span><span class="p">.</span><span class="nf">Load</span><span class="p">()</span> <span class="o">==</span> <span class="mi">0</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">		<span class="nx">o</span><span class="p">.</span><span class="nf">doSlow</span><span class="p">(</span><span class="nx">f</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">	<span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="p">(</span><span class="nx">o</span> <span class="o">*</span><span class="nx">Once</span><span class="p">)</span> <span class="nf">doSlow</span><span class="p">(</span><span class="nx">f</span> <span class="kd">func</span><span class="p">())</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">o</span><span class="p">.</span><span class="nx">m</span><span class="p">.</span><span class="nf">Lock</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">	<span class="k">defer</span> <span class="nx">o</span><span class="p">.</span><span class="nx">m</span><span class="p">.</span><span class="nf">Unlock</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">	<span class="c1">// 双重检查：拿到锁后再判断一次
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="k">if</span> <span class="nx">o</span><span class="p">.</span><span class="nx">done</span><span class="p">.</span><span class="nf">Load</span><span class="p">()</span> <span class="o">==</span> <span class="mi">0</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">		<span class="k">defer</span> <span class="nx">o</span><span class="p">.</span><span class="nx">done</span><span class="p">.</span><span class="nf">Store</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="c1">// 保证 f 执行完才置 1
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>		<span class="nf">f</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">	<span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>设计精妙之处：</p>
+<ul>
+<li><strong>快路径用 atomic.Load</strong>：已初始化后，后续调用只做一次原子读，几乎零开销。</li>
+<li><strong>慢路径用 Mutex + double-check</strong>：只有第一次并发调用才会走加锁路径，锁内再判断一次防止重复执行。</li>
+<li><strong><code>defer o.done.Store(1)</code></strong>：必须等 <code>f()</code> 真正执行完才把标志置 1。如果先置 1 再执行，别的 goroutine 会在快路径直接返回，却拿到还没初始化好的实例。</li>
+</ul>
+<blockquote>
+<p>为什么不用 <code>done bool</code> + 直接判断？因为无锁读一个普通 bool 而写用锁保护，会构成数据竞争。必须用 atomic 保证可见性。</p>
+</blockquote>
+<h2 id="53-go-121-的-oncefunc--oncevalue">5.3 Go 1.21 的 OnceFunc / OnceValue</h2>
+<p>Go 1.21 新增三个便捷函数：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// OnceFunc：返回一个只会执行 f 一次的函数
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">init</span> <span class="o">:=</span> <span class="nx">sync</span><span class="p">.</span><span class="nf">OnceFunc</span><span class="p">(</span><span class="kd">func</span><span class="p">()</span> <span class="p">{</span> <span class="nx">fmt</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="s">&#34;init&#34;</span><span class="p">)</span> <span class="p">})</span>
+</span></span><span class="line"><span class="cl"><span class="nf">init</span><span class="p">();</span> <span class="nf">init</span><span class="p">()</span> <span class="c1">// 只打印一次
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl"><span class="c1">// OnceValue：惰性求值，只计算一次并缓存结果
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">getConfig</span> <span class="o">:=</span> <span class="nx">sync</span><span class="p">.</span><span class="nf">OnceValue</span><span class="p">(</span><span class="kd">func</span><span class="p">()</span> <span class="nx">Config</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="k">return</span> <span class="nf">loadConfig</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl"><span class="p">})</span>
+</span></span><span class="line"><span class="cl"><span class="nx">c</span> <span class="o">:=</span> <span class="nf">getConfig</span><span class="p">()</span> <span class="c1">// 首次调用才 loadConfig，后续返回缓存
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl"><span class="c1">// OnceValues：支持返回两个值
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">getData</span> <span class="o">:=</span> <span class="nx">sync</span><span class="p">.</span><span class="nf">OnceValues</span><span class="p">(</span><span class="kd">func</span><span class="p">()</span> <span class="p">([]</span><span class="kt">byte</span><span class="p">,</span> <span class="kt">error</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="k">return</span> <span class="nx">os</span><span class="p">.</span><span class="nf">ReadFile</span><span class="p">(</span><span class="s">&#34;data.json&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="p">})</span>
+</span></span></code></pre></div><p>如果 <code>f</code> panic，后续调用会重新 panic（记录了 panic 信息），不会再执行 <code>f</code>。</p>
+<hr>
+<h1 id="6-synccond-条件变量">6. sync.Cond 条件变量</h1>
+<h2 id="61-概念">6.1 概念</h2>
+<p><code>sync.Cond</code> 是条件变量，用于让 goroutine 等待或宣告某个「条件」的发生。适合「一个/多个 goroutine 等待某状态，另一个 goroutine 改变状态并通知」的场景。</p>
+<p>三个核心方法：</p>
+<table>
+<thead>
+<tr>
+<th>方法</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Wait()</code></td>
+<td>释放锁并阻塞，被唤醒后重新加锁</td>
+</tr>
+<tr>
+<td><code>Signal()</code></td>
+<td>唤醒一个等待者</td>
+</tr>
+<tr>
+<td><code>Broadcast()</code></td>
+<td>唤醒所有等待者</td>
+</tr>
+</tbody>
+</table>
+<h2 id="62-使用示例">6.2 使用示例</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kn">package</span> <span class="nx">main</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kn">import</span> <span class="p">(</span>
+</span></span><span class="line"><span class="cl">	<span class="s">&#34;fmt&#34;</span>
+</span></span><span class="line"><span class="cl">	<span class="s">&#34;sync&#34;</span>
+</span></span><span class="line"><span class="cl">	<span class="s">&#34;time&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">main</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">c</span> <span class="o">:=</span> <span class="nx">sync</span><span class="p">.</span><span class="nf">NewCond</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">sync</span><span class="p">.</span><span class="nx">Mutex</span><span class="p">{})</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">ready</span> <span class="o">:=</span> <span class="kc">false</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">	<span class="c1">// 三个消费者等待条件就绪
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="k">for</span> <span class="nx">i</span> <span class="o">:=</span> <span class="mi">0</span><span class="p">;</span> <span class="nx">i</span> <span class="p">&lt;</span> <span class="mi">3</span><span class="p">;</span> <span class="nx">i</span><span class="o">++</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">		<span class="k">go</span> <span class="kd">func</span><span class="p">(</span><span class="nx">id</span> <span class="kt">int</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">			<span class="nx">c</span><span class="p">.</span><span class="nx">L</span><span class="p">.</span><span class="nf">Lock</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">			<span class="k">for</span> <span class="p">!</span><span class="nx">ready</span> <span class="p">{</span> <span class="c1">// 必须用 for 循环判断条件，不能用 if
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>				<span class="nx">c</span><span class="p">.</span><span class="nf">Wait</span><span class="p">()</span> <span class="c1">// 释放锁并阻塞；被唤醒后重新持锁
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>			<span class="p">}</span>
+</span></span><span class="line"><span class="cl">			<span class="nx">c</span><span class="p">.</span><span class="nx">L</span><span class="p">.</span><span class="nf">Unlock</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">			<span class="nx">fmt</span><span class="p">.</span><span class="nf">Printf</span><span class="p">(</span><span class="s">&#34;worker %d 开始工作\n&#34;</span><span class="p">,</span> <span class="nx">id</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">		<span class="p">}(</span><span class="nx">i</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">	<span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">	<span class="nx">time</span><span class="p">.</span><span class="nf">Sleep</span><span class="p">(</span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">c</span><span class="p">.</span><span class="nx">L</span><span class="p">.</span><span class="nf">Lock</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">ready</span> <span class="p">=</span> <span class="kc">true</span>       <span class="c1">// 改变条件
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="nx">c</span><span class="p">.</span><span class="nx">L</span><span class="p">.</span><span class="nf">Unlock</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">c</span><span class="p">.</span><span class="nf">Broadcast</span><span class="p">()</span>      <span class="c1">// 唤醒所有等待者
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl">	<span class="nx">time</span><span class="p">.</span><span class="nf">Sleep</span><span class="p">(</span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><h2 id="63-关键注意点">6.3 关键注意点</h2>
+<ul>
+<li><strong>Wait 前必须持有锁</strong>：<code>Wait</code> 内部会先解锁、阻塞，被唤醒后再重新加锁。</li>
+<li><strong>条件判断必须用 <code>for</code> 而非 <code>if</code></strong>：存在「虚假唤醒」以及被唤醒后条件又被其他 goroutine 改变的可能，被唤醒后要重新检查条件。</li>
+<li><code>Signal</code> / <code>Broadcast</code> 前不一定要持锁，但通常在锁内改变条件、锁外或锁内发信号都可以。</li>
+<li>现实中 Cond 用得较少，很多场景可以用 channel 优雅替代。但生产者-消费者、连接池「等待有可用连接」这类多等待者广播场景，Cond 仍然合适。</li>
+</ul>
+<hr>
+<h1 id="7-syncpool-对象复用">7. sync.Pool 对象复用</h1>
+<h2 id="71-用途">7.1 用途</h2>
+<p><code>sync.Pool</code> 是一个临时对象池，用来复用那些<strong>频繁创建又频繁丢弃</strong>的对象，从而减轻 GC 压力。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">var</span> <span class="nx">bufPool</span> <span class="p">=</span> <span class="nx">sync</span><span class="p">.</span><span class="nx">Pool</span><span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">New</span><span class="p">:</span> <span class="kd">func</span><span class="p">()</span> <span class="nx">any</span> <span class="p">{</span> <span class="c1">// 池空时的构造函数
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>		<span class="k">return</span> <span class="nb">new</span><span class="p">(</span><span class="nx">bytes</span><span class="p">.</span><span class="nx">Buffer</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">	<span class="p">},</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">handle</span><span class="p">(</span><span class="nx">data</span> <span class="p">[]</span><span class="kt">byte</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">buf</span> <span class="o">:=</span> <span class="nx">bufPool</span><span class="p">.</span><span class="nf">Get</span><span class="p">().(</span><span class="o">*</span><span class="nx">bytes</span><span class="p">.</span><span class="nx">Buffer</span><span class="p">)</span> <span class="c1">// 取出，可能是复用的也可能是 New 的
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="k">defer</span> <span class="kd">func</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">		<span class="nx">buf</span><span class="p">.</span><span class="nf">Reset</span><span class="p">()</span>      <span class="c1">// 关键：归还前必须重置状态
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>		<span class="nx">bufPool</span><span class="p">.</span><span class="nf">Put</span><span class="p">(</span><span class="nx">buf</span><span class="p">)</span> <span class="c1">// 放回池中
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="p">}()</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">	<span class="nx">buf</span><span class="p">.</span><span class="nf">Write</span><span class="p">(</span><span class="nx">data</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">	<span class="c1">// ... 使用 buf ...
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span></code></pre></div><h2 id="72-gc-时清理">7.2 GC 时清理</h2>
+<p><code>sync.Pool</code> 里的对象<strong>随时可能被 GC 回收</strong>，这是它与普通对象池最大的区别：</p>
+<ul>
+<li>每次 GC 会清理 Pool 中的对象（配合 victim cache，见下）。</li>
+<li>因此 Pool 只适合存放「无状态、可重建」的临时对象，<strong>绝不能</strong>用它做需要长期存活的连接池（比如数据库连接）。</li>
+</ul>
+<h2 id="73-p-本地池--victim-cache-原理">7.3 P 本地池 + victim cache 原理</h2>
+<p>sync.Pool 为了减少锁竞争，采用了<strong>每 P 一个本地池</strong>的设计（P 是 GMP 模型里的处理器）：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">        Pool
+</span></span><span class="line"><span class="cl">   ┌───────┬───────┬───────┐
+</span></span><span class="line"><span class="cl">   │ P0    │ P1    │ P2    │   每个 P 有独立的 poolLocal
+</span></span><span class="line"><span class="cl">   ├───────┼───────┼───────┤
+</span></span><span class="line"><span class="cl">   │private│private│private│  私有对象，仅本 P 可无锁访问
+</span></span><span class="line"><span class="cl">   │shared │shared │shared │  共享队列，可被其他 P &#34;偷取&#34;
+</span></span><span class="line"><span class="cl">   └───────┴───────┴───────┘
+</span></span></code></pre></div><ul>
+<li><strong>private</strong>：每个 P 私有一个对象，Get/Put 优先操作它，无需加锁（因为同一时刻一个 P 只运行一个 goroutine）。</li>
+<li><strong>shared</strong>：一个双端队列，本 P 从头部存取，其他 P 空闲时可从尾部「窃取」（work-stealing），保证负载均衡。</li>
+<li><strong>victim cache（Go 1.13 引入）</strong>：GC 时不直接清空 Pool，而是先把当前对象移到 victim（受害者）区，下一轮 GC 才真正丢弃。这样对象能多存活一个 GC 周期，避免 GC 后缓存瞬间清零导致的性能抖动（缓存命中率骤降）。</li>
+</ul>
+<p>Get 的查找顺序：本 P private → 本 P shared → 窃取其他 P 的 shared → victim cache → 调用 New。</p>
+<h2 id="74-标准库中的应用">7.4 标准库中的应用</h2>
+<ul>
+<li><code>fmt</code> 包：打印时用 Pool 复用 <code>pp</code>（printer）结构体。</li>
+<li><code>encoding/json</code>：复用编码缓冲区。</li>
+<li><code>net/http</code>：复用请求处理相关的临时对象。</li>
+</ul>
+<h2 id="75-注意事项">7.5 注意事项</h2>
+<ul>
+<li><strong>Get 后必须判断/重置</strong>：复用的对象带有上次的数据，务必 <code>Reset</code> 或重新赋值。</li>
+<li><strong>不要 Put 大对象或数量不定的对象</strong>：可能白白占内存又频繁被 GC。</li>
+<li><strong>不保证 Get 一定复用</strong>：高并发下也可能每次都 New，Pool 只是「尽力复用」。</li>
+<li><strong>Pool 本身不可复制</strong>。</li>
+</ul>
+<p>一个简单 benchmark 对比：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">BenchmarkWithPool</span><span class="p">(</span><span class="nx">b</span> <span class="o">*</span><span class="nx">testing</span><span class="p">.</span><span class="nx">B</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">b</span><span class="p">.</span><span class="nf">RunParallel</span><span class="p">(</span><span class="kd">func</span><span class="p">(</span><span class="nx">pb</span> <span class="o">*</span><span class="nx">testing</span><span class="p">.</span><span class="nx">PB</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">		<span class="k">for</span> <span class="nx">pb</span><span class="p">.</span><span class="nf">Next</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">			<span class="nx">buf</span> <span class="o">:=</span> <span class="nx">bufPool</span><span class="p">.</span><span class="nf">Get</span><span class="p">().(</span><span class="o">*</span><span class="nx">bytes</span><span class="p">.</span><span class="nx">Buffer</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">			<span class="nx">buf</span><span class="p">.</span><span class="nf">Reset</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">			<span class="nx">buf</span><span class="p">.</span><span class="nf">WriteString</span><span class="p">(</span><span class="s">&#34;hello world&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">			<span class="nx">bufPool</span><span class="p">.</span><span class="nf">Put</span><span class="p">(</span><span class="nx">buf</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">		<span class="p">}</span>
+</span></span><span class="line"><span class="cl">	<span class="p">})</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">BenchmarkNoPool</span><span class="p">(</span><span class="nx">b</span> <span class="o">*</span><span class="nx">testing</span><span class="p">.</span><span class="nx">B</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">b</span><span class="p">.</span><span class="nf">RunParallel</span><span class="p">(</span><span class="kd">func</span><span class="p">(</span><span class="nx">pb</span> <span class="o">*</span><span class="nx">testing</span><span class="p">.</span><span class="nx">PB</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">		<span class="k">for</span> <span class="nx">pb</span><span class="p">.</span><span class="nf">Next</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">			<span class="nx">buf</span> <span class="o">:=</span> <span class="nb">new</span><span class="p">(</span><span class="nx">bytes</span><span class="p">.</span><span class="nx">Buffer</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">			<span class="nx">buf</span><span class="p">.</span><span class="nf">WriteString</span><span class="p">(</span><span class="s">&#34;hello world&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">			<span class="nx">_</span> <span class="p">=</span> <span class="nx">buf</span>
+</span></span><span class="line"><span class="cl">		<span class="p">}</span>
+</span></span><span class="line"><span class="cl">	<span class="p">})</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="c1">// 典型结果：WithPool 分配次数近乎为 0，NoPool 每次都分配，
+</span></span></span><span class="line"><span class="cl"><span class="c1">// 在高并发大对象场景下 Pool 版本 GC 停顿显著更低。
+</span></span></span></code></pre></div><hr>
+<h1 id="8-syncmap">8. sync.Map</h1>
+<h2 id="81-为什么需要它">8.1 为什么需要它</h2>
+<p>普通 <code>map</code> 并发读写会 panic（<code>fatal error: concurrent map read and map write</code>），最简单的方案是 <code>Mutex + map</code>。但在<strong>读多写少</strong>、或 <strong>key 集合稳定</strong>的场景下，全局锁竞争激烈。<code>sync.Map</code> 用无锁读优化了这类场景。</p>
+<h2 id="82-用法">8.2 用法</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">var</span> <span class="nx">m</span> <span class="nx">sync</span><span class="p">.</span><span class="nx">Map</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="nx">m</span><span class="p">.</span><span class="nf">Store</span><span class="p">(</span><span class="s">&#34;a&#34;</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>              <span class="c1">// 写入
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">v</span><span class="p">,</span> <span class="nx">ok</span> <span class="o">:=</span> <span class="nx">m</span><span class="p">.</span><span class="nf">Load</span><span class="p">(</span><span class="s">&#34;a&#34;</span><span class="p">)</span>         <span class="c1">// 读取
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">m</span><span class="p">.</span><span class="nf">LoadOrStore</span><span class="p">(</span><span class="s">&#34;b&#34;</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>        <span class="c1">// 不存在则存入，返回实际值和是否已存在
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">m</span><span class="p">.</span><span class="nf">LoadAndDelete</span><span class="p">(</span><span class="s">&#34;a&#34;</span><span class="p">)</span>         <span class="c1">// 读取并删除
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">m</span><span class="p">.</span><span class="nf">Delete</span><span class="p">(</span><span class="s">&#34;a&#34;</span><span class="p">)</span>                <span class="c1">// 删除
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">m</span><span class="p">.</span><span class="nf">Range</span><span class="p">(</span><span class="kd">func</span><span class="p">(</span><span class="nx">k</span><span class="p">,</span> <span class="nx">v</span> <span class="nx">any</span><span class="p">)</span> <span class="kt">bool</span> <span class="p">{</span> <span class="c1">// 遍历，返回 false 停止
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="nx">fmt</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="nx">k</span><span class="p">,</span> <span class="nx">v</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">	<span class="k">return</span> <span class="kc">true</span>
+</span></span><span class="line"><span class="cl"><span class="p">})</span>
+</span></span></code></pre></div><p>注意 <code>sync.Map</code> 的 key/value 都是 <code>any</code>，没有泛型，使用时需类型断言。</p>
+<h2 id="83-readdirty-双-map--amended-原理">8.3 read/dirty 双 map + amended 原理</h2>
+<p><code>sync.Map</code> 内部维护两个 map：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">type</span> <span class="nx">Map</span> <span class="kd">struct</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">mu</span>     <span class="nx">Mutex</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">read</span>   <span class="nx">atomic</span><span class="p">.</span><span class="nx">Pointer</span><span class="p">[</span><span class="nx">readOnly</span><span class="p">]</span> <span class="c1">// 只读 map，无锁访问
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="nx">dirty</span>  <span class="kd">map</span><span class="p">[</span><span class="nx">any</span><span class="p">]</span><span class="o">*</span><span class="nx">entry</span>           <span class="c1">// 脏 map，含最新写入，访问需加锁
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="nx">misses</span> <span class="kt">int</span>                      <span class="c1">// read 未命中次数
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">type</span> <span class="nx">readOnly</span> <span class="kd">struct</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">m</span>       <span class="kd">map</span><span class="p">[</span><span class="nx">any</span><span class="p">]</span><span class="o">*</span><span class="nx">entry</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">amended</span> <span class="kt">bool</span> <span class="c1">// true 表示 dirty 中有 read 里没有的 key
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span></code></pre></div><p>核心思想：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">   ┌─────────────┐      ┌─────────────┐
+</span></span><span class="line"><span class="cl">   │  read map   │      │ dirty map   │
+</span></span><span class="line"><span class="cl">   │(atomic read)│      │(mutex guard)│
+</span></span><span class="line"><span class="cl">   │ lock-free   │      │  new keys   │
+</span></span><span class="line"><span class="cl">   └─────────────┘      └─────────────┘
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">        │                   │
+</span></span><span class="line"><span class="cl">   Load 先查 read ──miss──&gt; 加锁查 dirty
+</span></span></code></pre></div><ul>
+<li><strong>读</strong>：先无锁访问 <code>read</code>。若命中，直接返回，<strong>完全无锁</strong>。这是 sync.Map 快的核心。</li>
+<li><strong>read 未命中且 <code>amended=true</code></strong>：说明可能在 dirty 里，加锁去 dirty 查，并累加 <code>misses</code>。</li>
+<li><strong>misses 达到 dirty 长度</strong>：把 dirty 提升为新的 read（dirty 置空，<code>amended</code> 归 false），后续读又回到无锁快路径。</li>
+<li><strong>删除</strong>：用 tombstone 标记（<code>entry</code> 置为特殊的 <code>expunged</code>/nil），而非立刻从 map 删除，避免频繁重建。</li>
+</ul>
+<p><code>entry</code> 里存的是指针，通过原子操作 CAS 更新值，使得「更新已存在 key 的值」也能无锁完成。</p>
+<blockquote>
+<p><strong>写放大的成因</strong>：dirty 提升为 read 后 <code>amended=false</code>，此时若<strong>新插入一个 read 中没有的 key</strong>，会先触发一次「把整个 read 完整复制回新的 dirty」再插入。也就是说，<strong>每次「新增 key」都可能引发一次全量拷贝</strong>。这正是 sync.Map 在写多、尤其频繁插入新 key 场景下性能差的根本原因——它的设计假设是 key 集合基本稳定。</p>
+</blockquote>
+<h2 id="84-适用场景与对比">8.4 适用场景与对比</h2>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th>推荐</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>读多写少，key 相对稳定</td>
+<td><code>sync.Map</code></td>
+</tr>
+<tr>
+<td>读写均衡 / 写多</td>
+<td><code>Mutex + map</code></td>
+</tr>
+<tr>
+<td>需要频繁新增大量新 key</td>
+<td><code>Mutex + map</code>（sync.Map 写会不断重建 dirty）</td>
+</tr>
+<tr>
+<td>需要泛型、明确类型</td>
+<td><code>Mutex + map[K]V</code></td>
+</tr>
+</tbody>
+</table>
+<p>benchmark 直觉：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// 读多写少（如 90% 读）场景，sync.Map 因无锁读吞吐远高于 Mutex+map；
+</span></span></span><span class="line"><span class="cl"><span class="c1">// 写密集场景，sync.Map 反而更慢（dirty 提升、entry 拷贝开销大）。
+</span></span></span></code></pre></div><p>结论：不要默认用 <code>sync.Map</code>，它是针对特定读多写少场景的优化，用错场景反而更慢。</p>
+<hr>
+<h1 id="9-atomic-原子操作">9. atomic 原子操作</h1>
+<h2 id="91-基本操作">9.1 基本操作</h2>
+<p><code>sync/atomic</code> 提供对整数和指针的原子操作，底层由 CPU 指令（如 x86 的 <code>LOCK</code> 前缀、ARM 的 LL/SC）保证，比锁更轻量。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kn">import</span> <span class="s">&#34;sync/atomic&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">var</span> <span class="nx">counter</span> <span class="kt">int64</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="nx">atomic</span><span class="p">.</span><span class="nf">AddInt64</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">counter</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>              <span class="c1">// 原子加
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">v</span> <span class="o">:=</span> <span class="nx">atomic</span><span class="p">.</span><span class="nf">LoadInt64</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">counter</span><span class="p">)</span>           <span class="c1">// 原子读
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">atomic</span><span class="p">.</span><span class="nf">StoreInt64</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">counter</span><span class="p">,</span> <span class="mi">100</span><span class="p">)</span>          <span class="c1">// 原子写
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">old</span> <span class="o">:=</span> <span class="nx">atomic</span><span class="p">.</span><span class="nf">SwapInt64</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">counter</span><span class="p">,</span> <span class="mi">200</span><span class="p">)</span>    <span class="c1">// 原子交换，返回旧值
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">ok</span> <span class="o">:=</span> <span class="nx">atomic</span><span class="p">.</span><span class="nf">CompareAndSwapInt64</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">counter</span><span class="p">,</span> <span class="mi">200</span><span class="p">,</span> <span class="mi">300</span><span class="p">)</span> <span class="c1">// CAS
+</span></span></span></code></pre></div><p>用原子操作重写第 1 节的计数器，无竞争：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">main</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="kd">var</span> <span class="nx">counter</span> <span class="kt">int64</span>
+</span></span><span class="line"><span class="cl">	<span class="kd">var</span> <span class="nx">wg</span> <span class="nx">sync</span><span class="p">.</span><span class="nx">WaitGroup</span>
+</span></span><span class="line"><span class="cl">	<span class="k">for</span> <span class="nx">i</span> <span class="o">:=</span> <span class="mi">0</span><span class="p">;</span> <span class="nx">i</span> <span class="p">&lt;</span> <span class="mi">1000</span><span class="p">;</span> <span class="nx">i</span><span class="o">++</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">		<span class="nx">wg</span><span class="p">.</span><span class="nf">Add</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">		<span class="k">go</span> <span class="kd">func</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">			<span class="k">defer</span> <span class="nx">wg</span><span class="p">.</span><span class="nf">Done</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">			<span class="nx">atomic</span><span class="p">.</span><span class="nf">AddInt64</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">counter</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span> <span class="c1">// 原子操作，安全
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>		<span class="p">}()</span>
+</span></span><span class="line"><span class="cl">	<span class="p">}</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">wg</span><span class="p">.</span><span class="nf">Wait</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">fmt</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="nx">atomic</span><span class="p">.</span><span class="nf">LoadInt64</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">counter</span><span class="p">))</span> <span class="c1">// 稳定 1000
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span></code></pre></div><h2 id="92-go-119-新类型">9.2 Go 1.19 新类型</h2>
+<p>Go 1.19 引入了原子类型，把「变量 + 原子操作」封装成一个类型，更安全、更易读，避免忘记用原子函数访问：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">var</span> <span class="nx">counter</span> <span class="nx">atomic</span><span class="p">.</span><span class="nx">Int64</span>
+</span></span><span class="line"><span class="cl"><span class="nx">counter</span><span class="p">.</span><span class="nf">Add</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="nx">counter</span><span class="p">.</span><span class="nf">Load</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl"><span class="nx">counter</span><span class="p">.</span><span class="nf">Store</span><span class="p">(</span><span class="mi">100</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="nx">counter</span><span class="p">.</span><span class="nf">CompareAndSwap</span><span class="p">(</span><span class="mi">100</span><span class="p">,</span> <span class="mi">200</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">var</span> <span class="nx">flag</span> <span class="nx">atomic</span><span class="p">.</span><span class="nx">Bool</span>
+</span></span><span class="line"><span class="cl"><span class="nx">flag</span><span class="p">.</span><span class="nf">Store</span><span class="p">(</span><span class="kc">true</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="k">if</span> <span class="nx">flag</span><span class="p">.</span><span class="nf">Load</span><span class="p">()</span> <span class="p">{</span> <span class="cm">/* ... */</span> <span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">var</span> <span class="nx">p</span> <span class="nx">atomic</span><span class="p">.</span><span class="nx">Pointer</span><span class="p">[</span><span class="nx">Config</span><span class="p">]</span> <span class="c1">// 原子指针，无需 unsafe.Pointer
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">p</span><span class="p">.</span><span class="nf">Store</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">Config</span><span class="p">{})</span>
+</span></span><span class="line"><span class="cl"><span class="nx">cfg</span> <span class="o">:=</span> <span class="nx">p</span><span class="p">.</span><span class="nf">Load</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">var</span> <span class="nx">v</span> <span class="nx">atomic</span><span class="p">.</span><span class="nx">Value</span> <span class="c1">// 可存任意类型（但每次 Store 的动态类型必须一致）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">v</span><span class="p">.</span><span class="nf">Store</span><span class="p">(</span><span class="s">&#34;hello&#34;</span><span class="p">)</span>
+</span></span></code></pre></div><p>这些类型自带 <code>noCopy</code>，<code>go vet</code> 能检测误复制。<strong>推荐新代码优先使用这些类型</strong>而非裸函数。</p>
+<h2 id="93-无锁编程与-cas-自旋">9.3 无锁编程与 CAS 自旋</h2>
+<p>CAS（Compare-And-Swap）是无锁编程的基石：「如果当前值等于期望值，就更新为新值，返回是否成功」。它是原子的。</p>
+<p>用 CAS 自旋实现无锁自增：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">atomicInc</span><span class="p">(</span><span class="nx">addr</span> <span class="o">*</span><span class="kt">int64</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="k">for</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">		<span class="nx">old</span> <span class="o">:=</span> <span class="nx">atomic</span><span class="p">.</span><span class="nf">LoadInt64</span><span class="p">(</span><span class="nx">addr</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">		<span class="nx">newVal</span> <span class="o">:=</span> <span class="nx">old</span> <span class="o">+</span> <span class="mi">1</span>
+</span></span><span class="line"><span class="cl">		<span class="k">if</span> <span class="nx">atomic</span><span class="p">.</span><span class="nf">CompareAndSwapInt64</span><span class="p">(</span><span class="nx">addr</span><span class="p">,</span> <span class="nx">old</span><span class="p">,</span> <span class="nx">newVal</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">			<span class="k">return</span> <span class="c1">// 成功
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>		<span class="p">}</span>
+</span></span><span class="line"><span class="cl">		<span class="c1">// 失败说明期间被别人改了，重试（自旋）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>无锁配置热更新的经典模式：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">var</span> <span class="nx">config</span> <span class="nx">atomic</span><span class="p">.</span><span class="nx">Pointer</span><span class="p">[</span><span class="nx">Config</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">Reload</span><span class="p">(</span><span class="nx">newCfg</span> <span class="o">*</span><span class="nx">Config</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">config</span><span class="p">.</span><span class="nf">Store</span><span class="p">(</span><span class="nx">newCfg</span><span class="p">)</span> <span class="c1">// 写者原子替换整个指针
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">Current</span><span class="p">()</span> <span class="o">*</span><span class="nx">Config</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="k">return</span> <span class="nx">config</span><span class="p">.</span><span class="nf">Load</span><span class="p">()</span> <span class="c1">// 读者无锁读，读到的要么是旧的完整配置，要么是新的
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span></code></pre></div><p>读者永远不会读到「一半新一半旧」的配置，因为交换的是整个指针。</p>
+<h2 id="94-aba-问题">9.4 ABA 问题</h2>
+<p>CAS 有一个经典陷阱：<strong>ABA 问题</strong>。值从 A 变成 B 又变回 A，CAS 检查「还是 A」就认为没变过，但其实已经历了变化。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">线程1 读到 A，准备 CAS(A -&gt; C)
+</span></span><span class="line"><span class="cl">   线程2 把 A -&gt; B
+</span></span><span class="line"><span class="cl">   线程2 又把 B -&gt; A（比如对象被回收又复用了同一地址）
+</span></span><span class="line"><span class="cl">线程1 CAS(A -&gt; C) 成功，但中间发生的变化被忽略了
+</span></span></code></pre></div><p>在 Go 里做无锁栈/队列这类涉及指针复用的结构时要小心。常见解法：</p>
+<ul>
+<li>加<strong>版本号/标记位</strong>（tagged pointer），把值和一个递增计数器一起 CAS，A 到 A 但版本号不同，CAS 就会失败。</li>
+<li>用 Go 的 GC 特性避免地址被立即复用（持有引用则对象不会被回收），很多场景下天然规避了 ABA。</li>
+</ul>
+<p>对大多数「计数器、标志位、指针替换」的日常场景，ABA 不构成问题；只有实现精细的无锁数据结构时才需要重点关注。</p>
+<hr>
+<h1 id="10-go-内存模型简介">10. Go 内存模型简介</h1>
+<h2 id="101-为什么需要同步">10.1 为什么需要同步</h2>
+<p>现代 CPU 和编译器会对指令<strong>重排序</strong>，每个核心还有自己的缓存。这意味着一个 goroutine 的写入，不保证立即对另一个 goroutine 可见，且执行顺序可能与代码顺序不同。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">var</span> <span class="nx">a</span><span class="p">,</span> <span class="nx">done</span> <span class="p">=</span> <span class="mi">0</span><span class="p">,</span> <span class="kc">false</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">setup</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">a</span> <span class="p">=</span> <span class="mi">42</span>       <span class="c1">// 写 1
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="nx">done</span> <span class="p">=</span> <span class="kc">true</span>  <span class="c1">// 写 2
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">main</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="k">go</span> <span class="nf">setup</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">	<span class="k">for</span> <span class="p">!</span><span class="nx">done</span> <span class="p">{</span>  <span class="c1">// 可能永远读到 false（编译器缓存 done），或读到 done=true 但 a 还是 0
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="p">}</span>
+</span></span><span class="line"><span class="cl">	<span class="nb">println</span><span class="p">(</span><span class="nx">a</span><span class="p">)</span>   <span class="c1">// 不保证是 42
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span></code></pre></div><p>上面的代码有数据竞争，<code>a</code> 的值和 <code>done</code> 的可见性都没有保证。这不是 bug，而是内存模型允许的行为。</p>
+<h2 id="102-happens-before">10.2 happens-before</h2>
+<p>Go 内存模型用 <strong>happens-before</strong> 关系定义可见性：如果事件 A happens-before 事件 B，那么 A 的内存效果对 B 可见。</p>
+<p>建立 happens-before 的手段（同步原语的意义正在于此）：</p>
+<table>
+<thead>
+<tr>
+<th>同步方式</th>
+<th>建立的顺序</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>channel 发送</td>
+<td>发送 happens-before 对应接收完成</td>
+</tr>
+<tr>
+<td>channel 接收</td>
+<td>无缓冲 channel 的接收 happens-before 发送完成</td>
+</tr>
+<tr>
+<td>Mutex</td>
+<td><code>Unlock</code> happens-before 后续的 <code>Lock</code></td>
+</tr>
+<tr>
+<td>WaitGroup</td>
+<td><code>Done</code> happens-before <code>Wait</code> 返回</td>
+</tr>
+<tr>
+<td>Once</td>
+<td><code>Do</code> 中 f 的执行 happens-before 任何 <code>Do</code> 返回</td>
+</tr>
+<tr>
+<td>atomic</td>
+<td>一个原子写 happens-before 观察到该写的原子读</td>
+</tr>
+<tr>
+<td>go 语句</td>
+<td><code>go f()</code> happens-before f 开始执行</td>
+</tr>
+</tbody>
+</table>
+<h2 id="103-修正示例">10.3 修正示例</h2>
+<p>用 atomic 建立 happens-before：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">var</span> <span class="nx">a</span> <span class="kt">int</span>
+</span></span><span class="line"><span class="cl"><span class="kd">var</span> <span class="nx">done</span> <span class="nx">atomic</span><span class="p">.</span><span class="nx">Bool</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">setup</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">a</span> <span class="p">=</span> <span class="mi">42</span>          <span class="c1">// 普通写
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="nx">done</span><span class="p">.</span><span class="nf">Store</span><span class="p">(</span><span class="kc">true</span><span class="p">)</span> <span class="c1">// 原子写：作为同步点
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">main</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="k">go</span> <span class="nf">setup</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">	<span class="k">for</span> <span class="p">!</span><span class="nx">done</span><span class="p">.</span><span class="nf">Load</span><span class="p">()</span> <span class="p">{</span> <span class="c1">// 原子读：一旦读到 true，
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="p">}</span>
+</span></span><span class="line"><span class="cl">	<span class="nb">println</span><span class="p">(</span><span class="nx">a</span><span class="p">)</span> <span class="c1">// 保证是 42：Store(true) 之前的写对 Load 到 true 之后可见
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span></code></pre></div><p><strong>核心结论</strong>：同步原语不仅仅是「互斥」，更重要的是建立 happens-before 关系，保证内存写入的<strong>可见性</strong>和<strong>顺序</strong>。这就是为什么必须用同步原语，而不能靠「感觉应该没问题」。</p>
+<hr>
+<h1 id="11-优化与最佳实践">11. 优化与最佳实践</h1>
+<h2 id="111-锁粒度">11.1 锁粒度</h2>
+<ul>
+<li><strong>减小临界区</strong>：只在真正需要保护共享数据时持锁，把耗时的 I/O、计算移出临界区。</li>
+<li><strong>分片锁（sharding）</strong>：把一个大 map 拆成 N 个带独立锁的小 map，用 <code>hash(key) % N</code> 定位分片，大幅降低锁竞争。</li>
+</ul>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">type</span> <span class="nx">ShardedMap</span> <span class="kd">struct</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">shards</span> <span class="p">[</span><span class="mi">256</span><span class="p">]</span><span class="kd">struct</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">		<span class="nx">mu</span> <span class="nx">sync</span><span class="p">.</span><span class="nx">RWMutex</span>
+</span></span><span class="line"><span class="cl">		<span class="nx">m</span>  <span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kt">int</span>
+</span></span><span class="line"><span class="cl">	<span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="p">(</span><span class="nx">s</span> <span class="o">*</span><span class="nx">ShardedMap</span><span class="p">)</span> <span class="nf">shard</span><span class="p">(</span><span class="nx">key</span> <span class="kt">string</span><span class="p">)</span> <span class="o">*</span><span class="kd">struct</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">mu</span> <span class="nx">sync</span><span class="p">.</span><span class="nx">RWMutex</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">m</span>  <span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kt">int</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">h</span> <span class="o">:=</span> <span class="nf">fnv32</span><span class="p">(</span><span class="nx">key</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">	<span class="k">return</span> <span class="o">&amp;</span><span class="nx">s</span><span class="p">.</span><span class="nx">shards</span><span class="p">[</span><span class="nx">h</span><span class="o">%</span><span class="mi">256</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><h2 id="112-读写锁选择">11.2 读写锁选择</h2>
+<ul>
+<li>读远多于写、临界区不是极短 → RWMutex。</li>
+<li>临界区极短（几个字段读写）→ 普通 Mutex 往往更快，因为 RWMutex 记账开销更大。</li>
+<li>只是一个整数/指针 → 直接用 atomic，无锁最快。</li>
+</ul>
+<h2 id="113-channel-还是-mutex">11.3 channel 还是 mutex</h2>
+<table>
+<thead>
+<tr>
+<th>需求</th>
+<th>推荐</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>传递数据所有权、任务分发、流水线</td>
+<td>channel</td>
+</tr>
+<tr>
+<td>保护共享状态（缓存、计数器、状态机字段）</td>
+<td>Mutex / atomic</td>
+</tr>
+<tr>
+<td>一次性通知、扇出</td>
+<td>channel（close）</td>
+</tr>
+</tbody>
+</table>
+<p>经验法则：<strong>channel 用于「传递」，mutex 用于「保护」</strong>。别为了保护一个字段的读写去套 channel，那样又慢又绕。</p>
+<h2 id="114-atomic-vs-mutex-性能">11.4 atomic vs mutex 性能</h2>
+<ul>
+<li>单个基础类型的读写/累加：atomic 通常比 Mutex 快数倍（无需挂起 goroutine）。</li>
+<li>需要保护「多个字段的一致性」或复杂逻辑：必须用 Mutex，atomic 做不到多变量的原子组合。</li>
+<li>高并发下 atomic 也会因缓存行争用（false sharing）而变慢，可用缓存行填充（padding）缓解。</li>
+</ul>
+<h2 id="115-用-syncpool-减少-gc">11.5 用 sync.Pool 减少 GC</h2>
+<p>高频短生命周期对象（buffer、临时切片、请求上下文）用 Pool 复用，能显著降低 GC 频率和停顿。但记得：归还前重置、不放大对象、不做长连接池。</p>
+<hr>
+<h1 id="12-高频面试题">12. 高频面试题</h1>
+<p><strong>Q1：Mutex 的正常模式和饥饿模式有什么区别？为什么要设计两种？</strong></p>
+<p>正常模式下等待者 FIFO 排队，但新来的 goroutine 可以直接抢锁（因为它在 CPU 上，抢锁成本低），吞吐量高但可能造成队列中的等待者长期抢不到锁。当某等待者等待超过 1ms，切换到饥饿模式：锁直接移交给队首等待者，新来者不抢锁排队尾，保证公平。当队列清空或等待时间小于 1ms 时切回正常模式。这是吞吐量与公平性的权衡。</p>
+<hr>
+<p><strong>Q2：RWMutex 的原理？如何防止写饥饿？</strong></p>
+<p>RWMutex 内部用一个 Mutex 保证写者互斥，用 <code>readerCount</code> 记录读者数。写者到来时把 <code>readerCount</code> 减去一个大数使其变负，从而<strong>阻止后续新读者</strong>进入，只等待此前已经在读的读者读完，即可获得写锁。这样即使读者源源不断，写者也不会饿死，是「写优先」策略。</p>
+<hr>
+<p><strong>Q3：WaitGroup 有哪些常见误用？</strong></p>
+<p>（1）<code>Add</code> 放在 goroutine 内部，导致 <code>Wait</code> 提前返回；<code>Add</code> 必须在 <code>go</code> 之前。（2）值传递复制 WaitGroup。（3）<code>Done</code> 多于 <code>Add</code> 使 counter 变负而 panic。（4）在上一轮 <code>Wait</code> 未返回时又复用。Go 1.25 的 <code>wg.Go(f)</code> 可规避前两类问题。</p>
+<hr>
+<p><strong>Q4：sync.Once 如何保证只执行一次？为什么用 double-check？</strong></p>
+<p>内部有原子标志 <code>done</code> 和一个 Mutex。<code>Do</code> 先原子读 <code>done</code>，为 1 则直接返回（无锁快路径）；为 0 则加锁，在锁内再判断一次（double-check），确实未执行才运行 <code>f</code> 并在其返回后（<code>defer</code>）把 <code>done</code> 置 1。快路径用 atomic 避免每次加锁，慢路径用锁保证互斥，double-check 防止并发下重复执行。特别注意标志必须在 <code>f</code> 执行完后才置位，否则别的 goroutine 会拿到未初始化的实例。</p>
+<hr>
+<p><strong>Q5：sync.Map 的原理和适用场景？</strong></p>
+<p>内部有 read（原子指针，无锁读）和 dirty（Mutex 保护，含最新写入）两个 map，加 <code>amended</code> 标志表示 dirty 是否有 read 没有的 key。读优先无锁访问 read，命中直接返回；未命中且 amended 为真时加锁查 dirty 并计数 misses，misses 累积到阈值就把 dirty 提升为 read。适用于<strong>读多写少</strong>或 <strong>key 稳定</strong>的场景；读写均衡或写密集时不如 <code>Mutex + map</code>。</p>
+<hr>
+<p><strong>Q6：atomic 和 mutex 的区别，什么时候用哪个？</strong></p>
+<p>atomic 是基于 CPU 指令的无锁操作，适合单个基础类型（整数、指针、bool）的原子读写，性能高。mutex 适合保护一段临界区或多个变量的一致性。原则：能用 atomic 表达的单变量操作优先 atomic；涉及多个变量组合或复杂逻辑，必须用 mutex。</p>
+<hr>
+<p><strong>Q7：什么是 CAS？有什么问题？</strong></p>
+<p>CAS（比较并交换）：当内存值等于期望值时才更新为新值，是原子操作，无锁编程的基石。常配合自旋重试实现无锁累加/更新。问题是 ABA：值 A→B→A 后 CAS 仍认为未变。解法是加版本号（tagged pointer）或依赖 GC 防止地址被立即复用。</p>
+<hr>
+<p><strong>Q8：如何检测数据竞争？原理是什么？</strong></p>
+<p>用 <code>go test -race</code> / <code>go run -race</code>。编译器在内存读写处插桩，运行时用向量时钟（基于 happens-before）跟踪每个内存地址的访问历史，发现两次访问间不存在 happens-before 关系（无同步）就报告竞争。代价是内存 5~10 倍、CPU 2~20 倍，仅用于测试环境，且只能检测本次运行实际触发的竞争。</p>
+<hr>
+<p><strong>Q9：Mutex 可重入吗？为什么？</strong></p>
+<p>不可重入。Mutex 不记录持有者，同一 goroutine 二次 Lock 会死锁。设计上认为可重入锁会掩盖代码结构问题，应通过拆分「加锁版本」和「不加锁的内部函数」来解决嵌套调用。</p>
+<hr>
+<p><strong>Q10：sync.Pool 里的对象会一直存在吗？victim cache 是什么？</strong></p>
+<p>不会。每次 GC 都会清理 Pool。为避免 GC 后缓存瞬间清零导致的性能抖动，Go 1.13 引入 victim cache：GC 时先把对象移到 victim 区，下一轮 GC 才真正回收，让对象多存活一个 GC 周期。因此 Pool 只适合可重建的临时对象，不能做长连接池。</p>
+<hr>
+<h1 id="小结">小结</h1>
+<p>本章围绕 Go 的共享内存同步机制，梳理了从检测到原语再到内存模型的完整链路：</p>
+<ul>
+<li><strong>数据竞争与 -race</strong>：并发访问同一地址且至少一写、无同步即为竞争；<code>-race</code> 基于 happens-before + 插桩检测，仅用于测试。</li>
+<li><strong>Mutex</strong>：state 位复用表达锁状态，正常/饥饿双模式平衡吞吐与公平，自旋优化短临界区，不可重入、不可复制。</li>
+<li><strong>RWMutex</strong>：读并发写独占，通过让写者阻止新读者实现写优先，防止写饥饿；临界区极短时不如 Mutex。</li>
+<li><strong>WaitGroup</strong>：Add 必须在 go 之前，不可复制，Go 1.25 的 <code>Go</code> 方法更安全。</li>
+<li><strong>Once</strong>：atomic 快路径 + Mutex + double-check，标志在 f 执行后才置位。</li>
+<li><strong>Cond</strong>：条件变量，Wait 前持锁、条件用 for 判断，适合多等待者广播。</li>
+<li><strong>Pool</strong>：每 P 本地池 + work-stealing + victim cache，复用临时对象减 GC，随时可能被回收。</li>
+<li><strong>sync.Map</strong>：read/dirty 双 map + amended，读无锁，适合读多写少。</li>
+<li><strong>atomic</strong>：CPU 指令级无锁操作，Go 1.19 原子类型更安全，CAS 自旋要防 ABA。</li>
+<li><strong>内存模型</strong>：同步原语的本质是建立 happens-before，保证可见性与顺序，而不只是互斥。</li>
+</ul>
+<p>选型口诀：<strong>能 atomic 不 mutex，能 channel 传递不用锁保护，读多写少考虑 RWMutex 或 sync.Map，高频临时对象用 Pool，一切并发代码都要过一遍 <code>-race</code>。</strong></p>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2026-01-02</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/golang/">golang</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/golang/golang_17_context%E4%B8%8A%E4%B8%8B%E6%96%87/" class="prev" rel="prev" title="Go-17 context 上下文控制"><i class="fas fa-angle-left fa-fw"></i>Go-17 context 上下文控制</a>
+            <a href="/posts/golang/golang_15_channel%E4%B8%8Eselect%E5%8E%9F%E7%90%86/" class="next" rel="next" title="Go-15 channel 与 select 原理">Go-15 channel 与 select 原理<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2026-01-02T00:12:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Go-16 sync 并发原语与原子操作"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

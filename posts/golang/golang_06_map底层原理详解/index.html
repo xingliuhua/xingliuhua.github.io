@@ -1,0 +1,884 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>Go-06 map底层原理详解 - xingliuhua博客</title><meta name="Description" content="map底层hmap/bmap结构、哈希桶与溢出桶、渐进式扩容与等量扩容、负载因子、无序遍历、并发不安全与sync.Map"><meta property="og:title" content="Go-06 map底层原理详解" />
+<meta property="og:description" content="map底层hmap/bmap结构、哈希桶与溢出桶、渐进式扩容与等量扩容、负载因子、无序遍历、并发不安全与sync.Map" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/golang/golang_06_map%E5%BA%95%E5%B1%82%E5%8E%9F%E7%90%86%E8%AF%A6%E8%A7%A3/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2026-01-02T00:22:00+08:00" />
+<meta property="article:modified_time" content="2026-01-02T00:22:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="Go-06 map底层原理详解"/>
+<meta name="twitter:description" content="map底层hmap/bmap结构、哈希桶与溢出桶、渐进式扩容与等量扩容、负载因子、无序遍历、并发不安全与sync.Map"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/golang/golang_06_map%E5%BA%95%E5%B1%82%E5%8E%9F%E7%90%86%E8%AF%A6%E8%A7%A3/" /><link rel="prev" href="https://xingliuhua.github.io/posts/golang/golang_07_%E5%AD%97%E7%AC%A6%E4%B8%B2%E4%B8%8E%E5%AD%97%E8%8A%82%E5%A4%84%E7%90%86/" /><link rel="next" href="https://xingliuhua.github.io/posts/golang/golang_05_%E6%95%B0%E7%BB%84%E4%B8%8E%E5%88%87%E7%89%87%E5%8E%9F%E7%90%86/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Go-06 map底层原理详解",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/golang\/golang_06_map%E5%BA%95%E5%B1%82%E5%8E%9F%E7%90%86%E8%AF%A6%E8%A7%A3\/"
+        },"genre": "posts","keywords": "golang","wordcount":  8445 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/golang\/golang_06_map%E5%BA%95%E5%B1%82%E5%8E%9F%E7%90%86%E8%AF%A6%E8%A7%A3\/","datePublished": "2026-01-02T00:22:00+08:00","dateModified": "2026-01-02T00:22:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "map底层hmap/bmap结构、哈希桶与溢出桶、渐进式扩容与等量扩容、负载因子、无序遍历、并发不安全与sync.Map"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">Go-06 map底层原理详解</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2026-01-02">2026-01-02</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 8445 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 17 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-map-基础用法">1. map 基础用法</a>
+      <ol>
+        <li><a href="#11-声明与初始化">1.1 声明与初始化</a></li>
+        <li><a href="#12-增删改查">1.2 增删改查</a></li>
+        <li><a href="#13-遍历">1.3 遍历</a></li>
+      </ol>
+    </li>
+    <li><a href="#2-map-底层数据结构">2. map 底层数据结构</a>
+      <ol>
+        <li><a href="#21-hmapmap-的头结构">2.1 hmap：map 的头结构</a></li>
+        <li><a href="#22-bmap桶结构">2.2 bmap：桶结构</a></li>
+        <li><a href="#23-整体结构-ascii-图">2.3 整体结构 ASCII 图</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-哈希过程key-是如何定位的">3. 哈希过程：key 是如何定位的</a>
+      <ol>
+        <li><a href="#31-定位公式">3.1 定位公式</a></li>
+        <li><a href="#32-查找流程伪代码">3.2 查找流程（伪代码）</a></li>
+      </ol>
+    </li>
+    <li><a href="#4-扩容机制">4. 扩容机制</a>
+      <ol>
+        <li><a href="#41-触发条件">4.1 触发条件</a></li>
+        <li><a href="#42-翻倍扩容负载因子触发">4.2 翻倍扩容（负载因子触发）</a></li>
+        <li><a href="#43-等量扩容溢出桶过多触发">4.3 等量扩容（溢出桶过多触发）</a></li>
+        <li><a href="#44-渐进式-rehashevacuate-迁移">4.4 渐进式 rehash（evacuate 迁移）</a></li>
+      </ol>
+    </li>
+    <li><a href="#5-为什么遍历是无序的">5. 为什么遍历是无序的</a>
+      <ol>
+        <li><a href="#51-原因">5.1 原因</a></li>
+        <li><a href="#52-为什么要故意打乱">5.2 为什么要故意打乱</a></li>
+        <li><a href="#53-需要有序怎么办">5.3 需要有序怎么办</a></li>
+      </ol>
+    </li>
+    <li><a href="#6-key-的类型要求">6. key 的类型要求</a>
+      <ol>
+        <li><a href="#61-必须可比较comparable">6.1 必须可比较（comparable）</a></li>
+        <li><a href="#62-结构体作-key">6.2 结构体作 key</a></li>
+      </ol>
+    </li>
+    <li><a href="#7-并发不安全">7. 并发不安全</a>
+      <ol>
+        <li><a href="#71-现象fatal-error">7.1 现象：fatal error</a></li>
+        <li><a href="#72-原理hashwriting-标志位">7.2 原理：hashWriting 标志位</a></li>
+        <li><a href="#73-解决方案">7.3 解决方案</a></li>
+      </ol>
+    </li>
+    <li><a href="#8-syncmap-简介">8. sync.Map 简介</a>
+      <ol>
+        <li><a href="#81-适用场景">8.1 适用场景</a></li>
+        <li><a href="#82-双-store-结构read--dirty">8.2 双 store 结构（read / dirty）</a></li>
+        <li><a href="#83-用法">8.3 用法</a></li>
+      </ol>
+    </li>
+    <li><a href="#9-优化建议">9. 优化建议</a>
+      <ol>
+        <li><a href="#91-预分配容量">9.1 预分配容量</a></li>
+        <li><a href="#92-map-当集合set用">9.2 map 当集合（set）用</a></li>
+        <li><a href="#93-value-用指针还是结构体">9.3 value 用指针还是结构体</a></li>
+        <li><a href="#94-遍历中删除是安全的">9.4 遍历中删除是安全的</a></li>
+        <li><a href="#95-及时释放大-map">9.5 及时释放大 map</a></li>
+      </ol>
+    </li>
+    <li><a href="#10-高频面试题">10. 高频面试题</a></li>
+    <li><a href="#小结">小结</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><p>map 是 Go 中最常用的引用类型之一，底层是一张哈希表（hash table）。它读写平均 O(1)，但也隐藏着扩容、无序遍历、并发崩溃等诸多&quot;坑&quot;。本章从使用出发，深入 <code>runtime.hmap</code> / <code>bmap</code> 源码结构，讲清哈希、扩容、遍历随机化、并发不安全的底层原理，并给出优化建议与高频面试题解答。</p>
+<blockquote>
+<p>说明：本文源码结构以 Go 1.22 的 <code>runtime/map.go</code> 为准（Go 1.24 起 map 底层切换为 Swiss Table，字段有较大差异，文末单独说明）。理解经典 hmap/bmap 结构仍是掌握 map 原理和应对面试的基础。</p>
+</blockquote>
+<hr>
+<h1 id="1-map-基础用法">1. map 基础用法</h1>
+<h2 id="11-声明与初始化">1.1 声明与初始化</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kn">package</span> <span class="nx">main</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kn">import</span> <span class="s">&#34;fmt&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">main</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// 方式一：var 声明，得到 nil map（未初始化）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="kd">var</span> <span class="nx">m1</span> <span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kt">int</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">fmt</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="nx">m1</span> <span class="o">==</span> <span class="kc">nil</span><span class="p">)</span> <span class="c1">// true
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="c1">// m1[&#34;a&#34;] = 1          // panic: assignment to entry in nil map（写会 panic）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">fmt</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="nx">m1</span><span class="p">[</span><span class="s">&#34;a&#34;</span><span class="p">])</span>    <span class="c1">// 0     读 nil map 不 panic，返回零值
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// 方式二：make 初始化，可用
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">m2</span> <span class="o">:=</span> <span class="nb">make</span><span class="p">(</span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kt">int</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">m2</span><span class="p">[</span><span class="s">&#34;a&#34;</span><span class="p">]</span> <span class="p">=</span> <span class="mi">1</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// 方式三：make 带容量提示（预分配，减少扩容）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">m3</span> <span class="o">:=</span> <span class="nb">make</span><span class="p">(</span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kt">int</span><span class="p">,</span> <span class="mi">100</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// 方式四：字面量初始化
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">m4</span> <span class="o">:=</span> <span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kt">int</span><span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="s">&#34;one&#34;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">        <span class="s">&#34;two&#34;</span><span class="p">:</span> <span class="mi">2</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">fmt</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="nx">m3</span><span class="p">,</span> <span class="nx">m4</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><strong>关键点：<code>nil</code> map 可读不可写</strong>。读返回零值，写直接 panic。因此使用前务必 <code>make</code>。</p>
+<h2 id="12-增删改查">1.2 增删改查</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">main</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">m</span> <span class="o">:=</span> <span class="nb">make</span><span class="p">(</span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kt">int</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// 增 / 改：语法相同，存在则覆盖
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">m</span><span class="p">[</span><span class="s">&#34;age&#34;</span><span class="p">]</span> <span class="p">=</span> <span class="mi">18</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">m</span><span class="p">[</span><span class="s">&#34;age&#34;</span><span class="p">]</span> <span class="p">=</span> <span class="mi">20</span> <span class="c1">// 覆盖
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// 查
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">v</span> <span class="o">:=</span> <span class="nx">m</span><span class="p">[</span><span class="s">&#34;age&#34;</span><span class="p">]</span> <span class="c1">// 20
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">fmt</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="nx">v</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// comma ok：判断 key 是否存在（区分&#34;零值&#34;和&#34;不存在&#34;）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">if</span> <span class="nx">score</span><span class="p">,</span> <span class="nx">ok</span> <span class="o">:=</span> <span class="nx">m</span><span class="p">[</span><span class="s">&#34;score&#34;</span><span class="p">];</span> <span class="nx">ok</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">fmt</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="s">&#34;存在:&#34;</span><span class="p">,</span> <span class="nx">score</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">fmt</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="s">&#34;不存在，返回零值:&#34;</span><span class="p">,</span> <span class="nx">score</span><span class="p">)</span> <span class="c1">// 0
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// 删
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nb">delete</span><span class="p">(</span><span class="nx">m</span><span class="p">,</span> <span class="s">&#34;age&#34;</span><span class="p">)</span>           <span class="c1">// 删除存在的 key
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nb">delete</span><span class="p">(</span><span class="nx">m</span><span class="p">,</span> <span class="s">&#34;not-exist&#34;</span><span class="p">)</span>     <span class="c1">// 删除不存在的 key：安全，不 panic，无操作
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// len：键值对数量
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">fmt</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="nx">m</span><span class="p">))</span> <span class="c1">// 0
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span></code></pre></div><p><code>comma ok</code> 是判断&quot;存在性&quot;的唯一可靠手段。因为 <code>m[k]</code> 无论 key 是否存在都会返回一个值（不存在时返回值类型的零值），单靠返回值无法区分&quot;值恰好是零值&quot;和&quot;key 不存在&quot;两种情况。</p>
+<h2 id="13-遍历">1.3 遍历</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">main</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">m</span> <span class="o">:=</span> <span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kt">int</span><span class="p">{</span><span class="s">&#34;a&#34;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span> <span class="s">&#34;b&#34;</span><span class="p">:</span> <span class="mi">2</span><span class="p">,</span> <span class="s">&#34;c&#34;</span><span class="p">:</span> <span class="mi">3</span><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// 遍历 key + value
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">for</span> <span class="nx">k</span><span class="p">,</span> <span class="nx">v</span> <span class="o">:=</span> <span class="k">range</span> <span class="nx">m</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">fmt</span><span class="p">.</span><span class="nf">Printf</span><span class="p">(</span><span class="s">&#34;%s=%d\n&#34;</span><span class="p">,</span> <span class="nx">k</span><span class="p">,</span> <span class="nx">v</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// 只要 key
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">for</span> <span class="nx">k</span> <span class="o">:=</span> <span class="k">range</span> <span class="nx">m</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">_</span> <span class="p">=</span> <span class="nx">k</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><strong>注意：map 遍历顺序是随机的</strong>（原理见第 5 节）。若需要有序输出，应把 key 取出排序后再遍历。</p>
+<hr>
+<h1 id="2-map-底层数据结构">2. map 底层数据结构</h1>
+<p>Go 的 map 底层是&quot;数组 + 链表&quot;结构的哈希表：一个 <code>hmap</code> 头 + 一段 bucket（桶）数组，每个桶存 8 个键值对，桶满了用 overflow（溢出桶）拉链。</p>
+<h2 id="21-hmapmap-的头结构">2.1 hmap：map 的头结构</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// runtime/map.go（Go 1.22，简化）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kd">type</span> <span class="nx">hmap</span> <span class="kd">struct</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">count</span>     <span class="kt">int</span>    <span class="c1">// 元素个数，len(map) 直接返回它
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">flags</span>     <span class="kt">uint8</span>  <span class="c1">// 状态标志：是否正在写、是否正在扩容迁移等
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">B</span>         <span class="kt">uint8</span>  <span class="c1">// 桶数量的对数：桶数 = 2^B
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">noverflow</span> <span class="kt">uint16</span> <span class="c1">// 溢出桶的近似数量
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">hash0</span>     <span class="kt">uint32</span> <span class="c1">// 哈希种子，随机生成，防哈希碰撞攻击
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl">    <span class="nx">buckets</span>    <span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span> <span class="c1">// 指向桶数组，大小 2^B（元素为 bmap）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">oldbuckets</span> <span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span> <span class="c1">// 扩容时指向旧桶数组，平时为 nil
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">nevacuate</span>  <span class="kt">uintptr</span>        <span class="c1">// 渐进式迁移进度计数器（已迁移的旧桶数）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl">    <span class="nx">extra</span> <span class="o">*</span><span class="nx">mapextra</span> <span class="c1">// 溢出桶管理等额外信息
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span></code></pre></div><p>字段速查表：</p>
+<table>
+<thead>
+<tr>
+<th style="text-align:left">字段</th>
+<th style="text-align:left">含义</th>
+<th style="text-align:left">作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:left"><code>count</code></td>
+<td style="text-align:left">键值对数量</td>
+<td style="text-align:left"><code>len(m)</code> 的返回值</td>
+</tr>
+<tr>
+<td style="text-align:left"><code>flags</code></td>
+<td style="text-align:left">状态位</td>
+<td style="text-align:left">标记正在写 / 迭代 / 扩容</td>
+</tr>
+<tr>
+<td style="text-align:left"><code>B</code></td>
+<td style="text-align:left">桶数的对数</td>
+<td style="text-align:left">桶总数 = <code>2^B</code></td>
+</tr>
+<tr>
+<td style="text-align:left"><code>noverflow</code></td>
+<td style="text-align:left">溢出桶近似数</td>
+<td style="text-align:left">判断是否等量扩容</td>
+</tr>
+<tr>
+<td style="text-align:left"><code>hash0</code></td>
+<td style="text-align:left">哈希种子</td>
+<td style="text-align:left">每个 map 随机，防碰撞攻击</td>
+</tr>
+<tr>
+<td style="text-align:left"><code>buckets</code></td>
+<td style="text-align:left">当前桶数组指针</td>
+<td style="text-align:left">数据主存储</td>
+</tr>
+<tr>
+<td style="text-align:left"><code>oldbuckets</code></td>
+<td style="text-align:left">旧桶数组指针</td>
+<td style="text-align:left">扩容期间存在</td>
+</tr>
+<tr>
+<td style="text-align:left"><code>nevacuate</code></td>
+<td style="text-align:left">迁移进度</td>
+<td style="text-align:left">渐进式 rehash 用</td>
+</tr>
+</tbody>
+</table>
+<h2 id="22-bmap桶结构">2.2 bmap：桶结构</h2>
+<p>每个桶（bucket）就是一个 <code>bmap</code>，固定存储 <strong>8 个</strong> 键值对：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// runtime/map.go：编译期真实结构由编译器生成，源码里只有 tophash 头
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kd">type</span> <span class="nx">bmap</span> <span class="kd">struct</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">tophash</span> <span class="p">[</span><span class="mi">8</span><span class="p">]</span><span class="kt">uint8</span> <span class="c1">// 8 个槽，各存对应 key 哈希值的高 8 位
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="c1">// 以下字段编译期根据 K/V 类型动态生成，源码不可见：
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="c1">// keys     [8]K          // 8 个 key 连续存放
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="c1">// values   [8]V          // 8 个 value 连续存放
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="c1">// overflow *bmap         // 指向溢出桶
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span></code></pre></div><p><strong>关键设计：key 和 value 分开连续存放</strong>（8 个 key 挨着，8 个 value 挨着），而不是 <code>key/value/key/value</code> 交错。这样做是为了内存对齐紧凑，避免因对齐产生填充空洞。比如 <code>map[int64]int8</code>，若交错存储会因对齐浪费大量空间；分离存储则 key 区、value 区各自紧凑。</p>
+<h2 id="23-整体结构-ascii-图">2.3 整体结构 ASCII 图</h2>
+<pre tabindex="0"><code>hmap
+┌──────────────────────────────┐
+│ count     = 13               │
+│ B         = 2                │  ← 桶数 2^2=4
+│ hash0     = 0x9f3a...        │
+│ buckets  ──────────┐         │
+│ oldbuckets = nil   │         │
+└────────────────────┼─────────┘
+                     ▼
+        buckets 数组（4 个 bmap）
+   ┌────────┬────────┬────────┬────────┐
+   │ bucket0│ bucket1│ bucket2│ bucket3│
+   └────────┴───┬────┴────────┴────────┘
+                │ bucket1 内部（一个 bmap）：
+                ▼
+   ┌─────────────────────────────────────┐
+   │ tophash: [t0 t1 t2 t3 t4 t5 t6 t7]  │  ← 8 个高 8 位
+   ├─────────────────────────────────────┤
+   │ keys:    [k0 k1 k2 k3 k4 k5 k6 k7]  │  ← 8 个 key 连续
+   ├─────────────────────────────────────┤
+   │ values:  [v0 v1 v2 v3 v4 v5 v6 v7]  │  ← 8 个 value 连续
+   ├─────────────────────────────────────┤
+   │ overflow ─────────────┐             │  ← 满了指向溢出桶
+   └───────────────────────┼─────────────┘
+                           ▼
+                    ┌──────────────┐
+                    │ overflow bmap│（结构同上，继续拉链）
+                    └──────────────┘
+</code></pre><p>一个桶只能放 8 个 KV，第 9 个进来放不下时，会分配一个溢出桶挂在 <code>overflow</code> 指针上，形成链表。</p>
+<hr>
+<h1 id="3-哈希过程key-是如何定位的">3. 哈希过程：key 是如何定位的</h1>
+<p>查找 / 写入一个 key 时，runtime 会：</p>
+<ol>
+<li>用 <code>hash0</code> 种子 + key 计算出 64 位哈希值 <code>hash</code>；</li>
+<li>用哈希值的 <strong>低 B 位</strong> 决定落在哪个桶（<code>hash &amp; (2^B - 1)</code>）；</li>
+<li>用哈希值的 <strong>高 8 位</strong> 作为 <code>tophash</code>，在桶内 8 个槽里快速筛选；</li>
+<li>tophash 匹配后，再逐字节比较完整 key 确认。</li>
+</ol>
+<h2 id="31-定位公式">3.1 定位公式</h2>
+<pre tabindex="0"><code>假设 B = 4，则桶数 = 2^4 = 16。
+
+hash = 0x??..?? 6C   (64 位)
+                └┬┘
+       低 4 位 = 1100(b) = 12 → 落到 bucket[12]
+
+高 8 位 = tophash → 在 bucket[12] 的 tophash 数组里逐个比对，
+         命中的槽再比完整 key。
+</code></pre><p>为什么先比 tophash？因为 tophash 只有 1 字节，比较极快，可以在真正比较完整 key（可能是很长的字符串）之前先过滤掉绝大多数不匹配的槽，是一种&quot;廉价预筛选&quot;。</p>
+<h2 id="32-查找流程伪代码">3.2 查找流程（伪代码）</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// 查找 m[key] 的逻辑（简化自 runtime.mapaccess1）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kd">func</span> <span class="nf">mapaccess</span><span class="p">(</span><span class="nx">m</span> <span class="o">*</span><span class="nx">hmap</span><span class="p">,</span> <span class="nx">key</span> <span class="nx">K</span><span class="p">)</span> <span class="p">(</span><span class="nx">V</span><span class="p">,</span> <span class="kt">bool</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">m</span> <span class="o">==</span> <span class="kc">nil</span> <span class="o">||</span> <span class="nx">m</span><span class="p">.</span><span class="nx">count</span> <span class="o">==</span> <span class="mi">0</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="nx">zeroV</span><span class="p">,</span> <span class="kc">false</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">hash</span> <span class="o">:=</span> <span class="nf">hashFunc</span><span class="p">(</span><span class="nx">key</span><span class="p">,</span> <span class="nx">m</span><span class="p">.</span><span class="nx">hash0</span><span class="p">)</span>          <span class="c1">// 1. 算哈希
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">bucketMask</span> <span class="o">:=</span> <span class="nb">uintptr</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="o">&lt;&lt;</span><span class="nx">m</span><span class="p">.</span><span class="nx">B</span> <span class="o">-</span> <span class="mi">1</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">b</span> <span class="o">:=</span> <span class="nf">bucketAt</span><span class="p">(</span><span class="nx">m</span><span class="p">.</span><span class="nx">buckets</span><span class="p">,</span> <span class="nx">hash</span><span class="o">&amp;</span><span class="nx">bucketMask</span><span class="p">)</span> <span class="c1">// 2. 低 B 位定位桶
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// 若正在扩容且旧桶还没迁移，去旧桶找
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">if</span> <span class="nx">m</span><span class="p">.</span><span class="nx">oldbuckets</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">ob</span> <span class="o">:=</span> <span class="nf">oldBucketFor</span><span class="p">(</span><span class="nx">hash</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="p">!</span><span class="nf">evacuated</span><span class="p">(</span><span class="nx">ob</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">b</span> <span class="p">=</span> <span class="nx">ob</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="nx">top</span> <span class="o">:=</span> <span class="nf">tophash</span><span class="p">(</span><span class="nx">hash</span><span class="p">)</span>                    <span class="c1">// 3. 取高 8 位
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">for</span> <span class="p">;</span> <span class="nx">b</span> <span class="o">!=</span> <span class="kc">nil</span><span class="p">;</span> <span class="nx">b</span> <span class="p">=</span> <span class="nx">b</span><span class="p">.</span><span class="nx">overflow</span> <span class="p">{</span>        <span class="c1">// 遍历桶链（含溢出桶）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="k">for</span> <span class="nx">i</span> <span class="o">:=</span> <span class="mi">0</span><span class="p">;</span> <span class="nx">i</span> <span class="p">&lt;</span> <span class="mi">8</span><span class="p">;</span> <span class="nx">i</span><span class="o">++</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="k">if</span> <span class="nx">b</span><span class="p">.</span><span class="nx">tophash</span><span class="p">[</span><span class="nx">i</span><span class="p">]</span> <span class="o">!=</span> <span class="nx">top</span> <span class="p">{</span>        <span class="c1">// 4. 先比 tophash（快）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>                <span class="k">continue</span>
+</span></span><span class="line"><span class="cl">            <span class="p">}</span>
+</span></span><span class="line"><span class="cl">            <span class="k">if</span> <span class="nx">b</span><span class="p">.</span><span class="nx">keys</span><span class="p">[</span><span class="nx">i</span><span class="p">]</span> <span class="o">==</span> <span class="nx">key</span> <span class="p">{</span>           <span class="c1">// 5. tophash 命中再比完整 key
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>                <span class="k">return</span> <span class="nx">b</span><span class="p">.</span><span class="nx">values</span><span class="p">[</span><span class="nx">i</span><span class="p">],</span> <span class="kc">true</span>
+</span></span><span class="line"><span class="cl">            <span class="p">}</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="nx">zeroV</span><span class="p">,</span> <span class="kc">false</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><code>tophash</code> 还有一层特殊含义：取值 <code>0~4</code> 是保留的状态标记（如空槽 <code>emptyRest=0</code>、<code>emptyOne=1</code>、已迁移 <code>evacuatedX/Y</code> 等）。为避免与状态值冲突，真正的 key 高 8 位若算出来小于 5，会被加上 <code>minTopHash(5)</code> 偏移。</p>
+<hr>
+<h1 id="4-扩容机制">4. 扩容机制</h1>
+<p>map 元素越来越多时，桶会被塞满、溢出桶越拉越长，查找退化为 O(n)。runtime 通过扩容维持性能。扩容分两种：<strong>翻倍扩容</strong> 和 <strong>等量扩容</strong>。</p>
+<h2 id="41-触发条件">4.1 触发条件</h2>
+<p>在写入（<code>mapassign</code>）时检查，满足任一即触发扩容：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// 简化逻辑
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">if</span> <span class="p">!</span><span class="nf">growing</span><span class="p">(</span><span class="nx">h</span><span class="p">)</span> <span class="o">&amp;&amp;</span> <span class="p">(</span><span class="nf">overLoadFactor</span><span class="p">(</span><span class="nx">h</span><span class="p">.</span><span class="nx">count</span><span class="o">+</span><span class="mi">1</span><span class="p">,</span> <span class="nx">h</span><span class="p">.</span><span class="nx">B</span><span class="p">)</span> <span class="o">||</span> <span class="nf">tooManyOverflowBuckets</span><span class="p">(</span><span class="nx">h</span><span class="p">.</span><span class="nx">noverflow</span><span class="p">,</span> <span class="nx">h</span><span class="p">.</span><span class="nx">B</span><span class="p">))</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nf">hashGrow</span><span class="p">(</span><span class="nx">h</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><table>
+<thead>
+<tr>
+<th style="text-align:left">触发条件</th>
+<th style="text-align:left">判断依据</th>
+<th style="text-align:left">扩容类型</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:left"><strong>负载因子超标</strong></td>
+<td style="text-align:left"><code>count / 2^B &gt; 6.5</code></td>
+<td style="text-align:left">翻倍扩容（B+1）</td>
+</tr>
+<tr>
+<td style="text-align:left"><strong>溢出桶过多</strong></td>
+<td style="text-align:left">溢出桶数量过多（B≤15 时约等于桶数）</td>
+<td style="text-align:left">等量扩容（B 不变）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>负载因子（load factor）= 元素个数 / 桶数</strong>。Go 设定阈值 <code>6.5</code>（源码常量 <code>loadFactorNum=13, loadFactorDen=2</code>，即 13/2）。为什么是 6.5 而不是 1？因为每个桶能存 8 个，平均装到 6.5 个再扩容，是&quot;空间利用率&quot;和&quot;冲突查找成本&quot;权衡后的经验值：太小浪费内存，太大溢出桶太长影响性能。</p>
+<h2 id="42-翻倍扩容负载因子触发">4.2 翻倍扩容（负载因子触发）</h2>
+<p>元素太多导致桶平均装载过高时，桶数量翻倍（<code>B → B+1</code>，桶数 <code>×2</code>），把元素重新分散：</p>
+<pre tabindex="0"><code>扩容前 B=2（4 个桶）        扩容后 B=3（8 个桶）
+┌──┬──┬──┬──┐             ┌──┬──┬──┬──┬──┬──┬──┬──┐
+│0 │1 │2 │3 │    ──►      │0 │1 │2 │3 │4 │5 │6 │7 │
+└──┴──┴──┴──┘             └──┴──┴──┴──┴──┴──┴──┴──┘
+
+旧 bucket[i] 里的元素，会根据 hash 新增的那一位（第 B 位），
+分裂到新的 bucket[i]（该位为 0）和 bucket[i + 2^oldB]（该位为 1）。
+</code></pre><h2 id="43-等量扩容溢出桶过多触发">4.3 等量扩容（溢出桶过多触发）</h2>
+<p>有一种情况：元素个数没超负载因子，但溢出桶特别多——通常是因为大量 <code>插入后又删除</code>，导致桶里&quot;空洞&quot;很多、数据稀疏地散在一长串溢出桶里，查找要遍历很长的链。</p>
+<p>此时 <code>B</code> 不变（桶数不变），只是重新分配一套新桶，把数据 <strong>重新紧凑排列</strong>（<code>sameSizeGrow</code>），把稀疏的溢出桶数据挤回主桶，减少溢出链长度。</p>
+<pre tabindex="0"><code>等量扩容：桶数不变，只是&#34;整理房间&#34;
+旧：bucket0 → overflow → overflow → overflow（数据稀疏）
+新：bucket0（数据紧凑，overflow 链变短甚至消失）
+</code></pre><h2 id="44-渐进式-rehashevacuate-迁移">4.4 渐进式 rehash（evacuate 迁移）</h2>
+<p><strong>关键：Go 不会在触发扩容时一次性搬完所有数据</strong>（否则元素多时会造成明显卡顿）。而是采用渐进式迁移：</p>
+<ol>
+<li><code>hashGrow</code> 只是分配好新桶 <code>buckets</code>，把老桶挂到 <code>oldbuckets</code>，并置扩容标志；</li>
+<li>之后每次 <strong>写入 / 删除</strong> 操作，顺带迁移 1~2 个旧桶（<code>evacuate</code>）；</li>
+<li>查找时若旧桶未迁移，去旧桶找；</li>
+<li>用 <code>nevacuate</code> 记录迁移进度，全部迁移完后释放 <code>oldbuckets</code>。</li>
+</ol>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// 每次 mapassign / mapdelete 时调用，分摊迁移成本
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kd">func</span> <span class="nf">growWork</span><span class="p">(</span><span class="nx">h</span> <span class="o">*</span><span class="nx">hmap</span><span class="p">,</span> <span class="nx">bucket</span> <span class="kt">uintptr</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// 迁移当前正在操作的 bucket 对应的旧桶
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nf">evacuate</span><span class="p">(</span><span class="nx">h</span><span class="p">,</span> <span class="nx">bucket</span><span class="o">&amp;</span><span class="nx">h</span><span class="p">.</span><span class="nf">oldbucketmask</span><span class="p">())</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// 若仍在扩容，再多迁移一个，加速收尾
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">if</span> <span class="nx">h</span><span class="p">.</span><span class="nf">growing</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nf">evacuate</span><span class="p">(</span><span class="nx">h</span><span class="p">,</span> <span class="nx">h</span><span class="p">.</span><span class="nx">nevacuate</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>迁移期间，同一个 map 里 <code>buckets</code>（新）和 <code>oldbuckets</code>（旧）同时存在，所有读写都要兼顾两边，这也是 map 结构比 slice 复杂得多的原因。</p>
+<p><strong>这解释了一个常见现象：扩容后 map 占用的内存不会立即回收，且遍历顺序会变。</strong></p>
+<hr>
+<h1 id="5-为什么遍历是无序的">5. 为什么遍历是无序的</h1>
+<p>map 遍历无序 <strong>是 Go 故意设计的</strong>，不是&quot;实现副作用&quot;。</p>
+<h2 id="51-原因">5.1 原因</h2>
+<ol>
+<li><strong>物理上本就无序</strong>：元素按哈希值散布在桶里，key 在桶中的物理位置与插入顺序无关。</li>
+<li><strong>runtime 主动随机化起始点</strong>：<code>mapiterinit</code> 每次遍历都会随机选一个起始桶（<code>bucket</code>）和桶内起始槽（<code>offset</code>），然后环形遍历。</li>
+</ol>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// runtime.mapiterinit 简化：随机起点
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kd">func</span> <span class="nf">mapiterinit</span><span class="p">(</span><span class="nx">t</span> <span class="o">*</span><span class="nx">maptype</span><span class="p">,</span> <span class="nx">h</span> <span class="o">*</span><span class="nx">hmap</span><span class="p">,</span> <span class="nx">it</span> <span class="o">*</span><span class="nx">hiter</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">r</span> <span class="o">:=</span> <span class="nb">uintptr</span><span class="p">(</span><span class="nf">rand</span><span class="p">())</span>          <span class="c1">// 随机数
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">it</span><span class="p">.</span><span class="nx">startBucket</span> <span class="p">=</span> <span class="nx">r</span> <span class="o">&amp;</span> <span class="nf">bucketMask</span><span class="p">(</span><span class="nx">h</span><span class="p">.</span><span class="nx">B</span><span class="p">)</span> <span class="c1">// 随机起始桶
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">it</span><span class="p">.</span><span class="nx">offset</span> <span class="p">=</span> <span class="nb">uint8</span><span class="p">(</span><span class="nx">r</span> <span class="o">&gt;&gt;</span> <span class="nx">h</span><span class="p">.</span><span class="nx">B</span> <span class="o">&amp;</span> <span class="mi">7</span><span class="p">)</span>      <span class="c1">// 桶内随机起始槽（0~7）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="c1">// ... 从 startBucket、offset 开始环形遍历
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span></code></pre></div><h2 id="52-为什么要故意打乱">5.2 为什么要故意打乱</h2>
+<p>Go 团队担心：如果遍历顺序碰巧稳定，开发者会 <strong>无意中依赖这个顺序</strong> 写出代码，一旦哈希实现变化（比如扩容后顺序变了）就出 bug。于是干脆每次都随机，逼你&quot;永远不要依赖遍历顺序&quot;。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// 验证：连续两次遍历，顺序不同
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kd">func</span> <span class="nf">main</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">m</span> <span class="o">:=</span> <span class="kd">map</span><span class="p">[</span><span class="kt">int</span><span class="p">]</span><span class="kt">int</span><span class="p">{}</span>
+</span></span><span class="line"><span class="cl">    <span class="k">for</span> <span class="nx">i</span> <span class="o">:=</span> <span class="mi">0</span><span class="p">;</span> <span class="nx">i</span> <span class="p">&lt;</span> <span class="mi">10</span><span class="p">;</span> <span class="nx">i</span><span class="o">++</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">m</span><span class="p">[</span><span class="nx">i</span><span class="p">]</span> <span class="p">=</span> <span class="nx">i</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">fmt</span><span class="p">.</span><span class="nf">Print</span><span class="p">(</span><span class="s">&#34;第一次: &#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">for</span> <span class="nx">k</span> <span class="o">:=</span> <span class="k">range</span> <span class="nx">m</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">fmt</span><span class="p">.</span><span class="nf">Print</span><span class="p">(</span><span class="nx">k</span><span class="p">,</span> <span class="s">&#34; &#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">fmt</span><span class="p">.</span><span class="nf">Print</span><span class="p">(</span><span class="s">&#34;\n第二次: &#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">for</span> <span class="nx">k</span> <span class="o">:=</span> <span class="k">range</span> <span class="nx">m</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">fmt</span><span class="p">.</span><span class="nf">Print</span><span class="p">(</span><span class="nx">k</span><span class="p">,</span> <span class="s">&#34; &#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// 两次输出顺序几乎必然不同
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span></code></pre></div><h2 id="53-需要有序怎么办">5.3 需要有序怎么办</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kn">import</span> <span class="s">&#34;sort&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">main</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">m</span> <span class="o">:=</span> <span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kt">int</span><span class="p">{</span><span class="s">&#34;c&#34;</span><span class="p">:</span> <span class="mi">3</span><span class="p">,</span> <span class="s">&#34;a&#34;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span> <span class="s">&#34;b&#34;</span><span class="p">:</span> <span class="mi">2</span><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// 把 key 收集出来排序
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">keys</span> <span class="o">:=</span> <span class="nb">make</span><span class="p">([]</span><span class="kt">string</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="nx">m</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl">    <span class="k">for</span> <span class="nx">k</span> <span class="o">:=</span> <span class="k">range</span> <span class="nx">m</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">keys</span> <span class="p">=</span> <span class="nb">append</span><span class="p">(</span><span class="nx">keys</span><span class="p">,</span> <span class="nx">k</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">sort</span><span class="p">.</span><span class="nf">Strings</span><span class="p">(</span><span class="nx">keys</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="k">for</span> <span class="nx">_</span><span class="p">,</span> <span class="nx">k</span> <span class="o">:=</span> <span class="k">range</span> <span class="nx">keys</span> <span class="p">{</span> <span class="c1">// 按 key 有序遍历
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="nx">fmt</span><span class="p">.</span><span class="nf">Printf</span><span class="p">(</span><span class="s">&#34;%s=%d\n&#34;</span><span class="p">,</span> <span class="nx">k</span><span class="p">,</span> <span class="nx">m</span><span class="p">[</span><span class="nx">k</span><span class="p">])</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><hr>
+<h1 id="6-key-的类型要求">6. key 的类型要求</h1>
+<h2 id="61-必须可比较comparable">6.1 必须可比较（comparable）</h2>
+<p>map 的 key 必须支持 <code>==</code> / <code>!=</code> 比较（因为定位时要比较完整 key）。<strong>不可比较的类型不能作 key</strong>：</p>
+<table>
+<thead>
+<tr>
+<th style="text-align:left">可作 key</th>
+<th style="text-align:left">不可作 key</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:left">布尔、整型、浮点、复数</td>
+<td style="text-align:left">slice（切片）</td>
+</tr>
+<tr>
+<td style="text-align:left">字符串</td>
+<td style="text-align:left">map</td>
+</tr>
+<tr>
+<td style="text-align:left">指针、channel</td>
+<td style="text-align:left">function（函数）</td>
+</tr>
+<tr>
+<td style="text-align:left">接口（动态类型可比较时）</td>
+<td style="text-align:left">含上述字段的数组 / 结构体</td>
+</tr>
+<tr>
+<td style="text-align:left">全部字段可比较的结构体、数组</td>
+<td style="text-align:left"></td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// 编译错误示例
+</span></span></span><span class="line"><span class="cl"><span class="c1">// m1 := map[[]int]string{}       // invalid map key type []int
+</span></span></span><span class="line"><span class="cl"><span class="c1">// m2 := map[func()]int{}         // invalid map key type func()
+</span></span></span><span class="line"><span class="cl"><span class="c1">// m3 := map[map[int]int]bool{}   // invalid map key type map[int]int
+</span></span></span></code></pre></div><h2 id="62-结构体作-key">6.2 结构体作 key</h2>
+<p>结构体所有字段都可比较时，可作 key，按字段逐个比较：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">type</span> <span class="nx">Point</span> <span class="kd">struct</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">X</span><span class="p">,</span> <span class="nx">Y</span> <span class="kt">int</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">main</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">grid</span> <span class="o">:=</span> <span class="kd">map</span><span class="p">[</span><span class="nx">Point</span><span class="p">]</span><span class="kt">string</span><span class="p">{}</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">grid</span><span class="p">[</span><span class="nx">Point</span><span class="p">{</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">}]</span> <span class="p">=</span> <span class="s">&#34;A&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">grid</span><span class="p">[</span><span class="nx">Point</span><span class="p">{</span><span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">}]</span> <span class="p">=</span> <span class="s">&#34;B&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">fmt</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="nx">grid</span><span class="p">[</span><span class="nx">Point</span><span class="p">{</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">}])</span> <span class="c1">// A
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// 注意：结构体是值语义，字段值全等才算同一个 key
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">fmt</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="nx">grid</span><span class="p">[</span><span class="nx">Point</span><span class="p">{</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">}]</span> <span class="o">==</span> <span class="s">&#34;A&#34;</span><span class="p">)</span> <span class="c1">// true
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span></code></pre></div><blockquote>
+<p>陷阱：如果结构体里含 slice/map/func 字段，整个结构体就不可比较，不能作 key。含浮点字段作 key 也要小心 <code>NaN != NaN</code>。</p>
+</blockquote>
+<hr>
+<h1 id="7-并发不安全">7. 并发不安全</h1>
+<h2 id="71-现象fatal-error">7.1 现象：fatal error</h2>
+<p>map <strong>不是并发安全的</strong>。多个 goroutine 同时读写同一个 map，会直接 crash（不是 panic，是无法 recover 的 fatal error）：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">main</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">m</span> <span class="o">:=</span> <span class="nb">make</span><span class="p">(</span><span class="kd">map</span><span class="p">[</span><span class="kt">int</span><span class="p">]</span><span class="kt">int</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// 一个 goroutine 写
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">go</span> <span class="kd">func</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">for</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">m</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="p">=</span> <span class="mi">1</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}()</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// 另一个 goroutine 读
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">go</span> <span class="kd">func</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">for</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">_</span> <span class="p">=</span> <span class="nx">m</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}()</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="k">select</span> <span class="p">{}</span> <span class="c1">// 阻塞主协程
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="c1">// 运行一会儿必然崩溃：
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="c1">// fatal error: concurrent map read and map write
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span></code></pre></div><h2 id="72-原理hashwriting-标志位">7.2 原理：hashWriting 标志位</h2>
+<p>runtime 在 map 里用 <code>flags</code> 的 <code>hashWriting</code> 位（值为 <code>4</code>）做&quot;写检测&quot;。<strong>写操作开始时置位，结束时清位</strong>；任何读写操作开始时都会检查该位，发现别人正在写就 <code>fatal</code>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// runtime.mapassign 简化
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kd">func</span> <span class="nf">mapassign</span><span class="p">(</span><span class="nx">t</span> <span class="o">*</span><span class="nx">maptype</span><span class="p">,</span> <span class="nx">h</span> <span class="o">*</span><span class="nx">hmap</span><span class="p">,</span> <span class="nx">key</span> <span class="nx">K</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">h</span><span class="p">.</span><span class="nx">flags</span><span class="o">&amp;</span><span class="nx">hashWriting</span> <span class="o">!=</span> <span class="mi">0</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nf">fatal</span><span class="p">(</span><span class="s">&#34;concurrent map writes&#34;</span><span class="p">)</span> <span class="c1">// 别人也在写 → 崩
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">h</span><span class="p">.</span><span class="nx">flags</span> <span class="p">^=</span> <span class="nx">hashWriting</span> <span class="c1">// 进入写：置位
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="c1">// ... 执行写入 ...
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">h</span><span class="p">.</span><span class="nx">flags</span> <span class="o">&amp;^=</span> <span class="nx">hashWriting</span> <span class="c1">// 退出写：清位
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// runtime.mapaccess 简化
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kd">func</span> <span class="nf">mapaccess</span><span class="p">(</span><span class="nx">t</span> <span class="o">*</span><span class="nx">maptype</span><span class="p">,</span> <span class="nx">h</span> <span class="o">*</span><span class="nx">hmap</span><span class="p">,</span> <span class="nx">key</span> <span class="nx">K</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">h</span><span class="p">.</span><span class="nx">flags</span><span class="o">&amp;</span><span class="nx">hashWriting</span> <span class="o">!=</span> <span class="mi">0</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nf">fatal</span><span class="p">(</span><span class="s">&#34;concurrent map read and map write&#34;</span><span class="p">)</span> <span class="c1">// 有人在写 → 崩
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// ... 执行读取 ...
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span></code></pre></div><p><strong>为什么设计成直接 fatal 而不是加锁？</strong> 因为加锁会让所有 map 都付出性能代价，而绝大多数 map 只在单 goroutine 内使用。Go 选择&quot;不安全但快&quot;，并用这个检测机制帮你 <strong>尽早暴露</strong> 并发误用，而不是让它悄悄产生数据损坏。注意：这个检测是尽力而为的，不保证 100% 检测到所有竞态，最可靠的方式是用 <code>go run -race</code> 检测。</p>
+<h2 id="73-解决方案">7.3 解决方案</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// 方案一：sync.RWMutex 保护
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kd">type</span> <span class="nx">SafeMap</span> <span class="kd">struct</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">mu</span> <span class="nx">sync</span><span class="p">.</span><span class="nx">RWMutex</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">m</span>  <span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kt">int</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="p">(</span><span class="nx">s</span> <span class="o">*</span><span class="nx">SafeMap</span><span class="p">)</span> <span class="nf">Get</span><span class="p">(</span><span class="nx">k</span> <span class="kt">string</span><span class="p">)</span> <span class="p">(</span><span class="kt">int</span><span class="p">,</span> <span class="kt">bool</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">s</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nf">RLock</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">    <span class="k">defer</span> <span class="nx">s</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nf">RUnlock</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">v</span><span class="p">,</span> <span class="nx">ok</span> <span class="o">:=</span> <span class="nx">s</span><span class="p">.</span><span class="nx">m</span><span class="p">[</span><span class="nx">k</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="nx">v</span><span class="p">,</span> <span class="nx">ok</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="p">(</span><span class="nx">s</span> <span class="o">*</span><span class="nx">SafeMap</span><span class="p">)</span> <span class="nf">Set</span><span class="p">(</span><span class="nx">k</span> <span class="kt">string</span><span class="p">,</span> <span class="nx">v</span> <span class="kt">int</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">s</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nf">Lock</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">    <span class="k">defer</span> <span class="nx">s</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nf">Unlock</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">s</span><span class="p">.</span><span class="nx">m</span><span class="p">[</span><span class="nx">k</span><span class="p">]</span> <span class="p">=</span> <span class="nx">v</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// 方案二：sync.Map（见下节）
+</span></span></span></code></pre></div><hr>
+<h1 id="8-syncmap-简介">8. sync.Map 简介</h1>
+<p>标准库 <code>sync.Map</code> 是并发安全的 map，无需自己加锁。</p>
+<h2 id="81-适用场景">8.1 适用场景</h2>
+<p><code>sync.Map</code> 并非在所有场景都比 <code>map + Mutex</code> 快，它针对两类场景做了优化：</p>
+<ol>
+<li><strong>读多写少</strong>：key 一旦写入很少改动（如缓存、配置）；</li>
+<li><strong>键值稳定 / 多 goroutine 各操作不相交的 key 集合</strong>。</li>
+</ol>
+<p>在写频繁的场景，<code>sync.Map</code> 反而可能比 <code>RWMutex + map</code> 慢。</p>
+<h2 id="82-双-store-结构read--dirty">8.2 双 store 结构（read / dirty）</h2>
+<p><code>sync.Map</code> 的核心思想是 <strong>读写分离的两份存储</strong>：</p>
+<pre tabindex="0"><code>sync.Map
+┌────────────────────────────────────────┐
+│ read   (atomic.Value)                  │  ← 只读、无锁访问
+│   readOnly snapshot (immutable)        │  ← 一个不可变的 readOnly 快照
+│   lock-free on hit, atomic ops         │  ← 命中读时完全无锁，靠原子操作
+├────────────────────────────────────────┤
+│ dirty  (map + mu)                      │  ← 加锁访问
+│   newest writable data                 │  ← 最新的可写数据，含 read 里没有的新 key
+├────────────────────────────────────────┤
+│ misses                                 │  ← read 未命中次数计数
+│   promote dirty -&gt; read when high      │  ← miss 多了就把 dirty 提升为新的 read
+└────────────────────────────────────────┘
+</code></pre><p>工作机制概览：</p>
+<ul>
+<li><strong>读</strong>：先无锁查 <code>read</code>，命中直接返回（这是它快的关键）；未命中再加锁查 <code>dirty</code>，并累加 <code>misses</code>。</li>
+<li><strong>写</strong>：更新已存在的 key 可能走原子操作；写新 key 则加锁写入 <code>dirty</code>。</li>
+<li><strong>提升</strong>：当 <code>misses</code> 达到 <code>dirty</code> 大小时，把 <code>dirty</code> 整体升级为新的 <code>read</code>，<code>dirty</code> 置空。</li>
+</ul>
+<h2 id="83-用法">8.3 用法</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kn">import</span> <span class="s">&#34;sync&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">main</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="kd">var</span> <span class="nx">m</span> <span class="nx">sync</span><span class="p">.</span><span class="nx">Map</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="nx">m</span><span class="p">.</span><span class="nf">Store</span><span class="p">(</span><span class="s">&#34;a&#34;</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>              <span class="c1">// 写
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">v</span><span class="p">,</span> <span class="nx">ok</span> <span class="o">:=</span> <span class="nx">m</span><span class="p">.</span><span class="nf">Load</span><span class="p">(</span><span class="s">&#34;a&#34;</span><span class="p">)</span>         <span class="c1">// 读
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">fmt</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="nx">v</span><span class="p">,</span> <span class="nx">ok</span><span class="p">)</span>           <span class="c1">// 1 true
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// 不存在才写，返回实际值和是否已存在
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">actual</span><span class="p">,</span> <span class="nx">loaded</span> <span class="o">:=</span> <span class="nx">m</span><span class="p">.</span><span class="nf">LoadOrStore</span><span class="p">(</span><span class="s">&#34;a&#34;</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">fmt</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="nx">actual</span><span class="p">,</span> <span class="nx">loaded</span><span class="p">)</span>  <span class="c1">// 1 true（a 已存在，不覆盖）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl">    <span class="nx">m</span><span class="p">.</span><span class="nf">Delete</span><span class="p">(</span><span class="s">&#34;a&#34;</span><span class="p">)</span>                <span class="c1">// 删
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// 遍历（注意：不保证顺序，遍历期间的并发写不保证可见）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">m</span><span class="p">.</span><span class="nf">Range</span><span class="p">(</span><span class="kd">func</span><span class="p">(</span><span class="nx">k</span><span class="p">,</span> <span class="nx">v</span> <span class="nx">any</span><span class="p">)</span> <span class="kt">bool</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">fmt</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="nx">k</span><span class="p">,</span> <span class="nx">v</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="kc">true</span> <span class="c1">// 返回 false 可提前终止
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="p">})</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><blockquote>
+<p><code>sync.Map</code> 的 key/value 都是 <code>any</code>，会有装箱开销和类型断言，无法用 <code>len()</code>，也不能像普通 map 那样下标访问。Go 1.9 引入，Go 1.24 起底层用 <code>HashTrieMap</code> 重写，性能进一步提升。本系列后续并发章节会展开对比。</p>
+</blockquote>
+<hr>
+<h1 id="9-优化建议">9. 优化建议</h1>
+<h2 id="91-预分配容量">9.1 预分配容量</h2>
+<p>已知大致规模时，用 <code>make(map, hint)</code> 预分配，避免多次扩容和 rehash：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// 差：从 0 开始，随着插入反复扩容
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">m</span> <span class="o">:=</span> <span class="nb">make</span><span class="p">(</span><span class="kd">map</span><span class="p">[</span><span class="kt">int</span><span class="p">]</span><span class="kt">int</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="k">for</span> <span class="nx">i</span> <span class="o">:=</span> <span class="mi">0</span><span class="p">;</span> <span class="nx">i</span> <span class="p">&lt;</span> <span class="mi">100000</span><span class="p">;</span> <span class="nx">i</span><span class="o">++</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">m</span><span class="p">[</span><span class="nx">i</span><span class="p">]</span> <span class="p">=</span> <span class="nx">i</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// 好：一次性分配足够桶，减少扩容次数
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">m</span> <span class="o">:=</span> <span class="nb">make</span><span class="p">(</span><span class="kd">map</span><span class="p">[</span><span class="kt">int</span><span class="p">]</span><span class="kt">int</span><span class="p">,</span> <span class="mi">100000</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="k">for</span> <span class="nx">i</span> <span class="o">:=</span> <span class="mi">0</span><span class="p">;</span> <span class="nx">i</span> <span class="p">&lt;</span> <span class="mi">100000</span><span class="p">;</span> <span class="nx">i</span><span class="o">++</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">m</span><span class="p">[</span><span class="nx">i</span><span class="p">]</span> <span class="p">=</span> <span class="nx">i</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><h2 id="92-map-当集合set用">9.2 map 当集合（set）用</h2>
+<p>Go 没有内置 set，用 <code>map[T]struct{}</code> 模拟，<code>struct{}</code> 不占空间（0 字节）：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">main</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">set</span> <span class="o">:=</span> <span class="nb">make</span><span class="p">(</span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kd">struct</span><span class="p">{})</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="nx">set</span><span class="p">[</span><span class="s">&#34;a&#34;</span><span class="p">]</span> <span class="p">=</span> <span class="kd">struct</span><span class="p">{}{}</span> <span class="c1">// 添加
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">set</span><span class="p">[</span><span class="s">&#34;b&#34;</span><span class="p">]</span> <span class="p">=</span> <span class="kd">struct</span><span class="p">{}{}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="nx">_</span><span class="p">,</span> <span class="nx">exists</span> <span class="o">:=</span> <span class="nx">set</span><span class="p">[</span><span class="s">&#34;a&#34;</span><span class="p">]</span> <span class="c1">// 判断存在
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">fmt</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="nx">exists</span><span class="p">)</span>   <span class="c1">// true
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl">    <span class="nb">delete</span><span class="p">(</span><span class="nx">set</span><span class="p">,</span> <span class="s">&#34;a&#34;</span><span class="p">)</span>      <span class="c1">// 删除
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">fmt</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="nx">set</span><span class="p">))</span> <span class="c1">// 1
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span></code></pre></div><p>用 <code>struct{}</code> 而非 <code>bool</code>：value 完全不占内存，语义也更清晰（只关心 key 是否存在）。</p>
+<h2 id="93-value-用指针还是结构体">9.3 value 用指针还是结构体</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">type</span> <span class="nx">User</span> <span class="kd">struct</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">Name</span> <span class="kt">string</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">Age</span>  <span class="kt">int</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// ... 很多字段
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// 方式一：值存储。注意 map 的 value 不可取地址，不能直接改字段
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">m1</span> <span class="o">:=</span> <span class="kd">map</span><span class="p">[</span><span class="kt">int</span><span class="p">]</span><span class="nx">User</span><span class="p">{}</span>
+</span></span><span class="line"><span class="cl"><span class="nx">m1</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="p">=</span> <span class="nx">User</span><span class="p">{</span><span class="nx">Name</span><span class="p">:</span> <span class="s">&#34;Tom&#34;</span><span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="c1">// m1[1].Age = 20   // 编译错误：cannot assign to struct field m1[1].Age
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">u</span> <span class="o">:=</span> <span class="nx">m1</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>           <span class="c1">// 只能整体取出，改完再整体放回
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">u</span><span class="p">.</span><span class="nx">Age</span> <span class="p">=</span> <span class="mi">20</span>
+</span></span><span class="line"><span class="cl"><span class="nx">m1</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="p">=</span> <span class="nx">u</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// 方式二：存指针，可直接改字段，且赋值/取出不拷贝整个结构体
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">m2</span> <span class="o">:=</span> <span class="kd">map</span><span class="p">[</span><span class="kt">int</span><span class="p">]</span><span class="o">*</span><span class="nx">User</span><span class="p">{}</span>
+</span></span><span class="line"><span class="cl"><span class="nx">m2</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="p">=</span> <span class="o">&amp;</span><span class="nx">User</span><span class="p">{</span><span class="nx">Name</span><span class="p">:</span> <span class="s">&#34;Tom&#34;</span><span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="nx">m2</span><span class="p">[</span><span class="mi">1</span><span class="p">].</span><span class="nx">Age</span> <span class="p">=</span> <span class="mi">20</span>       <span class="c1">// OK，直接改
+</span></span></span></code></pre></div><p><strong>大结构体建议存指针</strong>：一是能直接修改字段，二是赋值 / 查找时避免整块拷贝。小结构体存值也没问题。</p>
+<h2 id="94-遍历中删除是安全的">9.4 遍历中删除是安全的</h2>
+<p>Go 明确允许在 <code>range</code> 遍历过程中 <code>delete</code> 当前或其他 key（但新增 key 是否会被遍历到不确定）：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">main</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">m</span> <span class="o">:=</span> <span class="kd">map</span><span class="p">[</span><span class="kt">int</span><span class="p">]</span><span class="kt">int</span><span class="p">{</span><span class="mi">1</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">:</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">:</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">:</span> <span class="mi">4</span><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// 遍历删除偶数 key —— 安全
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">for</span> <span class="nx">k</span> <span class="o">:=</span> <span class="k">range</span> <span class="nx">m</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="nx">k</span><span class="o">%</span><span class="mi">2</span> <span class="o">==</span> <span class="mi">0</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="nb">delete</span><span class="p">(</span><span class="nx">m</span><span class="p">,</span> <span class="nx">k</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">fmt</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="nx">m</span><span class="p">)</span> <span class="c1">// map[1:1 3:3]
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span></code></pre></div><blockquote>
+<p>与 slice 不同：slice 边遍历边删要小心索引错位，而 map 遍历删除由 runtime 保证安全。但遍历中 <strong>新增</strong> key 的可见性是未定义的，应避免。</p>
+</blockquote>
+<h2 id="95-及时释放大-map">9.5 及时释放大 map</h2>
+<p>删除元素不会缩小 map 的桶数组（<code>B</code> 不会减小），大 map <code>delete</code> 后内存不释放。若要彻底释放，直接置 <code>nil</code> 或重建：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="nx">m</span> <span class="p">=</span> <span class="kc">nil</span>                    <span class="c1">// 整体丢弃，等待 GC
+</span></span></span><span class="line"><span class="cl"><span class="c1">// 或
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">m</span> <span class="p">=</span> <span class="nb">make</span><span class="p">(</span><span class="kd">map</span><span class="p">[</span><span class="kt">int</span><span class="p">]</span><span class="kt">int</span><span class="p">)</span>      <span class="c1">// 重建一个小的
+</span></span></span></code></pre></div><hr>
+<h1 id="10-高频面试题">10. 高频面试题</h1>
+<p><strong>Q1：map 的底层数据结构是什么？</strong></p>
+<p>底层是哈希表。核心是 <code>hmap</code> 头结构（记录 count、B、buckets 指针、hash0 种子等），数据存在一段桶数组里，每个桶是 <code>bmap</code>，固定存 8 个键值对。桶内 key、value 分区连续存放（不交错，为了内存对齐紧凑）。桶满了用溢出桶（overflow）拉成链表。定位时低 B 位选桶、高 8 位（tophash）在桶内快速筛选。</p>
+<p><strong>Q2：map 的扩容触发条件和过程？</strong></p>
+<p>两种触发条件（写入时检查）：</p>
+<ol>
+<li><strong>翻倍扩容</strong>：负载因子 <code>count/2^B &gt; 6.5</code>，桶数翻倍（B+1），把元素分散；</li>
+<li><strong>等量扩容</strong>：溢出桶过多（数据稀疏，通常因大量插入后删除），桶数不变，重新紧凑排列（sameSizeGrow）。</li>
+</ol>
+<p>过程是 <strong>渐进式</strong> 的：<code>hashGrow</code> 只分配新桶、把旧桶挂到 <code>oldbuckets</code>；之后每次写 / 删操作顺带迁移 1~2 个旧桶（<code>evacuate</code>），用 <code>nevacuate</code> 记录进度，避免一次性搬迁造成卡顿。迁移期间新旧桶并存，读写都要兼顾。</p>
+<p><strong>Q3：为什么 map 遍历是无序的？</strong></p>
+<p>两层原因：一是元素按哈希值散布，物理上本就无序；二是 runtime <strong>故意</strong> 在每次遍历时随机选起始桶和起始槽（<code>mapiterinit</code>）。目的是防止开发者依赖遍历顺序写代码，避免哈希实现变化后出 bug。需要有序就把 key 取出排序。</p>
+<p><strong>Q4：为什么 map 并发读写会崩溃？如何检测？</strong></p>
+<p>runtime 用 <code>flags</code> 的 <code>hashWriting</code> 位标记&quot;正在写&quot;。写操作开始置位、结束清位；任何读写开始时都会检查该位，发现别人正在写就 <code>fatal error: concurrent map read and map write</code>。这是不可 recover 的致命错误。设计成 fatal 而非加锁，是为了不让绝大多数单协程使用的 map 付出锁代价，同时尽早暴露误用。检测竞态最可靠的方式是 <code>go run -race</code>。</p>
+<p><strong>Q5：map 的元素能取地址（&amp;m[k]）吗？为什么？</strong></p>
+<p>不能。<code>&amp;m[k]</code> 编译报错。因为 map 在扩容 / rehash 时元素会被迁移到新桶，内存地址会变，如果允许取地址，指针就会失效（悬垂）。所以 Go 直接禁止对 map value 取地址。这也是&quot;value 是结构体时不能直接改字段&quot;的根本原因——要么整体取出改完放回，要么把 value 定义为指针。</p>
+<p><strong>Q6：如何实现并发安全的 map？</strong></p>
+<p>三种方式：</p>
+<ol>
+<li><code>map + sync.RWMutex</code>：通用，写多也稳，自己封装；</li>
+<li><code>sync.Map</code>：标准库自带，适合读多写少 / 键值稳定场景，读命中无锁最快；</li>
+<li>分片锁（sharded map）：把 key 哈希到 N 个带独立锁的小 map，降低锁竞争，写并发高时性能好（如 <code>orcaman/concurrent-map</code>）。</li>
+</ol>
+<p><strong>Q7：负载因子是什么？Go 为什么设成 6.5？</strong></p>
+<p>负载因子 = 元素个数 / 桶数，衡量桶的平均装载程度。Go 设为 6.5（源码 13/2）。因为每个桶能装 8 个 KV，平均装到 6.5 个再扩容是空间和时间的平衡点：设太小（如 1）会频繁扩容、浪费大量空桶内存；设太大（接近 8）会导致溢出桶过长、查找变慢。6.5 是官方测试得出的经验最优值。</p>
+<p><strong>Q8：两个 map 能用 <code>==</code> 比较吗？</strong></p>
+<p>不能（除了和 <code>nil</code> 比）。<code>m1 == m2</code> 编译报错，map 只能判断是否为 <code>nil</code>。要比较两个 map 内容是否相等，用 <code>reflect.DeepEqual</code> 或手动遍历比较。</p>
+<p><strong>Q9：nil map 和空 map 的区别？</strong></p>
+<p><code>var m map[K]V</code>（nil map）未初始化，可读（返回零值）、可删（无操作）、可 <code>len</code>（0），但 <strong>写会 panic</strong>。<code>make(map[K]V)</code>（空 map）已初始化，读写删都正常，<code>len</code> 为 0。判断可用 <code>m == nil</code>。</p>
+<hr>
+<h1 id="小结">小结</h1>
+<ul>
+<li>map 底层是哈希表：<code>hmap</code> 头 + <code>bmap</code> 桶数组，每桶存 8 个 KV，key/value 分区连续存放，满了挂溢出桶。</li>
+<li>定位靠哈希值：<strong>低 B 位选桶，高 8 位（tophash）桶内快速筛选</strong>，命中再比完整 key。</li>
+<li>扩容两种：负载因子 &gt; 6.5 触发 <strong>翻倍扩容</strong>；溢出桶过多触发 <strong>等量扩容</strong>。均为 <strong>渐进式迁移</strong>（evacuate），写 / 删时分摊搬迁，迁移期间新旧桶并存。</li>
+<li>遍历 <strong>故意随机</strong>（随机起始桶 + 起始槽），防止依赖顺序；要有序须自行排序 key。</li>
+<li>key 必须 <strong>可比较</strong>：slice / map / func 不能作 key；结构体全字段可比较才可作 key。</li>
+<li><strong>并发不安全</strong>：<code>hashWriting</code> 标志位检测到并发写就 <code>fatal</code>，用 <code>RWMutex</code> / <code>sync.Map</code> / 分片锁解决。</li>
+<li><code>sync.Map</code> 用 <strong>read / dirty 双 store</strong> 实现读多写少场景的无锁快速读。</li>
+<li>优化：预分配 <code>make(map, hint)</code>、用 <code>map[T]struct{}</code> 当 set、大结构体 value 存指针、遍历删除安全但新增未定义、map value 不可取地址、大 map 删元素不缩容需重建释放。</li>
+</ul>
+<p>下一章将进入 <strong>字符串与字节处理</strong>，拆解 string 的底层结构、UTF-8/rune 遍历、零拷贝转换与高效拼接。</p>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2026-01-02</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/golang/">golang</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/golang/golang_07_%E5%AD%97%E7%AC%A6%E4%B8%B2%E4%B8%8E%E5%AD%97%E8%8A%82%E5%A4%84%E7%90%86/" class="prev" rel="prev" title="Go-07 字符串与字节处理"><i class="fas fa-angle-left fa-fw"></i>Go-07 字符串与字节处理</a>
+            <a href="/posts/golang/golang_05_%E6%95%B0%E7%BB%84%E4%B8%8E%E5%88%87%E7%89%87%E5%8E%9F%E7%90%86/" class="next" rel="next" title="Go-05 数组与切片原理">Go-05 数组与切片原理<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2026-01-02T00:22:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Go-06 map底层原理详解"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

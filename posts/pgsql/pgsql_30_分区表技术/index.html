@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>pgsql-30 分区表技术 - xingliuhua博客</title><meta name="Description" content="全面讲解 PostgreSQL 声明式分区：范围/列表/哈希三种分区、分区裁剪、子分区、分区维护与自动化、约束与索引注意事项，并对比 MySQL 分区与分库分表"><meta property="og:title" content="pgsql-30 分区表技术" />
+<meta property="og:description" content="全面讲解 PostgreSQL 声明式分区：范围/列表/哈希三种分区、分区裁剪、子分区、分区维护与自动化、约束与索引注意事项，并对比 MySQL 分区与分库分表" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/pgsql/pgsql_30_%E5%88%86%E5%8C%BA%E8%A1%A8%E6%8A%80%E6%9C%AF/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2025-09-25T09:13:00+08:00" />
+<meta property="article:modified_time" content="2025-09-25T09:13:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="pgsql-30 分区表技术"/>
+<meta name="twitter:description" content="全面讲解 PostgreSQL 声明式分区：范围/列表/哈希三种分区、分区裁剪、子分区、分区维护与自动化、约束与索引注意事项，并对比 MySQL 分区与分库分表"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/pgsql/pgsql_30_%E5%88%86%E5%8C%BA%E8%A1%A8%E6%8A%80%E6%9C%AF/" /><link rel="prev" href="https://xingliuhua.github.io/posts/pgsql/pgsql_31_%E8%BF%9E%E6%8E%A5%E6%B1%A0%E4%B8%8E%E8%BF%9E%E6%8E%A5%E7%AE%A1%E7%90%86/" /><link rel="next" href="https://xingliuhua.github.io/posts/pgsql/pgsql_29_%E6%85%A2%E6%9F%A5%E8%AF%A2%E5%88%86%E6%9E%90/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "pgsql-30 分区表技术",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/pgsql\/pgsql_30_%E5%88%86%E5%8C%BA%E8%A1%A8%E6%8A%80%E6%9C%AF\/"
+        },"genre": "posts","keywords": "pgsql","wordcount":  1822 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/pgsql\/pgsql_30_%E5%88%86%E5%8C%BA%E8%A1%A8%E6%8A%80%E6%9C%AF\/","datePublished": "2025-09-25T09:13:00+08:00","dateModified": "2025-09-25T09:13:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "全面讲解 PostgreSQL 声明式分区：范围/列表/哈希三种分区、分区裁剪、子分区、分区维护与自动化、约束与索引注意事项，并对比 MySQL 分区与分库分表"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">pgsql-30 分区表技术</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2025-09-25">2025-09-25</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 1822 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 4 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-概述">1. 概述</a></li>
+    <li><a href="#2-三种分区类型">2. 三种分区类型</a>
+      <ol>
+        <li><a href="#21-范围分区range-最常用">2.1 范围分区（Range）—— 最常用</a></li>
+        <li><a href="#22-列表分区list">2.2 列表分区（List）</a></li>
+        <li><a href="#23-哈希分区hash">2.3 哈希分区（Hash）</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-分区裁剪性能关键">3. 分区裁剪（性能关键）</a></li>
+    <li><a href="#4-索引与约束">4. 索引与约束</a></li>
+    <li><a href="#5-分区维护">5. 分区维护</a>
+      <ol>
+        <li><a href="#51-增删分区历史数据管理利器">5.1 增删分区（历史数据管理利器）</a></li>
+        <li><a href="#52-自动化pg_partman">5.2 自动化：pg_partman</a></li>
+      </ol>
+    </li>
+    <li><a href="#6-什么时候该分区什么时候该分库分表">6. 什么时候该分区？什么时候该分库分表？</a></li>
+    <li><a href="#7-面试高频问答">7. 面试高频问答</a></li>
+    <li><a href="#8-下一步">8. 下一步</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><h1 id="1-概述">1. 概述</h1>
+<p>当单表数据量达到数千万甚至上亿行时，会遇到查询变慢、VACUUM 耗时长、历史数据难清理等问题。**分区（Partitioning）**把一张逻辑大表按规则拆成多个物理子表，好处是：</p>
+<ol>
+<li><strong>分区裁剪（Partition Pruning）</strong>：查询只扫描相关分区，跳过无关数据。</li>
+<li><strong>维护高效</strong>：删除历史数据用 <code>DROP</code>/<code>DETACH</code> 整个分区（秒级），而非慢速 <code>DELETE</code>。</li>
+<li><strong>VACUUM/索引更小更快</strong>：每个分区独立维护。</li>
+<li><strong>可分层存储</strong>：冷分区放慢盘/归档。</li>
+</ol>
+<p>PostgreSQL 10 起支持<strong>声明式分区（Declarative Partitioning）</strong>，语法简洁，此前需用表继承手动实现。</p>
+<blockquote>
+<p>对比 MySQL：MySQL 也有 <code>PARTITION BY</code> 分区，但有较多限制（分区键必须包含在所有唯一键里、不支持外键等）。PG 的声明式分区更灵活、社区还有 pg_partman 做自动化。注意分区解决的是&quot;单机大表&quot;，真正的&quot;分库分表&quot;（跨机器水平拆分）在 PG 里用 Citus 扩展实现。</p>
+</blockquote>
+<h1 id="2-三种分区类型">2. 三种分区类型</h1>
+<h2 id="21-范围分区range-最常用">2.1 范围分区（Range）—— 最常用</h2>
+<p>按值的范围划分，典型是<strong>按时间</strong>（日志、订单、指标）。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="c1">-- 声明分区表（按 created_at 范围分区）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">orders</span><span class="w"> </span><span class="p">(</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="n">id</span><span class="w">         </span><span class="n">BIGSERIAL</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="n">user_id</span><span class="w">    </span><span class="nb">BIGINT</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="n">amount</span><span class="w">     </span><span class="nb">NUMERIC</span><span class="p">(</span><span class="mi">12</span><span class="p">,</span><span class="mi">2</span><span class="p">),</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="n">created_at</span><span class="w"> </span><span class="n">TIMESTAMPTZ</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="p">)</span><span class="w"> </span><span class="n">PARTITION</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="n">RANGE</span><span class="w"> </span><span class="p">(</span><span class="n">created_at</span><span class="p">);</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 创建各月分区
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">orders_2026_06</span><span class="w"> </span><span class="n">PARTITION</span><span class="w"> </span><span class="k">OF</span><span class="w"> </span><span class="n">orders</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="k">FOR</span><span class="w"> </span><span class="k">VALUES</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="p">(</span><span class="s1">&#39;2026-06-01&#39;</span><span class="p">)</span><span class="w"> </span><span class="k">TO</span><span class="w"> </span><span class="p">(</span><span class="s1">&#39;2026-07-01&#39;</span><span class="p">);</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">orders_2026_07</span><span class="w"> </span><span class="n">PARTITION</span><span class="w"> </span><span class="k">OF</span><span class="w"> </span><span class="n">orders</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="k">FOR</span><span class="w"> </span><span class="k">VALUES</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="p">(</span><span class="s1">&#39;2026-07-01&#39;</span><span class="p">)</span><span class="w"> </span><span class="k">TO</span><span class="w"> </span><span class="p">(</span><span class="s1">&#39;2026-08-01&#39;</span><span class="p">);</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 默认分区：接收不匹配任何分区的数据（可选）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">orders_default</span><span class="w"> </span><span class="n">PARTITION</span><span class="w"> </span><span class="k">OF</span><span class="w"> </span><span class="n">orders</span><span class="w"> </span><span class="k">DEFAULT</span><span class="p">;</span><span class="w">
+</span></span></span></code></pre></div><blockquote>
+<p>⚠️ 分区键（这里 created_at）<strong>必须包含在主键/唯一约束中</strong>——这是分区表最常见的限制，PG 和 MySQL 都如此。所以上面主键要用 <code>(id, created_at)</code>。</p>
+</blockquote>
+<h2 id="22-列表分区list">2.2 列表分区（List）</h2>
+<p>按离散值集合划分，典型是<strong>按地区/类型/租户</strong>。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">sales</span><span class="w"> </span><span class="p">(</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="n">id</span><span class="w"> </span><span class="n">BIGSERIAL</span><span class="p">,</span><span class="w"> </span><span class="n">region</span><span class="w"> </span><span class="nb">TEXT</span><span class="p">,</span><span class="w"> </span><span class="n">amount</span><span class="w"> </span><span class="nb">NUMERIC</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="p">)</span><span class="w"> </span><span class="n">PARTITION</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="n">LIST</span><span class="w"> </span><span class="p">(</span><span class="n">region</span><span class="p">);</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">sales_cn</span><span class="w"> </span><span class="n">PARTITION</span><span class="w"> </span><span class="k">OF</span><span class="w"> </span><span class="n">sales</span><span class="w"> </span><span class="k">FOR</span><span class="w"> </span><span class="k">VALUES</span><span class="w"> </span><span class="k">IN</span><span class="w"> </span><span class="p">(</span><span class="s1">&#39;beijing&#39;</span><span class="p">,</span><span class="s1">&#39;shanghai&#39;</span><span class="p">,</span><span class="s1">&#39;guangzhou&#39;</span><span class="p">);</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">sales_us</span><span class="w"> </span><span class="n">PARTITION</span><span class="w"> </span><span class="k">OF</span><span class="w"> </span><span class="n">sales</span><span class="w"> </span><span class="k">FOR</span><span class="w"> </span><span class="k">VALUES</span><span class="w"> </span><span class="k">IN</span><span class="w"> </span><span class="p">(</span><span class="s1">&#39;newyork&#39;</span><span class="p">,</span><span class="s1">&#39;losangeles&#39;</span><span class="p">);</span><span class="w">
+</span></span></span></code></pre></div><h2 id="23-哈希分区hash">2.3 哈希分区（Hash）</h2>
+<p>按哈希值均匀打散，用于<strong>数据无天然范围、只想均摊负载</strong>的场景。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">events</span><span class="w"> </span><span class="p">(</span><span class="n">id</span><span class="w"> </span><span class="nb">BIGINT</span><span class="p">,</span><span class="w"> </span><span class="k">data</span><span class="w"> </span><span class="n">JSONB</span><span class="p">)</span><span class="w"> </span><span class="n">PARTITION</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="n">HASH</span><span class="w"> </span><span class="p">(</span><span class="n">id</span><span class="p">);</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">events_p0</span><span class="w"> </span><span class="n">PARTITION</span><span class="w"> </span><span class="k">OF</span><span class="w"> </span><span class="n">events</span><span class="w"> </span><span class="k">FOR</span><span class="w"> </span><span class="k">VALUES</span><span class="w"> </span><span class="k">WITH</span><span class="w"> </span><span class="p">(</span><span class="n">MODULUS</span><span class="w"> </span><span class="mi">4</span><span class="p">,</span><span class="w"> </span><span class="n">REMAINDER</span><span class="w"> </span><span class="mi">0</span><span class="p">);</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">events_p1</span><span class="w"> </span><span class="n">PARTITION</span><span class="w"> </span><span class="k">OF</span><span class="w"> </span><span class="n">events</span><span class="w"> </span><span class="k">FOR</span><span class="w"> </span><span class="k">VALUES</span><span class="w"> </span><span class="k">WITH</span><span class="w"> </span><span class="p">(</span><span class="n">MODULUS</span><span class="w"> </span><span class="mi">4</span><span class="p">,</span><span class="w"> </span><span class="n">REMAINDER</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">events_p2</span><span class="w"> </span><span class="n">PARTITION</span><span class="w"> </span><span class="k">OF</span><span class="w"> </span><span class="n">events</span><span class="w"> </span><span class="k">FOR</span><span class="w"> </span><span class="k">VALUES</span><span class="w"> </span><span class="k">WITH</span><span class="w"> </span><span class="p">(</span><span class="n">MODULUS</span><span class="w"> </span><span class="mi">4</span><span class="p">,</span><span class="w"> </span><span class="n">REMAINDER</span><span class="w"> </span><span class="mi">2</span><span class="p">);</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">events_p3</span><span class="w"> </span><span class="n">PARTITION</span><span class="w"> </span><span class="k">OF</span><span class="w"> </span><span class="n">events</span><span class="w"> </span><span class="k">FOR</span><span class="w"> </span><span class="k">VALUES</span><span class="w"> </span><span class="k">WITH</span><span class="w"> </span><span class="p">(</span><span class="n">MODULUS</span><span class="w"> </span><span class="mi">4</span><span class="p">,</span><span class="w"> </span><span class="n">REMAINDER</span><span class="w"> </span><span class="mi">3</span><span class="p">);</span><span class="w">
+</span></span></span></code></pre></div><h1 id="3-分区裁剪性能关键">3. 分区裁剪（性能关键）</h1>
+<p>查询条件命中分区键时，优化器只扫描相关分区。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="c1">-- 只会扫描 orders_2026_07 一个分区
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">EXPLAIN</span><span class="w"> </span><span class="k">SELECT</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">orders</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="n">created_at</span><span class="w"> </span><span class="o">&gt;=</span><span class="w"> </span><span class="s1">&#39;2026-07-10&#39;</span><span class="w"> </span><span class="k">AND</span><span class="w"> </span><span class="n">created_at</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="s1">&#39;2026-07-20&#39;</span><span class="p">;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 计划中只出现该分区，其余被 pruning 掉
+</span></span></span></code></pre></div><ul>
+<li>确保 <code>enable_partition_pruning = on</code>（默认开）。</li>
+<li><strong>查询必须带分区键条件</strong>才能裁剪；不带分区键的查询会扫描所有分区（反而更慢）。这是分区键选择的关键——要选最常出现在 WHERE 里的列。</li>
+</ul>
+<h1 id="4-索引与约束">4. 索引与约束</h1>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="c1">-- 在父表上建索引，会自动在每个（含未来）分区上创建
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">idx_orders_user</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">orders</span><span class="w"> </span><span class="p">(</span><span class="n">user_id</span><span class="p">);</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 主键必须包含分区键
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">ALTER</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">orders</span><span class="w"> </span><span class="k">ADD</span><span class="w"> </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="w"> </span><span class="p">(</span><span class="n">id</span><span class="p">,</span><span class="w"> </span><span class="n">created_at</span><span class="p">);</span><span class="w">
+</span></span></span></code></pre></div><ul>
+<li>PG 11+ 支持父表建索引自动传播到分区。</li>
+<li>全局唯一约束若不含分区键则无法跨分区保证唯一——这是设计难点。</li>
+</ul>
+<h1 id="5-分区维护">5. 分区维护</h1>
+<h2 id="51-增删分区历史数据管理利器">5.1 增删分区（历史数据管理利器）</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="c1">-- 挂载已有表为分区（如预先建好、导入数据后再 ATTACH）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">ALTER</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">orders</span><span class="w"> </span><span class="n">ATTACH</span><span class="w"> </span><span class="n">PARTITION</span><span class="w"> </span><span class="n">orders_2026_08</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="k">FOR</span><span class="w"> </span><span class="k">VALUES</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="p">(</span><span class="s1">&#39;2026-08-01&#39;</span><span class="p">)</span><span class="w"> </span><span class="k">TO</span><span class="w"> </span><span class="p">(</span><span class="s1">&#39;2026-09-01&#39;</span><span class="p">);</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 卸载分区（变回普通表，数据保留，可归档）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">ALTER</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">orders</span><span class="w"> </span><span class="n">DETACH</span><span class="w"> </span><span class="n">PARTITION</span><span class="w"> </span><span class="n">orders_2026_06</span><span class="p">;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 直接删除旧分区（秒级清理历史数据，远快于 DELETE）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">DROP</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">orders_2026_06</span><span class="p">;</span><span class="w">
+</span></span></span></code></pre></div><blockquote>
+<p>这是分区最大的运维价值：清理&quot;3 个月前的数据&quot;只需 <code>DROP</code> 对应分区，无需扫描 + <code>DELETE</code> + VACUUM。</p>
+</blockquote>
+<h2 id="52-自动化pg_partman">5.2 自动化：pg_partman</h2>
+<p>手动按月建分区易遗漏。生产常用 <strong>pg_partman</strong> 扩展自动创建未来分区、清理过期分区，配合 pg_cron 定时执行。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="k">CREATE</span><span class="w"> </span><span class="n">EXTENSION</span><span class="w"> </span><span class="n">pg_partman</span><span class="p">;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">SELECT</span><span class="w"> </span><span class="n">partman</span><span class="p">.</span><span class="n">create_parent</span><span class="p">(</span><span class="s1">&#39;public.orders&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;created_at&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;range&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;monthly&#39;</span><span class="p">);</span><span class="w">
+</span></span></span></code></pre></div><h1 id="6-什么时候该分区什么时候该分库分表">6. 什么时候该分区？什么时候该分库分表？</h1>
+<table>
+<thead>
+<tr>
+<th>方案</th>
+<th>解决什么</th>
+<th>适用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>不分区（单表+索引）</strong></td>
+<td>常规</td>
+<td>千万级以下</td>
+</tr>
+<tr>
+<td><strong>PG 分区表</strong></td>
+<td>单机大表管理、历史清理</td>
+<td>单表上亿、有天然分区键（时间）</td>
+</tr>
+<tr>
+<td><strong>Citus 分布式</strong></td>
+<td>跨机器水平扩展</td>
+<td>超大规模、单机放不下</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li>分区不是&quot;数据量大就要上&quot;——分区键选不好（查询不带分区键）反而变慢。</li>
+<li>分区解决<strong>单机</strong>的管理效率，不解决单机容量/算力上限；那是 Citus（分库分表）的领域。</li>
+</ul>
+<h1 id="7-面试高频问答">7. 面试高频问答</h1>
+<p><strong>Q1：分区表能带来什么好处？</strong>
+分区裁剪减少扫描量、按分区独立维护（VACUUM/索引更小）、用 DROP/DETACH 秒级清理历史数据、冷热分层存储。</p>
+<p><strong>Q2：PostgreSQL 有哪几种分区？分别适合什么？</strong>
+范围（按时间等连续值，最常用）、列表（按离散值如地区/租户）、哈希（无天然范围时均摊负载）。</p>
+<p><strong>Q3：分区键怎么选？</strong>
+选最常出现在查询 WHERE 条件里的列，才能触发分区裁剪；否则查询扫全部分区反而更慢。分区键还必须包含在主键/唯一约束中。</p>
+<p><strong>Q4：分区表和分库分表有什么区别？</strong>
+分区是单机内把大表拆成多个子表，解决管理效率；分库分表是把数据分散到多台机器，解决容量和算力上限。PG 分库分表用 Citus 扩展实现。</p>
+<p><strong>Q5：如何高效清理历史数据？</strong>
+分区表直接 <code>DROP</code>/<code>DETACH</code> 对应的旧分区（秒级），远优于 <code>DELETE</code> 大量行（慢且产生大量死元组需 VACUUM）。</p>
+<h1 id="8-下一步">8. 下一步</h1>
+<p>学习 <a href="https://xingliuhua.github.io/posts/pgsql/pgsql_31_%E8%BF%9E%E6%8E%A5%E6%B1%A0%E4%B8%8E%E8%BF%9E%E6%8E%A5%E7%AE%A1%E7%90%86/" rel="">连接池与连接管理</a>，优化高并发下的连接开销。</p>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2025-09-25</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/pgsql/">pgsql</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/pgsql/pgsql_31_%E8%BF%9E%E6%8E%A5%E6%B1%A0%E4%B8%8E%E8%BF%9E%E6%8E%A5%E7%AE%A1%E7%90%86/" class="prev" rel="prev" title="pgsql-31 连接池与连接管理"><i class="fas fa-angle-left fa-fw"></i>pgsql-31 连接池与连接管理</a>
+            <a href="/posts/pgsql/pgsql_29_%E6%85%A2%E6%9F%A5%E8%AF%A2%E5%88%86%E6%9E%90/" class="next" rel="next" title="pgsql-29 慢查询分析">pgsql-29 慢查询分析<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2025-09-25T09:13:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"pgsql-30 分区表技术"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

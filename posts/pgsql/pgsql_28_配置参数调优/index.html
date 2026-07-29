@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>pgsql-28 配置参数调优 - xingliuhua博客</title><meta name="Description" content="系统讲解 PostgreSQL 核心配置参数调优：内存（shared_buffers/work_mem/effective_cache_size）、WAL/检查点、并发连接、autovacuum、并行查询与规划器参数，附经验公式与对比 MySQL"><meta property="og:title" content="pgsql-28 配置参数调优" />
+<meta property="og:description" content="系统讲解 PostgreSQL 核心配置参数调优：内存（shared_buffers/work_mem/effective_cache_size）、WAL/检查点、并发连接、autovacuum、并行查询与规划器参数，附经验公式与对比 MySQL" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/pgsql/pgsql_28_%E9%85%8D%E7%BD%AE%E5%8F%82%E6%95%B0%E8%B0%83%E4%BC%98/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2025-09-25T09:15:00+08:00" />
+<meta property="article:modified_time" content="2025-09-25T09:15:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="pgsql-28 配置参数调优"/>
+<meta name="twitter:description" content="系统讲解 PostgreSQL 核心配置参数调优：内存（shared_buffers/work_mem/effective_cache_size）、WAL/检查点、并发连接、autovacuum、并行查询与规划器参数，附经验公式与对比 MySQL"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/pgsql/pgsql_28_%E9%85%8D%E7%BD%AE%E5%8F%82%E6%95%B0%E8%B0%83%E4%BC%98/" /><link rel="prev" href="https://xingliuhua.github.io/posts/pgsql/pgsql_29_%E6%85%A2%E6%9F%A5%E8%AF%A2%E5%88%86%E6%9E%90/" /><link rel="next" href="https://xingliuhua.github.io/posts/pgsql/pgsql_27_vacuum%E4%B8%8E%E8%A1%A8%E8%86%A8%E8%83%80/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "pgsql-28 配置参数调优",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/pgsql\/pgsql_28_%E9%85%8D%E7%BD%AE%E5%8F%82%E6%95%B0%E8%B0%83%E4%BC%98\/"
+        },"genre": "posts","keywords": "pgsql","wordcount":  1884 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/pgsql\/pgsql_28_%E9%85%8D%E7%BD%AE%E5%8F%82%E6%95%B0%E8%B0%83%E4%BC%98\/","datePublished": "2025-09-25T09:15:00+08:00","dateModified": "2025-09-25T09:15:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "系统讲解 PostgreSQL 核心配置参数调优：内存（shared_buffers/work_mem/effective_cache_size）、WAL/检查点、并发连接、autovacuum、并行查询与规划器参数，附经验公式与对比 MySQL"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">pgsql-28 配置参数调优</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2025-09-25">2025-09-25</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 1884 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 4 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-概述">1. 概述</a>
+      <ol>
+        <li><a href="#11-参数管理">1.1 参数管理</a></li>
+      </ol>
+    </li>
+    <li><a href="#2-内存参数最重要">2. 内存参数（最重要）</a>
+      <ol>
+        <li><a href="#21-shared_buffers">2.1 shared_buffers</a></li>
+        <li><a href="#22-effective_cache_size">2.2 effective_cache_size</a></li>
+        <li><a href="#23-work_mem易踩坑">2.3 work_mem（易踩坑）</a></li>
+        <li><a href="#24-maintenance_work_mem">2.4 maintenance_work_mem</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-wal-与检查点">3. WAL 与检查点</a></li>
+    <li><a href="#4-并发连接">4. 并发连接</a></li>
+    <li><a href="#5-autovacuum">5. autovacuum</a></li>
+    <li><a href="#6-并行查询">6. 并行查询</a></li>
+    <li><a href="#7-规划器成本参数">7. 规划器/成本参数</a></li>
+    <li><a href="#8-一个-32gb-内存-oltp-服务器的示例配置">8. 一个 32GB 内存 OLTP 服务器的示例配置</a></li>
+    <li><a href="#9-面试高频问答">9. 面试高频问答</a></li>
+    <li><a href="#10-下一步">10. 下一步</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><h1 id="1-概述">1. 概述</h1>
+<p>PostgreSQL 默认配置非常保守（为了能在小机器上启动），生产环境几乎必须调优。本篇按&quot;内存 → WAL/检查点 → 并发 → autovacuum → 规划器&quot;梳理最核心的参数，给出经验公式。</p>
+<blockquote>
+<p>对比 MySQL：MySQL 调优的核心是 <code>innodb_buffer_pool_size</code>（通常设为 60-70% 内存，一块大缓冲池）；PostgreSQL 的内存模型不同——它<strong>依赖操作系统的页缓存</strong>，<code>shared_buffers</code> 只设中等大小（约 25% 内存），把剩余内存留给 OS 缓存。这是两者调优哲学最大的区别。</p>
+</blockquote>
+<h2 id="11-参数管理">1.1 参数管理</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="c1">-- 查看参数
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SHOW</span><span class="w"> </span><span class="n">shared_buffers</span><span class="p">;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">SELECT</span><span class="w"> </span><span class="n">name</span><span class="p">,</span><span class="w"> </span><span class="n">setting</span><span class="p">,</span><span class="w"> </span><span class="n">unit</span><span class="p">,</span><span class="w"> </span><span class="n">context</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">pg_settings</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;work_mem&#39;</span><span class="p">;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 修改（PG 支持在线改，部分需重启）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">ALTER</span><span class="w"> </span><span class="k">SYSTEM</span><span class="w"> </span><span class="k">SET</span><span class="w"> </span><span class="n">work_mem</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;32MB&#39;</span><span class="p">;</span><span class="w">   </span><span class="c1">-- 写入 postgresql.auto.conf
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="n">pg_reload_conf</span><span class="p">();</span><span class="w">              </span><span class="c1">-- 重载（对需重启的参数无效）
+</span></span></span></code></pre></div><p><code>context</code> 列决定改后是否需重启：<code>postmaster</code>=需重启，<code>sighup</code>=reload 即可，<code>user</code>=会话级可随时改。</p>
+<h1 id="2-内存参数最重要">2. 内存参数（最重要）</h1>
+<h2 id="21-shared_buffers">2.1 shared_buffers</h2>
+<p>PostgreSQL 自己的共享缓冲池，缓存数据页。</p>
+<ul>
+<li><strong>经验值：物理内存的 25%</strong>（如 32GB 内存 → 8GB）。</li>
+<li>不宜过大：PG 还依赖 OS 页缓存，设太高反而与 OS 缓存重复浪费，且加大检查点刷盘压力。</li>
+</ul>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="na">shared_buffers</span> <span class="o">=</span> <span class="s">8GB</span>
+</span></span></code></pre></div><h2 id="22-effective_cache_size">2.2 effective_cache_size</h2>
+<p><strong>告诉优化器&quot;整个系统大约有多少内存可用于缓存&quot;</strong>（shared_buffers + OS 缓存的估计值）。它不实际分配内存，只影响优化器判断&quot;索引扫描 vs 全表扫描&quot;的成本。</p>
+<ul>
+<li><strong>经验值：物理内存的 50-75%</strong>。</li>
+</ul>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="na">effective_cache_size</span> <span class="o">=</span> <span class="s">24GB</span>
+</span></span></code></pre></div><h2 id="23-work_mem易踩坑">2.3 work_mem（易踩坑）</h2>
+<p><strong>单个查询操作</strong>（排序 Sort、哈希 Hash Join、聚合）可用的内存。超出则用磁盘临时文件（慢）。</p>
+<ul>
+<li>⚠️ 这是<strong>每操作、每连接</strong>的量！一个复杂查询可能有多个排序/哈希，一个高并发场景 = <code>work_mem × 操作数 × 并发连接数</code>，设太大易 OOM。</li>
+<li><strong>经验起点：</strong> <code>(可用内存 - shared_buffers) / (max_connections × 2~3)</code>，常见 16-64MB。</li>
+<li>技巧：全局设小，对个别大查询会话级临时调大 <code>SET work_mem='256MB'</code>。</li>
+</ul>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="na">work_mem</span> <span class="o">=</span> <span class="s">32MB</span>
+</span></span></code></pre></div><h2 id="24-maintenance_work_mem">2.4 maintenance_work_mem</h2>
+<p>VACUUM、CREATE INDEX、ALTER TABLE 等维护操作的内存，可设较大加速这些操作。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="na">maintenance_work_mem</span> <span class="o">=</span> <span class="s">1GB</span>
+</span></span></code></pre></div><h1 id="3-wal-与检查点">3. WAL 与检查点</h1>
+<p>详见 <a href="https://xingliuhua.github.io/posts/pgsql/pgsql_32_wal%E4%B8%8E%E6%A3%80%E6%9F%A5%E7%82%B9%E6%9C%BA%E5%88%B6/" rel="">WAL与检查点机制</a>，调优要点：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="na">wal_buffers</span> <span class="o">=</span> <span class="s">16MB</span>
+</span></span><span class="line"><span class="cl"><span class="na">max_wal_size</span> <span class="o">=</span> <span class="s">4GB                    # 调大→检查点更少→吞吐更好，代价是恢复更慢</span>
+</span></span><span class="line"><span class="cl"><span class="na">min_wal_size</span> <span class="o">=</span> <span class="s">1GB</span>
+</span></span><span class="line"><span class="cl"><span class="na">checkpoint_timeout</span> <span class="o">=</span> <span class="s">15min</span>
+</span></span><span class="line"><span class="cl"><span class="na">checkpoint_completion_target</span> <span class="o">=</span> <span class="s">0.9    # 几乎必调：把刷盘摊平避免IO尖峰</span>
+</span></span></code></pre></div><h1 id="4-并发连接">4. 并发连接</h1>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="na">max_connections</span> <span class="o">=</span> <span class="s">200                 # 不宜过大！每连接是一个进程，开销不小</span>
+</span></span></code></pre></div><ul>
+<li>PostgreSQL <strong>每个连接是一个独立进程</strong>（不是线程），连接数过多会消耗大量内存和上下文切换。</li>
+<li><strong>强烈建议前面加连接池</strong>（PgBouncer），而不是一味调大 max_connections。详见 <a href="https://xingliuhua.github.io/posts/pgsql/pgsql_31_%E8%BF%9E%E6%8E%A5%E6%B1%A0%E4%B8%8E%E8%BF%9E%E6%8E%A5%E7%AE%A1%E7%90%86/" rel="">连接池与连接管理</a>。</li>
+<li>经验：max_connections 控制在 100-300，通过连接池复用。</li>
+</ul>
+<blockquote>
+<p>对比 MySQL：MySQL 是线程模型，单连接开销比 PG 进程模型小，所以 MySQL 能扛更多直连；PG 更依赖连接池。这也是 PG 面试常问的架构差异。</p>
+</blockquote>
+<h1 id="5-autovacuum">5. autovacuum</h1>
+<p>详见 <a href="https://xingliuhua.github.io/posts/pgsql/pgsql_27_vacuum%E4%B8%8E%E8%A1%A8%E8%86%A8%E8%83%80/" rel="">VACUUM与表膨胀</a>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="na">autovacuum</span> <span class="o">=</span> <span class="s">on                       # 生产绝不关闭</span>
+</span></span><span class="line"><span class="cl"><span class="na">autovacuum_max_workers</span> <span class="o">=</span> <span class="s">4</span>
+</span></span><span class="line"><span class="cl"><span class="na">autovacuum_vacuum_cost_limit</span> <span class="o">=</span> <span class="s">2000   # 默认较保守，调大让清理更快</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 大表单独降低触发阈值:</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ALTER TABLE big SET (autovacuum_vacuum_scale_factor = 0.02);</span>
+</span></span></code></pre></div><h1 id="6-并行查询">6. 并行查询</h1>
+<p>PG 9.6+ 支持并行执行（多个 worker 并行扫描/聚合大表）。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="na">max_worker_processes</span> <span class="o">=</span> <span class="s">8</span>
+</span></span><span class="line"><span class="cl"><span class="na">max_parallel_workers</span> <span class="o">=</span> <span class="s">8</span>
+</span></span><span class="line"><span class="cl"><span class="na">max_parallel_workers_per_gather</span> <span class="o">=</span> <span class="s">4   # 单个查询最多用几个并行worker</span>
+</span></span></code></pre></div><p>OLAP/大表聚合场景收益明显；纯 OLTP 短查询用处不大。</p>
+<h1 id="7-规划器成本参数">7. 规划器/成本参数</h1>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="na">random_page_cost</span> <span class="o">=</span> <span class="s">1.1     # SSD 上从默认4.0调到1.1！让优化器更愿意用索引扫描</span>
+</span></span><span class="line"><span class="cl"><span class="na">effective_io_concurrency</span> <span class="o">=</span> <span class="s">200   # SSD 可调高，机械盘保持较低</span>
+</span></span></code></pre></div><p><code>random_page_cost</code> 是 SSD 环境<strong>最值得调</strong>的参数之一：默认值 4.0 假设机械硬盘随机 IO 很贵，SSD 上应降到 1.1 左右，否则优化器可能错误地偏向全表扫描而不用索引。</p>
+<h1 id="8-一个-32gb-内存-oltp-服务器的示例配置">8. 一个 32GB 内存 OLTP 服务器的示例配置</h1>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="na">shared_buffers</span> <span class="o">=</span> <span class="s">8GB</span>
+</span></span><span class="line"><span class="cl"><span class="na">effective_cache_size</span> <span class="o">=</span> <span class="s">24GB</span>
+</span></span><span class="line"><span class="cl"><span class="na">work_mem</span> <span class="o">=</span> <span class="s">32MB</span>
+</span></span><span class="line"><span class="cl"><span class="na">maintenance_work_mem</span> <span class="o">=</span> <span class="s">1GB</span>
+</span></span><span class="line"><span class="cl"><span class="na">max_connections</span> <span class="o">=</span> <span class="s">200</span>
+</span></span><span class="line"><span class="cl"><span class="na">max_wal_size</span> <span class="o">=</span> <span class="s">4GB</span>
+</span></span><span class="line"><span class="cl"><span class="na">checkpoint_completion_target</span> <span class="o">=</span> <span class="s">0.9</span>
+</span></span><span class="line"><span class="cl"><span class="na">random_page_cost</span> <span class="o">=</span> <span class="s">1.1</span>
+</span></span><span class="line"><span class="cl"><span class="na">effective_io_concurrency</span> <span class="o">=</span> <span class="s">200</span>
+</span></span><span class="line"><span class="cl"><span class="na">autovacuum_vacuum_cost_limit</span> <span class="o">=</span> <span class="s">2000</span>
+</span></span></code></pre></div><blockquote>
+<p>工具推荐：<a href="https://pgtune.leopard.in.ua/" target="_blank" rel="noopener noreffer">PGTune</a> 可根据机器规格和负载类型自动生成推荐配置，作为起点很方便。</p>
+</blockquote>
+<h1 id="9-面试高频问答">9. 面试高频问答</h1>
+<p><strong>Q1：PostgreSQL 和 MySQL 的内存调优有什么本质区别？</strong>
+MySQL 靠一块大 innodb_buffer_pool（60-70% 内存）；PG 的 shared_buffers 只设约 25%，其余内存交给操作系统页缓存，effective_cache_size 告知优化器总可用缓存。PG 更依赖 OS 缓存。</p>
+<p><strong>Q2：work_mem 设置要注意什么？</strong>
+它是每操作每连接的内存，不是全局的。总消耗 ≈ work_mem × 并发 × 每查询操作数，设太大会 OOM。建议全局设小，大查询会话级临时调大。</p>
+<p><strong>Q3：为什么 PostgreSQL 建议用连接池？</strong>
+PG 每个连接是一个独立进程，连接数多则内存和切换开销大。用 PgBouncer 复用连接，把 max_connections 控制在合理范围。</p>
+<p><strong>Q4：SSD 环境下哪个参数最该调？</strong>
+random_page_cost，从默认 4.0 降到 1.1 左右，让优化器正确评估 SSD 的随机 IO 成本，避免该用索引却全表扫描。</p>
+<p><strong>Q5：max_wal_size 调大有什么影响？</strong>
+检查点触发更少、写入吞吐更好，但崩溃恢复要重放更多 WAL、恢复时间变长，需权衡。</p>
+<h1 id="10-下一步">10. 下一步</h1>
+<p>学习 <a href="https://xingliuhua.github.io/posts/pgsql/pgsql_29_%E6%85%A2%E6%9F%A5%E8%AF%A2%E5%88%86%E6%9E%90/" rel="">慢查询分析</a>，定位并优化性能瓶颈。</p>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2025-09-25</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/pgsql/">pgsql</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/pgsql/pgsql_29_%E6%85%A2%E6%9F%A5%E8%AF%A2%E5%88%86%E6%9E%90/" class="prev" rel="prev" title="pgsql-29 慢查询分析"><i class="fas fa-angle-left fa-fw"></i>pgsql-29 慢查询分析</a>
+            <a href="/posts/pgsql/pgsql_27_vacuum%E4%B8%8E%E8%A1%A8%E8%86%A8%E8%83%80/" class="next" rel="next" title="pgsql-27 VACUUM与表膨胀">pgsql-27 VACUUM与表膨胀<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2025-09-25T09:15:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"pgsql-28 配置参数调优"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

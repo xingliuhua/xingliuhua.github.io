@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>pgsql-33 备份与恢复 - xingliuhua博客</title><meta name="Description" content="系统讲解 PostgreSQL 备份恢复：逻辑备份 pg_dump/pg_restore、物理备份 pg_basebackup、基于 WAL 归档的 PITR 时间点恢复、备份策略与工具(pgBackRest)，对比 MySQL"><meta property="og:title" content="pgsql-33 备份与恢复" />
+<meta property="og:description" content="系统讲解 PostgreSQL 备份恢复：逻辑备份 pg_dump/pg_restore、物理备份 pg_basebackup、基于 WAL 归档的 PITR 时间点恢复、备份策略与工具(pgBackRest)，对比 MySQL" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/pgsql/pgsql_33_%E5%A4%87%E4%BB%BD%E4%B8%8E%E6%81%A2%E5%A4%8D/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2025-09-25T09:10:00+08:00" />
+<meta property="article:modified_time" content="2025-09-25T09:10:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="pgsql-33 备份与恢复"/>
+<meta name="twitter:description" content="系统讲解 PostgreSQL 备份恢复：逻辑备份 pg_dump/pg_restore、物理备份 pg_basebackup、基于 WAL 归档的 PITR 时间点恢复、备份策略与工具(pgBackRest)，对比 MySQL"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/pgsql/pgsql_33_%E5%A4%87%E4%BB%BD%E4%B8%8E%E6%81%A2%E5%A4%8D/" /><link rel="prev" href="https://xingliuhua.github.io/posts/pgsql/pgsql_34_%E4%B8%BB%E4%BB%8E%E5%A4%8D%E5%88%B6%E4%B8%8E%E9%AB%98%E5%8F%AF%E7%94%A8/" /><link rel="next" href="https://xingliuhua.github.io/posts/pgsql/pgsql_32_wal%E4%B8%8E%E6%A3%80%E6%9F%A5%E7%82%B9%E6%9C%BA%E5%88%B6/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "pgsql-33 备份与恢复",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/pgsql\/pgsql_33_%E5%A4%87%E4%BB%BD%E4%B8%8E%E6%81%A2%E5%A4%8D\/"
+        },"genre": "posts","keywords": "pgsql","wordcount":  1775 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/pgsql\/pgsql_33_%E5%A4%87%E4%BB%BD%E4%B8%8E%E6%81%A2%E5%A4%8D\/","datePublished": "2025-09-25T09:10:00+08:00","dateModified": "2025-09-25T09:10:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "系统讲解 PostgreSQL 备份恢复：逻辑备份 pg_dump/pg_restore、物理备份 pg_basebackup、基于 WAL 归档的 PITR 时间点恢复、备份策略与工具(pgBackRest)，对比 MySQL"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">pgsql-33 备份与恢复</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2025-09-25">2025-09-25</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 1775 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 4 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-概述">1. 概述</a></li>
+    <li><a href="#2-逻辑备份pg_dump--pg_restore">2. 逻辑备份：pg_dump / pg_restore</a>
+      <ol>
+        <li><a href="#21-pg_dump单库">2.1 pg_dump（单库）</a></li>
+        <li><a href="#22-pg_dumpall整个实例">2.2 pg_dumpall（整个实例）</a></li>
+        <li><a href="#23-恢复">2.3 恢复</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-物理备份pg_basebackup">3. 物理备份：pg_basebackup</a></li>
+    <li><a href="#4-pitr时间点恢复进阶重点">4. PITR：时间点恢复（进阶重点）</a>
+      <ol>
+        <li><a href="#41-开启-wal-归档">4.1 开启 WAL 归档</a></li>
+        <li><a href="#42-恢复流程">4.2 恢复流程</a></li>
+      </ol>
+    </li>
+    <li><a href="#5-备份策略与工具">5. 备份策略与工具</a></li>
+    <li><a href="#6-面试高频问答">6. 面试高频问答</a></li>
+    <li><a href="#7-下一步">7. 下一步</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><h1 id="1-概述">1. 概述</h1>
+<p>备份是数据库的生命线。PostgreSQL 备份分两大类，理解它们的区别是面试和实战的基础：</p>
+<table>
+<thead>
+<tr>
+<th>类型</th>
+<th>工具</th>
+<th>内容</th>
+<th>特点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>逻辑备份</strong></td>
+<td>pg_dump / pg_dumpall</td>
+<td>导出为 SQL/自定义格式</td>
+<td>灵活、可跨版本/跨平台、可选表，但大库慢</td>
+</tr>
+<tr>
+<td><strong>物理备份</strong></td>
+<td>pg_basebackup</td>
+<td>复制数据文件</td>
+<td>快、适合大库，但需同版本/同架构</td>
+</tr>
+<tr>
+<td><strong>PITR</strong></td>
+<td>物理备份 + WAL 归档</td>
+<td>基础备份 + 增量日志</td>
+<td>可恢复到<strong>任意时间点</strong></td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>对比 MySQL：MySQL 逻辑备份用 <code>mysqldump</code>（对应 pg_dump），物理备份用 Percona XtraBackup（对应 pg_basebackup/pgBackRest）。PG 的 PITR 基于统一的 WAL（见 <a href="https://xingliuhua.github.io/posts/pgsql/pgsql_32_wal%E4%B8%8E%E6%A3%80%E6%9F%A5%E7%82%B9%E6%9C%BA%E5%88%B6/" rel="">WAL与检查点机制</a>），而 MySQL 的时间点恢复需结合全量备份 + binlog 重放，机制相似但日志体系不同。</p>
+</blockquote>
+<h1 id="2-逻辑备份pg_dump--pg_restore">2. 逻辑备份：pg_dump / pg_restore</h1>
+<h2 id="21-pg_dump单库">2.1 pg_dump（单库）</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 自定义格式（推荐！支持并行、压缩、选择性恢复）</span>
+</span></span><span class="line"><span class="cl">pg_dump -U postgres -d mydb -F c -f mydb.dump
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 纯 SQL 格式（可读、可直接 psql 执行）</span>
+</span></span><span class="line"><span class="cl">pg_dump -U postgres -d mydb -f mydb.sql
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 常用选项</span>
+</span></span><span class="line"><span class="cl">pg_dump -d mydb --schema-only  -f schema.sql   <span class="c1"># 只结构</span>
+</span></span><span class="line"><span class="cl">pg_dump -d mydb --data-only    -f data.sql     <span class="c1"># 只数据</span>
+</span></span><span class="line"><span class="cl">pg_dump -d mydb -t orders -t users -f part.dump <span class="c1"># 指定表</span>
+</span></span><span class="line"><span class="cl">pg_dump -d mydb -F d -j <span class="m">4</span> -f dumpdir/          <span class="c1"># 目录格式 + 4并行(大库快)</span>
+</span></span></code></pre></div><p>格式说明：<code>-F c</code>(custom 自定义)、<code>-F d</code>(directory 目录，支持并行)、<code>-F t</code>(tar)、<code>-F p</code>(plain SQL 默认)。<strong>生产推荐 custom 或 directory 格式</strong>，因为支持压缩、并行和选择性恢复。</p>
+<h2 id="22-pg_dumpall整个实例">2.2 pg_dumpall（整个实例）</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 备份所有库 + 全局对象（角色、表空间）</span>
+</span></span><span class="line"><span class="cl">pg_dumpall -U postgres -f all.sql
+</span></span><span class="line"><span class="cl"><span class="c1"># 只备份全局对象（角色/权限），常与 pg_dump 配合</span>
+</span></span><span class="line"><span class="cl">pg_dumpall --globals-only -f globals.sql
+</span></span></code></pre></div><blockquote>
+<p>注意：pg_dump <strong>不含角色和权限等全局对象</strong>，完整迁移需配合 <code>pg_dumpall --globals-only</code>。这是常见遗漏点。</p>
+</blockquote>
+<h2 id="23-恢复">2.3 恢复</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 恢复 custom/directory 格式（用 pg_restore）</span>
+</span></span><span class="line"><span class="cl">pg_restore -U postgres -d mydb -c mydb.dump          <span class="c1"># -c 先清理再恢复</span>
+</span></span><span class="line"><span class="cl">pg_restore -U postgres -d newdb -j <span class="m">4</span> mydb.dump       <span class="c1"># 并行恢复</span>
+</span></span><span class="line"><span class="cl">pg_restore -d mydb -t orders mydb.dump               <span class="c1"># 只恢复某表</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 恢复纯 SQL 格式（直接用 psql）</span>
+</span></span><span class="line"><span class="cl">psql -U postgres -d mydb -f mydb.sql
+</span></span></code></pre></div><h1 id="3-物理备份pg_basebackup">3. 物理备份：pg_basebackup</h1>
+<p>复制整个数据目录的字节级副本，适合大库和搭建从库。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">pg_basebackup -h localhost -U replicator -D /backup/base -F tar -z -P -X stream
+</span></span><span class="line"><span class="cl"><span class="c1"># -F tar 打包  -z 压缩  -P 显示进度  -X stream 同时流式获取备份期间产生的WAL</span>
+</span></span></code></pre></div><ul>
+<li>速度快（不解析数据，直接拷文件）。</li>
+<li>要求恢复端 PG <strong>大版本一致、CPU 架构一致</strong>。</li>
+<li>是搭建流复制从库的标准手段（见 <a href="https://xingliuhua.github.io/posts/pgsql/pgsql_34_%E4%B8%BB%E4%BB%8E%E5%A4%8D%E5%88%B6%E4%B8%8E%E9%AB%98%E5%8F%AF%E7%94%A8/" rel="">主从复制与高可用</a>）。</li>
+</ul>
+<h1 id="4-pitr时间点恢复进阶重点">4. PITR：时间点恢复（进阶重点）</h1>
+<p><strong>PITR（Point-In-Time Recovery）</strong> = 一份基础物理备份 + 持续归档的 WAL 日志，可恢复到备份之后的<strong>任意时刻</strong>（如&quot;误删数据前一秒&quot;）。</p>
+<h2 id="41-开启-wal-归档">4.1 开启 WAL 归档</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="c1"># postgresql.conf</span>
+</span></span><span class="line"><span class="cl"><span class="na">wal_level</span> <span class="o">=</span> <span class="s">replica</span>
+</span></span><span class="line"><span class="cl"><span class="na">archive_mode</span> <span class="o">=</span> <span class="s">on</span>
+</span></span><span class="line"><span class="cl"><span class="na">archive_command</span> <span class="o">=</span> <span class="s">&#39;test ! -f /archive/%f &amp;&amp; cp %p /archive/%f&#39;   # 归档每个WAL段</span>
+</span></span></code></pre></div><h2 id="42-恢复流程">4.2 恢复流程</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 1) 停库，用基础备份替换数据目录</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 2) 在数据目录创建 recovery 配置（PG 12+ 用 postgresql.conf + 标志文件）</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="c1"># postgresql.conf 中设置恢复目标</span>
+</span></span><span class="line"><span class="cl"><span class="na">restore_command</span> <span class="o">=</span> <span class="s">&#39;cp /archive/%f %p&#39;       # 从归档取回 WAL</span>
+</span></span><span class="line"><span class="cl"><span class="na">recovery_target_time</span> <span class="o">=</span> <span class="s">&#39;2026-07-27 14:30:00&#39; # 恢复到这个时刻（误操作前）</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 3) 创建 recovery.signal 触发恢复，然后启动</span>
+</span></span><span class="line"><span class="cl">touch <span class="nv">$PGDATA</span>/recovery.signal
+</span></span><span class="line"><span class="cl">pg_ctl start
+</span></span><span class="line"><span class="cl"><span class="c1"># PG 会重放 WAL 到指定时间点后停止</span>
+</span></span></code></pre></div><p>恢复目标还可用 <code>recovery_target_xid</code>（事务号）、<code>recovery_target_lsn</code>、<code>recovery_target_name</code>（还原点）。</p>
+<h1 id="5-备份策略与工具">5. 备份策略与工具</h1>
+<ul>
+<li><strong>小库</strong>：定期 pg_dump（自定义格式）+ 异地存储。</li>
+<li><strong>大库/关键业务</strong>：物理备份 + WAL 归档做 PITR，定期全量 + 持续增量。</li>
+<li><strong>生产推荐工具</strong>：
+<ul>
+<li><strong>pgBackRest</strong>：功能最全，支持增量/差异备份、并行、压缩、加密、云存储、保留策略。</li>
+<li><strong>Barman</strong>：备份管理与 PITR 一体化。</li>
+</ul>
+</li>
+<li><strong>3-2-1 原则</strong>：3 份副本、2 种介质、1 份异地。</li>
+<li><strong>定期演练恢复</strong>：没验证过的备份等于没有备份。</li>
+</ul>
+<h1 id="6-面试高频问答">6. 面试高频问答</h1>
+<p><strong>Q1：逻辑备份和物理备份的区别？</strong>
+逻辑备份（pg_dump）导出 SQL/数据，灵活、可跨版本跨平台、可选表，但大库慢、恢复需重建索引；物理备份（pg_basebackup）拷贝数据文件，快、适合大库，但要求同版本同架构。</p>
+<p><strong>Q2：pg_dump 会备份用户和权限吗？</strong>
+不会。pg_dump 只备份单个库的对象，角色/权限等全局对象要用 <code>pg_dumpall --globals-only</code> 单独备份，完整迁移需两者配合。</p>
+<p><strong>Q3：什么是 PITR？依赖什么实现？</strong>
+时间点恢复，依赖一份基础物理备份 + 持续归档的 WAL 日志，重放 WAL 到指定时刻，可恢复到误操作前任意时间点。</p>
+<p><strong>Q4：pg_dump 的哪种格式最好？为什么？</strong>
+custom（-F c）或 directory（-F d）格式，支持压缩、并行备份/恢复、选择性恢复单表；纯 SQL 格式只能整体顺序执行。</p>
+<p><strong>Q5：怎么保证备份可靠？</strong>
+遵循 3-2-1 原则、开启 WAL 归档做 PITR、用 pgBackRest 等工具管理增量与保留策略，并<strong>定期演练恢复</strong>验证备份可用。</p>
+<h1 id="7-下一步">7. 下一步</h1>
+<p>学习 <a href="https://xingliuhua.github.io/posts/pgsql/pgsql_34_%E4%B8%BB%E4%BB%8E%E5%A4%8D%E5%88%B6%E4%B8%8E%E9%AB%98%E5%8F%AF%E7%94%A8/" rel="">主从复制与高可用</a>，构建高可用架构。</p>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2025-09-25</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/pgsql/">pgsql</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/pgsql/pgsql_34_%E4%B8%BB%E4%BB%8E%E5%A4%8D%E5%88%B6%E4%B8%8E%E9%AB%98%E5%8F%AF%E7%94%A8/" class="prev" rel="prev" title="pgsql-34 主从复制与高可用"><i class="fas fa-angle-left fa-fw"></i>pgsql-34 主从复制与高可用</a>
+            <a href="/posts/pgsql/pgsql_32_wal%E4%B8%8E%E6%A3%80%E6%9F%A5%E7%82%B9%E6%9C%BA%E5%88%B6/" class="next" rel="next" title="pgsql-32 WAL与检查点机制">pgsql-32 WAL与检查点机制<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2025-09-25T09:10:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"pgsql-33 备份与恢复"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

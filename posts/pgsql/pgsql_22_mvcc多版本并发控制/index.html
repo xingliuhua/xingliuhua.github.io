@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>pgsql-22 MVCC多版本并发控制 - xingliuhua博客</title><meta name="Description" content="深入剖析 PostgreSQL 的 MVCC 实现：多版本元组、xmin/xmax 事务号、事务快照与可见性判断、HOT 更新，并与 MySQL InnoDB 的 undo 版本链机制深度对比"><meta property="og:title" content="pgsql-22 MVCC多版本并发控制" />
+<meta property="og:description" content="深入剖析 PostgreSQL 的 MVCC 实现：多版本元组、xmin/xmax 事务号、事务快照与可见性判断、HOT 更新，并与 MySQL InnoDB 的 undo 版本链机制深度对比" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/pgsql/pgsql_22_mvcc%E5%A4%9A%E7%89%88%E6%9C%AC%E5%B9%B6%E5%8F%91%E6%8E%A7%E5%88%B6/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2025-09-25T09:21:00+08:00" />
+<meta property="article:modified_time" content="2025-09-25T09:21:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="pgsql-22 MVCC多版本并发控制"/>
+<meta name="twitter:description" content="深入剖析 PostgreSQL 的 MVCC 实现：多版本元组、xmin/xmax 事务号、事务快照与可见性判断、HOT 更新，并与 MySQL InnoDB 的 undo 版本链机制深度对比"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/pgsql/pgsql_22_mvcc%E5%A4%9A%E7%89%88%E6%9C%AC%E5%B9%B6%E5%8F%91%E6%8E%A7%E5%88%B6/" /><link rel="prev" href="https://xingliuhua.github.io/posts/pgsql/pgsql_23_%E9%94%81%E6%9C%BA%E5%88%B6%E8%AF%A6%E8%A7%A3/" /><link rel="next" href="https://xingliuhua.github.io/posts/pgsql/pgsql_21_%E4%BA%8B%E5%8A%A1%E4%B8%8Eacid/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "pgsql-22 MVCC多版本并发控制",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/pgsql\/pgsql_22_mvcc%E5%A4%9A%E7%89%88%E6%9C%AC%E5%B9%B6%E5%8F%91%E6%8E%A7%E5%88%B6\/"
+        },"genre": "posts","keywords": "pgsql","wordcount":  3083 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/pgsql\/pgsql_22_mvcc%E5%A4%9A%E7%89%88%E6%9C%AC%E5%B9%B6%E5%8F%91%E6%8E%A7%E5%88%B6\/","datePublished": "2025-09-25T09:21:00+08:00","dateModified": "2025-09-25T09:21:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "深入剖析 PostgreSQL 的 MVCC 实现：多版本元组、xmin/xmax 事务号、事务快照与可见性判断、HOT 更新，并与 MySQL InnoDB 的 undo 版本链机制深度对比"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">pgsql-22 MVCC多版本并发控制</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2025-09-25">2025-09-25</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 3083 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 7 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-概述">1. 概述</a></li>
+    <li><a href="#2-postgresql-的-mvcc-实现">2. PostgreSQL 的 MVCC 实现</a>
+      <ol>
+        <li><a href="#21-核心思想多版本元组直接存在表里">2.1 核心思想：多版本元组直接存在表里</a></li>
+        <li><a href="#22-增删改如何操作版本">2.2 增删改如何操作版本</a></li>
+        <li><a href="#23-事务快照与可见性判断">2.3 事务快照与可见性判断</a></li>
+        <li><a href="#24-hot-更新优化">2.4 HOT 更新（优化）</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-事务隔离级别">3. 事务隔离级别</a>
+      <ol>
+        <li><a href="#31-serializablessi">3.1 Serializable（SSI）</a></li>
+      </ol>
+    </li>
+    <li><a href="#4-postgresql-vs-mysqlinnodb-的-mvcc面试核心">4. PostgreSQL vs MySQL(InnoDB) 的 MVCC（面试核心）</a></li>
+    <li><a href="#5-长事务的危害pg-特别严重">5. 长事务的危害（PG 特别严重）</a></li>
+    <li><a href="#6-面试高频问答">6. 面试高频问答</a></li>
+    <li><a href="#7-下一步">7. 下一步</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><h1 id="1-概述">1. 概述</h1>
+<p><strong>MVCC（Multi-Version Concurrency Control，多版本并发控制）<strong>是现代数据库并发的基石，也是 PostgreSQL 面试</strong>出现频率最高</strong>的主题之一。它要解决的核心矛盾是：</p>
+<blockquote>
+<p>如何让&quot;读&quot;和&quot;写&quot;互不阻塞？</p>
+</blockquote>
+<p>传统的&quot;读写加锁&quot;方案下，一个事务在读某行时，其他事务不能写；写时不能读。并发一高就大量阻塞。MVCC 的思路是：<strong>每次修改都生成数据的一个新版本，读操作读取某个一致性时间点的旧版本</strong>。于是——</p>
+<ul>
+<li><strong>读不阻塞写，写不阻塞读</strong>（读到的是历史版本）。</li>
+<li>每个事务看到的是一个一致的&quot;数据库快照&quot;。</li>
+</ul>
+<p>PostgreSQL 和 MySQL(InnoDB) 都用 MVCC，但<strong>实现方式截然不同</strong>，这个差异是面试最爱考的点，本文会重点对比。</p>
+<h1 id="2-postgresql-的-mvcc-实现">2. PostgreSQL 的 MVCC 实现</h1>
+<h2 id="21-核心思想多版本元组直接存在表里">2.1 核心思想：多版本元组直接存在表里</h2>
+<p>PostgreSQL 最关键的设计：<strong>更新（UPDATE）不是原地修改，而是&quot;标记旧行失效 + 插入新行&quot;</strong>。同一行的多个版本（称为<strong>元组 tuple</strong>）直接存放在**堆表（heap）**中。</p>
+<p>每个元组头部有几个隐藏系统字段：</p>
+<table>
+<thead>
+<tr>
+<th>系统列</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>xmin</code></td>
+<td><strong>插入</strong>该版本的事务 ID（XID）</td>
+</tr>
+<tr>
+<td><code>xmax</code></td>
+<td><strong>删除/更新</strong>该版本的事务 ID（0 表示未被删除）</td>
+</tr>
+<tr>
+<td><code>ctid</code></td>
+<td>该元组的物理位置（块号, 偏移）</td>
+</tr>
+<tr>
+<td><code>cmin/cmax</code></td>
+<td>同一事务内的命令序号</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="c1">-- 可以直接查看隐藏系统列
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="n">xmin</span><span class="p">,</span><span class="w"> </span><span class="n">xmax</span><span class="p">,</span><span class="w"> </span><span class="n">ctid</span><span class="p">,</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">accounts</span><span class="p">;</span><span class="w">
+</span></span></span></code></pre></div><h2 id="22-增删改如何操作版本">2.2 增删改如何操作版本</h2>
+<ul>
+<li><strong>INSERT</strong>：写入新元组，<code>xmin=当前事务ID</code>，<code>xmax=0</code>。</li>
+<li><strong>DELETE</strong>：不真正删除，只把该元组的 <code>xmax=当前事务ID</code>（标记&quot;我删了它&quot;）。</li>
+<li><strong>UPDATE</strong> = DELETE + INSERT：把旧版本 <code>xmax=当前事务ID</code>，同时插入一个新版本元组 <code>xmin=当前事务ID</code>。</li>
+</ul>
+<blockquote>
+<p>所以 PostgreSQL 的 UPDATE 会<strong>产生一个新元组，旧元组变成&quot;死元组（dead tuple）&quot;</strong>。这些死元组不会自动消失，需要 <a href="https://xingliuhua.github.io/posts/pgsql/pgsql_27_vacuum%E4%B8%8E%E8%A1%A8%E8%86%A8%E8%83%80/" rel="">VACUUM与表膨胀</a> 来回收——这正是 PG 特有的&quot;表膨胀&quot;问题的根源。</p>
+</blockquote>
+<h2 id="23-事务快照与可见性判断">2.3 事务快照与可见性判断</h2>
+<p>每个事务/语句执行时会拿到一个<strong>快照（snapshot）</strong>，快照记录了&quot;此刻哪些事务是活跃的（未提交）&quot;。核心信息：</p>
+<ul>
+<li><code>xmin</code>（快照）：当前最小活跃事务 ID，小于它的事务都已结束。</li>
+<li><code>xmax</code>（快照）：下一个将分配的事务 ID，大于等于它的都还没开始。</li>
+<li><code>xip_list</code>：正在进行中的活跃事务列表。</li>
+</ul>
+<p><strong>可见性规则（简化版）</strong>：一个元组对当前快照可见，当且仅当：</p>
+<ol>
+<li>它的 <code>xmin</code> 对应的事务<strong>已提交</strong>，且在快照看来是&quot;过去&quot;的；<strong>并且</strong></li>
+<li>它的 <code>xmax</code> 为 0，或 <code>xmax</code> 对应的事务<strong>未提交/已回滚</strong>（即它还没被有效删除）。</li>
+</ol>
+<pre tabindex="0"><code>简言之：这个版本是由「已经提交且我能看见」的事务创建的，
+        并且还没有被「已经提交且我能看见」的事务删除。
+</code></pre><p>配合 <code>t_infomask</code> 里的提交状态标志位（Hint Bits）和 CLOG（事务提交日志）判断某个 XID 到底提交了没有。</p>
+<h2 id="24-hot-更新优化">2.4 HOT 更新（优化）</h2>
+<p>频繁 UPDATE 会产生大量死元组和索引更新。PostgreSQL 用 <strong>HOT（Heap-Only Tuple）<strong>优化：如果更新</strong>不涉及索引列</strong>，且新版本能放在<strong>同一个数据页</strong>内，就不需要更新索引——旧元组通过 <code>ctid</code> 链指向新版本，索引仍指向旧元组即可。</p>
+<p>这大幅减少了索引膨胀。设计表时，<strong>把频繁更新的列排除在索引外</strong>能更好地触发 HOT。</p>
+<h1 id="3-事务隔离级别">3. 事务隔离级别</h1>
+<p>MVCC 是实现隔离级别的手段。PostgreSQL 支持标准的 4 个隔离级别：</p>
+<table>
+<thead>
+<tr>
+<th>隔离级别</th>
+<th>脏读</th>
+<th>不可重复读</th>
+<th>幻读</th>
+<th>PG 实际表现</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Read Uncommitted</td>
+<td>❌禁止</td>
+<td>可能</td>
+<td>可能</td>
+<td>PG 中等同于 Read Committed（无脏读）</td>
+</tr>
+<tr>
+<td><strong>Read Committed</strong>（默认）</td>
+<td>❌</td>
+<td>可能</td>
+<td>可能</td>
+<td>每条语句取新快照</td>
+</tr>
+<tr>
+<td><strong>Repeatable Read</strong></td>
+<td>❌</td>
+<td>❌</td>
+<td>❌</td>
+<td>事务开始时取一次快照；PG 下已无幻读</td>
+</tr>
+<tr>
+<td><strong>Serializable</strong></td>
+<td>❌</td>
+<td>❌</td>
+<td>❌</td>
+<td>SSI 可串行化快照隔离</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="k">BEGIN</span><span class="w"> </span><span class="k">ISOLATION</span><span class="w"> </span><span class="k">LEVEL</span><span class="w"> </span><span class="k">REPEATABLE</span><span class="w"> </span><span class="k">READ</span><span class="p">;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- ... 整个事务用同一个快照 ...
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">COMMIT</span><span class="p">;</span><span class="w">
+</span></span></span></code></pre></div><p><strong>两个易考点：</strong></p>
+<ol>
+<li><strong>PG 默认是 Read Committed</strong>：每条 SQL 语句开始时都取一个新快照，所以同一事务内两次查询可能看到别的事务已提交的新数据（不可重复读）。</li>
+<li><strong>PG 的 Repeatable Read 已经消除了幻读</strong>（快照隔离天然如此），这比 SQL 标准要求的更强；而 MySQL 靠间隙锁（Next-Key Lock）在 RR 下防幻读，机制完全不同。</li>
+</ol>
+<h2 id="31-serializablessi">3.1 Serializable（SSI）</h2>
+<p>PostgreSQL 的 Serializable 用 <strong>SSI（Serializable Snapshot Isolation，可串行化快照隔离）</strong>，在快照隔离基础上检测&quot;读写依赖环&quot;，发现可能破坏串行性时让其中一个事务失败回滚（报 <code>could not serialize access</code>）。它是<strong>乐观</strong>的——不加读锁，靠冲突检测。</p>
+<h1 id="4-postgresql-vs-mysqlinnodb-的-mvcc面试核心">4. PostgreSQL vs MySQL(InnoDB) 的 MVCC（面试核心）</h1>
+<p>这是本文最重要的对比，务必掌握：</p>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>PostgreSQL</th>
+<th>MySQL / InnoDB</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>旧版本存哪</strong></td>
+<td><strong>直接存在堆表里</strong>（新旧元组同表）</td>
+<td>存在 <strong>undo log（回滚段）</strong></td>
+</tr>
+<tr>
+<td><strong>UPDATE 方式</strong></td>
+<td>旧元组标记失效 + 插入新元组</td>
+<td><strong>原地更新</strong>，旧值写入 undo log</td>
+</tr>
+<tr>
+<td><strong>版本组织</strong></td>
+<td>表内多元组，靠 xmin/xmax + 可见性判断</td>
+<td>行上有 DB_TRX_ID / DB_ROLL_PTR 指向 undo 版本链</td>
+</tr>
+<tr>
+<td><strong>回滚成本</strong></td>
+<td>极低（旧元组本就在，直接可见）</td>
+<td>需要用 undo 反向恢复</td>
+</tr>
+<tr>
+<td><strong>旧版本清理</strong></td>
+<td>需要 <strong>VACUUM</strong> 异步清理死元组</td>
+<td><strong>Purge 线程</strong>清理不再需要的 undo</td>
+</tr>
+<tr>
+<td><strong>典型副作用</strong></td>
+<td><strong>表膨胀</strong>（死元组堆积）、需要 VACUUM</td>
+<td>undo 膨胀（长事务导致 undo 无法回收）</td>
+</tr>
+<tr>
+<td><strong>回滚段争用</strong></td>
+<td>无</td>
+<td>高并发下 undo 可能成瓶颈</td>
+</tr>
+<tr>
+<td><strong>可见性判断</strong></td>
+<td>元组头 xmin/xmax + 快照 + CLOG</td>
+<td>行 trx_id 与 Read View 比较 + undo 回溯</td>
+</tr>
+</tbody>
+</table>
+<p><strong>一句话总结（面试金句）：</strong></p>
+<blockquote>
+<p>PostgreSQL 把&quot;旧版本&quot;直接留在表里，代价是产生死元组、需要 VACUUM 回收，会有表膨胀；MySQL(InnoDB) 把&quot;旧版本&quot;放进 undo log 做版本链、原地更新，代价是回滚和一致性读要回溯 undo，长事务会撑大 undo。两者都用 MVCC 实现&quot;读写不阻塞&quot;，只是&quot;旧版本放哪、谁来清理&quot;的取舍不同。</p>
+</blockquote>
+<p><strong>衍生问题：为什么 PG 的回滚很快，而 MySQL 回滚可能较慢？</strong>
+PG 回滚只需把当前事务创建的新元组标记为无效（它们本就不可见），几乎零成本；MySQL 回滚需要读 undo log 把数据一条条恢复原值。反过来，PG 为此付出的代价是需要 VACUUM。</p>
+<h1 id="5-长事务的危害pg-特别严重">5. 长事务的危害（PG 特别严重）</h1>
+<p>在 PG 中，只要有一个<strong>长时间不提交的事务</strong>，它的快照就&quot;钉住&quot;了一个旧的事务水平线（<code>xmin</code>），导致：</p>
+<ol>
+<li>VACUUM <strong>无法清理</strong>那些&quot;可能还被老事务看到&quot;的死元组 → 表持续膨胀。</li>
+<li>事务 ID 消耗加剧，逼近 **XID 回卷（wraparound）**风险。</li>
+</ol>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="c1">-- 排查长事务/空闲事务（运维必备）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="n">pid</span><span class="p">,</span><span class="w"> </span><span class="k">state</span><span class="p">,</span><span class="w"> </span><span class="n">now</span><span class="p">()</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">xact_start</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">duration</span><span class="p">,</span><span class="w"> </span><span class="n">query</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">FROM</span><span class="w"> </span><span class="n">pg_stat_activity</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">WHERE</span><span class="w"> </span><span class="k">state</span><span class="w"> </span><span class="o">&lt;&gt;</span><span class="w"> </span><span class="s1">&#39;idle&#39;</span><span class="w"> </span><span class="k">AND</span><span class="w"> </span><span class="n">xact_start</span><span class="w"> </span><span class="k">IS</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">ORDER</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="n">duration</span><span class="w"> </span><span class="k">DESC</span><span class="p">;</span><span class="w">
+</span></span></span></code></pre></div><p><strong>结论</strong>：PG 中要极力避免长事务和&quot;idle in transaction&quot;（开了事务却迟迟不提交）。</p>
+<h1 id="6-面试高频问答">6. 面试高频问答</h1>
+<p><strong>Q1：什么是 MVCC？解决了什么问题？</strong>
+多版本并发控制，通过为数据保留多个版本，让读操作读取一致性快照的历史版本，从而实现&quot;读不阻塞写、写不阻塞读&quot;，大幅提升并发。</p>
+<p><strong>Q2：PostgreSQL 的 MVCC 和 MySQL 的有什么区别？</strong>（最高频）
+PG 把旧版本直接存在堆表里，UPDATE 是&quot;旧元组失效+插入新元组&quot;，靠 xmin/xmax 和快照判断可见性，需要 VACUUM 清理死元组、会表膨胀；MySQL 把旧版本存在 undo log，原地更新形成版本链，靠 trx_id 和 Read View 判断可见性，由 purge 线程清理 undo。（见第4节表）</p>
+<p><strong>Q3：xmin 和 xmax 是什么？</strong>
+元组头的系统字段：xmin 是创建该版本的事务 ID，xmax 是删除/更新该版本的事务 ID（0 表示未删除）。可见性判断就是比较它们与当前快照。</p>
+<p><strong>Q4：PG 的 UPDATE 为什么会导致表膨胀？</strong>
+因为 UPDATE 不是原地改，而是把旧元组标记失效、插入新元组，旧元组变成死元组不会立即消失，累积就是表膨胀，需要 VACUUM 回收。</p>
+<p><strong>Q5：PG 默认隔离级别是什么？RR 下有幻读吗？</strong>
+默认 Read Committed（每条语句取新快照）。PG 的 Repeatable Read 基于快照隔离，已经消除了幻读，无需像 MySQL 那样用间隙锁。</p>
+<p><strong>Q6：为什么长事务在 PG 中危害大？</strong>
+长事务的旧快照会阻止 VACUUM 回收死元组，导致表持续膨胀，并加剧事务 ID 回卷风险。</p>
+<h1 id="7-下一步">7. 下一步</h1>
+<p>学习 <a href="https://xingliuhua.github.io/posts/pgsql/pgsql_23_%E9%94%81%E6%9C%BA%E5%88%B6%E8%AF%A6%E8%A7%A3/" rel="">锁机制详解</a>，了解 MVCC 之外 PG 如何用锁保证一致性。</p>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2025-09-25</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/pgsql/">pgsql</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/pgsql/pgsql_23_%E9%94%81%E6%9C%BA%E5%88%B6%E8%AF%A6%E8%A7%A3/" class="prev" rel="prev" title="pgsql-23 锁机制详解"><i class="fas fa-angle-left fa-fw"></i>pgsql-23 锁机制详解</a>
+            <a href="/posts/pgsql/pgsql_21_%E4%BA%8B%E5%8A%A1%E4%B8%8Eacid/" class="next" rel="next" title="pgsql-21 事务与ACID">pgsql-21 事务与ACID<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2025-09-25T09:21:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"pgsql-22 MVCC多版本并发控制"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

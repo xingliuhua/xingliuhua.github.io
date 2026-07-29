@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>pgsql-35 监控与日志管理 - xingliuhua博客</title><meta name="Description" content="讲解 PostgreSQL 可观测性：核心统计视图、关键监控指标(连接/缓存命中/复制延迟/膨胀/长事务)、日志配置、Prometheus&#43;Grafana监控栈，对比 MySQL"><meta property="og:title" content="pgsql-35 监控与日志管理" />
+<meta property="og:description" content="讲解 PostgreSQL 可观测性：核心统计视图、关键监控指标(连接/缓存命中/复制延迟/膨胀/长事务)、日志配置、Prometheus&#43;Grafana监控栈，对比 MySQL" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/pgsql/pgsql_35_%E7%9B%91%E6%8E%A7%E4%B8%8E%E6%97%A5%E5%BF%97%E7%AE%A1%E7%90%86/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2025-09-25T09:08:00+08:00" />
+<meta property="article:modified_time" content="2025-09-25T09:08:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="pgsql-35 监控与日志管理"/>
+<meta name="twitter:description" content="讲解 PostgreSQL 可观测性：核心统计视图、关键监控指标(连接/缓存命中/复制延迟/膨胀/长事务)、日志配置、Prometheus&#43;Grafana监控栈，对比 MySQL"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/pgsql/pgsql_35_%E7%9B%91%E6%8E%A7%E4%B8%8E%E6%97%A5%E5%BF%97%E7%AE%A1%E7%90%86/" /><link rel="prev" href="https://xingliuhua.github.io/posts/pgsql/pgsql_36_%E7%94%A8%E6%88%B7%E6%9D%83%E9%99%90%E4%B8%8E%E5%AE%89%E5%85%A8/" /><link rel="next" href="https://xingliuhua.github.io/posts/pgsql/pgsql_34_%E4%B8%BB%E4%BB%8E%E5%A4%8D%E5%88%B6%E4%B8%8E%E9%AB%98%E5%8F%AF%E7%94%A8/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "pgsql-35 监控与日志管理",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/pgsql\/pgsql_35_%E7%9B%91%E6%8E%A7%E4%B8%8E%E6%97%A5%E5%BF%97%E7%AE%A1%E7%90%86\/"
+        },"genre": "posts","keywords": "pgsql","wordcount":  1438 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/pgsql\/pgsql_35_%E7%9B%91%E6%8E%A7%E4%B8%8E%E6%97%A5%E5%BF%97%E7%AE%A1%E7%90%86\/","datePublished": "2025-09-25T09:08:00+08:00","dateModified": "2025-09-25T09:08:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "讲解 PostgreSQL 可观测性：核心统计视图、关键监控指标(连接/缓存命中/复制延迟/膨胀/长事务)、日志配置、Prometheus+Grafana监控栈，对比 MySQL"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">pgsql-35 监控与日志管理</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2025-09-25">2025-09-25</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 1438 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 3 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-概述">1. 概述</a></li>
+    <li><a href="#2-核心统计视图">2. 核心统计视图</a></li>
+    <li><a href="#3-关键监控指标与查询">3. 关键监控指标与查询</a>
+      <ol>
+        <li><a href="#31-连接数与状态">3.1 连接数与状态</a></li>
+        <li><a href="#32-缓存命中率应-99">3.2 缓存命中率（应 &gt;99%）</a></li>
+        <li><a href="#33-事务与死锁">3.3 事务与死锁</a></li>
+        <li><a href="#34-表膨胀与-vacuum">3.4 表膨胀与 VACUUM</a></li>
+        <li><a href="#35-长事务长查询">3.5 长事务/长查询</a></li>
+        <li><a href="#36-复制延迟">3.6 复制延迟</a></li>
+        <li><a href="#37-数据库表大小">3.7 数据库/表大小</a></li>
+      </ol>
+    </li>
+    <li><a href="#4-日志管理">4. 日志管理</a></li>
+    <li><a href="#5-prometheus--grafana-监控栈">5. Prometheus + Grafana 监控栈</a></li>
+    <li><a href="#6-需要建立告警的关键指标">6. 需要建立告警的关键指标</a></li>
+    <li><a href="#7-面试高频问答">7. 面试高频问答</a></li>
+    <li><a href="#8-下一步">8. 下一步</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><h1 id="1-概述">1. 概述</h1>
+<p>&ldquo;没有监控的数据库是黑盒&rdquo;。本篇讲 PostgreSQL 的可观测性：用内置<strong>统计视图</strong>看实时状态，用<strong>日志</strong>留存审计与诊断信息，用 <strong>Prometheus + Grafana</strong> 做长期监控告警。</p>
+<blockquote>
+<p>对比 MySQL：MySQL 用 <code>SHOW STATUS</code>、<code>performance_schema</code>、<code>information_schema</code> 和 <code>SHOW ENGINE INNODB STATUS</code>；PostgreSQL 用一套 <code>pg_stat_*</code> 系统视图。理念相通——都是把内部计数器暴露为可查询的视图。</p>
+</blockquote>
+<h1 id="2-核心统计视图">2. 核心统计视图</h1>
+<table>
+<thead>
+<tr>
+<th>视图</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>pg_stat_activity</code></td>
+<td>当前连接/会话与正在执行的查询</td>
+</tr>
+<tr>
+<td><code>pg_stat_database</code></td>
+<td>每个库的提交/回滚/缓存命中/死锁</td>
+</tr>
+<tr>
+<td><code>pg_stat_user_tables</code></td>
+<td>表的读写次数、死元组、VACUUM 时间</td>
+</tr>
+<tr>
+<td><code>pg_stat_user_indexes</code></td>
+<td>索引使用次数</td>
+</tr>
+<tr>
+<td><code>pg_stat_replication</code></td>
+<td>复制状态与延迟</td>
+</tr>
+<tr>
+<td><code>pg_statio_user_tables</code></td>
+<td>表的物理/缓存 IO</td>
+</tr>
+<tr>
+<td><code>pg_stat_statements</code></td>
+<td>SQL 级统计（需扩展）</td>
+</tr>
+</tbody>
+</table>
+<h1 id="3-关键监控指标与查询">3. 关键监控指标与查询</h1>
+<h2 id="31-连接数与状态">3.1 连接数与状态</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="k">SELECT</span><span class="w"> </span><span class="k">state</span><span class="p">,</span><span class="w"> </span><span class="k">count</span><span class="p">(</span><span class="o">*</span><span class="p">)</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">pg_stat_activity</span><span class="w"> </span><span class="k">GROUP</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="k">state</span><span class="p">;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 关注 active / idle / &#39;idle in transaction&#39;（后者危险，见连接池篇）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 距离 max_connections 还剩多少
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="k">count</span><span class="p">(</span><span class="o">*</span><span class="p">)</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="err">当前</span><span class="p">,</span><span class="w"> </span><span class="n">current_setting</span><span class="p">(</span><span class="s1">&#39;max_connections&#39;</span><span class="p">)</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="err">上限</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">pg_stat_activity</span><span class="p">;</span><span class="w">
+</span></span></span></code></pre></div><h2 id="32-缓存命中率应-99">3.2 缓存命中率（应 &gt;99%）</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="k">SELECT</span><span class="w"> </span><span class="n">datname</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">       </span><span class="n">round</span><span class="p">(</span><span class="n">blks_hit</span><span class="o">*</span><span class="mi">100</span><span class="p">.</span><span class="mi">0</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="k">nullif</span><span class="p">(</span><span class="n">blks_hit</span><span class="o">+</span><span class="n">blks_read</span><span class="p">,</span><span class="mi">0</span><span class="p">),</span><span class="w"> </span><span class="mi">2</span><span class="p">)</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="err">缓存命中率</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">FROM</span><span class="w"> </span><span class="n">pg_stat_database</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="n">datname</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">current_database</span><span class="p">();</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 命中率低说明 shared_buffers 不足或有大量冷数据扫描
+</span></span></span></code></pre></div><h2 id="33-事务与死锁">3.3 事务与死锁</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="k">SELECT</span><span class="w"> </span><span class="n">datname</span><span class="p">,</span><span class="w"> </span><span class="n">xact_commit</span><span class="p">,</span><span class="w"> </span><span class="n">xact_rollback</span><span class="p">,</span><span class="w"> </span><span class="n">deadlocks</span><span class="p">,</span><span class="w"> </span><span class="n">temp_files</span><span class="p">,</span><span class="w"> </span><span class="n">temp_bytes</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">FROM</span><span class="w"> </span><span class="n">pg_stat_database</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="n">datname</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">current_database</span><span class="p">();</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- deadlocks 增长、temp_files 多(work_mem不足) 都是告警点
+</span></span></span></code></pre></div><h2 id="34-表膨胀与-vacuum">3.4 表膨胀与 VACUUM</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="k">SELECT</span><span class="w"> </span><span class="n">relname</span><span class="p">,</span><span class="w"> </span><span class="n">n_live_tup</span><span class="p">,</span><span class="w"> </span><span class="n">n_dead_tup</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">       </span><span class="n">last_autovacuum</span><span class="p">,</span><span class="w"> </span><span class="n">last_autoanalyze</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">FROM</span><span class="w"> </span><span class="n">pg_stat_user_tables</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">ORDER</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="n">n_dead_tup</span><span class="w"> </span><span class="k">DESC</span><span class="w"> </span><span class="k">LIMIT</span><span class="w"> </span><span class="mi">10</span><span class="p">;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 死元组多、长期没 autovacuum 需关注（见 VACUUM 篇）
+</span></span></span></code></pre></div><h2 id="35-长事务长查询">3.5 长事务/长查询</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="k">SELECT</span><span class="w"> </span><span class="n">pid</span><span class="p">,</span><span class="w"> </span><span class="n">now</span><span class="p">()</span><span class="o">-</span><span class="n">xact_start</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="err">事务时长</span><span class="p">,</span><span class="w"> </span><span class="k">state</span><span class="p">,</span><span class="w"> </span><span class="n">query</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">FROM</span><span class="w"> </span><span class="n">pg_stat_activity</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">WHERE</span><span class="w"> </span><span class="k">state</span><span class="w"> </span><span class="o">&lt;&gt;</span><span class="w"> </span><span class="s1">&#39;idle&#39;</span><span class="w"> </span><span class="k">AND</span><span class="w"> </span><span class="n">now</span><span class="p">()</span><span class="o">-</span><span class="n">xact_start</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="nb">interval</span><span class="w"> </span><span class="s1">&#39;1 min&#39;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">ORDER</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="err">事务时长</span><span class="w"> </span><span class="k">DESC</span><span class="p">;</span><span class="w">
+</span></span></span></code></pre></div><h2 id="36-复制延迟">3.6 复制延迟</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="k">SELECT</span><span class="w"> </span><span class="n">client_addr</span><span class="p">,</span><span class="w"> </span><span class="k">state</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">       </span><span class="n">pg_wal_lsn_diff</span><span class="p">(</span><span class="n">pg_current_wal_lsn</span><span class="p">(),</span><span class="w"> </span><span class="n">replay_lsn</span><span class="p">)</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="err">延迟字节</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">FROM</span><span class="w"> </span><span class="n">pg_stat_replication</span><span class="p">;</span><span class="w">
+</span></span></span></code></pre></div><h2 id="37-数据库表大小">3.7 数据库/表大小</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="k">SELECT</span><span class="w"> </span><span class="n">pg_size_pretty</span><span class="p">(</span><span class="n">pg_database_size</span><span class="p">(</span><span class="n">current_database</span><span class="p">()))</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="err">库大小</span><span class="p">;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">SELECT</span><span class="w"> </span><span class="n">relname</span><span class="p">,</span><span class="w"> </span><span class="n">pg_size_pretty</span><span class="p">(</span><span class="n">pg_total_relation_size</span><span class="p">(</span><span class="n">relid</span><span class="p">))</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="err">大小</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">FROM</span><span class="w"> </span><span class="n">pg_stat_user_tables</span><span class="w"> </span><span class="k">ORDER</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="n">pg_total_relation_size</span><span class="p">(</span><span class="n">relid</span><span class="p">)</span><span class="w"> </span><span class="k">DESC</span><span class="w"> </span><span class="k">LIMIT</span><span class="w"> </span><span class="mi">10</span><span class="p">;</span><span class="w">
+</span></span></span></code></pre></div><h1 id="4-日志管理">4. 日志管理</h1>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="c1"># postgresql.conf 常用日志配置</span>
+</span></span><span class="line"><span class="cl"><span class="na">logging_collector</span> <span class="o">=</span> <span class="s">on</span>
+</span></span><span class="line"><span class="cl"><span class="na">log_directory</span> <span class="o">=</span> <span class="s">&#39;log&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="na">log_filename</span> <span class="o">=</span> <span class="s">&#39;postgresql-%Y-%m-%d.log&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="na">log_rotation_age</span> <span class="o">=</span> <span class="s">1d</span>
+</span></span><span class="line"><span class="cl"><span class="na">log_rotation_size</span> <span class="o">=</span> <span class="s">100MB</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="na">log_min_duration_statement</span> <span class="o">=</span> <span class="s">1000     # 慢查询阈值(ms)</span>
+</span></span><span class="line"><span class="cl"><span class="na">log_line_prefix</span> <span class="o">=</span> <span class="s">&#39;%m [%p] %u@%d %r &#39; # 时间 进程 用户@库 客户端</span>
+</span></span><span class="line"><span class="cl"><span class="na">log_checkpoints</span> <span class="o">=</span> <span class="s">on                  # 记录检查点</span>
+</span></span><span class="line"><span class="cl"><span class="na">log_connections</span> <span class="o">=</span> <span class="s">on                  # 记录连接建立</span>
+</span></span><span class="line"><span class="cl"><span class="na">log_disconnections</span> <span class="o">=</span> <span class="s">on</span>
+</span></span><span class="line"><span class="cl"><span class="na">log_lock_waits</span> <span class="o">=</span> <span class="s">on                   # 记录锁等待(排查阻塞)</span>
+</span></span><span class="line"><span class="cl"><span class="na">log_temp_files</span> <span class="o">=</span> <span class="s">0                    # 记录临时文件使用(work_mem不足信号)</span>
+</span></span><span class="line"><span class="cl"><span class="na">log_autovacuum_min_duration</span> <span class="o">=</span> <span class="s">0       # 记录autovacuum活动</span>
+</span></span></code></pre></div><ul>
+<li><strong>审计需求</strong>：用 <code>pgAudit</code> 扩展做细粒度操作审计（谁在何时执行了什么）。</li>
+<li>日志可接入 ELK / Loki 做集中检索。</li>
+</ul>
+<h1 id="5-prometheus--grafana-监控栈">5. Prometheus + Grafana 监控栈</h1>
+<p>生产标配的可视化监控方案：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># postgres_exporter 采集 PG 指标暴露给 Prometheus</span>
+</span></span><span class="line"><span class="cl">docker run -d -p 9187:9187 <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  -e <span class="nv">DATA_SOURCE_NAME</span><span class="o">=</span><span class="s2">&#34;postgresql://monitor:pwd@db:5432/postgres?sslmode=disable&#34;</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  quay.io/prometheuscommunity/postgres-exporter
+</span></span></code></pre></div><ul>
+<li><strong>postgres_exporter</strong> 把 pg_stat_* 转成 Prometheus 指标。</li>
+<li>Prometheus 抓取并存储，Grafana 用现成的 PostgreSQL 仪表盘展示。</li>
+<li>配合 Alertmanager 对&quot;连接数逼近上限、复制延迟过大、缓存命中率下降、磁盘不足、长事务&quot;等设告警。</li>
+</ul>
+<h1 id="6-需要建立告警的关键指标">6. 需要建立告警的关键指标</h1>
+<ol>
+<li>连接数接近 max_connections。</li>
+<li>缓存命中率 &lt; 99%。</li>
+<li>复制延迟过大 / 复制中断。</li>
+<li><code>idle in transaction</code> 长事务堆积。</li>
+<li>死元组比例高 / autovacuum 长期未运行。</li>
+<li>磁盘剩余空间 / WAL 目录膨胀。</li>
+<li>死锁数增长、临时文件频繁（work_mem 不足）。</li>
+<li>XID 回卷风险（<code>age(datfrozenxid)</code> 接近阈值）。</li>
+</ol>
+<h1 id="7-面试高频问答">7. 面试高频问答</h1>
+<p><strong>Q1：PostgreSQL 靠什么做监控？</strong>
+一套 <code>pg_stat_*</code> 系统视图暴露内部计数器（活动会话、数据库统计、表/索引使用、复制状态等），配合 pg_stat_statements 做 SQL 级统计，外部用 postgres_exporter + Prometheus + Grafana 做可视化和告警。</p>
+<p><strong>Q2：缓存命中率怎么算？多少算健康？</strong>
+<code>blks_hit / (blks_hit + blks_read)</code>，来自 pg_stat_database，健康值应 &gt;99%；偏低说明 shared_buffers 不足或大量冷数据扫描。</p>
+<p><strong>Q3：怎么发现长事务和阻塞？</strong>
+查 pg_stat_activity：按 <code>now()-xact_start</code> 找长事务，<code>state='idle in transaction'</code> 找泄漏，<code>pg_blocking_pids()</code> 找阻塞源。</p>
+<p><strong>Q4：哪些指标必须告警？</strong>
+连接数逼近上限、复制延迟/中断、缓存命中率下降、长事务堆积、死元组过多、磁盘/WAL 膨胀、XID 回卷风险。</p>
+<p><strong>Q5：需要审计谁改了数据怎么做？</strong>
+开启 log_connections/log_statement 记录基本操作，或用 pgAudit 扩展做细粒度审计，日志集中到 ELK/Loki 检索。</p>
+<h1 id="8-下一步">8. 下一步</h1>
+<p>学习 <a href="https://xingliuhua.github.io/posts/pgsql/pgsql_36_%E7%94%A8%E6%88%B7%E6%9D%83%E9%99%90%E4%B8%8E%E5%AE%89%E5%85%A8/" rel="">用户权限与安全</a>，掌握访问控制。</p>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2025-09-25</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/pgsql/">pgsql</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/pgsql/pgsql_36_%E7%94%A8%E6%88%B7%E6%9D%83%E9%99%90%E4%B8%8E%E5%AE%89%E5%85%A8/" class="prev" rel="prev" title="pgsql-36 用户权限与安全"><i class="fas fa-angle-left fa-fw"></i>pgsql-36 用户权限与安全</a>
+            <a href="/posts/pgsql/pgsql_34_%E4%B8%BB%E4%BB%8E%E5%A4%8D%E5%88%B6%E4%B8%8E%E9%AB%98%E5%8F%AF%E7%94%A8/" class="next" rel="next" title="pgsql-34 主从复制与高可用">pgsql-34 主从复制与高可用<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2025-09-25T09:08:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"pgsql-35 监控与日志管理"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

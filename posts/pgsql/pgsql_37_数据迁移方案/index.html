@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>pgsql-37 数据迁移方案 - xingliuhua博客</title><meta name="Description" content="讲解数据库迁移：MySQL→PostgreSQL 用 pgloader 迁移、类型/语法差异对照、大表不停机迁移(逻辑复制)、数据校验与回滚，PG 版本升级方案"><meta property="og:title" content="pgsql-37 数据迁移方案" />
+<meta property="og:description" content="讲解数据库迁移：MySQL→PostgreSQL 用 pgloader 迁移、类型/语法差异对照、大表不停机迁移(逻辑复制)、数据校验与回滚，PG 版本升级方案" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/pgsql/pgsql_37_%E6%95%B0%E6%8D%AE%E8%BF%81%E7%A7%BB%E6%96%B9%E6%A1%88/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2025-09-25T09:06:00+08:00" />
+<meta property="article:modified_time" content="2025-09-25T09:06:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="pgsql-37 数据迁移方案"/>
+<meta name="twitter:description" content="讲解数据库迁移：MySQL→PostgreSQL 用 pgloader 迁移、类型/语法差异对照、大表不停机迁移(逻辑复制)、数据校验与回滚，PG 版本升级方案"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/pgsql/pgsql_37_%E6%95%B0%E6%8D%AE%E8%BF%81%E7%A7%BB%E6%96%B9%E6%A1%88/" /><link rel="prev" href="https://xingliuhua.github.io/posts/pgsql/pgsql_38_go%E8%AF%AD%E8%A8%80%E8%BF%9E%E6%8E%A5postgresql/" /><link rel="next" href="https://xingliuhua.github.io/posts/pgsql/pgsql_36_%E7%94%A8%E6%88%B7%E6%9D%83%E9%99%90%E4%B8%8E%E5%AE%89%E5%85%A8/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "pgsql-37 数据迁移方案",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/pgsql\/pgsql_37_%E6%95%B0%E6%8D%AE%E8%BF%81%E7%A7%BB%E6%96%B9%E6%A1%88\/"
+        },"genre": "posts","keywords": "pgsql","wordcount":  1531 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/pgsql\/pgsql_37_%E6%95%B0%E6%8D%AE%E8%BF%81%E7%A7%BB%E6%96%B9%E6%A1%88\/","datePublished": "2025-09-25T09:06:00+08:00","dateModified": "2025-09-25T09:06:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "讲解数据库迁移：MySQL→PostgreSQL 用 pgloader 迁移、类型/语法差异对照、大表不停机迁移(逻辑复制)、数据校验与回滚，PG 版本升级方案"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">pgsql-37 数据迁移方案</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2025-09-25">2025-09-25</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 1531 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 4 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-概述">1. 概述</a></li>
+    <li><a href="#2-mysql--postgresql-迁移">2. MySQL → PostgreSQL 迁移</a>
+      <ol>
+        <li><a href="#21-用-pgloader推荐">2.1 用 pgloader（推荐）</a></li>
+        <li><a href="#22-类型与语法差异对照面试常问">2.2 类型与语法差异对照（面试常问）</a></li>
+        <li><a href="#23-手动迁移步骤复杂场景">2.3 手动迁移步骤（复杂场景）</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-大表不停机迁移">3. 大表不停机迁移</a></li>
+    <li><a href="#4-数据校验不可省略">4. 数据校验（不可省略）</a></li>
+    <li><a href="#5-postgresql-版本升级同构">5. PostgreSQL 版本升级（同构）</a></li>
+    <li><a href="#6-迁移检查清单">6. 迁移检查清单</a></li>
+    <li><a href="#7-面试高频问答">7. 面试高频问答</a></li>
+    <li><a href="#8-下一步">8. 下一步</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><h1 id="1-概述">1. 概述</h1>
+<p>数据迁移是常见且高风险的工作，分两类：<strong>异构迁移</strong>（MySQL→PostgreSQL 等换数据库）和<strong>同构迁移/升级</strong>（PG 大版本升级）。本篇覆盖迁移工具、类型差异、不停机方案与校验。</p>
+<p>迁移核心原则：<strong>先小规模验证 → 数据校验 → 可回滚 → 灰度切流</strong>。</p>
+<h1 id="2-mysql--postgresql-迁移">2. MySQL → PostgreSQL 迁移</h1>
+<h2 id="21-用-pgloader推荐">2.1 用 pgloader（推荐）</h2>
+<p>pgloader 能自动处理类型转换、批量加载，是 MySQL 迁 PG 的首选工具。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">apt install pgloader
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 一行命令迁移整库</span>
+</span></span><span class="line"><span class="cl">pgloader mysql://user:pass@localhost/mydb <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>         postgresql://user:pass@localhost/mydb
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 配置文件方式（可定制类型映射、排除表、加索引等）</span>
+</span></span><span class="line"><span class="cl">pgloader migration.load
+</span></span></code></pre></div><pre tabindex="0"><code># migration.load 示例
+LOAD DATABASE
+  FROM mysql://user:pass@localhost/mydb
+  INTO postgresql://user:pass@localhost/mydb
+WITH include drop, create tables, create indexes, reset sequences
+CAST type datetime to timestamptz,
+     type tinyint to boolean when (= 1 precision);
+</code></pre><p>pgloader 会自动：建表、迁数据、转类型、建索引、重置序列，并输出迁移报告。</p>
+<h2 id="22-类型与语法差异对照面试常问">2.2 类型与语法差异对照（面试常问）</h2>
+<table>
+<thead>
+<tr>
+<th>MySQL</th>
+<th>PostgreSQL</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>AUTO_INCREMENT</code></td>
+<td><code>SERIAL</code> / <code>IDENTITY</code></td>
+<td>自增，PG 用序列</td>
+</tr>
+<tr>
+<td><code>TINYINT(1)</code></td>
+<td><code>BOOLEAN</code></td>
+<td>MySQL 用 tinyint 存布尔</td>
+</tr>
+<tr>
+<td><code>DATETIME</code></td>
+<td><code>TIMESTAMP</code> / <code>TIMESTAMPTZ</code></td>
+<td>推荐带时区的 timestamptz</td>
+</tr>
+<tr>
+<td><code>ENUM('a','b')</code></td>
+<td>自定义 <code>ENUM</code> 类型或 CHECK</td>
+<td>PG 需 CREATE TYPE</td>
+</tr>
+<tr>
+<td><code>\</code>反引号`` 标识符</td>
+<td><code>&quot;双引号&quot;</code></td>
+<td>引用标识符方式不同</td>
+</tr>
+<tr>
+<td><code>LIMIT n, m</code></td>
+<td><code>LIMIT m OFFSET n</code></td>
+<td>分页语法不同</td>
+</tr>
+<tr>
+<td><code>IFNULL()</code></td>
+<td><code>COALESCE()</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>CONCAT()</code> 容 NULL</td>
+<td>`</td>
+<td></td>
+</tr>
+<tr>
+<td><code>GROUP BY</code> 宽松</td>
+<td>严格要求非聚合列在 GROUP BY</td>
+<td>PG 更严格</td>
+</tr>
+<tr>
+<td>大小写不敏感表名</td>
+<td>默认区分（除非加引号）</td>
+<td>注意命名</td>
+</tr>
+<tr>
+<td><code>ON UPDATE CURRENT_TIMESTAMP</code></td>
+<td>需用触发器实现</td>
+<td>PG 无此列属性</td>
+</tr>
+</tbody>
+</table>
+<h2 id="23-手动迁移步骤复杂场景">2.3 手动迁移步骤（复杂场景）</h2>
+<ol>
+<li>导出 MySQL 结构，按上表转换 DDL（或用工具生成）。</li>
+<li>在 PG 建表结构、约束。</li>
+<li>导出 MySQL 数据为 CSV，<code>COPY</code> 导入 PG（最快）。
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="k">COPY</span><span class="w"> </span><span class="n">orders</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="s1">&#39;/data/orders.csv&#39;</span><span class="w"> </span><span class="k">WITH</span><span class="w"> </span><span class="p">(</span><span class="n">FORMAT</span><span class="w"> </span><span class="n">csv</span><span class="p">,</span><span class="w"> </span><span class="n">HEADER</span><span class="w"> </span><span class="k">true</span><span class="p">);</span><span class="w">
+</span></span></span></code></pre></div></li>
+<li>建索引、重置序列、迁移视图/存储过程（存储过程需重写，语法差异大）。</li>
+<li>校验数据。</li>
+</ol>
+<h1 id="3-大表不停机迁移">3. 大表不停机迁移</h1>
+<p>对不能长时间停机的核心库，用&quot;全量 + 增量追平&quot;策略：</p>
+<ol>
+<li><strong>全量</strong>：pgloader/COPY 迁历史数据。</li>
+<li><strong>增量同步</strong>：用 CDC 工具（Debezium 捕获 MySQL binlog）持续把变更同步到 PG。</li>
+<li><strong>追平后灰度切流</strong>：先切读、验证一致后切写。</li>
+<li><strong>保留回滚能力</strong>：切换后一段时间内保留原库，异常可切回。</li>
+</ol>
+<h1 id="4-数据校验不可省略">4. 数据校验（不可省略）</h1>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="c1">-- 行数比对
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="k">count</span><span class="p">(</span><span class="o">*</span><span class="p">)</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">orders</span><span class="p">;</span><span class="w">   </span><span class="c1">-- 两库对比
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 关键字段汇总比对（金额等）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="k">sum</span><span class="p">(</span><span class="n">amount</span><span class="p">),</span><span class="w"> </span><span class="k">count</span><span class="p">(</span><span class="o">*</span><span class="p">),</span><span class="w"> </span><span class="k">max</span><span class="p">(</span><span class="n">created_at</span><span class="p">)</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">orders</span><span class="p">;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 抽样比对主键区间的记录
+</span></span></span></code></pre></div><ul>
+<li>逐表比对行数、关键聚合值（sum/count/max）。</li>
+<li>抽样比对具体记录。</li>
+<li>校验外键完整性、序列当前值是否正确。</li>
+</ul>
+<h1 id="5-postgresql-版本升级同构">5. PostgreSQL 版本升级（同构）</h1>
+<table>
+<thead>
+<tr>
+<th>方法</th>
+<th>停机</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>pg_dump/restore</strong></td>
+<td>长</td>
+<td>简单可靠，适合小库</td>
+</tr>
+<tr>
+<td><strong>pg_upgrade</strong></td>
+<td>短</td>
+<td>原地升级，用 <code>--link</code> 硬链接极快，适合大库</td>
+</tr>
+<tr>
+<td><strong>逻辑复制</strong></td>
+<td>极短</td>
+<td>新版本建从库、逻辑复制追平后切换，几乎不停机</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># pg_upgrade 原地升级（大库首选）</span>
+</span></span><span class="line"><span class="cl">pg_upgrade -b /old/bin -B /new/bin -d /old/data -D /new/data --link
+</span></span></code></pre></div><h1 id="6-迁移检查清单">6. 迁移检查清单</h1>
+<ol>
+<li>类型/语法差异是否全部处理（尤其布尔、时间、自增、分页）。</li>
+<li>存储过程/触发器/函数需重写（PL/pgSQL vs MySQL 存储过程）。</li>
+<li>序列当前值是否正确（避免主键冲突）。</li>
+<li>索引、约束、默认权限是否重建。</li>
+<li>应用 SQL 是否有 MySQL 方言需改。</li>
+<li>数据校验通过。</li>
+<li>有回滚预案。</li>
+<li>性能回归测试（执行计划可能不同）。</li>
+</ol>
+<h1 id="7-面试高频问答">7. 面试高频问答</h1>
+<p><strong>Q1：MySQL 迁 PostgreSQL 用什么工具？</strong>
+首选 pgloader，能自动建表、转类型、迁数据、建索引、重置序列；不停机场景用 Debezium 等 CDC 工具做增量同步。</p>
+<p><strong>Q2：MySQL 和 PostgreSQL 有哪些关键差异要注意？</strong>
+自增（AUTO_INCREMENT→SERIAL/序列）、布尔（tinyint→boolean）、时间（datetime→timestamptz）、分页（LIMIT n,m→LIMIT m OFFSET n）、标识符引用（反引号→双引号）、GROUP BY 更严格、字符串拼接遇 NULL 行为不同、存储过程需重写。</p>
+<p><strong>Q3：大表怎么不停机迁移？</strong>
+全量迁移历史数据 + CDC 增量同步追平 + 灰度切流（先切读再切写）+ 保留回滚。</p>
+<p><strong>Q4：迁移后怎么校验数据一致？</strong>
+逐表比对行数与关键聚合值（sum/count/max）、抽样比对记录、校验外键完整性和序列当前值，必要时做性能回归。</p>
+<p><strong>Q5：PostgreSQL 大版本升级怎么做到少停机？</strong>
+大库用 pg_upgrade &ndash;link（硬链接，分钟级）；要求几乎不停机则用逻辑复制搭建新版本从库、追平后切换。</p>
+<h1 id="8-下一步">8. 下一步</h1>
+<p>学习 <a href="https://xingliuhua.github.io/posts/pgsql/pgsql_38_go%E8%AF%AD%E8%A8%80%E8%BF%9E%E6%8E%A5postgresql/" rel="">Go语言连接PostgreSQL</a>，进入应用开发实战。</p>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2025-09-25</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/pgsql/">pgsql</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/pgsql/pgsql_38_go%E8%AF%AD%E8%A8%80%E8%BF%9E%E6%8E%A5postgresql/" class="prev" rel="prev" title="pgsql-38 Go语言连接PostgreSQL"><i class="fas fa-angle-left fa-fw"></i>pgsql-38 Go语言连接PostgreSQL</a>
+            <a href="/posts/pgsql/pgsql_36_%E7%94%A8%E6%88%B7%E6%9D%83%E9%99%90%E4%B8%8E%E5%AE%89%E5%85%A8/" class="next" rel="next" title="pgsql-36 用户权限与安全">pgsql-36 用户权限与安全<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2025-09-25T09:06:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"pgsql-37 数据迁移方案"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

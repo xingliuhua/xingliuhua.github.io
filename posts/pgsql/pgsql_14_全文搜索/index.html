@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>pgsql-14 全文搜索 - xingliuhua博客</title><meta name="Description" content="系统讲解 PostgreSQL 内置全文搜索：tsvector/tsquery 原理、分词配置、GIN/GiST 索引、相关性排名、高亮，中文分词（zhparser/pg_jieba），并对比 MySQL 与 Elasticsearch"><meta property="og:title" content="pgsql-14 全文搜索" />
+<meta property="og:description" content="系统讲解 PostgreSQL 内置全文搜索：tsvector/tsquery 原理、分词配置、GIN/GiST 索引、相关性排名、高亮，中文分词（zhparser/pg_jieba），并对比 MySQL 与 Elasticsearch" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/pgsql/pgsql_14_%E5%85%A8%E6%96%87%E6%90%9C%E7%B4%A2/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2025-09-25T09:29:00+08:00" />
+<meta property="article:modified_time" content="2025-09-25T09:29:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="pgsql-14 全文搜索"/>
+<meta name="twitter:description" content="系统讲解 PostgreSQL 内置全文搜索：tsvector/tsquery 原理、分词配置、GIN/GiST 索引、相关性排名、高亮，中文分词（zhparser/pg_jieba），并对比 MySQL 与 Elasticsearch"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/pgsql/pgsql_14_%E5%85%A8%E6%96%87%E6%90%9C%E7%B4%A2/" /><link rel="prev" href="https://xingliuhua.github.io/posts/pgsql/pgsql_15_postgis%E5%9C%B0%E7%90%86%E6%95%B0%E6%8D%AE/" /><link rel="next" href="https://xingliuhua.github.io/posts/pgsql/pgsql_13_%E6%95%B0%E7%BB%84%E4%B8%8E%E8%8C%83%E5%9B%B4%E7%B1%BB%E5%9E%8B/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "pgsql-14 全文搜索",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/pgsql\/pgsql_14_%E5%85%A8%E6%96%87%E6%90%9C%E7%B4%A2\/"
+        },"genre": "posts","keywords": "pgsql","wordcount":  2858 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/pgsql\/pgsql_14_%E5%85%A8%E6%96%87%E6%90%9C%E7%B4%A2\/","datePublished": "2025-09-25T09:29:00+08:00","dateModified": "2025-09-25T09:29:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "系统讲解 PostgreSQL 内置全文搜索：tsvector/tsquery 原理、分词配置、GIN/GiST 索引、相关性排名、高亮，中文分词（zhparser/pg_jieba），并对比 MySQL 与 Elasticsearch"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">pgsql-14 全文搜索</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2025-09-25">2025-09-25</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 2858 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 6 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-概述">1. 概述</a></li>
+    <li><a href="#2-核心概念tsvector-与-tsquery">2. 核心概念：tsvector 与 tsquery</a>
+      <ol>
+        <li><a href="#21-tsvector--文档的分词--位置表示">2.1 tsvector —— 文档的&quot;分词 + 位置&quot;表示</a></li>
+        <li><a href="#22-tsquery--查询表达式">2.2 tsquery —— 查询表达式</a></li>
+        <li><a href="#23-匹配运算符-">2.3 匹配运算符 @@</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-在表中使用全文搜索">3. 在表中使用全文搜索</a>
+      <ol>
+        <li><a href="#31-三种存储计算方式">3.1 三种存储/计算方式</a></li>
+        <li><a href="#32-建立索引gin-vs-gist">3.2 建立索引：GIN vs GiST</a></li>
+        <li><a href="#33-查询">3.3 查询</a></li>
+      </ol>
+    </li>
+    <li><a href="#4-相关性排名ranking">4. 相关性排名（Ranking）</a></li>
+    <li><a href="#5-结果高亮">5. 结果高亮</a></li>
+    <li><a href="#6-中文全文搜索">6. 中文全文搜索</a>
+      <ol>
+        <li><a href="#61-zhparser-配置">6.1 zhparser 配置</a></li>
+        <li><a href="#62-生成列使用中文配置">6.2 生成列使用中文配置</a></li>
+        <li><a href="#63-中文分词常见问题">6.3 中文分词常见问题</a></li>
+      </ol>
+    </li>
+    <li><a href="#7-前缀模糊搜索的补充方案pg_trgm">7. 前缀/模糊搜索的补充方案：pg_trgm</a></li>
+    <li><a href="#8-什么时候该上-elasticsearch">8. 什么时候该上 Elasticsearch？</a></li>
+    <li><a href="#9-面试高频问答">9. 面试高频问答</a></li>
+    <li><a href="#10-下一步">10. 下一步</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><h1 id="1-概述">1. 概述</h1>
+<p>全文搜索（Full Text Search, FTS）解决的是&quot;在大量文本中按词检索并按相关性排序&quot;的问题。普通的 <code>LIKE '%关键词%'</code> 有三大缺陷：</p>
+<ol>
+<li><strong>无法用索引</strong>（前置通配符导致索引失效），大表极慢；</li>
+<li><strong>不理解语言</strong>：不会词干还原（searching / searched / search 视为不同），不处理停用词；</li>
+<li><strong>不能排序相关性</strong>：无法区分&quot;标题命中&quot;和&quot;正文偶然命中&quot;。</li>
+</ol>
+<p>PostgreSQL 内置了一套完整的全文搜索引擎，核心是两个类型：<code>tsvector</code>（文档的分词结果）和 <code>tsquery</code>（查询表达式），配合 GIN 索引，可在<strong>不引入 Elasticsearch 的情况下</strong>满足绝大多数站内搜索需求。</p>
+<blockquote>
+<p>对比 MySQL：MySQL 的 <code>FULLTEXT</code> 索引（InnoDB 5.6+）功能相对基础，中文需要 <code>ngram</code> 解析器（按 N 元切分，不是真正分词），相关性算法（BM25/TF-IDF）和可定制性都弱于 PostgreSQL。PG 的优势在于<strong>可插拔的分词器、词典、多语言配置和丰富的排名函数</strong>。</p>
+</blockquote>
+<h1 id="2-核心概念tsvector-与-tsquery">2. 核心概念：tsvector 与 tsquery</h1>
+<h2 id="21-tsvector--文档的分词--位置表示">2.1 tsvector —— 文档的&quot;分词 + 位置&quot;表示</h2>
+<p><code>tsvector</code> 把一段文本处理成&quot;词素（lexeme）+ 位置&quot;的有序集合。处理过程包括：分词 → 转小写 → 去停用词 → 词干还原（归一化）。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="c1">-- to_tsvector：把文本转成 tsvector（第一个参数是语言配置）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="n">to_tsvector</span><span class="p">(</span><span class="s1">&#39;english&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;The quick brown foxes are jumping&#39;</span><span class="p">);</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 结果: &#39;brown&#39;:3 &#39;fox&#39;:4 &#39;jump&#39;:6 &#39;quick&#39;:2
+</span></span></span><span class="line"><span class="cl"><span class="c1">-- 注意：the/are 是停用词被去掉；foxes→fox、jumping→jump 做了词干还原；数字是词在原文的位置
+</span></span></span></code></pre></div><h2 id="22-tsquery--查询表达式">2.2 tsquery —— 查询表达式</h2>
+<p><code>tsquery</code> 表示搜索条件，支持布尔运算：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="k">SELECT</span><span class="w"> </span><span class="n">to_tsquery</span><span class="p">(</span><span class="s1">&#39;english&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;quick &amp; fox&#39;</span><span class="p">);</span><span class="w">        </span><span class="c1">-- 与：同时包含
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="n">to_tsquery</span><span class="p">(</span><span class="s1">&#39;english&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;quick | slow&#39;</span><span class="p">);</span><span class="w">       </span><span class="c1">-- 或
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="n">to_tsquery</span><span class="p">(</span><span class="s1">&#39;english&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;fox &amp; !dog&#39;</span><span class="p">);</span><span class="w">         </span><span class="c1">-- 非：包含 fox 但不含 dog
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="n">to_tsquery</span><span class="p">(</span><span class="s1">&#39;english&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;quick &lt;-&gt; fox&#39;</span><span class="p">);</span><span class="w">      </span><span class="c1">-- 相邻（短语，quick 紧跟 fox）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="n">to_tsquery</span><span class="p">(</span><span class="s1">&#39;english&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;quick &lt;2&gt; fox&#39;</span><span class="p">);</span><span class="w">      </span><span class="c1">-- 距离为2的近邻
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 面向用户输入的便捷函数（自动处理，无需手写 &amp; |）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="n">plainto_tsquery</span><span class="p">(</span><span class="s1">&#39;english&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;quick fox&#39;</span><span class="p">);</span><span class="w">     </span><span class="c1">-- 词之间默认 AND: &#39;quick&#39; &amp; &#39;fox&#39;
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="n">phraseto_tsquery</span><span class="p">(</span><span class="s1">&#39;english&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;quick fox&#39;</span><span class="p">);</span><span class="w">    </span><span class="c1">-- 作为短语: &#39;quick&#39; &lt;-&gt; &#39;fox&#39;
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="n">websearch_to_tsquery</span><span class="p">(</span><span class="s1">&#39;english&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;quick or &#34;brown fox&#34; -dog&#39;</span><span class="p">);</span><span class="w">  </span><span class="c1">-- 支持类搜索引擎语法
+</span></span></span></code></pre></div><h2 id="23-匹配运算符-">2.3 匹配运算符 @@</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="c1">-- @@ 判断 tsvector 是否匹配 tsquery
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="n">to_tsvector</span><span class="p">(</span><span class="s1">&#39;english&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;The quick brown fox&#39;</span><span class="p">)</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">       </span><span class="o">@@</span><span class="w"> </span><span class="n">to_tsquery</span><span class="p">(</span><span class="s1">&#39;english&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;quick &amp; fox&#39;</span><span class="p">);</span><span class="w">    </span><span class="c1">-- true
+</span></span></span></code></pre></div><h1 id="3-在表中使用全文搜索">3. 在表中使用全文搜索</h1>
+<h2 id="31-三种存储计算方式">3.1 三种存储/计算方式</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">articles</span><span class="w"> </span><span class="p">(</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="n">id</span><span class="w">       </span><span class="n">BIGSERIAL</span><span class="w"> </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="n">title</span><span class="w">    </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="n">content</span><span class="w">  </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="p">);</span><span class="w">
+</span></span></span></code></pre></div><p><strong>方式一：查询时实时计算（无需额外列，适合小表）</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="k">SELECT</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">articles</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">WHERE</span><span class="w"> </span><span class="n">to_tsvector</span><span class="p">(</span><span class="s1">&#39;english&#39;</span><span class="p">,</span><span class="w"> </span><span class="n">title</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="s1">&#39; &#39;</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="n">content</span><span class="p">)</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">      </span><span class="o">@@</span><span class="w"> </span><span class="n">plainto_tsquery</span><span class="p">(</span><span class="s1">&#39;english&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;postgresql database&#39;</span><span class="p">);</span><span class="w">
+</span></span></span></code></pre></div><p><strong>方式二：生成列（PG 12+，推荐）</strong> —— 自动维护，无需触发器</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="k">ALTER</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">articles</span><span class="w"> </span><span class="k">ADD</span><span class="w"> </span><span class="k">COLUMN</span><span class="w"> </span><span class="n">search_vector</span><span class="w"> </span><span class="n">tsvector</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="k">GENERATED</span><span class="w"> </span><span class="n">ALWAYS</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="p">(</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">        </span><span class="n">setweight</span><span class="p">(</span><span class="n">to_tsvector</span><span class="p">(</span><span class="s1">&#39;english&#39;</span><span class="p">,</span><span class="w"> </span><span class="n">coalesce</span><span class="p">(</span><span class="n">title</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;&#39;</span><span class="p">)),</span><span class="w">   </span><span class="s1">&#39;A&#39;</span><span class="p">)</span><span class="w"> </span><span class="o">||</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">        </span><span class="n">setweight</span><span class="p">(</span><span class="n">to_tsvector</span><span class="p">(</span><span class="s1">&#39;english&#39;</span><span class="p">,</span><span class="w"> </span><span class="n">coalesce</span><span class="p">(</span><span class="n">content</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;&#39;</span><span class="p">)),</span><span class="w"> </span><span class="s1">&#39;B&#39;</span><span class="p">)</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="p">)</span><span class="w"> </span><span class="n">STORED</span><span class="p">;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- setweight 给不同字段设权重(A&gt;B&gt;C&gt;D)，标题命中比正文命中更重要
+</span></span></span></code></pre></div><p><strong>方式三：普通列 + 触发器（PG 12 以前）</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="k">ALTER</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">articles</span><span class="w"> </span><span class="k">ADD</span><span class="w"> </span><span class="k">COLUMN</span><span class="w"> </span><span class="n">search_vector</span><span class="w"> </span><span class="n">tsvector</span><span class="p">;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">CREATE</span><span class="w"> </span><span class="k">TRIGGER</span><span class="w"> </span><span class="n">tsv_update</span><span class="w"> </span><span class="k">BEFORE</span><span class="w"> </span><span class="k">INSERT</span><span class="w"> </span><span class="k">OR</span><span class="w"> </span><span class="k">UPDATE</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">articles</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="k">FOR</span><span class="w"> </span><span class="k">EACH</span><span class="w"> </span><span class="k">ROW</span><span class="w"> </span><span class="k">EXECUTE</span><span class="w"> </span><span class="k">FUNCTION</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="n">tsvector_update_trigger</span><span class="p">(</span><span class="n">search_vector</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;pg_catalog.english&#39;</span><span class="p">,</span><span class="w"> </span><span class="n">title</span><span class="p">,</span><span class="w"> </span><span class="n">content</span><span class="p">);</span><span class="w">
+</span></span></span></code></pre></div><h2 id="32-建立索引gin-vs-gist">3.2 建立索引：GIN vs GiST</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="c1">-- GIN 索引（首选）：查询快，适合读多写少
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">idx_articles_search</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">articles</span><span class="w"> </span><span class="k">USING</span><span class="w"> </span><span class="n">GIN</span><span class="w"> </span><span class="p">(</span><span class="n">search_vector</span><span class="p">);</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- GiST 索引：更新快、体积小，但查询有损（可能误报），适合频繁更新
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">idx_articles_search_gist</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">articles</span><span class="w"> </span><span class="k">USING</span><span class="w"> </span><span class="n">GiST</span><span class="w"> </span><span class="p">(</span><span class="n">search_vector</span><span class="p">);</span><span class="w">
+</span></span></span></code></pre></div><table>
+<thead>
+<tr>
+<th>对比</th>
+<th>GIN</th>
+<th>GiST</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>查询速度</strong></td>
+<td><strong>快 3 倍左右</strong></td>
+<td>较慢（可能需重查）</td>
+</tr>
+<tr>
+<td><strong>构建/更新速度</strong></td>
+<td>慢</td>
+<td><strong>快</strong></td>
+</tr>
+<tr>
+<td><strong>索引体积</strong></td>
+<td>大</td>
+<td><strong>小</strong></td>
+</tr>
+<tr>
+<td><strong>适用</strong></td>
+<td><strong>全文搜索默认选 GIN</strong></td>
+<td>频繁更新、数据量小</td>
+</tr>
+</tbody>
+</table>
+<h2 id="33-查询">3.3 查询</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="k">SELECT</span><span class="w"> </span><span class="n">id</span><span class="p">,</span><span class="w"> </span><span class="n">title</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">FROM</span><span class="w"> </span><span class="n">articles</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">WHERE</span><span class="w"> </span><span class="n">search_vector</span><span class="w"> </span><span class="o">@@</span><span class="w"> </span><span class="n">plainto_tsquery</span><span class="p">(</span><span class="s1">&#39;english&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;postgresql &amp; index&#39;</span><span class="p">)</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">LIMIT</span><span class="w"> </span><span class="mi">20</span><span class="p">;</span><span class="w">
+</span></span></span></code></pre></div><h1 id="4-相关性排名ranking">4. 相关性排名（Ranking）</h1>
+<p>搜索的关键不只是&quot;匹配&quot;，而是&quot;最相关的排前面&quot;。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="k">SELECT</span><span class="w"> </span><span class="n">id</span><span class="p">,</span><span class="w"> </span><span class="n">title</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">       </span><span class="n">ts_rank</span><span class="p">(</span><span class="n">search_vector</span><span class="p">,</span><span class="w"> </span><span class="n">query</span><span class="p">)</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">rank</span><span class="w">            </span><span class="c1">-- 基于词频
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">FROM</span><span class="w"> </span><span class="n">articles</span><span class="p">,</span><span class="w"> </span><span class="n">plainto_tsquery</span><span class="p">(</span><span class="s1">&#39;english&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;postgresql performance&#39;</span><span class="p">)</span><span class="w"> </span><span class="n">query</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">WHERE</span><span class="w"> </span><span class="n">search_vector</span><span class="w"> </span><span class="o">@@</span><span class="w"> </span><span class="n">query</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">ORDER</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="n">rank</span><span class="w"> </span><span class="k">DESC</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">LIMIT</span><span class="w"> </span><span class="mi">10</span><span class="p">;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- ts_rank_cd：考虑词的&#34;密度/距离&#34;，短语聚集的文档得分更高
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="n">id</span><span class="p">,</span><span class="w"> </span><span class="n">title</span><span class="p">,</span><span class="w"> </span><span class="n">ts_rank_cd</span><span class="p">(</span><span class="n">search_vector</span><span class="p">,</span><span class="w"> </span><span class="n">query</span><span class="p">)</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">rank</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">FROM</span><span class="w"> </span><span class="n">articles</span><span class="p">,</span><span class="w"> </span><span class="n">plainto_tsquery</span><span class="p">(</span><span class="s1">&#39;english&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;query optimization&#39;</span><span class="p">)</span><span class="w"> </span><span class="n">query</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">WHERE</span><span class="w"> </span><span class="n">search_vector</span><span class="w"> </span><span class="o">@@</span><span class="w"> </span><span class="n">query</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">ORDER</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="n">rank</span><span class="w"> </span><span class="k">DESC</span><span class="p">;</span><span class="w">
+</span></span></span></code></pre></div><ul>
+<li><code>ts_rank</code>：基于词频（TF）与权重（A/B/C/D）。</li>
+<li><code>ts_rank_cd</code>：Cover Density，额外考虑匹配词之间的距离，更适合短语搜索。</li>
+<li>第三个参数可传归一化选项（如按文档长度归一化，避免长文档天然占优）。</li>
+</ul>
+<h1 id="5-结果高亮">5. 结果高亮</h1>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="c1">-- ts_headline 生成带高亮标记的摘要片段
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="n">ts_headline</span><span class="p">(</span><span class="s1">&#39;english&#39;</span><span class="p">,</span><span class="w"> </span><span class="n">content</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">                    </span><span class="n">plainto_tsquery</span><span class="p">(</span><span class="s1">&#39;english&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;postgresql&#39;</span><span class="p">),</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">                    </span><span class="s1">&#39;StartSel=&lt;b&gt;, StopSel=&lt;/b&gt;, MaxWords=35, MinWords=15&#39;</span><span class="p">)</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">snippet</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">FROM</span><span class="w"> </span><span class="n">articles</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">WHERE</span><span class="w"> </span><span class="n">search_vector</span><span class="w"> </span><span class="o">@@</span><span class="w"> </span><span class="n">plainto_tsquery</span><span class="p">(</span><span class="s1">&#39;english&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;postgresql&#39;</span><span class="p">)</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">LIMIT</span><span class="w"> </span><span class="mi">5</span><span class="p">;</span><span class="w">
+</span></span></span></code></pre></div><h1 id="6-中文全文搜索">6. 中文全文搜索</h1>
+<p>英文靠空格分词，中文没有天然分隔，必须引入<strong>中文分词器</strong>。常用两种扩展：</p>
+<table>
+<thead>
+<tr>
+<th>扩展</th>
+<th>底层</th>
+<th>特点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>zhparser</strong></td>
+<td>SCWS 词库</td>
+<td>老牌稳定，配置灵活</td>
+</tr>
+<tr>
+<td><strong>pg_jieba</strong></td>
+<td>结巴分词</td>
+<td>词库更新活跃，支持自定义词典</td>
+</tr>
+</tbody>
+</table>
+<h2 id="61-zhparser-配置">6.1 zhparser 配置</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="c1">-- 安装后创建配置
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">CREATE</span><span class="w"> </span><span class="n">EXTENSION</span><span class="w"> </span><span class="n">zhparser</span><span class="p">;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">CREATE</span><span class="w"> </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">SEARCH</span><span class="w"> </span><span class="n">CONFIGURATION</span><span class="w"> </span><span class="n">chinese</span><span class="w"> </span><span class="p">(</span><span class="n">PARSER</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">zhparser</span><span class="p">);</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 映射词性到词素类型（n名词 v动词 a形容词 i成语 等）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">ALTER</span><span class="w"> </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">SEARCH</span><span class="w"> </span><span class="n">CONFIGURATION</span><span class="w"> </span><span class="n">chinese</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="k">ADD</span><span class="w"> </span><span class="n">MAPPING</span><span class="w"> </span><span class="k">FOR</span><span class="w"> </span><span class="n">n</span><span class="p">,</span><span class="n">v</span><span class="p">,</span><span class="n">a</span><span class="p">,</span><span class="n">i</span><span class="p">,</span><span class="n">e</span><span class="p">,</span><span class="n">l</span><span class="w"> </span><span class="k">WITH</span><span class="w"> </span><span class="k">simple</span><span class="p">;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 使用中文配置分词
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="n">to_tsvector</span><span class="p">(</span><span class="s1">&#39;chinese&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;PostgreSQL 是强大的开源关系型数据库&#39;</span><span class="p">);</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 结果类似: &#39;postgresql&#39;:1 &#39;关系&#39;:5 &#39;强大&#39;:3 &#39;数据库&#39;:6 &#39;开源&#39;:4
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 中文搜索
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="n">title</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">articles</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">WHERE</span><span class="w"> </span><span class="n">to_tsvector</span><span class="p">(</span><span class="s1">&#39;chinese&#39;</span><span class="p">,</span><span class="w"> </span><span class="n">title</span><span class="p">)</span><span class="w"> </span><span class="o">@@</span><span class="w"> </span><span class="n">to_tsquery</span><span class="p">(</span><span class="s1">&#39;chinese&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;数据库 &amp; 开源&#39;</span><span class="p">);</span><span class="w">
+</span></span></span></code></pre></div><h2 id="62-生成列使用中文配置">6.2 生成列使用中文配置</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="k">ALTER</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">articles</span><span class="w"> </span><span class="k">ADD</span><span class="w"> </span><span class="k">COLUMN</span><span class="w"> </span><span class="n">search_zh</span><span class="w"> </span><span class="n">tsvector</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="k">GENERATED</span><span class="w"> </span><span class="n">ALWAYS</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="p">(</span><span class="n">to_tsvector</span><span class="p">(</span><span class="s1">&#39;chinese&#39;</span><span class="p">,</span><span class="w"> </span><span class="n">coalesce</span><span class="p">(</span><span class="n">title</span><span class="p">,</span><span class="s1">&#39;&#39;</span><span class="p">)</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="s1">&#39; &#39;</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="n">coalesce</span><span class="p">(</span><span class="n">content</span><span class="p">,</span><span class="s1">&#39;&#39;</span><span class="p">)))</span><span class="w"> </span><span class="n">STORED</span><span class="p">;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">idx_articles_zh</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">articles</span><span class="w"> </span><span class="k">USING</span><span class="w"> </span><span class="n">GIN</span><span class="w"> </span><span class="p">(</span><span class="n">search_zh</span><span class="p">);</span><span class="w">
+</span></span></span></code></pre></div><h2 id="63-中文分词常见问题">6.3 中文分词常见问题</h2>
+<ul>
+<li><strong>未登录词</strong>：新词/专有名词切不准 → 给分词器加自定义词典。</li>
+<li><strong>歧义切分</strong>：&ldquo;北京大学生&quot;可能切成&quot;北京/大学生&quot;或&quot;北京大学/生&rdquo;，需词库权重调优。</li>
+<li><strong>简繁体</strong>：可先统一转换再入库。</li>
+</ul>
+<h1 id="7-前缀模糊搜索的补充方案pg_trgm">7. 前缀/模糊搜索的补充方案：pg_trgm</h1>
+<p>全文搜索是&quot;按词&quot;匹配，不擅长&quot;输入了错别字&quot;或&quot;任意子串&quot;的模糊查询。此时用 <code>pg_trgm</code>（三元组相似度）扩展补充：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="k">CREATE</span><span class="w"> </span><span class="n">EXTENSION</span><span class="w"> </span><span class="n">pg_trgm</span><span class="p">;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 相似度搜索（容错拼写错误）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="n">title</span><span class="p">,</span><span class="w"> </span><span class="n">similarity</span><span class="p">(</span><span class="n">title</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;postgres&#39;</span><span class="p">)</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">sim</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">FROM</span><span class="w"> </span><span class="n">articles</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">WHERE</span><span class="w"> </span><span class="n">title</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="s1">&#39;postgres&#39;</span><span class="w">          </span><span class="c1">-- % 运算符：相似度超过阈值
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">ORDER</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="n">sim</span><span class="w"> </span><span class="k">DESC</span><span class="p">;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 让 LIKE &#39;%xxx%&#39; 也能走索引！
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">idx_articles_title_trgm</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">articles</span><span class="w"> </span><span class="k">USING</span><span class="w"> </span><span class="n">GIN</span><span class="w"> </span><span class="p">(</span><span class="n">title</span><span class="w"> </span><span class="n">gin_trgm_ops</span><span class="p">);</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">SELECT</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">articles</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="n">title</span><span class="w"> </span><span class="k">LIKE</span><span class="w"> </span><span class="s1">&#39;%postg%&#39;</span><span class="p">;</span><span class="w">   </span><span class="c1">-- 现在能用索引
+</span></span></span></code></pre></div><blockquote>
+<p><code>pg_trgm</code> 是让 <code>LIKE '%...%'</code> 走索引的经典方案，也常用于&quot;搜索框自动补全/纠错&quot;。详见 <a href="https://xingliuhua.github.io/posts/pgsql/pgsql_17_%E6%89%A9%E5%B1%95%E6%8F%92%E4%BB%B6%E6%80%BB%E8%A7%88/" rel="">扩展插件总览</a>。</p>
+</blockquote>
+<h1 id="8-什么时候该上-elasticsearch">8. 什么时候该上 Elasticsearch？</h1>
+<p>PostgreSQL 全文搜索 vs Elasticsearch（面试常问选型）：</p>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>PG 全文搜索</th>
+<th>Elasticsearch</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>架构复杂度</strong></td>
+<td>无需额外系统</td>
+<td>独立集群，需数据同步</td>
+</tr>
+<tr>
+<td><strong>数据一致性</strong></td>
+<td>与业务数据强一致（同库事务）</td>
+<td>异步同步，存在延迟</td>
+</tr>
+<tr>
+<td><strong>中小规模站内搜索</strong></td>
+<td>✅ 足够</td>
+<td>杀鸡用牛刀</td>
+</tr>
+<tr>
+<td><strong>海量文档 / 高并发搜索</strong></td>
+<td>有上限</td>
+<td>✅ 更强</td>
+</tr>
+<tr>
+<td><strong>打分算法</strong></td>
+<td>ts_rank（可用）</td>
+<td>BM25（更成熟）、聚合分析强</td>
+</tr>
+<tr>
+<td><strong>运维成本</strong></td>
+<td>低</td>
+<td>高</td>
+</tr>
+</tbody>
+</table>
+<p><strong>结论</strong>：数据量在千万级以内、搜索不是核心业务、想少维护一套系统 → PG 全文搜索完全够用；文档海量、搜索是核心卖点、需要复杂聚合/高亮/纠错 → 上 ES。</p>
+<h1 id="9-面试高频问答">9. 面试高频问答</h1>
+<p><strong>Q1：为什么 <code>LIKE '%关键词%'</code> 慢？全文搜索为什么快？</strong>
+前置通配符使 B-tree 索引失效，只能全表扫描。全文搜索预先把文本分词成 <code>tsvector</code> 并建 GIN 倒排索引，检索时直接查倒排表，且支持词干还原与相关性排序。</p>
+<p><strong>Q2：tsvector 和 tsquery 是什么？</strong>
+tsvector 是文档经分词/去停用词/词干还原后的&quot;词素+位置&quot;集合；tsquery 是带布尔逻辑的查询表达式；用 <code>@@</code> 判断是否匹配。</p>
+<p><strong>Q3：GIN 和 GiST 索引怎么选？</strong>
+全文搜索默认 GIN（查询快、体积大、更新慢）；数据频繁更新且量小可用 GiST（更新快、有损查询）。</p>
+<p><strong>Q4：ts_rank 和 ts_rank_cd 的区别？</strong>
+ts_rank 基于词频和字段权重；ts_rank_cd 额外考虑匹配词之间的距离密度，更适合短语相关性。</p>
+<p><strong>Q5：PG 全文搜索怎么处理中文？</strong>
+需引入 zhparser 或 pg_jieba 分词器，创建对应的文本搜索配置，把词性映射到词素类型后即可像英文一样使用。</p>
+<p><strong>Q6：什么场景该用 ES 而不是 PG 全文搜索？</strong>
+海量文档、搜索为核心业务、需要复杂聚合/高亮/纠错/高并发时用 ES；中小规模站内搜索优先用 PG，省一套系统且数据强一致。</p>
+<h1 id="10-下一步">10. 下一步</h1>
+<p>学习 <a href="https://xingliuhua.github.io/posts/pgsql/pgsql_15_postgis%E5%9C%B0%E7%90%86%E6%95%B0%E6%8D%AE/" rel="">PostGIS地理数据</a>，掌握空间数据的存储与检索。</p>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2025-09-25</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/pgsql/">pgsql</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/pgsql/pgsql_15_postgis%E5%9C%B0%E7%90%86%E6%95%B0%E6%8D%AE/" class="prev" rel="prev" title="pgsql-15 PostGIS地理数据"><i class="fas fa-angle-left fa-fw"></i>pgsql-15 PostGIS地理数据</a>
+            <a href="/posts/pgsql/pgsql_13_%E6%95%B0%E7%BB%84%E4%B8%8E%E8%8C%83%E5%9B%B4%E7%B1%BB%E5%9E%8B/" class="next" rel="next" title="pgsql-13 数组与范围类型">pgsql-13 数组与范围类型<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2025-09-25T09:29:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"pgsql-14 全文搜索"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

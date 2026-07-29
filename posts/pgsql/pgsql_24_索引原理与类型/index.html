@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>pgsql-24 索引原理与类型 - xingliuhua博客</title><meta name="Description" content="全面讲解 PostgreSQL 索引家族：B-tree/Hash/GIN/GiST/SP-GiST/BRIN 六大索引原理与适用场景、部分索引、表达式索引、覆盖索引、并发建索引，并与 MySQL 索引深度对比"><meta property="og:title" content="pgsql-24 索引原理与类型" />
+<meta property="og:description" content="全面讲解 PostgreSQL 索引家族：B-tree/Hash/GIN/GiST/SP-GiST/BRIN 六大索引原理与适用场景、部分索引、表达式索引、覆盖索引、并发建索引，并与 MySQL 索引深度对比" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/pgsql/pgsql_24_%E7%B4%A2%E5%BC%95%E5%8E%9F%E7%90%86%E4%B8%8E%E7%B1%BB%E5%9E%8B/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2025-09-25T09:19:00+08:00" />
+<meta property="article:modified_time" content="2025-09-25T09:19:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="pgsql-24 索引原理与类型"/>
+<meta name="twitter:description" content="全面讲解 PostgreSQL 索引家族：B-tree/Hash/GIN/GiST/SP-GiST/BRIN 六大索引原理与适用场景、部分索引、表达式索引、覆盖索引、并发建索引，并与 MySQL 索引深度对比"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/pgsql/pgsql_24_%E7%B4%A2%E5%BC%95%E5%8E%9F%E7%90%86%E4%B8%8E%E7%B1%BB%E5%9E%8B/" /><link rel="prev" href="https://xingliuhua.github.io/posts/pgsql/pgsql_25_%E7%B4%A2%E5%BC%95%E4%BC%98%E5%8C%96%E7%AD%96%E7%95%A5/" /><link rel="next" href="https://xingliuhua.github.io/posts/pgsql/pgsql_23_%E9%94%81%E6%9C%BA%E5%88%B6%E8%AF%A6%E8%A7%A3/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "pgsql-24 索引原理与类型",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/pgsql\/pgsql_24_%E7%B4%A2%E5%BC%95%E5%8E%9F%E7%90%86%E4%B8%8E%E7%B1%BB%E5%9E%8B\/"
+        },"genre": "posts","keywords": "pgsql","wordcount":  3288 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/pgsql\/pgsql_24_%E7%B4%A2%E5%BC%95%E5%8E%9F%E7%90%86%E4%B8%8E%E7%B1%BB%E5%9E%8B\/","datePublished": "2025-09-25T09:19:00+08:00","dateModified": "2025-09-25T09:19:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "全面讲解 PostgreSQL 索引家族：B-tree/Hash/GIN/GiST/SP-GiST/BRIN 六大索引原理与适用场景、部分索引、表达式索引、覆盖索引、并发建索引，并与 MySQL 索引深度对比"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">pgsql-24 索引原理与类型</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2025-09-25">2025-09-25</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 3288 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 7 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-概述">1. 概述</a></li>
+    <li><a href="#2-postgresql-六大索引类型总览">2. PostgreSQL 六大索引类型总览</a></li>
+    <li><a href="#3-b-tree-索引默认最常用">3. B-tree 索引（默认、最常用）</a></li>
+    <li><a href="#4-hash-索引">4. Hash 索引</a></li>
+    <li><a href="#5-gin-索引多值包含查询之王">5. GIN 索引（多值/包含查询之王）</a></li>
+    <li><a href="#6-gist-索引范围空间最近邻">6. GiST 索引（范围/空间/最近邻）</a></li>
+    <li><a href="#7-sp-gist-索引">7. SP-GiST 索引</a></li>
+    <li><a href="#8-brin-索引超大表利器">8. BRIN 索引（超大表利器）</a></li>
+    <li><a href="#9-高级索引技巧">9. 高级索引技巧</a>
+      <ol>
+        <li><a href="#91-部分索引partial-index">9.1 部分索引（Partial Index）</a></li>
+        <li><a href="#92-表达式索引expression-index">9.2 表达式索引（Expression Index）</a></li>
+        <li><a href="#93-覆盖索引includepg-11">9.3 覆盖索引（INCLUDE，PG 11+）</a></li>
+        <li><a href="#94-并发建索引避免锁表">9.4 并发建索引（避免锁表）</a></li>
+      </ol>
+    </li>
+    <li><a href="#10-index-only-scan-与可见性">10. Index Only Scan 与可见性</a></li>
+    <li><a href="#11-postgresql-vs-mysql-索引对比面试核心">11. PostgreSQL vs MySQL 索引对比（面试核心）</a></li>
+    <li><a href="#12-索引使用建议">12. 索引使用建议</a></li>
+    <li><a href="#13-面试高频问答">13. 面试高频问答</a></li>
+    <li><a href="#14-下一步">14. 下一步</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><h1 id="1-概述">1. 概述</h1>
+<p>索引是数据库性能优化的核心。PostgreSQL 相比 MySQL 最大的特色之一，就是拥有<strong>极其丰富的索引类型家族</strong>——除了通用的 B-tree，还有专为全文、JSON、数组、地理、大范围数据设计的专用索引。理解&quot;什么场景用什么索引&quot;是 PG 面试和调优的必备功底。</p>
+<blockquote>
+<p>与 MySQL 的根本差异：MySQL(InnoDB) 的主键索引是<strong>聚簇索引（数据即索引，表数据按主键物理排序）</strong>，二级索引叶子存主键值需&quot;回表&quot;；PostgreSQL <strong>所有索引都是二级索引（非聚簇）</strong>，索引项通过 <code>ctid</code>（物理位置）指向堆表中的行，不存在 InnoDB 那种聚簇结构。这是两者索引模型最本质的区别，后面详述。</p>
+</blockquote>
+<h1 id="2-postgresql-六大索引类型总览">2. PostgreSQL 六大索引类型总览</h1>
+<table>
+<thead>
+<tr>
+<th>索引类型</th>
+<th>底层结构</th>
+<th>擅长的查询</th>
+<th>典型场景</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>B-tree</strong></td>
+<td>平衡树</td>
+<td><code>=</code> <code>&lt;</code> <code>&gt;</code> <code>BETWEEN</code> 排序</td>
+<td><strong>默认，绝大多数场景</strong></td>
+</tr>
+<tr>
+<td><strong>Hash</strong></td>
+<td>哈希表</td>
+<td>仅 <code>=</code> 等值</td>
+<td>等值查询（较少用）</td>
+</tr>
+<tr>
+<td><strong>GIN</strong></td>
+<td>倒排索引</td>
+<td>包含/多值 <code>@&gt;</code> <code>?</code></td>
+<td>JSONB、数组、全文搜索</td>
+</tr>
+<tr>
+<td><strong>GiST</strong></td>
+<td>通用平衡树</td>
+<td>范围重叠、最近邻</td>
+<td>几何/空间、范围类型、KNN</td>
+</tr>
+<tr>
+<td><strong>SP-GiST</strong></td>
+<td>空间分区树</td>
+<td>非平衡结构</td>
+<td>四叉树、IP、电话号前缀</td>
+</tr>
+<tr>
+<td><strong>BRIN</strong></td>
+<td>块范围摘要</td>
+<td>有序大表范围</td>
+<td>时序/日志超大表</td>
+</tr>
+</tbody>
+</table>
+<h1 id="3-b-tree-索引默认最常用">3. B-tree 索引（默认、最常用）</h1>
+<p>基于平衡多路搜索树，支持等值、范围、排序、<code>LIKE 'prefix%'</code>（前缀匹配）。<code>CREATE INDEX</code> 默认就是 B-tree。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">idx_users_email</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">users</span><span class="w"> </span><span class="p">(</span><span class="n">email</span><span class="p">);</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">idx_orders_created</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">orders</span><span class="w"> </span><span class="p">(</span><span class="n">created_at</span><span class="p">);</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 复合索引：遵循&#34;最左前缀&#34;原则
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">idx_orders_uc</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">orders</span><span class="w"> </span><span class="p">(</span><span class="n">user_id</span><span class="p">,</span><span class="w"> </span><span class="n">created_at</span><span class="p">);</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 能用：WHERE user_id=1  /  WHERE user_id=1 AND created_at&gt;...
+</span></span></span><span class="line"><span class="cl"><span class="c1">-- 不能用（跳过最左列）：WHERE created_at&gt;...
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 支持指定排序方向和 NULL 位置（利于 ORDER BY 消除排序）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">idx_orders_desc</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">orders</span><span class="w"> </span><span class="p">(</span><span class="n">created_at</span><span class="w"> </span><span class="k">DESC</span><span class="w"> </span><span class="n">NULLS</span><span class="w"> </span><span class="k">LAST</span><span class="p">);</span><span class="w">
+</span></span></span></code></pre></div><p><strong>面试点：最左前缀原则</strong>与 MySQL 完全一致——复合索引 <code>(a,b,c)</code> 只能被&quot;从最左列开始连续&quot;的条件利用。</p>
+<h1 id="4-hash-索引">4. Hash 索引</h1>
+<p>只支持 <code>=</code> 等值查询，不支持范围和排序。PG 10 后 Hash 索引才支持 WAL（崩溃安全），但<strong>实践中很少用</strong>：B-tree 对等值查询已经足够快，还兼顾范围和排序，Hash 几乎没有优势场景。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">idx_sessions_token</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">sessions</span><span class="w"> </span><span class="k">USING</span><span class="w"> </span><span class="n">HASH</span><span class="w"> </span><span class="p">(</span><span class="n">token</span><span class="p">);</span><span class="w">
+</span></span></span></code></pre></div><h1 id="5-gin-索引多值包含查询之王">5. GIN 索引（多值/包含查询之王）</h1>
+<p><strong>GIN（Generalized Inverted Index，通用倒排索引）</strong>：为&quot;一个字段包含多个值&quot;的场景设计。它把每个元素建成倒排项，指向包含它的行。</p>
+<p><strong>核心场景：</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="c1">-- 1) JSONB 查询（见 JSON 篇）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">idx_prod_attr</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">products</span><span class="w"> </span><span class="k">USING</span><span class="w"> </span><span class="n">GIN</span><span class="w"> </span><span class="p">(</span><span class="n">attributes</span><span class="p">);</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">SELECT</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">products</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="n">attributes</span><span class="w"> </span><span class="o">@&gt;</span><span class="w"> </span><span class="s1">&#39;{&#34;brand&#34;:&#34;Dell&#34;}&#39;</span><span class="p">;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 2) 数组包含查询
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">idx_post_tags</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">posts</span><span class="w"> </span><span class="k">USING</span><span class="w"> </span><span class="n">GIN</span><span class="w"> </span><span class="p">(</span><span class="n">tags</span><span class="p">);</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">SELECT</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">posts</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="n">tags</span><span class="w"> </span><span class="o">@&gt;</span><span class="w"> </span><span class="nb">ARRAY</span><span class="p">[</span><span class="s1">&#39;postgres&#39;</span><span class="p">];</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 3) 全文搜索（见全文搜索篇）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">idx_doc_fts</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">docs</span><span class="w"> </span><span class="k">USING</span><span class="w"> </span><span class="n">GIN</span><span class="w"> </span><span class="p">(</span><span class="n">search_vector</span><span class="p">);</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 4) 配合 pg_trgm 让 LIKE &#39;%x%&#39; 走索引
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">idx_name_trgm</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">users</span><span class="w"> </span><span class="k">USING</span><span class="w"> </span><span class="n">GIN</span><span class="w"> </span><span class="p">(</span><span class="n">name</span><span class="w"> </span><span class="n">gin_trgm_ops</span><span class="p">);</span><span class="w">
+</span></span></span></code></pre></div><p>特点：查询快、体积大、更新较慢。写多的场景可开 <code>fastupdate</code> 缓冲更新。</p>
+<h1 id="6-gist-索引范围空间最近邻">6. GiST 索引（范围/空间/最近邻）</h1>
+<p>**GiST（Generalized Search Tree）**是可扩展的平衡树框架，擅长&quot;重叠、包含、距离&quot;这类查询。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="c1">-- 1) 几何/空间数据（PostGIS 用它）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">idx_places_geom</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">places</span><span class="w"> </span><span class="k">USING</span><span class="w"> </span><span class="n">GiST</span><span class="w"> </span><span class="p">(</span><span class="n">geom</span><span class="p">);</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 2) 范围类型的重叠查询
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">idx_reservation</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">reservations</span><span class="w"> </span><span class="k">USING</span><span class="w"> </span><span class="n">GiST</span><span class="w"> </span><span class="p">(</span><span class="n">during</span><span class="p">);</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">SELECT</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">reservations</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="n">during</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="n">tsrange</span><span class="p">(</span><span class="s1">&#39;2026-01-01&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;2026-01-05&#39;</span><span class="p">);</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 3) 排他约束（防止时间段重叠预订）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">ALTER</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">reservations</span><span class="w"> </span><span class="k">ADD</span><span class="w"> </span><span class="k">CONSTRAINT</span><span class="w"> </span><span class="n">no_overlap</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="n">EXCLUDE</span><span class="w"> </span><span class="k">USING</span><span class="w"> </span><span class="n">GiST</span><span class="w"> </span><span class="p">(</span><span class="n">room_id</span><span class="w"> </span><span class="k">WITH</span><span class="w"> </span><span class="o">=</span><span class="p">,</span><span class="w"> </span><span class="n">during</span><span class="w"> </span><span class="k">WITH</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="p">);</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 4) KNN 最近邻检索（&lt;-&gt; 距离运算符）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">places</span><span class="w"> </span><span class="k">ORDER</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="n">geom</span><span class="w"> </span><span class="o">&lt;-&gt;</span><span class="w"> </span><span class="n">ST_Point</span><span class="p">(</span><span class="mi">116</span><span class="p">,</span><span class="mi">39</span><span class="p">)</span><span class="w"> </span><span class="k">LIMIT</span><span class="w"> </span><span class="mi">5</span><span class="p">;</span><span class="w">
+</span></span></span></code></pre></div><blockquote>
+<p>**排他约束（EXCLUDE）**是 PG 独有的强大特性，MySQL 无法用约束直接实现&quot;防止时间段重叠&quot;，这是 GiST 的杀手锏。</p>
+</blockquote>
+<h1 id="7-sp-gist-索引">7. SP-GiST 索引</h1>
+<p><strong>空间分区 GiST</strong>，适合<strong>非平衡</strong>的数据结构（四叉树、k-d 树、基数树/radix）。典型：IP 地址范围、电话号码前缀、点数据。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">idx_ip</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">logs</span><span class="w"> </span><span class="k">USING</span><span class="w"> </span><span class="n">SPGIST</span><span class="w"> </span><span class="p">(</span><span class="n">client_ip</span><span class="w"> </span><span class="n">inet_ops</span><span class="p">);</span><span class="w">
+</span></span></span></code></pre></div><h1 id="8-brin-索引超大表利器">8. BRIN 索引（超大表利器）</h1>
+<p><strong>BRIN（Block Range Index，块范围索引）</strong>：不为每一行建索引，而是记录<strong>每个数据块范围的最小/最大值摘要</strong>。索引体积极小（可能只有 B-tree 的千分之一）。</p>
+<p><strong>前提</strong>：数据在物理上要与索引列<strong>有序相关</strong>（如自增时间戳的日志表，新数据总在表尾）。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="c1">-- 亿级时序表，按时间范围查询
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">idx_metrics_time</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">metrics</span><span class="w"> </span><span class="k">USING</span><span class="w"> </span><span class="n">BRIN</span><span class="w"> </span><span class="p">(</span><span class="n">created_at</span><span class="p">);</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">SELECT</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">metrics</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="n">created_at</span><span class="w"> </span><span class="k">BETWEEN</span><span class="w"> </span><span class="s1">&#39;2026-07-01&#39;</span><span class="w"> </span><span class="k">AND</span><span class="w"> </span><span class="s1">&#39;2026-07-02&#39;</span><span class="p">;</span><span class="w">
+</span></span></span></code></pre></div><table>
+<thead>
+<tr>
+<th>对比</th>
+<th>B-tree</th>
+<th>BRIN</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>索引体积</td>
+<td>大</td>
+<td><strong>极小</strong></td>
+</tr>
+<tr>
+<td>精确度</td>
+<td>精确定位行</td>
+<td>定位到块范围，需再扫描</td>
+</tr>
+<tr>
+<td>适用</td>
+<td>通用</td>
+<td><strong>物理有序的超大表（时序/日志）</strong></td>
+</tr>
+</tbody>
+</table>
+<h1 id="9-高级索引技巧">9. 高级索引技巧</h1>
+<h2 id="91-部分索引partial-index">9.1 部分索引（Partial Index）</h2>
+<p>只对满足条件的行建索引，大幅减小索引体积。PG 特色，MySQL 不支持（MySQL 需借助其他手段）。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="c1">-- 只给&#34;未删除&#34;的行建索引（软删除场景，绝大多数查询只查未删除）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">idx_active_users</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">users</span><span class="w"> </span><span class="p">(</span><span class="n">email</span><span class="p">)</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="n">deleted_at</span><span class="w"> </span><span class="k">IS</span><span class="w"> </span><span class="k">NULL</span><span class="p">;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 只给待处理订单建索引
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">idx_pending</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">orders</span><span class="w"> </span><span class="p">(</span><span class="n">created_at</span><span class="p">)</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="n">status</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;pending&#39;</span><span class="p">;</span><span class="w">
+</span></span></span></code></pre></div><h2 id="92-表达式索引expression-index">9.2 表达式索引（Expression Index）</h2>
+<p>对函数/表达式结果建索引，让&quot;列上带函数&quot;的查询也能走索引。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="c1">-- 大小写不敏感查询
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">idx_lower_email</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">users</span><span class="w"> </span><span class="p">(</span><span class="k">lower</span><span class="p">(</span><span class="n">email</span><span class="p">));</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">SELECT</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">users</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="k">lower</span><span class="p">(</span><span class="n">email</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;a@b.com&#39;</span><span class="p">;</span><span class="w">   </span><span class="c1">-- 命中
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 对 JSONB 字段某个 key 建索引
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">idx_brand</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">products</span><span class="w"> </span><span class="p">((</span><span class="n">attributes</span><span class="o">-&gt;&gt;</span><span class="s1">&#39;brand&#39;</span><span class="p">));</span><span class="w">
+</span></span></span></code></pre></div><h2 id="93-覆盖索引includepg-11">9.3 覆盖索引（INCLUDE，PG 11+）</h2>
+<p>把额外列&quot;带&quot;进索引但不参与排序，实现 <strong>Index Only Scan</strong>（只查索引不回表）。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">idx_cover</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">orders</span><span class="w"> </span><span class="p">(</span><span class="n">user_id</span><span class="p">)</span><span class="w"> </span><span class="n">INCLUDE</span><span class="w"> </span><span class="p">(</span><span class="n">amount</span><span class="p">,</span><span class="w"> </span><span class="n">status</span><span class="p">);</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- SELECT amount, status FROM orders WHERE user_id=1  → 可只扫索引
+</span></span></span></code></pre></div><h2 id="94-并发建索引避免锁表">9.4 并发建索引（避免锁表）</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="c1">-- 普通建索引会锁表（阻塞写），生产大表要用 CONCURRENTLY
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">CONCURRENTLY</span><span class="w"> </span><span class="n">idx_big</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">big_table</span><span class="w"> </span><span class="p">(</span><span class="n">col</span><span class="p">);</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 代价：更慢、需扫两遍表、失败会留下无效索引需手动清理
+</span></span></span></code></pre></div><h1 id="10-index-only-scan-与可见性">10. Index Only Scan 与可见性</h1>
+<p>即使走了覆盖索引，PG 仍可能需要回堆表检查元组<strong>可见性</strong>（MVCC 死元组问题）。为此每个表有个 <strong>Visibility Map</strong> 标记&quot;整页都可见&quot;的页。VACUUM 会更新这个图，使 Index Only Scan 真正避免回表——这又一次说明 <a href="https://xingliuhua.github.io/posts/pgsql/pgsql_27_vacuum%E4%B8%8E%E8%A1%A8%E8%86%A8%E8%83%80/" rel="">VACUUM与表膨胀</a> 对性能的重要性。</p>
+<h1 id="11-postgresql-vs-mysql-索引对比面试核心">11. PostgreSQL vs MySQL 索引对比（面试核心）</h1>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>PostgreSQL</th>
+<th>MySQL (InnoDB)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>主键索引</strong></td>
+<td>非聚簇，索引指向 ctid</td>
+<td><strong>聚簇索引</strong>，数据按主键物理排序</td>
+</tr>
+<tr>
+<td><strong>二级索引回表</strong></td>
+<td>索引→ctid→堆表</td>
+<td>二级索引→主键→聚簇索引（回表两次结构）</td>
+</tr>
+<tr>
+<td><strong>索引类型</strong></td>
+<td>B-tree/Hash/GIN/GiST/SP-GiST/BRIN 六种</td>
+<td>主要 B+tree，另有 FULLTEXT、SPATIAL、Hash(Memory)</td>
+</tr>
+<tr>
+<td><strong>部分索引</strong></td>
+<td>✅ 支持</td>
+<td>❌ 不支持</td>
+</tr>
+<tr>
+<td><strong>表达式索引</strong></td>
+<td>✅ 支持</td>
+<td>✅ 8.0.13+ 函数索引</td>
+</tr>
+<tr>
+<td><strong>覆盖索引</strong></td>
+<td>INCLUDE 显式</td>
+<td>二级索引天然含主键，选合适列即可覆盖</td>
+</tr>
+<tr>
+<td><strong>排他约束</strong></td>
+<td>✅ GiST EXCLUDE</td>
+<td>❌</td>
+</tr>
+</tbody>
+</table>
+<p><strong>面试金句：</strong></p>
+<blockquote>
+<p>MySQL 主键是聚簇索引，表数据物理上按主键排列，二级索引存的是主键值、查询需&quot;回表&quot;到聚簇索引；PostgreSQL 没有聚簇索引概念，所有索引都指向堆表的物理位置 ctid。因此 MySQL 选主键要慎重（影响物理存储和二级索引大小），PG 则更灵活；而 PG 用丰富的专用索引（GIN/GiST/BRIN）和部分索引、排他约束在复杂场景更强。</p>
+</blockquote>
+<blockquote>
+<p>注：PG 有 <code>CLUSTER</code> 命令可按某索引物理重排表，但那是<strong>一次性</strong>操作，之后新数据不会自动保持有序，与 MySQL 的自动聚簇完全不同。</p>
+</blockquote>
+<h1 id="12-索引使用建议">12. 索引使用建议</h1>
+<ol>
+<li>默认用 B-tree；有特殊数据类型（JSONB/数组/全文/空间）才考虑 GIN/GiST。</li>
+<li>复合索引注意<strong>最左前缀</strong>，把选择性高、常用于等值的列放左边。</li>
+<li>软删除、状态过滤场景优先用<strong>部分索引</strong>省空间。</li>
+<li>超大有序表（时序/日志）用 <strong>BRIN</strong>。</li>
+<li>生产大表建索引一律 <code>CONCURRENTLY</code>。</li>
+<li>索引不是越多越好——每个索引都拖慢写入并占空间，用 <code>pg_stat_user_indexes</code> 找出从不使用的索引删掉。</li>
+</ol>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="c1">-- 找出从未被使用的索引
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="n">indexrelname</span><span class="p">,</span><span class="w"> </span><span class="n">idx_scan</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">FROM</span><span class="w"> </span><span class="n">pg_stat_user_indexes</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="n">idx_scan</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w">
+</span></span></span></code></pre></div><h1 id="13-面试高频问答">13. 面试高频问答</h1>
+<p><strong>Q1：PostgreSQL 有哪些索引类型？分别适合什么？</strong>
+B-tree（默认，等值/范围/排序）、Hash（等值）、GIN（JSONB/数组/全文等多值包含）、GiST（空间/范围重叠/最近邻）、SP-GiST（非平衡结构如 IP/前缀）、BRIN（物理有序的超大表）。</p>
+<p><strong>Q2：PostgreSQL 和 MySQL 的索引最大区别？</strong>（高频）
+MySQL 主键是聚簇索引、数据按主键物理排序、二级索引需回表；PG 无聚簇索引，所有索引指向 ctid。PG 还独有部分索引、排他约束和更丰富的专用索引类型。</p>
+<p><strong>Q3：什么是部分索引？有什么好处？</strong>
+只对满足 WHERE 条件的行建索引（如 <code>WHERE deleted_at IS NULL</code>），索引更小、更新更快，适合软删除、状态过滤等只查子集的场景。MySQL 不支持。</p>
+<p><strong>Q4：GIN 和 GiST 的区别？</strong>
+GIN 是倒排索引，适合&quot;字段含多个值&quot;的包含查询（JSONB、数组、全文），查询快体积大更新慢；GiST 是通用平衡树，适合空间、范围重叠、最近邻查询，更新快。</p>
+<p><strong>Q5：什么是覆盖索引 / Index Only Scan？PG 里有什么注意点？</strong>
+查询所需列都在索引里，可只扫索引不回表。PG 中还需 Visibility Map 标记页全可见才能真正避免回表，因此依赖 VACUUM 保持可见性图最新。</p>
+<p><strong>Q6：BRIN 索引什么时候用？</strong>
+数据物理上与索引列有序相关的超大表（如自增时间的日志/时序表），BRIN 只存块范围摘要、体积极小，范围查询高效。</p>
+<h1 id="14-下一步">14. 下一步</h1>
+<p>学习 <a href="https://xingliuhua.github.io/posts/pgsql/pgsql_25_%E7%B4%A2%E5%BC%95%E4%BC%98%E5%8C%96%E7%AD%96%E7%95%A5/" rel="">索引优化策略</a>，把索引知识用于实战调优。</p>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2025-09-25</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/pgsql/">pgsql</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/pgsql/pgsql_25_%E7%B4%A2%E5%BC%95%E4%BC%98%E5%8C%96%E7%AD%96%E7%95%A5/" class="prev" rel="prev" title="pgsql-25 索引优化策略"><i class="fas fa-angle-left fa-fw"></i>pgsql-25 索引优化策略</a>
+            <a href="/posts/pgsql/pgsql_23_%E9%94%81%E6%9C%BA%E5%88%B6%E8%AF%A6%E8%A7%A3/" class="next" rel="next" title="pgsql-23 锁机制详解">pgsql-23 锁机制详解<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2025-09-25T09:19:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"pgsql-24 索引原理与类型"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

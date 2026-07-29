@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>Go-27 文件IO与读写性能对比 - xingliuhua博客</title><meta name="Description" content="os包基础文件操作、bufio缓冲原理、os.ReadFile/bufio/流式读取的性能对比与基准测试、ioutil废弃到新API的迁移对照，以及不同文件大小下的读写选型建议"><meta property="og:title" content="Go-27 文件IO与读写性能对比" />
+<meta property="og:description" content="os包基础文件操作、bufio缓冲原理、os.ReadFile/bufio/流式读取的性能对比与基准测试、ioutil废弃到新API的迁移对照，以及不同文件大小下的读写选型建议" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/golang/golang_27_%E6%96%87%E4%BB%B6io%E4%B8%8E%E8%AF%BB%E5%86%99%E6%80%A7%E8%83%BD%E5%AF%B9%E6%AF%94/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2026-01-02T00:01:00+08:00" />
+<meta property="article:modified_time" content="2026-01-02T00:01:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="Go-27 文件IO与读写性能对比"/>
+<meta name="twitter:description" content="os包基础文件操作、bufio缓冲原理、os.ReadFile/bufio/流式读取的性能对比与基准测试、ioutil废弃到新API的迁移对照，以及不同文件大小下的读写选型建议"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/golang/golang_27_%E6%96%87%E4%BB%B6io%E4%B8%8E%E8%AF%BB%E5%86%99%E6%80%A7%E8%83%BD%E5%AF%B9%E6%AF%94/" /><link rel="prev" href="https://xingliuhua.github.io/posts/pgsql/pgsql_01_postgresql%E7%AE%80%E4%BB%8B%E4%B8%8E%E5%AE%89%E8%A3%85/" /><link rel="next" href="https://xingliuhua.github.io/posts/golang/golang_26_%E4%BC%98%E9%9B%85%E9%87%8D%E5%90%AF%E4%B8%8E%E4%BF%A1%E5%8F%B7%E5%A4%84%E7%90%86/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Go-27 文件IO与读写性能对比",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/golang\/golang_27_%E6%96%87%E4%BB%B6io%E4%B8%8E%E8%AF%BB%E5%86%99%E6%80%A7%E8%83%BD%E5%AF%B9%E6%AF%94\/"
+        },"genre": "posts","keywords": "golang","wordcount":  2442 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/golang\/golang_27_%E6%96%87%E4%BB%B6io%E4%B8%8E%E8%AF%BB%E5%86%99%E6%80%A7%E8%83%BD%E5%AF%B9%E6%AF%94\/","datePublished": "2026-01-02T00:01:00+08:00","dateModified": "2026-01-02T00:01:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "os包基础文件操作、bufio缓冲原理、os.ReadFile/bufio/流式读取的性能对比与基准测试、ioutil废弃到新API的迁移对照，以及不同文件大小下的读写选型建议"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">Go-27 文件IO与读写性能对比</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2026-01-02">2026-01-02</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 2442 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 5 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-三种读文件的姿势">1. 三种读文件的姿势</a></li>
+    <li><a href="#2-bufio-缓冲原理">2. bufio 缓冲原理</a>
+      <ol>
+        <li><a href="#21-reader-对象">2.1 Reader 对象</a></li>
+        <li><a href="#22-writer-对象">2.2 Writer 对象</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-重要告别-ioutil">3. 重要：告别 ioutil</a></li>
+    <li><a href="#4-三种读法的代码">4. 三种读法的代码</a>
+      <ol>
+        <li><a href="#41-os-包手动循环-read">4.1 os 包：手动循环 Read</a></li>
+        <li><a href="#42-bufio-包带缓冲的-read">4.2 bufio 包：带缓冲的 Read</a></li>
+        <li><a href="#43-一次性读入内存">4.3 一次性读入内存</a></li>
+      </ol>
+    </li>
+    <li><a href="#5-基准测试">5. 基准测试</a></li>
+    <li><a href="#6-比拼结果与原因分析">6. 比拼结果与原因分析</a></li>
+    <li><a href="#7-选型建议">7. 选型建议</a></li>
+    <li><a href="#8-小结">8. 小结</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><h1 id="1-三种读文件的姿势">1. 三种读文件的姿势</h1>
+<p>Go 里读一个文件，主流有三种写法，它们的差异不在「能不能读」，而在<strong>一次读多少、要不要缓冲、内存占用多大</strong>：</p>
+<ul>
+<li><strong><code>os</code> 包直接读</strong>：<code>os.Open</code> 拿到 <code>*os.File</code>，自己开 buffer 循环 <code>Read</code>，每次都是一次系统调用；</li>
+<li><strong><code>bufio</code> 缓冲读</strong>：在 <code>*os.File</code> 外再包一层内存缓冲，减少系统调用次数；</li>
+<li><strong>一次性读入内存</strong>：<code>os.ReadFile</code> 把整个文件读成 <code>[]byte</code>，最省心但吃内存。</li>
+</ul>
+<p>搞清楚它们的取舍，需要先理解 <code>bufio</code> 的缓冲原理。</p>
+<h1 id="2-bufio-缓冲原理">2. bufio 缓冲原理</h1>
+<p>IO 操作本身并不慢，慢的是<strong>频繁地陷入内核访问磁盘</strong>——每次 <code>Read</code>/<code>Write</code> 系统调用都要在用户态和内核态之间切换，切换本身有成本。<code>bufio</code> 的思路是在中间加一块内存缓冲区：读的时候一次多读一些囤在缓冲里，之后从缓冲取；写的时候先攒在缓冲里，攒够了再一次性落盘。这样就把「多次小 IO」合并成了「少数几次大 IO」。</p>
+<h2 id="21-reader-对象">2.1 Reader 对象</h2>
+<p><code>bufio.Reader</code> 是对 <code>io.Reader</code> 的封装：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">type</span> <span class="nx">Reader</span> <span class="kd">struct</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">buf</span>          <span class="p">[]</span><span class="kt">byte</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">rd</span>           <span class="nx">io</span><span class="p">.</span><span class="nx">Reader</span> <span class="c1">// 底层 reader
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">r</span><span class="p">,</span> <span class="nx">w</span>         <span class="kt">int</span>       <span class="c1">// buf 的读、写位置
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">err</span>          <span class="kt">error</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">lastByte</span>     <span class="kt">int</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">lastRuneSize</span> <span class="kt">int</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><code>Read(p []byte)</code> 的逻辑：</p>
+<ul>
+<li>缓冲区<strong>有内容</strong>时，直接把缓冲内容拷进 <code>p</code> 并清空缓冲；</li>
+<li>缓冲区<strong>空</strong>且 <code>len(p) &gt;= len(buf)</code>（要读的比缓冲还大）时，跳过缓冲直接从底层读进 <code>p</code>——因为走缓冲反而多一次拷贝；</li>
+<li>缓冲区<strong>空</strong>且 <code>len(p) &lt; len(buf)</code> 时，先从底层读满缓冲区，再从缓冲填 <code>p</code>（缓冲留有余量供下次用）。</li>
+</ul>
+<h2 id="22-writer-对象">2.2 Writer 对象</h2>
+<p><code>bufio.Writer</code> 是对 <code>io.Writer</code> 的封装：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">type</span> <span class="nx">Writer</span> <span class="kd">struct</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">err</span> <span class="kt">error</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">buf</span> <span class="p">[]</span><span class="kt">byte</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">n</span>   <span class="kt">int</span>       <span class="c1">// 缓冲中已有字节数
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">wr</span>  <span class="nx">io</span><span class="p">.</span><span class="nx">Writer</span> <span class="c1">// 底层 writer
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span></code></pre></div><p><code>Write(p []byte)</code> 的逻辑核心是「能攒就攒」：缓冲放得下就把 <code>p</code> 拼进去；放不下且缓冲为空则直接写底层；放不下且缓冲有内容则先把缓冲填满、刷盘、清空，再处理 <code>p</code> 剩余部分。</p>
+<blockquote>
+<p><strong>务必记得 <code>Flush</code></strong>：<code>bufio.Writer</code> 的数据先攒在缓冲里，程序退出前必须调用 <code>w.Flush()</code> 把残留数据刷到底层，否则<strong>最后一段没写满缓冲的数据会丢失</strong>。这是新手最常踩的坑。</p>
+</blockquote>
+<p><code>Reader</code> 和 <code>Writer</code> 都有一个 <code>buf</code> 字节切片，<strong>默认大小 4096 字节</strong>，也可用 <code>bufio.NewReaderSize</code> / <code>NewWriterSize</code> 自定义。</p>
+<h1 id="3-重要告别-ioutil">3. 重要：告别 ioutil</h1>
+<p>早年 Go 教程里满是 <code>ioutil.ReadFile</code>、<code>ioutil.ReadAll</code>，但 <strong><code>io/ioutil</code> 包从 Go 1.16（2021 年）起已被整体废弃</strong>（deprecated）。它的功能被拆分并迁移到了 <code>os</code> 和 <code>io</code> 两个包，语义完全等价，只是位置和名字变了。新代码<strong>必须</strong>用新 API，迁移对照如下：</p>
+<table>
+<thead>
+<tr>
+<th>旧 API（<code>io/ioutil</code>，已废弃）</th>
+<th>新 API</th>
+<th>所属包</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ioutil.ReadFile</code></td>
+<td><code>os.ReadFile</code></td>
+<td><code>os</code></td>
+</tr>
+<tr>
+<td><code>ioutil.WriteFile</code></td>
+<td><code>os.WriteFile</code></td>
+<td><code>os</code></td>
+</tr>
+<tr>
+<td><code>ioutil.ReadAll</code></td>
+<td><code>io.ReadAll</code></td>
+<td><code>io</code></td>
+</tr>
+<tr>
+<td><code>ioutil.ReadDir</code></td>
+<td><code>os.ReadDir</code></td>
+<td><code>os</code></td>
+</tr>
+<tr>
+<td><code>ioutil.TempFile</code></td>
+<td><code>os.CreateTemp</code></td>
+<td><code>os</code></td>
+</tr>
+<tr>
+<td><code>ioutil.TempDir</code></td>
+<td><code>os.MkdirTemp</code></td>
+<td><code>os</code></td>
+</tr>
+<tr>
+<td><code>ioutil.NopCloser</code></td>
+<td><code>io.NopCloser</code></td>
+<td><code>io</code></td>
+</tr>
+<tr>
+<td><code>ioutil.Discard</code></td>
+<td><code>io.Discard</code></td>
+<td><code>io</code></td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>注意 <code>ioutil.ReadDir</code> 到 <code>os.ReadDir</code> 不只是搬家：返回值从 <code>[]os.FileInfo</code> 变成了更轻量的 <code>[]os.DirEntry</code>（避免对每个条目都 <code>stat</code>，需要详情时再 <code>entry.Info()</code>），这是一处需要留意的行为差异。</p>
+</blockquote>
+<p>下文的示例统一使用新 API。</p>
+<h1 id="4-三种读法的代码">4. 三种读法的代码</h1>
+<h2 id="41-os-包手动循环-read">4.1 os 包：手动循环 Read</h2>
+<p>自己开缓冲、循环读，控制力最强，也最啰嗦：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">readByOS</span><span class="p">(</span><span class="nx">filename</span> <span class="kt">string</span><span class="p">)</span> <span class="p">(</span><span class="kt">int</span><span class="p">,</span> <span class="kt">error</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">fi</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">os</span><span class="p">.</span><span class="nf">Open</span><span class="p">(</span><span class="nx">filename</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="mi">0</span><span class="p">,</span> <span class="nx">err</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="k">defer</span> <span class="nx">fi</span><span class="p">.</span><span class="nf">Close</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="nx">buf</span> <span class="o">:=</span> <span class="nb">make</span><span class="p">([]</span><span class="kt">byte</span><span class="p">,</span> <span class="mi">4096</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="kd">var</span> <span class="nx">nbytes</span> <span class="kt">int</span>
+</span></span><span class="line"><span class="cl">    <span class="k">for</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">n</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">fi</span><span class="p">.</span><span class="nf">Read</span><span class="p">(</span><span class="nx">buf</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">nbytes</span> <span class="o">+=</span> <span class="nx">n</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="nx">err</span> <span class="o">==</span> <span class="nx">io</span><span class="p">.</span><span class="nx">EOF</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="k">break</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="k">return</span> <span class="nx">nbytes</span><span class="p">,</span> <span class="nx">err</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="nx">nbytes</span><span class="p">,</span> <span class="kc">nil</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>每次 <code>fi.Read</code> 都是一次系统调用。</p>
+<h2 id="42-bufio-包带缓冲的-read">4.2 bufio 包：带缓冲的 Read</h2>
+<p>只需把 <code>*os.File</code> 用 <code>bufio.NewReader</code> 包一层，系统调用次数骤降：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">readByBufio</span><span class="p">(</span><span class="nx">filename</span> <span class="kt">string</span><span class="p">)</span> <span class="p">(</span><span class="kt">int</span><span class="p">,</span> <span class="kt">error</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">fi</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">os</span><span class="p">.</span><span class="nf">Open</span><span class="p">(</span><span class="nx">filename</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="mi">0</span><span class="p">,</span> <span class="nx">err</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="k">defer</span> <span class="nx">fi</span><span class="p">.</span><span class="nf">Close</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="nx">rd</span> <span class="o">:=</span> <span class="nx">bufio</span><span class="p">.</span><span class="nf">NewReader</span><span class="p">(</span><span class="nx">fi</span><span class="p">)</span> <span class="c1">// 默认 4096 缓冲
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">buf</span> <span class="o">:=</span> <span class="nb">make</span><span class="p">([]</span><span class="kt">byte</span><span class="p">,</span> <span class="mi">4096</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="kd">var</span> <span class="nx">nbytes</span> <span class="kt">int</span>
+</span></span><span class="line"><span class="cl">    <span class="k">for</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">n</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">rd</span><span class="p">.</span><span class="nf">Read</span><span class="p">(</span><span class="nx">buf</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">nbytes</span> <span class="o">+=</span> <span class="nx">n</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="nx">err</span> <span class="o">==</span> <span class="nx">io</span><span class="p">.</span><span class="nx">EOF</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="k">break</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="k">return</span> <span class="nx">nbytes</span><span class="p">,</span> <span class="nx">err</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="nx">nbytes</span><span class="p">,</span> <span class="kc">nil</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><h2 id="43-一次性读入内存">4.3 一次性读入内存</h2>
+<p>最简单的写法，<code>os.ReadFile</code> 内部会先 <code>Stat</code> 拿到大小、一次性分配好切片再读满：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">readByReadFile</span><span class="p">(</span><span class="nx">filename</span> <span class="kt">string</span><span class="p">)</span> <span class="p">(</span><span class="kt">int</span><span class="p">,</span> <span class="kt">error</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// 新 API：等价于旧的 ioutil.ReadFile
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">data</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">os</span><span class="p">.</span><span class="nf">ReadFile</span><span class="p">(</span><span class="nx">filename</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="mi">0</span><span class="p">,</span> <span class="nx">err</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="nx">data</span><span class="p">),</span> <span class="kc">nil</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>若手上是一个 <code>io.Reader</code>（如 HTTP body），对应用 <code>io.ReadAll</code>（旧 <code>ioutil.ReadAll</code>）。</p>
+<h1 id="5-基准测试">5. 基准测试</h1>
+<p>空口无凭，用标准库 <code>testing</code> 的基准测试来量化。把上面三个函数放在一起跑 <code>Benchmark</code>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// file_bench_test.go
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kd">func</span> <span class="nf">BenchmarkReadByOS</span><span class="p">(</span><span class="nx">b</span> <span class="o">*</span><span class="nx">testing</span><span class="p">.</span><span class="nx">B</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">for</span> <span class="nx">i</span> <span class="o">:=</span> <span class="mi">0</span><span class="p">;</span> <span class="nx">i</span> <span class="p">&lt;</span> <span class="nx">b</span><span class="p">.</span><span class="nx">N</span><span class="p">;</span> <span class="nx">i</span><span class="o">++</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nf">readByOS</span><span class="p">(</span><span class="s">&#34;testdata/sample.dat&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">BenchmarkReadByBufio</span><span class="p">(</span><span class="nx">b</span> <span class="o">*</span><span class="nx">testing</span><span class="p">.</span><span class="nx">B</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">for</span> <span class="nx">i</span> <span class="o">:=</span> <span class="mi">0</span><span class="p">;</span> <span class="nx">i</span> <span class="p">&lt;</span> <span class="nx">b</span><span class="p">.</span><span class="nx">N</span><span class="p">;</span> <span class="nx">i</span><span class="o">++</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nf">readByBufio</span><span class="p">(</span><span class="s">&#34;testdata/sample.dat&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">BenchmarkReadByReadFile</span><span class="p">(</span><span class="nx">b</span> <span class="o">*</span><span class="nx">testing</span><span class="p">.</span><span class="nx">B</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">for</span> <span class="nx">i</span> <span class="o">:=</span> <span class="mi">0</span><span class="p">;</span> <span class="nx">i</span> <span class="p">&lt;</span> <span class="nx">b</span><span class="p">.</span><span class="nx">N</span><span class="p">;</span> <span class="nx">i</span><span class="o">++</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nf">readByReadFile</span><span class="p">(</span><span class="s">&#34;testdata/sample.dat&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>用不同大小的样本文件分别跑（<code>-benchmem</code> 一并看内存分配）：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">go <span class="nb">test</span> -bench<span class="o">=</span>. -benchmem
+</span></span></code></pre></div><h1 id="6-比拼结果与原因分析">6. 比拼结果与原因分析</h1>
+<p>多次实测下来，不同文件量级的排序规律稳定如下（<code>&gt;</code> 表示更快）：</p>
+<table>
+<thead>
+<tr>
+<th>文件规模</th>
+<th>速度排序</th>
+<th>关键原因</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>小文件（KB 级）</td>
+<td><code>ReadFile</code> &gt; <code>bufio</code> &gt; <code>os</code></td>
+<td>一次系统调用读完，最省</td>
+</tr>
+<tr>
+<td>常规（MB 级）</td>
+<td>三者接近，<code>bufio</code> 略优</td>
+<td>缓冲摊薄了系统调用成本</td>
+</tr>
+<tr>
+<td>大文件（GB 级）</td>
+<td><code>bufio</code> &gt; <code>os</code> &gt; <code>ReadFile</code></td>
+<td>一次性读入内存反而拖垮</td>
+</tr>
+</tbody>
+</table>
+<p>逐条拆解：</p>
+<ul>
+<li>
+<p><strong>小文件为什么 <code>ReadFile</code> 最快</strong>：它直接把全文一次性读进内存，<strong>只有一次 IO 系统调用</strong>；而 <code>os</code> 和 <code>bufio</code> 都在循环里多次读取。文件小，一把梭自然最快。</p>
+</li>
+<li>
+<p><strong>大文件为什么 <code>ReadFile</code> 反而最慢甚至崩掉</strong>：<code>os.ReadFile</code> 要开辟一块<strong>与文件等大的内存</strong>来装全部数据。GB 级文件就要 GB 级内存，分配和 GC 压力骤增；文件再大到超过可用内存，直接 OOM，这种读法彻底失效。所以<strong>永远不要用 <code>os.ReadFile</code> 读不可控大小的文件</strong>。</p>
+</li>
+<li>
+<p><strong>大文件为什么 <code>bufio</code> 快过 <code>os</code></strong>：<code>bufio</code> 默认带 4096 字节缓冲，每次系统调用读 4096 字节到缓冲，之后 <code>rd.Read</code> 从缓冲这块<strong>用户态内存</strong>取数据；而裸 <code>os</code> 每次 <code>Read</code> 都触发系统调用，导致内核频繁在用户态/内核态之间切换，这种上下文切换的累积开销让它慢于 <code>bufio</code>。</p>
+</li>
+</ul>
+<h1 id="7-选型建议">7. 选型建议</h1>
+<p>综合下来给出实用准则：</p>
+<ul>
+<li><strong>小配置/小文本文件</strong>：直接 <code>os.ReadFile</code> / <code>os.WriteFile</code>，一行搞定，别过度设计。</li>
+<li><strong>大文件、日志、流式数据</strong>：用 <code>bufio.Reader</code>（读）/ <code>bufio.Writer</code>（写），逐行 <code>bufio.Scanner</code> 或分块处理，<strong>内存占用恒定</strong>，不随文件增大而膨胀——这是处理不可控大小数据的默认选择。</li>
+<li><strong>网络流、<code>io.Reader</code> 抽象</strong>：小响应体 <code>io.ReadAll</code>；大流量务必配合 <code>bufio</code> 或 <code>io.Copy</code> 流式转发，避免全量入内存。</li>
+<li><strong>写文件记得 <code>Flush</code></strong>：用 <code>bufio.Writer</code> 时，收尾一定 <code>defer w.Flush()</code>。</li>
+<li><strong>一律使用新 API</strong>：<code>os.ReadFile</code>/<code>os.WriteFile</code>/<code>io.ReadAll</code>/<code>os.ReadDir</code>，彻底告别 <code>ioutil</code>。</li>
+</ul>
+<p>一句话总结：<strong>能一次读完的小文件图省事，大小不可控的数据靠缓冲</strong>——把内存占用控制住，才是文件 IO 的核心。</p>
+<h1 id="8-小结">8. 小结</h1>
+<ul>
+<li><code>bufio</code> 通过内存缓冲把「多次小 IO」合并为「少数大 IO」，默认缓冲 4096 字节，写完必须 <code>Flush</code>。</li>
+<li><code>io/ioutil</code> 自 Go 1.16 废弃，功能迁移到 <code>os</code> 与 <code>io</code>；新代码用 <code>os.ReadFile</code>/<code>os.WriteFile</code>/<code>io.ReadAll</code>/<code>os.ReadDir</code>。</li>
+<li>性能没有银弹：<strong>小文件 <code>ReadFile</code> 最快，大文件 <code>bufio</code> 最稳，<code>ReadFile</code> 读大文件会 OOM</strong>。</li>
+<li>选型看数据规模是否可控——可控且小就一把梭，不可控就上缓冲流式处理。</li>
+</ul>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2026-01-02</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/golang/">golang</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/pgsql/pgsql_01_postgresql%E7%AE%80%E4%BB%8B%E4%B8%8E%E5%AE%89%E8%A3%85/" class="prev" rel="prev" title="pgsql-01 PostgreSQL简介与安装"><i class="fas fa-angle-left fa-fw"></i>pgsql-01 PostgreSQL简介与安装</a>
+            <a href="/posts/golang/golang_26_%E4%BC%98%E9%9B%85%E9%87%8D%E5%90%AF%E4%B8%8E%E4%BF%A1%E5%8F%B7%E5%A4%84%E7%90%86/" class="next" rel="next" title="Go-26 优雅重启与信号处理">Go-26 优雅重启与信号处理<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2026-01-02T00:01:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Go-27 文件IO与读写性能对比"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

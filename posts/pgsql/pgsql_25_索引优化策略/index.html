@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>pgsql-25 索引优化策略 - xingliuhua博客</title><meta name="Description" content="实战讲解 PostgreSQL 索引优化：选择性与区分度、复合索引列序、索引失效的常见原因、覆盖索引与回表、找出冗余/未用索引、索引维护，并对比 MySQL"><meta property="og:title" content="pgsql-25 索引优化策略" />
+<meta property="og:description" content="实战讲解 PostgreSQL 索引优化：选择性与区分度、复合索引列序、索引失效的常见原因、覆盖索引与回表、找出冗余/未用索引、索引维护，并对比 MySQL" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/pgsql/pgsql_25_%E7%B4%A2%E5%BC%95%E4%BC%98%E5%8C%96%E7%AD%96%E7%95%A5/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2025-09-25T09:18:00+08:00" />
+<meta property="article:modified_time" content="2025-09-25T09:18:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="pgsql-25 索引优化策略"/>
+<meta name="twitter:description" content="实战讲解 PostgreSQL 索引优化：选择性与区分度、复合索引列序、索引失效的常见原因、覆盖索引与回表、找出冗余/未用索引、索引维护，并对比 MySQL"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/pgsql/pgsql_25_%E7%B4%A2%E5%BC%95%E4%BC%98%E5%8C%96%E7%AD%96%E7%95%A5/" /><link rel="prev" href="https://xingliuhua.github.io/posts/pgsql/pgsql_26_%E6%9F%A5%E8%AF%A2%E4%BC%98%E5%8C%96%E4%B8%8E%E6%89%A7%E8%A1%8C%E8%AE%A1%E5%88%92/" /><link rel="next" href="https://xingliuhua.github.io/posts/pgsql/pgsql_24_%E7%B4%A2%E5%BC%95%E5%8E%9F%E7%90%86%E4%B8%8E%E7%B1%BB%E5%9E%8B/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "pgsql-25 索引优化策略",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/pgsql\/pgsql_25_%E7%B4%A2%E5%BC%95%E4%BC%98%E5%8C%96%E7%AD%96%E7%95%A5\/"
+        },"genre": "posts","keywords": "pgsql","wordcount":  2083 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/pgsql\/pgsql_25_%E7%B4%A2%E5%BC%95%E4%BC%98%E5%8C%96%E7%AD%96%E7%95%A5\/","datePublished": "2025-09-25T09:18:00+08:00","dateModified": "2025-09-25T09:18:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "实战讲解 PostgreSQL 索引优化：选择性与区分度、复合索引列序、索引失效的常见原因、覆盖索引与回表、找出冗余/未用索引、索引维护，并对比 MySQL"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">pgsql-25 索引优化策略</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2025-09-25">2025-09-25</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 2083 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 5 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-概述">1. 概述</a></li>
+    <li><a href="#2-选择性与区分度">2. 选择性与区分度</a></li>
+    <li><a href="#3-复合索引的列顺序重点">3. 复合索引的列顺序（重点）</a></li>
+    <li><a href="#4-索引失效的常见原因面试高频">4. 索引失效的常见原因（面试高频）</a></li>
+    <li><a href="#5-用-explain-验证索引是否生效">5. 用 EXPLAIN 验证索引是否生效</a></li>
+    <li><a href="#6-覆盖索引与消除排序">6. 覆盖索引与消除排序</a>
+      <ol>
+        <li><a href="#61-覆盖索引index-only-scan">6.1 覆盖索引（Index Only Scan）</a></li>
+        <li><a href="#62-用索引消除-order-by-排序">6.2 用索引消除 ORDER BY 排序</a></li>
+      </ol>
+    </li>
+    <li><a href="#7-找出并清理无效索引">7. 找出并清理无效索引</a></li>
+    <li><a href="#8-索引维护实践">8. 索引维护实践</a></li>
+    <li><a href="#9-面试高频问答">9. 面试高频问答</a></li>
+    <li><a href="#10-下一步">10. 下一步</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><h1 id="1-概述">1. 概述</h1>
+<p>上一篇 <a href="https://xingliuhua.github.io/posts/pgsql/pgsql_24_%E7%B4%A2%E5%BC%95%E5%8E%9F%E7%90%86%E4%B8%8E%E7%B1%BB%E5%9E%8B/" rel="">索引原理与类型</a> 讲了&quot;有哪些索引&quot;，本篇讲&quot;<strong>怎么用好索引</strong>&quot;——这是日常调优和面试实战的核心。核心思路是三句话：</p>
+<ol>
+<li><strong>建对索引</strong>：在正确的列、正确的顺序上建，避免冗余。</li>
+<li><strong>让查询能用上索引</strong>：避免写出使索引失效的 SQL。</li>
+<li><strong>持续维护</strong>：删掉没用的、监控膨胀。</li>
+</ol>
+<blockquote>
+<p>索引优化的很多原则（选择性、最左前缀、索引失效）PG 与 MySQL 是相通的，本篇会标注差异点。</p>
+</blockquote>
+<h1 id="2-选择性与区分度">2. 选择性与区分度</h1>
+<p><strong>选择性（Selectivity）= 不同值的数量 / 总行数</strong>，越接近 1 越适合建索引。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="c1">-- 评估某列的选择性
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="k">count</span><span class="p">(</span><span class="k">DISTINCT</span><span class="w"> </span><span class="n">status</span><span class="p">)::</span><span class="nb">float</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="k">count</span><span class="p">(</span><span class="o">*</span><span class="p">)</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">selectivity</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">orders</span><span class="p">;</span><span class="w">
+</span></span></span></code></pre></div><ul>
+<li><strong>高选择性</strong>（如 user_id、email、订单号）→ 建索引收益大。</li>
+<li><strong>低选择性</strong>（如 gender、is_deleted、status 只有几个值）→ 单独建普通索引几乎没用，优化器往往直接全表扫描。
+<ul>
+<li>但低选择性列适合放进<strong>复合索引</strong>或用作<strong>部分索引</strong>的条件（如 <code>WHERE status='pending'</code>）。</li>
+</ul>
+</li>
+</ul>
+<h1 id="3-复合索引的列顺序重点">3. 复合索引的列顺序（重点）</h1>
+<p>复合索引 <code>(a, b, c)</code> 遵循<strong>最左前缀原则</strong>：只能被&quot;从最左列开始连续&quot;的条件利用。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">idx</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">orders</span><span class="w"> </span><span class="p">(</span><span class="n">user_id</span><span class="p">,</span><span class="w"> </span><span class="n">status</span><span class="p">,</span><span class="w"> </span><span class="n">created_at</span><span class="p">);</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- ✅ 能用: WHERE user_id=1
+</span></span></span><span class="line"><span class="cl"><span class="c1">-- ✅ 能用: WHERE user_id=1 AND status=&#39;paid&#39;
+</span></span></span><span class="line"><span class="cl"><span class="c1">-- ✅ 能用: WHERE user_id=1 AND status=&#39;paid&#39; AND created_at&gt;&#39;2026-01-01&#39;
+</span></span></span><span class="line"><span class="cl"><span class="c1">-- ⚠️ 部分用: WHERE user_id=1 AND created_at&gt;... （跳过status，只用到user_id）
+</span></span></span><span class="line"><span class="cl"><span class="c1">-- ❌ 不能用: WHERE status=&#39;paid&#39; （跳过最左列user_id）
+</span></span></span></code></pre></div><p><strong>列顺序设计原则：</strong></p>
+<ol>
+<li><strong>等值查询列放前，范围查询列放后</strong>。范围条件（<code>&gt;</code>、<code>&lt;</code>、<code>BETWEEN</code>）之后的列无法再用于索引过滤。
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="c1">-- 查询: WHERE user_id=1 AND created_at &gt; X AND status=&#39;paid&#39;
+</span></span></span><span class="line"><span class="cl"><span class="c1">-- 好: (user_id, status, created_at)  等值(user_id,status)在前，范围(created_at)在后
+</span></span></span><span class="line"><span class="cl"><span class="c1">-- 差: (user_id, created_at, status)  created_at范围后，status用不上索引过滤
+</span></span></span></code></pre></div></li>
+<li><strong>高选择性列尽量靠前</strong>（能更快缩小范围）。</li>
+<li><strong>兼顾 ORDER BY</strong>：若索引顺序与排序一致，可省去排序步骤（见第6节）。</li>
+</ol>
+<h1 id="4-索引失效的常见原因面试高频">4. 索引失效的常见原因（面试高频）</h1>
+<p>即使建了索引，写法不当也会让优化器放弃它，退化为全表扫描：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="c1">-- ❌ 1) 列上使用函数/运算 → 失效
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">WHERE</span><span class="w"> </span><span class="k">lower</span><span class="p">(</span><span class="n">email</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;a@b.com&#39;</span><span class="w">          </span><span class="c1">-- 解决：建表达式索引 lower(email)
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">WHERE</span><span class="w"> </span><span class="n">created_at</span><span class="p">::</span><span class="nb">date</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;2026-07-01&#39;</span><span class="w">   </span><span class="c1">-- 解决：改成范围 created_at &gt;= ... AND &lt; ...
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">WHERE</span><span class="w"> </span><span class="n">amount</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">10</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">100</span><span class="w">                 </span><span class="c1">-- 解决：改成 amount &gt; 90
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- ❌ 2) 前置通配的 LIKE → 失效
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">WHERE</span><span class="w"> </span><span class="n">name</span><span class="w"> </span><span class="k">LIKE</span><span class="w"> </span><span class="s1">&#39;%abc%&#39;</span><span class="w">                 </span><span class="c1">-- 解决：用 pg_trgm 的 GIN 索引
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">WHERE</span><span class="w"> </span><span class="n">name</span><span class="w"> </span><span class="k">LIKE</span><span class="w"> </span><span class="s1">&#39;abc%&#39;</span><span class="w">                  </span><span class="c1">-- ✅ 后置通配可用 B-tree
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- ❌ 3) 隐式类型转换 → 失效
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">WHERE</span><span class="w"> </span><span class="n">phone</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">13800138000</span><span class="w">              </span><span class="c1">-- phone是varchar，数字触发转换。加引号: &#39;13800138000&#39;
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- ❌ 4) 违反最左前缀（见第3节）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- ❌ 5) 优化器认为全表更快（低选择性/小表）→ 主动放弃索引（这是&#34;对&#34;的）
+</span></span></span></code></pre></div><blockquote>
+<p>差异点：MySQL 里 <code>OR</code> 常导致索引失效，PG 有 <strong>BitmapOr</strong> 能对多个索引做位图合并，<code>col1=1 OR col2=2</code> 在两列都有索引时仍可能各走一个索引再合并，比 MySQL 更灵活。</p>
+</blockquote>
+<h1 id="5-用-explain-验证索引是否生效">5. 用 EXPLAIN 验证索引是否生效</h1>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="k">EXPLAIN</span><span class="w"> </span><span class="p">(</span><span class="k">ANALYZE</span><span class="p">,</span><span class="w"> </span><span class="n">BUFFERS</span><span class="p">)</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">SELECT</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">orders</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="n">user_id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">100</span><span class="w"> </span><span class="k">AND</span><span class="w"> </span><span class="n">status</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;paid&#39;</span><span class="p">;</span><span class="w">
+</span></span></span></code></pre></div><ul>
+<li>看到 <code>Index Scan</code> / <code>Index Only Scan</code> / <code>Bitmap Index Scan</code> → 用了索引。</li>
+<li>看到 <code>Seq Scan</code>（全表扫描）→ 索引没生效，排查第4节原因。</li>
+<li>关注 <code>Rows Removed by Filter</code>：若很大说明索引过滤不够精准。</li>
+</ul>
+<p>执行计划详解见 <a href="https://xingliuhua.github.io/posts/pgsql/pgsql_26_%E6%9F%A5%E8%AF%A2%E4%BC%98%E5%8C%96%E4%B8%8E%E6%89%A7%E8%A1%8C%E8%AE%A1%E5%88%92/" rel="">查询优化与执行计划</a>。</p>
+<h1 id="6-覆盖索引与消除排序">6. 覆盖索引与消除排序</h1>
+<h2 id="61-覆盖索引index-only-scan">6.1 覆盖索引（Index Only Scan）</h2>
+<p>查询用到的列全在索引里，就不必回堆表，性能最佳。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="c1">-- 查询只要 status，把它 INCLUDE 进索引
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">idx_cover</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">orders</span><span class="w"> </span><span class="p">(</span><span class="n">user_id</span><span class="p">)</span><span class="w"> </span><span class="n">INCLUDE</span><span class="w"> </span><span class="p">(</span><span class="n">status</span><span class="p">,</span><span class="w"> </span><span class="n">amount</span><span class="p">);</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- SELECT status, amount FROM orders WHERE user_id=1  → Index Only Scan
+</span></span></span></code></pre></div><p>注意 PG 的 Index Only Scan 还依赖 Visibility Map（VACUUM 维护），见 <a href="https://xingliuhua.github.io/posts/pgsql/pgsql_27_vacuum%E4%B8%8E%E8%A1%A8%E8%86%A8%E8%83%80/" rel="">VACUUM与表膨胀</a>。</p>
+<h2 id="62-用索引消除-order-by-排序">6.2 用索引消除 ORDER BY 排序</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="c1">-- 索引本身有序，若排序方向匹配可直接返回，省掉 Sort 步骤
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">idx_created</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">orders</span><span class="w"> </span><span class="p">(</span><span class="n">created_at</span><span class="w"> </span><span class="k">DESC</span><span class="p">);</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">SELECT</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">orders</span><span class="w"> </span><span class="k">ORDER</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="n">created_at</span><span class="w"> </span><span class="k">DESC</span><span class="w"> </span><span class="k">LIMIT</span><span class="w"> </span><span class="mi">20</span><span class="p">;</span><span class="w">   </span><span class="c1">-- 无需额外排序
+</span></span></span></code></pre></div><h1 id="7-找出并清理无效索引">7. 找出并清理无效索引</h1>
+<p>索引不是越多越好——每个索引都会拖慢 INSERT/UPDATE/DELETE 并占空间。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="c1">-- 1) 从未被使用的索引（idx_scan=0），可考虑删除（排除主键/唯一约束）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="n">s</span><span class="p">.</span><span class="n">relname</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="err">表</span><span class="p">,</span><span class="w"> </span><span class="n">s</span><span class="p">.</span><span class="n">indexrelname</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="err">索引</span><span class="p">,</span><span class="w"> </span><span class="n">s</span><span class="p">.</span><span class="n">idx_scan</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="err">使用次数</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">       </span><span class="n">pg_size_pretty</span><span class="p">(</span><span class="n">pg_relation_size</span><span class="p">(</span><span class="n">s</span><span class="p">.</span><span class="n">indexrelid</span><span class="p">))</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="err">大小</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">FROM</span><span class="w"> </span><span class="n">pg_stat_user_indexes</span><span class="w"> </span><span class="n">s</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">JOIN</span><span class="w"> </span><span class="n">pg_index</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">i</span><span class="p">.</span><span class="n">indexrelid</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">s</span><span class="p">.</span><span class="n">indexrelid</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">WHERE</span><span class="w"> </span><span class="n">s</span><span class="p">.</span><span class="n">idx_scan</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="k">AND</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="n">i</span><span class="p">.</span><span class="n">indisprimary</span><span class="w"> </span><span class="k">AND</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="n">i</span><span class="p">.</span><span class="n">indisunique</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">ORDER</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="n">pg_relation_size</span><span class="p">(</span><span class="n">s</span><span class="p">.</span><span class="n">indexrelid</span><span class="p">)</span><span class="w"> </span><span class="k">DESC</span><span class="p">;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 2) 重复/冗余索引：如已有 (a,b) 再建 (a) 就是冗余（被最左前缀覆盖）
+</span></span></span><span class="line"><span class="cl"><span class="c1">-- 3) 索引膨胀检查后用 REINDEX 重建
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">REINDEX</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">CONCURRENTLY</span><span class="w"> </span><span class="n">idx_orders_user</span><span class="p">;</span><span class="w">   </span><span class="c1">-- PG 12+ 支持并发重建
+</span></span></span></code></pre></div><h1 id="8-索引维护实践">8. 索引维护实践</h1>
+<ol>
+<li>大表建索引一律 <code>CREATE INDEX CONCURRENTLY</code>（不锁写）。</li>
+<li>定期用 <code>pg_stat_user_indexes</code> 审计未用索引并清理。</li>
+<li>避免冗余索引（复合索引已覆盖的前缀不必单建）。</li>
+<li>索引膨胀严重时 <code>REINDEX CONCURRENTLY</code> 重建。</li>
+<li>外键列建议手动建索引——<strong>PG 不像 MySQL 会为外键自动建索引</strong>，忘记建会导致父表删除时对子表全表扫描。</li>
+</ol>
+<h1 id="9-面试高频问答">9. 面试高频问答</h1>
+<p><strong>Q1：什么样的列适合建索引？</strong>
+高选择性（不同值多）、频繁出现在 WHERE/JOIN/ORDER BY 中的列。低选择性列（如性别、状态）单独建索引意义不大，但可作复合索引后缀或部分索引条件。</p>
+<p><strong>Q2：复合索引的列顺序怎么定？</strong>
+遵循最左前缀；等值条件列放前、范围条件列放后（范围之后的列用不上索引过滤）；高选择性列靠前；并尽量兼顾 ORDER BY 顺序。</p>
+<p><strong>Q3：哪些写法会导致索引失效？</strong>
+列上加函数/运算、前置通配 LIKE &lsquo;%x%&rsquo;、隐式类型转换、违反最左前缀。解决办法分别是：表达式索引、pg_trgm 索引、显式匹配类型、调整索引/查询。</p>
+<p><strong>Q4：PG 的外键会自动建索引吗？</strong>
+不会（这点和 MySQL 不同，MySQL InnoDB 外键自动建索引）。需手动为外键列建索引，否则父表删除/更新会引发子表全表扫描。</p>
+<p><strong>Q5：怎么判断一个索引该不该删？</strong>
+查 pg_stat_user_indexes 的 idx_scan，长期为 0 且非主键/唯一约束的索引通常可删；同时排查被更长复合索引最左前缀覆盖的冗余索引。</p>
+<h1 id="10-下一步">10. 下一步</h1>
+<p>学习 <a href="https://xingliuhua.github.io/posts/pgsql/pgsql_26_%E6%9F%A5%E8%AF%A2%E4%BC%98%E5%8C%96%E4%B8%8E%E6%89%A7%E8%A1%8C%E8%AE%A1%E5%88%92/" rel="">查询优化与执行计划</a>，学会读懂 EXPLAIN。</p>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2025-09-25</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/pgsql/">pgsql</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/pgsql/pgsql_26_%E6%9F%A5%E8%AF%A2%E4%BC%98%E5%8C%96%E4%B8%8E%E6%89%A7%E8%A1%8C%E8%AE%A1%E5%88%92/" class="prev" rel="prev" title="pgsql-26 查询优化与执行计划"><i class="fas fa-angle-left fa-fw"></i>pgsql-26 查询优化与执行计划</a>
+            <a href="/posts/pgsql/pgsql_24_%E7%B4%A2%E5%BC%95%E5%8E%9F%E7%90%86%E4%B8%8E%E7%B1%BB%E5%9E%8B/" class="next" rel="next" title="pgsql-24 索引原理与类型">pgsql-24 索引原理与类型<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2025-09-25T09:18:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"pgsql-25 索引优化策略"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>pgsql-32 WAL与检查点机制 - xingliuhua博客</title><meta name="Description" content="深入讲解 PostgreSQL 的 WAL 预写日志：作用与原理、LSN、检查点（checkpoint）、fsync 与持久化、WAL 在崩溃恢复/复制/PITR 中的角色，并对比 MySQL 的 redo log 与 binlog"><meta property="og:title" content="pgsql-32 WAL与检查点机制" />
+<meta property="og:description" content="深入讲解 PostgreSQL 的 WAL 预写日志：作用与原理、LSN、检查点（checkpoint）、fsync 与持久化、WAL 在崩溃恢复/复制/PITR 中的角色，并对比 MySQL 的 redo log 与 binlog" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/pgsql/pgsql_32_wal%E4%B8%8E%E6%A3%80%E6%9F%A5%E7%82%B9%E6%9C%BA%E5%88%B6/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2025-09-25T09:11:00+08:00" />
+<meta property="article:modified_time" content="2025-09-25T09:11:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="pgsql-32 WAL与检查点机制"/>
+<meta name="twitter:description" content="深入讲解 PostgreSQL 的 WAL 预写日志：作用与原理、LSN、检查点（checkpoint）、fsync 与持久化、WAL 在崩溃恢复/复制/PITR 中的角色，并对比 MySQL 的 redo log 与 binlog"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/pgsql/pgsql_32_wal%E4%B8%8E%E6%A3%80%E6%9F%A5%E7%82%B9%E6%9C%BA%E5%88%B6/" /><link rel="prev" href="https://xingliuhua.github.io/posts/pgsql/pgsql_33_%E5%A4%87%E4%BB%BD%E4%B8%8E%E6%81%A2%E5%A4%8D/" /><link rel="next" href="https://xingliuhua.github.io/posts/pgsql/pgsql_31_%E8%BF%9E%E6%8E%A5%E6%B1%A0%E4%B8%8E%E8%BF%9E%E6%8E%A5%E7%AE%A1%E7%90%86/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "pgsql-32 WAL与检查点机制",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/pgsql\/pgsql_32_wal%E4%B8%8E%E6%A3%80%E6%9F%A5%E7%82%B9%E6%9C%BA%E5%88%B6\/"
+        },"genre": "posts","keywords": "pgsql","wordcount":  2543 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/pgsql\/pgsql_32_wal%E4%B8%8E%E6%A3%80%E6%9F%A5%E7%82%B9%E6%9C%BA%E5%88%B6\/","datePublished": "2025-09-25T09:11:00+08:00","dateModified": "2025-09-25T09:11:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "深入讲解 PostgreSQL 的 WAL 预写日志：作用与原理、LSN、检查点（checkpoint）、fsync 与持久化、WAL 在崩溃恢复/复制/PITR 中的角色，并对比 MySQL 的 redo log 与 binlog"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">pgsql-32 WAL与检查点机制</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2025-09-25">2025-09-25</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 2543 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 6 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-概述">1. 概述</a></li>
+    <li><a href="#2-wal-的工作流程">2. WAL 的工作流程</a>
+      <ol>
+        <li><a href="#21-lsnlog-sequence-number">2.1 LSN（Log Sequence Number）</a></li>
+        <li><a href="#22-wal-文件">2.2 WAL 文件</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-检查点checkpoint">3. 检查点（Checkpoint）</a>
+      <ol>
+        <li><a href="#31-触发条件">3.1 触发条件</a></li>
+        <li><a href="#32-检查点调优重要权衡">3.2 检查点调优（重要权衡）</a></li>
+      </ol>
+    </li>
+    <li><a href="#4-持久化与-fsync">4. 持久化与 fsync</a></li>
+    <li><a href="#5-wal-的三大用途">5. WAL 的三大用途</a>
+      <ol>
+        <li><a href="#51-wal-归档">5.1 WAL 归档</a></li>
+        <li><a href="#52-wal_level">5.2 wal_level</a></li>
+      </ol>
+    </li>
+    <li><a href="#6-对比-mysqlwal-vs-redo-log--binlog面试高频">6. 对比 MySQL：WAL vs redo log + binlog（面试高频）</a></li>
+    <li><a href="#7-监控">7. 监控</a></li>
+    <li><a href="#8-面试高频问答">8. 面试高频问答</a></li>
+    <li><a href="#9-下一步">9. 下一步</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><h1 id="1-概述">1. 概述</h1>
+<p>**WAL（Write-Ahead Logging，预写日志）**是 PostgreSQL 保证数据持久性（Durability，ACID 的 D）和崩溃恢复的核心机制，也是复制、备份、时间点恢复（PITR）的底层基础。面试中它常与&quot;如何保证宕机不丢数据&quot;一起被问到。</p>
+<p><strong>核心原则（预写日志规则）：</strong></p>
+<blockquote>
+<p>任何对数据页的修改，必须<strong>先把变更记录写入 WAL 日志并落盘，然后才能修改内存中的数据页</strong>。</p>
+</blockquote>
+<p>为什么这样能不丢数据又快？因为——</p>
+<ul>
+<li>WAL 是<strong>顺序追加写</strong>（磁盘顺序 IO 极快），而数据页是随机分布的（随机 IO 慢）。</li>
+<li>事务提交时只需保证 <strong>WAL 落盘</strong>即可返回成功，脏数据页可以稍后再慢慢刷盘。</li>
+<li>即使此时宕机，重启后可用 WAL **重放（replay）**把未刷盘的修改恢复出来。</li>
+</ul>
+<p>这就是&quot;用一次顺序写换取持久性&quot;的经典设计。</p>
+<h1 id="2-wal-的工作流程">2. WAL 的工作流程</h1>
+<pre tabindex="0"><code>1. 事务修改数据 → 生成 WAL 记录写入 WAL 缓冲区（wal_buffers）
+2. 事务 COMMIT → 把 WAL 缓冲区 fsync 落盘（保证持久）→ 返回客户端成功
+3. 被修改的数据页（脏页）仍在 shared_buffers 内存中，暂不落盘
+4. 后台进程（bgwriter / checkpointer）稍后把脏页刷到数据文件
+5. 若第3步后宕机：重启时从上个检查点开始重放 WAL，恢复未落盘的脏页
+</code></pre><h2 id="21-lsnlog-sequence-number">2.1 LSN（Log Sequence Number）</h2>
+<p>WAL 中每条记录都有一个 <strong>LSN</strong>——日志的字节偏移量，全局单调递增，用来标识&quot;日志位置&quot;。数据页头也记录了&quot;最后修改它的 LSN&quot;，恢复时据此判断某个修改是否需要重放。复制中主从也用 LSN 衡量同步进度。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="c1">-- 查看当前 WAL 写入位置（LSN）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="n">pg_current_wal_lsn</span><span class="p">();</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 计算两个 LSN 之间的字节差（衡量主从延迟）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="n">pg_wal_lsn_diff</span><span class="p">(</span><span class="n">pg_current_wal_lsn</span><span class="p">(),</span><span class="w"> </span><span class="n">replay_lsn</span><span class="p">)</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">pg_stat_replication</span><span class="p">;</span><span class="w">
+</span></span></span></code></pre></div><h2 id="22-wal-文件">2.2 WAL 文件</h2>
+<p>WAL 存放在 <code>pg_wal/</code> 目录，默认每个段文件 16MB，写满切换下一个。文件会被循环复用或归档。</p>
+<h1 id="3-检查点checkpoint">3. 检查点（Checkpoint）</h1>
+<p>如果 WAL 无限增长、脏页永不落盘，那崩溃恢复就要重放海量日志。<strong>检查点</strong>是一个同步点：</p>
+<blockquote>
+<p>在检查点时刻，把此前所有脏页强制刷到数据文件，并记录&quot;到此为止的修改都已持久化到数据文件&quot;。之后崩溃恢复只需从<strong>最近一个检查点</strong>之后的 WAL 开始重放，而不是从头。</p>
+</blockquote>
+<h2 id="31-触发条件">3.1 触发条件</h2>
+<ul>
+<li><strong>时间触发</strong>：<code>checkpoint_timeout</code>（默认 5min）。</li>
+<li><strong>WAL 量触发</strong>：写入的 WAL 达到 <code>max_wal_size</code>（默认 1GB）。</li>
+<li>手动：<code>CHECKPOINT;</code></li>
+<li>关库、备份开始等。</li>
+</ul>
+<h2 id="32-检查点调优重要权衡">3.2 检查点调优（重要权衡）</h2>
+<p>检查点是一把双刃剑：</p>
+<ul>
+<li>太频繁 → 脏页反复刷盘，IO 尖峰，影响性能。</li>
+<li>太稀疏 → 恢复时要重放很多 WAL，崩溃恢复慢；且脏页积压导致检查点时一次性刷盘造成&quot;IO 风暴&quot;。</li>
+</ul>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="c1"># postgresql.conf 关键参数</span>
+</span></span><span class="line"><span class="cl"><span class="na">max_wal_size</span> <span class="o">=</span> <span class="s">4GB                    # 调大 → 检查点更少 → 吞吐更好，但恢复更慢</span>
+</span></span><span class="line"><span class="cl"><span class="na">checkpoint_timeout</span> <span class="o">=</span> <span class="s">15min            # 适当调大</span>
+</span></span><span class="line"><span class="cl"><span class="na">checkpoint_completion_target</span> <span class="o">=</span> <span class="s">0.9    # 把刷盘摊平到整个周期的90%，避免IO尖峰</span>
+</span></span></code></pre></div><blockquote>
+<p><code>checkpoint_completion_target=0.9</code> 是几乎必调的项：让检查点的脏页刷写平滑分布，而不是集中在一瞬间打爆磁盘。</p>
+</blockquote>
+<h1 id="4-持久化与-fsync">4. 持久化与 fsync</h1>
+<ul>
+<li><strong>fsync = on</strong>（默认）：COMMIT 时确保 WAL 真正写入磁盘介质，<strong>绝不能在生产关闭</strong>（关了性能高但宕机会丢数据/损坏）。</li>
+<li><strong>synchronous_commit</strong>：控制&quot;提交是否等待 WAL 落盘&quot;：
+<ul>
+<li><code>on</code>（默认）：等 WAL 落盘才返回，最安全。</li>
+<li><code>off</code>：不等待，提交更快，但宕机可能丢失<strong>最近几百毫秒</strong>已提交事务（注意：不会损坏数据，只是丢最新的几笔）。高吞吐、可容忍少量丢失时可用。</li>
+</ul>
+</li>
+</ul>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="c1">-- 会话级临时关闭同步提交（如批量导入时提速）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SET</span><span class="w"> </span><span class="n">synchronous_commit</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">off</span><span class="p">;</span><span class="w">
+</span></span></span></code></pre></div><h1 id="5-wal-的三大用途">5. WAL 的三大用途</h1>
+<p>WAL 不只是崩溃恢复，它是 PG 很多高级功能的底座：</p>
+<table>
+<thead>
+<tr>
+<th>用途</th>
+<th>说明</th>
+<th>相关篇</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>崩溃恢复</strong></td>
+<td>宕机后重放 WAL 恢复未落盘修改</td>
+<td>本篇</td>
+</tr>
+<tr>
+<td><strong>流复制 / 逻辑复制</strong></td>
+<td>把 WAL 传给从库重放，实现主从同步</td>
+<td><a href="https://xingliuhua.github.io/posts/pgsql/pgsql_34_%E4%B8%BB%E4%BB%8E%E5%A4%8D%E5%88%B6%E4%B8%8E%E9%AB%98%E5%8F%AF%E7%94%A8/" rel="">主从复制与高可用</a></td>
+</tr>
+<tr>
+<td><strong>PITR 时间点恢复</strong></td>
+<td>基础备份 + 归档 WAL，恢复到任意时刻</td>
+<td><a href="https://xingliuhua.github.io/posts/pgsql/pgsql_33_%E5%A4%87%E4%BB%BD%E4%B8%8E%E6%81%A2%E5%A4%8D/" rel="">备份与恢复</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="51-wal-归档">5.1 WAL 归档</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="na">archive_mode</span> <span class="o">=</span> <span class="s">on</span>
+</span></span><span class="line"><span class="cl"><span class="na">archive_command</span> <span class="o">=</span> <span class="s">&#39;cp %p /archive/%f&#39;   # 把写满的 WAL 段复制到归档目录</span>
+</span></span></code></pre></div><p>归档的 WAL 配合基础备份即可实现 PITR。</p>
+<h2 id="52-wal_level">5.2 wal_level</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="na">wal_level</span> <span class="o">=</span> <span class="s">replica    # minimal(仅恢复) / replica(默认,支持复制) / logical(支持逻辑复制)</span>
+</span></span></code></pre></div><h1 id="6-对比-mysqlwal-vs-redo-log--binlog面试高频">6. 对比 MySQL：WAL vs redo log + binlog（面试高频）</h1>
+<p>MySQL 把 PostgreSQL 里 WAL 承担的职责拆成了<strong>两套日志</strong>，这个对比极常考：</p>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>PostgreSQL WAL</th>
+<th>MySQL</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>崩溃恢复</strong></td>
+<td>WAL（一套搞定）</td>
+<td><strong>redo log</strong>（InnoDB 引擎层，物理日志）</td>
+</tr>
+<tr>
+<td><strong>复制/binlog</strong></td>
+<td>同一个 WAL 复用</td>
+<td><strong>binlog</strong>（Server 层，逻辑日志）</td>
+</tr>
+<tr>
+<td><strong>日志套数</strong></td>
+<td><strong>一套 WAL</strong></td>
+<td>两套（redo + binlog），需两阶段提交保证一致</td>
+</tr>
+<tr>
+<td><strong>日志内容</strong></td>
+<td>物理/物理逻辑混合</td>
+<td>redo 物理、binlog 逻辑</td>
+</tr>
+<tr>
+<td><strong>提交一致性</strong></td>
+<td>单日志，天然一致</td>
+<td>需 XA 两阶段提交协调 redo 与 binlog</td>
+</tr>
+</tbody>
+</table>
+<p><strong>面试金句：</strong></p>
+<blockquote>
+<p>MySQL 需要 redo log 做崩溃恢复、binlog 做复制和归档，两套日志靠两阶段提交保持一致，机制较复杂；PostgreSQL 只有一套 WAL，同时承担崩溃恢复、复制、PITR，设计更统一，但也因此没有 binlog 那种独立的逻辑变更流（逻辑复制是后来通过 wal_level=logical 解码 WAL 实现的）。</p>
+</blockquote>
+<h1 id="7-监控">7. 监控</h1>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="c1">-- WAL 生成速率、归档状态
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">pg_stat_archiver</span><span class="p">;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 检查点统计（PG 15 前在 pg_stat_bgwriter，之后在 pg_stat_checkpointer）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">pg_stat_bgwriter</span><span class="p">;</span><span class="w">
+</span></span></span></code></pre></div><h1 id="8-面试高频问答">8. 面试高频问答</h1>
+<p><strong>Q1：什么是 WAL？为什么能保证不丢数据还快？</strong>
+预写日志：修改数据前先把变更顺序写入 WAL 并落盘。顺序 IO 快，提交只需保证 WAL 落盘即可返回，脏页延后刷；宕机后重放 WAL 恢复。用一次顺序写换持久性。</p>
+<p><strong>Q2：检查点是什么？为什么需要它？</strong>
+把此前所有脏页刷到数据文件的同步点。有了它，崩溃恢复只需从最近检查点之后重放 WAL，而不是从头，控制恢复时间；同时限制 WAL 增长。</p>
+<p><strong>Q3：checkpoint_completion_target 的作用？</strong>
+把一次检查点的脏页刷写平摊到整个检查点周期（如 90%），避免集中刷盘造成 IO 尖峰影响业务。</p>
+<p><strong>Q4：synchronous_commit=off 会丢数据吗？会损坏数据库吗？</strong>
+可能丢失最近几百毫秒已提交但 WAL 未落盘的事务，但<strong>不会损坏数据库</strong>（WAL 顺序保证一致性），适合可容忍少量丢失的高吞吐场景。</p>
+<p><strong>Q5：PostgreSQL 的 WAL 和 MySQL 的 redo log/binlog 有什么区别？</strong>
+MySQL 用 redo log（引擎层，崩溃恢复）+ binlog（Server 层，复制/归档）两套日志，靠两阶段提交保持一致；PG 只用一套 WAL 同时承担崩溃恢复、复制、PITR。</p>
+<p><strong>Q6：LSN 是什么？</strong>
+Log Sequence Number，WAL 中的字节位置偏移，全局单调递增，用于标识日志位置、判断数据页修改是否需重放、衡量主从复制延迟。</p>
+<h1 id="9-下一步">9. 下一步</h1>
+<p>学习 <a href="https://xingliuhua.github.io/posts/pgsql/pgsql_33_%E5%A4%87%E4%BB%BD%E4%B8%8E%E6%81%A2%E5%A4%8D/" rel="">备份与恢复</a>，基于 WAL 实现 PITR 时间点恢复。</p>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2025-09-25</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/pgsql/">pgsql</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/pgsql/pgsql_33_%E5%A4%87%E4%BB%BD%E4%B8%8E%E6%81%A2%E5%A4%8D/" class="prev" rel="prev" title="pgsql-33 备份与恢复"><i class="fas fa-angle-left fa-fw"></i>pgsql-33 备份与恢复</a>
+            <a href="/posts/pgsql/pgsql_31_%E8%BF%9E%E6%8E%A5%E6%B1%A0%E4%B8%8E%E8%BF%9E%E6%8E%A5%E7%AE%A1%E7%90%86/" class="next" rel="next" title="pgsql-31 连接池与连接管理">pgsql-31 连接池与连接管理<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2025-09-25T09:11:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"pgsql-32 WAL与检查点机制"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

@@ -1,0 +1,952 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>Go-14 goroutine 与 GMP 调度模型 - xingliuhua博客</title><meta name="Description" content="goroutine原理、进程线程协程对比、GMP模型详解、调度流程、work-stealing、抢占式调度、系统调用与网络轮询netpoller、GOMAXPROCS"><meta property="og:title" content="Go-14 goroutine 与 GMP 调度模型" />
+<meta property="og:description" content="goroutine原理、进程线程协程对比、GMP模型详解、调度流程、work-stealing、抢占式调度、系统调用与网络轮询netpoller、GOMAXPROCS" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/golang/golang_14_goroutine%E4%B8%8Egmp%E8%B0%83%E5%BA%A6%E6%A8%A1%E5%9E%8B/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2026-01-02T00:14:00+08:00" />
+<meta property="article:modified_time" content="2026-01-02T00:14:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="Go-14 goroutine 与 GMP 调度模型"/>
+<meta name="twitter:description" content="goroutine原理、进程线程协程对比、GMP模型详解、调度流程、work-stealing、抢占式调度、系统调用与网络轮询netpoller、GOMAXPROCS"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/golang/golang_14_goroutine%E4%B8%8Egmp%E8%B0%83%E5%BA%A6%E6%A8%A1%E5%9E%8B/" /><link rel="prev" href="https://xingliuhua.github.io/posts/golang/golang_15_channel%E4%B8%8Eselect%E5%8E%9F%E7%90%86/" /><link rel="next" href="https://xingliuhua.github.io/posts/golang/golang_13_%E9%94%99%E8%AF%AF%E5%A4%84%E7%90%86%E6%9C%80%E4%BD%B3%E5%AE%9E%E8%B7%B5/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Go-14 goroutine 与 GMP 调度模型",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/golang\/golang_14_goroutine%E4%B8%8Egmp%E8%B0%83%E5%BA%A6%E6%A8%A1%E5%9E%8B\/"
+        },"genre": "posts","keywords": "golang","wordcount":  12464 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/golang\/golang_14_goroutine%E4%B8%8Egmp%E8%B0%83%E5%BA%A6%E6%A8%A1%E5%9E%8B\/","datePublished": "2026-01-02T00:14:00+08:00","dateModified": "2026-01-02T00:14:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "goroutine原理、进程线程协程对比、GMP模型详解、调度流程、work-stealing、抢占式调度、系统调用与网络轮询netpoller、GOMAXPROCS"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">Go-14 goroutine 与 GMP 调度模型</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2026-01-02">2026-01-02</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 12464 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 25 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-进程线程与协程">1. 进程、线程与协程</a>
+      <ol>
+        <li><a href="#11-三者的定位">1.1 三者的定位</a></li>
+        <li><a href="#12-内核态切换-vs-用户态切换">1.2 内核态切换 vs 用户态切换</a></li>
+        <li><a href="#13-goroutine-的初始栈2kb-可增长">1.3 goroutine 的初始栈：2KB 可增长</a></li>
+        <li><a href="#14-对比表">1.4 对比表</a></li>
+      </ol>
+    </li>
+    <li><a href="#2-goroutine-基础">2. goroutine 基础</a>
+      <ol>
+        <li><a href="#21-go-关键字启动">2.1 go 关键字启动</a></li>
+        <li><a href="#22-轻量到什么程度启动百万-goroutine">2.2 轻量到什么程度：启动百万 goroutine</a></li>
+        <li><a href="#23-main-退出所有-goroutine-立即结束">2.3 main 退出，所有 goroutine 立即结束</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-为什么需要-gmp">3. 为什么需要 GMP</a>
+      <ol>
+        <li><a href="#31-早期的-gm-模型go-10">3.1 早期的 GM 模型（Go 1.0）</a></li>
+        <li><a href="#32-引入-pprocessor">3.2 引入 P（Processor）</a></li>
+      </ol>
+    </li>
+    <li><a href="#4-gmp-三大组件">4. GMP 三大组件</a>
+      <ol>
+        <li><a href="#41-g--goroutine">4.1 G — goroutine</a></li>
+        <li><a href="#42-m--machine内核线程">4.2 M — machine（内核线程）</a></li>
+        <li><a href="#43-p--processor逻辑处理器">4.3 P — processor（逻辑处理器）</a></li>
+      </ol>
+    </li>
+    <li><a href="#5-调度流程">5. 调度流程</a>
+      <ol>
+        <li><a href="#51-g-创建后放在哪里">5.1 G 创建后放在哪里</a></li>
+        <li><a href="#52-m-的调度循环-schedule">5.2 M 的调度循环 schedule()</a></li>
+      </ol>
+    </li>
+    <li><a href="#6-work-stealing-工作窃取">6. work-stealing 工作窃取</a>
+      <ol>
+        <li><a href="#61-偷取规则">6.1 偷取规则</a></li>
+        <li><a href="#62-自旋线程spinning-m">6.2 自旋线程（spinning M）</a></li>
+      </ol>
+    </li>
+    <li><a href="#7-调度时机与抢占">7. 调度时机与抢占</a>
+      <ol>
+        <li><a href="#71-主动让出gopark--gosched">7.1 主动让出（gopark / Gosched）</a></li>
+        <li><a href="#72-抢占式调度的演进">7.2 抢占式调度的演进</a></li>
+      </ol>
+    </li>
+    <li><a href="#8-系统调用与网络轮询">8. 系统调用与网络轮询</a>
+      <ol>
+        <li><a href="#81-阻塞式系统调用与-handoff">8.1 阻塞式系统调用与 handoff</a></li>
+        <li><a href="#82-netpoller--网络-io-不阻塞线程">8.2 netpoller — 网络 I/O 不阻塞线程</a></li>
+        <li><a href="#83-sysmon-监控线程">8.3 sysmon 监控线程</a></li>
+      </ol>
+    </li>
+    <li><a href="#9-gomaxprocs">9. GOMAXPROCS</a>
+      <ol>
+        <li><a href="#91-默认值与设置">9.1 默认值与设置</a></li>
+        <li><a href="#92-容器里的大坑">9.2 容器里的大坑</a></li>
+        <li><a href="#93-该设多少">9.3 该设多少</a></li>
+      </ol>
+    </li>
+    <li><a href="#10-优化与实践">10. 优化与实践</a>
+      <ol>
+        <li><a href="#101-控制-goroutine-数量用-worker-pool">10.1 控制 goroutine 数量：用 worker pool</a></li>
+        <li><a href="#102-协程泄漏goroutine-leak">10.2 协程泄漏（goroutine leak）</a></li>
+        <li><a href="#103-观测调度godebug-schedtrace">10.3 观测调度：GODEBUG schedtrace</a></li>
+      </ol>
+    </li>
+    <li><a href="#11-高频面试题">11. 高频面试题</a></li>
+    <li><a href="#小结">小结</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><h1 id="1-进程线程与协程">1. 进程、线程与协程</h1>
+<p>要理解 goroutine 为什么&quot;轻&quot;，先要弄清它在整个并发抽象体系里所处的位置。从操作系统到语言运行时，并发执行单元大致分三层：<strong>进程（Process）→ 线程（Thread）→ 协程（Coroutine）</strong>。</p>
+<h2 id="11-三者的定位">1.1 三者的定位</h2>
+<pre tabindex="0"><code>┌────────────────────────── Operating System ──────────────────────────┐
+│                                                                      │
+│  Process ( independent address space, fd table, isolation )          │
+│  ┌────────────────────────────────────────────────────────────────┐  │
+│  │  Thread ( kernel scheduling unit, shares process addr space )  │  │
+│  │  ┌───────────────────────────────────────────────────────┐     │  │
+│  │  │  goroutine ( user-mode scheduling, runtime managed )  │     │  │
+│  │  │  G1   G2   G3   G4   ...   Gn                         │     │  │
+│  │  └───────────────────────────────────────────────────────┘     │  │
+│  └────────────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────────────┘
+</code></pre><ul>
+<li><strong>进程</strong>：操作系统资源分配的基本单位，拥有独立的虚拟地址空间、文件描述符表、信号处理等。进程间隔离性最强，切换开销也最大（要切换页表、刷 TLB）。</li>
+<li><strong>线程</strong>：操作系统 <strong>CPU 调度的基本单位</strong>。同一进程内的线程共享地址空间，切换比进程轻，但仍需<strong>陷入内核态</strong>完成寄存器保存/恢复、调度器选取下一个线程。</li>
+<li><strong>协程</strong>：由**用户态程序（语言运行时或库）**自己调度的执行单元，操作系统完全感知不到它的存在。切换只是普通的函数调用级别的寄存器保存，不进内核，因此极其廉价。</li>
+</ul>
+<h2 id="12-内核态切换-vs-用户态切换">1.2 内核态切换 vs 用户态切换</h2>
+<p>线程切换必须经过内核，一次典型的上下文切换要做这些事：</p>
+<ol>
+<li>触发陷入（时钟中断 / 系统调用），从用户态切到内核态；</li>
+<li>保存当前线程的完整 CPU 上下文（通用寄存器、SP、PC、浮点状态等）到内核栈；</li>
+<li>内核调度器挑选下一个可运行线程；</li>
+<li>恢复新线程上下文，切回用户态；</li>
+<li>可能伴随 TLB 失效、缓存冷启动。</li>
+</ol>
+<p>一次内核级线程切换的直接开销通常在 <strong>1~2 微秒</strong>量级，加上缓存污染的间接成本可能更高。而 goroutine 的切换完全在用户态完成，只需保存/恢复少量寄存器（PC、SP、几个被调用者保存寄存器），<strong>开销约几十到一两百纳秒</strong>，相差一个数量级以上。</p>
+<h2 id="13-goroutine-的初始栈2kb-可增长">1.3 goroutine 的初始栈：2KB 可增长</h2>
+<p>线程的栈通常是<strong>固定大小</strong>且很大（Linux 默认 8MB），无论你用不用都预留着。这意味着开 1 万个线程光栈就要占 80GB 虚拟内存，根本不现实。</p>
+<p>goroutine 则采用<strong>可增长/可收缩的分段栈（连续栈）</strong>：</p>
+<ul>
+<li>初始栈仅 <strong>2KB</strong>（<code>runtime</code> 常量 <code>_StackMin</code>）；</li>
+<li>函数调用时会在序言（prologue）检查栈是否够用，不够就触发 <strong>morestack</strong>：分配一块 2 倍大的新栈，把旧栈数据整体拷贝过去，并调整指针（栈拷贝，Go 1.4 起用连续栈取代早期的分段栈，避免&quot;热点分裂&quot;性能抖动）；</li>
+<li>GC 期间栈也可能被收缩。</li>
+</ul>
+<p>因此百万级 goroutine 只需约 GB 级内存，且大多数 goroutine 的栈始终很小。</p>
+<h2 id="14-对比表">1.4 对比表</h2>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>进程</th>
+<th>线程</th>
+<th>goroutine</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>调度者</td>
+<td>操作系统内核</td>
+<td>操作系统内核</td>
+<td>Go 运行时（用户态）</td>
+</tr>
+<tr>
+<td>地址空间</td>
+<td>独立</td>
+<td>进程内共享</td>
+<td>进程内共享</td>
+</tr>
+<tr>
+<td>创建开销</td>
+<td>最大（复制页表等）</td>
+<td>较大（内核对象+栈）</td>
+<td>极小（分配 G 结构+2KB 栈）</td>
+</tr>
+<tr>
+<td>切换开销</td>
+<td>微秒级（切页表/TLB）</td>
+<td>~1μs（陷内核）</td>
+<td>纳秒级（用户态寄存器）</td>
+</tr>
+<tr>
+<td>默认栈大小</td>
+<td>——</td>
+<td>固定 8MB（Linux）</td>
+<td>初始 2KB，动态伸缩</td>
+</tr>
+<tr>
+<td>通信方式</td>
+<td>IPC/管道/共享内存</td>
+<td>共享内存+锁</td>
+<td>channel（推荐）/ 共享内存+锁</td>
+</tr>
+<tr>
+<td>数量级</td>
+<td>几百</td>
+<td>几千</td>
+<td>几十万~百万</td>
+</tr>
+</tbody>
+</table>
+<p>一句话：<strong>goroutine = 用户态调度的、栈可伸缩的、极廉价的执行单元</strong>，Go 运行时把成千上万个 goroutine 复用（multiplex）到少量内核线程上运行，这正是 GMP 模型要解决的问题。</p>
+<hr>
+<h1 id="2-goroutine-基础">2. goroutine 基础</h1>
+<h2 id="21-go-关键字启动">2.1 go 关键字启动</h2>
+<p>在任意函数调用前加 <code>go</code>，就把它变成一个 goroutine 异步执行：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kn">package</span> <span class="nx">main</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kn">import</span> <span class="p">(</span>
+</span></span><span class="line"><span class="cl">	<span class="s">&#34;fmt&#34;</span>
+</span></span><span class="line"><span class="cl">	<span class="s">&#34;sync&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">main</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="kd">var</span> <span class="nx">wg</span> <span class="nx">sync</span><span class="p">.</span><span class="nx">WaitGroup</span>
+</span></span><span class="line"><span class="cl">	<span class="k">for</span> <span class="nx">i</span> <span class="o">:=</span> <span class="mi">0</span><span class="p">;</span> <span class="nx">i</span> <span class="p">&lt;</span> <span class="mi">3</span><span class="p">;</span> <span class="nx">i</span><span class="o">++</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">		<span class="nx">wg</span><span class="p">.</span><span class="nf">Add</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">		<span class="k">go</span> <span class="kd">func</span><span class="p">(</span><span class="nx">id</span> <span class="kt">int</span><span class="p">)</span> <span class="p">{</span> <span class="c1">// Go 1.22 起每次循环 i 是独立变量，但传参仍是最稳妥写法
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>			<span class="k">defer</span> <span class="nx">wg</span><span class="p">.</span><span class="nf">Done</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">			<span class="nx">fmt</span><span class="p">.</span><span class="nf">Printf</span><span class="p">(</span><span class="s">&#34;goroutine %d 执行\n&#34;</span><span class="p">,</span> <span class="nx">id</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">		<span class="p">}(</span><span class="nx">i</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">	<span class="p">}</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">wg</span><span class="p">.</span><span class="nf">Wait</span><span class="p">()</span> <span class="c1">// 等待所有 goroutine 完成
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="nx">fmt</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="s">&#34;main 结束&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><code>go f()</code> 的语义是：运行时创建一个新的 G，把 <code>f</code> 的入口和参数拷贝进去，放入调度队列，然后<strong>立即返回</strong>，<code>main</code> 继续往下走。何时真正执行由调度器决定。</p>
+<h2 id="22-轻量到什么程度启动百万-goroutine">2.2 轻量到什么程度：启动百万 goroutine</h2>
+<p>下面这段程序直接开一百万个 goroutine，观察内存占用：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kn">package</span> <span class="nx">main</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kn">import</span> <span class="p">(</span>
+</span></span><span class="line"><span class="cl">	<span class="s">&#34;fmt&#34;</span>
+</span></span><span class="line"><span class="cl">	<span class="s">&#34;runtime&#34;</span>
+</span></span><span class="line"><span class="cl">	<span class="s">&#34;sync&#34;</span>
+</span></span><span class="line"><span class="cl">	<span class="s">&#34;time&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">main</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="kd">const</span> <span class="nx">N</span> <span class="p">=</span> <span class="mi">1_000_000</span>
+</span></span><span class="line"><span class="cl">	<span class="kd">var</span> <span class="nx">wg</span> <span class="nx">sync</span><span class="p">.</span><span class="nx">WaitGroup</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">wg</span><span class="p">.</span><span class="nf">Add</span><span class="p">(</span><span class="nx">N</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">	<span class="nx">start</span> <span class="o">:=</span> <span class="nx">time</span><span class="p">.</span><span class="nf">Now</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">	<span class="k">for</span> <span class="nx">i</span> <span class="o">:=</span> <span class="mi">0</span><span class="p">;</span> <span class="nx">i</span> <span class="p">&lt;</span> <span class="nx">N</span><span class="p">;</span> <span class="nx">i</span><span class="o">++</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">		<span class="k">go</span> <span class="kd">func</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">			<span class="k">defer</span> <span class="nx">wg</span><span class="p">.</span><span class="nf">Done</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">			<span class="nx">time</span><span class="p">.</span><span class="nf">Sleep</span><span class="p">(</span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">)</span> <span class="c1">// 让它们同时&#34;存活&#34;，观察内存峰值
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>		<span class="p">}()</span>
+</span></span><span class="line"><span class="cl">	<span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">	<span class="kd">var</span> <span class="nx">m</span> <span class="nx">runtime</span><span class="p">.</span><span class="nx">MemStats</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">runtime</span><span class="p">.</span><span class="nf">ReadMemStats</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">m</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">fmt</span><span class="p">.</span><span class="nf">Printf</span><span class="p">(</span><span class="s">&#34;已启动 %d 个 goroutine\n&#34;</span><span class="p">,</span> <span class="nx">runtime</span><span class="p">.</span><span class="nf">NumGoroutine</span><span class="p">())</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">fmt</span><span class="p">.</span><span class="nf">Printf</span><span class="p">(</span><span class="s">&#34;当前堆分配: %.1f MB\n&#34;</span><span class="p">,</span> <span class="nb">float64</span><span class="p">(</span><span class="nx">m</span><span class="p">.</span><span class="nx">Alloc</span><span class="p">)</span><span class="o">/</span><span class="mi">1024</span><span class="o">/</span><span class="mi">1024</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">	<span class="nx">wg</span><span class="p">.</span><span class="nf">Wait</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">fmt</span><span class="p">.</span><span class="nf">Printf</span><span class="p">(</span><span class="s">&#34;耗时: %v\n&#34;</span><span class="p">,</span> <span class="nx">time</span><span class="p">.</span><span class="nf">Since</span><span class="p">(</span><span class="nx">start</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>典型输出（数值随机器不同）：</p>
+<pre tabindex="0"><code>已启动 1000001 个 goroutine
+当前堆分配: 约 数百 MB
+耗时: 约 1.x s
+</code></pre><p>一百万个 goroutine 只消耗几百 MB 内存、创建耗时不到一秒。换成一百万个线程，操作系统早就 OOM 或拒绝创建了。</p>
+<h2 id="23-main-退出所有-goroutine-立即结束">2.3 main 退出，所有 goroutine 立即结束</h2>
+<p>goroutine <strong>不是</strong>守护线程，主 goroutine（<code>main</code> 函数）一旦返回，整个进程退出，其余 goroutine 无论执行到哪里都被强制终止，没有任何清理机会：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kn">package</span> <span class="nx">main</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kn">import</span> <span class="p">(</span>
+</span></span><span class="line"><span class="cl">	<span class="s">&#34;fmt&#34;</span>
+</span></span><span class="line"><span class="cl">	<span class="s">&#34;time&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">main</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="k">go</span> <span class="kd">func</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">		<span class="nx">time</span><span class="p">.</span><span class="nf">Sleep</span><span class="p">(</span><span class="mi">100</span> <span class="o">*</span> <span class="nx">time</span><span class="p">.</span><span class="nx">Millisecond</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">		<span class="nx">fmt</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="s">&#34;这行大概率打印不出来&#34;</span><span class="p">)</span> <span class="c1">// main 已经退出了
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="p">}()</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">fmt</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="s">&#34;main 直接结束&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">	<span class="c1">// 没有等待，进程立刻退出
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span></code></pre></div><p>输出通常只有 <code>main 直接结束</code>。因此需要用 <code>sync.WaitGroup</code>、channel 或 <code>context</code> 来显式同步，绝不能靠 <code>time.Sleep</code> &ldquo;碰运气&quot;等待子 goroutine。</p>
+<hr>
+<h1 id="3-为什么需要-gmp">3. 为什么需要 GMP</h1>
+<h2 id="31-早期的-gm-模型go-10">3.1 早期的 GM 模型（Go 1.0）</h2>
+<p>最初的 Go 调度器只有两个角色：<strong>G（goroutine）</strong> 和 <strong>M（machine，内核线程）</strong>，所有可运行的 G 放在一个<strong>全局运行队列</strong>里，M 从队列取 G 执行：</p>
+<pre tabindex="0"><code>        全局运行队列 (受一把全局锁保护)
+        ┌─────────────────────────────┐
+        │  G  G  G  G  G  G  G  G ... │
+        └─────────────────────────────┘
+           ▲    ▲    ▲    ▲
+           │    │    │    │   (所有 M 抢同一把锁)
+          M1   M2   M3   M4
+</code></pre><p>这个模型能跑，但有致命的性能问题：</p>
+<ol>
+<li><strong>全局锁争用严重</strong>：每次创建、调度、结束 G 都要抢全局锁，M 数量一多，锁竞争成为瓶颈。</li>
+<li><strong>G 在 M 之间频繁迁移，破坏局部性</strong>：一个 G 在 M1 上跑到一半让出，下次可能在 M3 上恢复，CPU 缓存（cache）和内存局部性全丢了。</li>
+<li><strong>每个 M 都要维护内存缓存（mcache）</strong>：M 阻塞在系统调用时也占着 mcache，内存浪费严重，且数据局部性差。</li>
+</ol>
+<h2 id="32-引入-pprocessor">3.2 引入 P（Processor）</h2>
+<p>Go 1.1（2013 年，Dmitry Vyukov 的方案）引入了中间层 <strong>P（Processor，逻辑处理器）</strong>，形成 GMP：</p>
+<ul>
+<li>P 是&quot;执行 G 的<strong>资源/许可证</strong>&quot;，数量固定为 <code>GOMAXPROCS</code>；</li>
+<li><strong>每个 P 拥有自己的本地运行队列</strong>（local run queue），大部分调度操作只碰本地队列，<strong>无需全局锁</strong>；</li>
+<li><strong>mcache 挂到 P 上</strong>而不是 M 上，M 阻塞时把 P 连同 mcache 交给别的 M，内存不再浪费；</li>
+<li>M 必须<strong>先获得一个 P 才能执行 G</strong>，P 的数量天然限制了并行执行 G 的线程数。</li>
+</ul>
+<p>引入 P 之后：全局锁退化为极少走的慢路径，绝大多数调度在无锁的本地队列完成；G 优先在同一个 P 上被调度，保住了缓存局部性；work-stealing 则解决了负载均衡。这就是现代 Go 调度器的基石。</p>
+<hr>
+<h1 id="4-gmp-三大组件">4. GMP 三大组件</h1>
+<h2 id="41-g--goroutine">4.1 G — goroutine</h2>
+<p><code>G</code> 是 goroutine 在运行时的表示（<code>runtime.g</code> 结构体），保存了它的栈、执行上下文和状态。关键字段（简化）：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// 摘自 runtime/runtime2.go（简化并加注释）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kd">type</span> <span class="nx">g</span> <span class="kd">struct</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">stack</span>       <span class="nx">stack</span>   <span class="c1">// 栈的 [lo, hi) 边界
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="nx">stackguard0</span> <span class="kt">uintptr</span> <span class="c1">// 栈溢出检查的警戒线（morestack 判断用）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl">	<span class="nx">m</span>         <span class="o">*</span><span class="nx">m</span>       <span class="c1">// 当前正在执行本 G 的 M（没在执行则为 nil）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="nx">sched</span>     <span class="nx">gobuf</span>    <span class="c1">// 调度上下文：保存 SP/PC/BP 等寄存器，切换时用它恢复现场
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="nx">atomicstatus</span> <span class="nx">atomic</span><span class="p">.</span><span class="nx">Uint32</span> <span class="c1">// G 的状态：_Grunnable/_Grunning/_Gwaiting...
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="nx">goid</span>      <span class="kt">uint64</span>   <span class="c1">// goroutine id
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="nx">waitreason</span> <span class="nx">waitReason</span> <span class="c1">// 处于 _Gwaiting 时的原因（chan 阻塞、GC 等）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="c1">// ... 还有 defer、panic 链表等
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// gobuf 就是&#34;寄存器快照&#34;，切换 goroutine 本质是换一组 gobuf
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kd">type</span> <span class="nx">gobuf</span> <span class="kd">struct</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">sp</span>   <span class="kt">uintptr</span> <span class="c1">// 栈指针
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="nx">pc</span>   <span class="kt">uintptr</span> <span class="c1">// 程序计数器（下一条指令）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="nx">g</span>    <span class="nx">guintptr</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">ret</span>  <span class="kt">uintptr</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">bp</span>   <span class="kt">uintptr</span> <span class="c1">// 帧指针
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span></code></pre></div><p><strong>G 的主要状态</strong>（状态机）：</p>
+<table>
+<thead>
+<tr>
+<th>状态</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>_Gidle</code></td>
+<td>刚分配，尚未初始化</td>
+</tr>
+<tr>
+<td><code>_Grunnable</code></td>
+<td>在运行队列中，等待被调度执行</td>
+</tr>
+<tr>
+<td><code>_Grunning</code></td>
+<td>正在某个 M 上执行（占用 P）</td>
+</tr>
+<tr>
+<td><code>_Gsyscall</code></td>
+<td>正在执行系统调用</td>
+</tr>
+<tr>
+<td><code>_Gwaiting</code></td>
+<td>阻塞中（等 channel、锁、timer、GC 等），不在运行队列</td>
+</tr>
+<tr>
+<td><code>_Gdead</code></td>
+<td>执行完毕或刚被分配，等待复用（放入空闲 G 池）</td>
+</tr>
+<tr>
+<td><code>_Gcopystack</code></td>
+<td>正在进行栈拷贝（栈增长/收缩）</td>
+</tr>
+</tbody>
+</table>
+<p>状态流转示意：</p>
+<pre tabindex="0"><code>   go f()          调度器选中它         时间片到/主动让出
+_Gidle ──▶ _Grunnable ──────────▶ _Grunning ──────────▶ _Grunnable
+                  ▲                    │  │
+        唤醒(ready)│         chan block │  │ 系统调用
+                  │            _Gwaiting│  │_Gsyscall
+                  └────────────────────┘  └────────┐
+                                                     ▼
+                                          返回后重新入队 _Grunnable
+                        执行结束 ──▶ _Gdead（回收进 gFree 复用）
+</code></pre><h2 id="42-m--machine内核线程">4.2 M — machine（内核线程）</h2>
+<p><code>M</code> 代表一个<strong>真正的操作系统线程</strong>（<code>runtime.m</code>），是实际干活、占用 CPU 的实体。M 由运行时通过 <code>clone</code>（Linux）创建，其入口是调度循环 <code>schedule()</code>。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">type</span> <span class="nx">m</span> <span class="kd">struct</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">g0</span>        <span class="o">*</span><span class="nx">g</span>      <span class="c1">// 特殊的调度 goroutine，跑调度代码、用系统栈（不是用户 G 的栈）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="nx">curg</span>      <span class="o">*</span><span class="nx">g</span>      <span class="c1">// 当前正在运行的用户 G
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="nx">p</span>         <span class="nx">puintptr</span> <span class="c1">// 当前绑定的 P（执行用户代码时必须持有 P）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="nx">nextp</span>     <span class="nx">puintptr</span> <span class="c1">// 即将绑定的 P
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="nx">oldp</span>      <span class="nx">puintptr</span> <span class="c1">// 进入系统调用前的 P
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="nx">spinning</span>  <span class="kt">bool</span>     <span class="c1">// 是否处于&#34;自旋找活&#34;状态
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="c1">// ... 信号处理、锁、线程本地存储等
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span></code></pre></div><p>关键点：</p>
+<ul>
+<li>每个 M 都有一个 <strong>g0</strong>：这是运行时专用的 goroutine，栈很大（约 8KB），专门用来执行调度器代码、垃圾回收、栈增长等<strong>运行时逻辑</strong>。用户 G 与 g0 之间来回切换，就是&quot;业务代码&quot;与&quot;调度代码&quot;的切换。</li>
+<li>M 数量不固定，默认上限 <code>10000</code>（<code>runtime.SetMaxThreads</code> 可调）。M 阻塞在系统调用时运行时会按需再创建 M，保证有足够线程干活。</li>
+<li>M 想执行用户 G，<strong>必须先绑定一个 P</strong>。</li>
+</ul>
+<h2 id="43-p--processor逻辑处理器">4.3 P — processor（逻辑处理器）</h2>
+<p><code>P</code>（<code>runtime.p</code>）是介于 G 和 M 之间的调度上下文，持有执行 G 所需的本地资源：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">type</span> <span class="nx">p</span> <span class="kd">struct</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">id</span>     <span class="kt">int32</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">status</span> <span class="kt">uint32</span> <span class="c1">// _Pidle / _Prunning / _Psyscall / _Pgcstop ...
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="nx">m</span>      <span class="nx">muintptr</span> <span class="c1">// 关联的 M
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl">	<span class="c1">// —— 本地运行队列（无锁访问，核心） ——
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="nx">runqhead</span> <span class="kt">uint32</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">runqtail</span> <span class="kt">uint32</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">runq</span>     <span class="p">[</span><span class="mi">256</span><span class="p">]</span><span class="nx">guintptr</span> <span class="c1">// 固定 256 长度的环形数组
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="nx">runnext</span>  <span class="nx">guintptr</span>      <span class="c1">// &#34;下一个执行&#34;槽，存刚被唤醒/创建的 G，优先级最高
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl">	<span class="nx">mcache</span> <span class="o">*</span><span class="nx">mcache</span> <span class="c1">// 内存分配缓存（原来挂在 M 上，现在挂 P）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="c1">// ... timer 堆、GC 相关字段等
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span></code></pre></div><p>三者关系用一张图串起来：</p>
+<pre tabindex="0"><code>                    ┌─────────────────────────────────────────┐
+  全局队列 globrunq │  G  G  G  G   (all P share; needs lock) │
+                    └─────────────────────────────────────────┘
+                              ▲                    ▲
+                              │                    │   ← 队列空时来这偷
+   ┌──────────────────┐   ┌──────────────────┐
+   │  P0              │   │  P1              │
+   │  runnext: G_a    │   │  runnext: G_x    │
+   │  runq: [Gb Gc..] │   │  runq: [Gy Gz..] │   ← 每个 P 一条本地队列
+   │  mcache          │   │  mcache          │
+   └────────┬─────────┘   └────────┬─────────┘
+            │                      │   ← 绑定
+        ┌───┴─────┐            ┌───┴─────┐
+        │  M0     │            │  M1     │      ← 内核线程，真正占 CPU
+        │(g0+curg)│            │(g0+curg)│
+        └─────────┘            └─────────┘
+</code></pre><p>数量关系：<strong>P 的数量 = <code>GOMAXPROCS</code>（固定）</strong>；<strong>M 的数量 ≥ P（动态，可能因系统调用暂时增多）</strong>；<strong>G 的数量不限（几十万都行）</strong>。运行时里还有全局的空闲 P 链表（<code>idle P</code>）和空闲 M 链表（<code>idle M</code>）用于复用。</p>
+<hr>
+<h1 id="5-调度流程">5. 调度流程</h1>
+<h2 id="51-g-创建后放在哪里">5.1 G 创建后放在哪里</h2>
+<p>执行 <code>go f()</code> 时，运行时调用 <code>newproc</code> 创建 G，放置策略是：</p>
+<ol>
+<li>优先放入<strong>当前 P 的 <code>runnext</code> 槽</strong>（这是&quot;插队&quot;槽，意味着新建的 G 很可能马上被执行，利于父子 goroutine 的局部性）；</li>
+<li>若 <code>runnext</code> 已有 G，则把原来的挤到本地 <code>runq</code> 环形队列尾部；</li>
+<li>若本地 <code>runq</code> 已满（256 个），则把本地队列的<strong>前一半 + 新 G</strong> 一起打包，批量移到<strong>全局队列</strong>，给其他 P 匀负载。</li>
+</ol>
+<pre tabindex="0"><code>go f()  ──▶  newproc  ──▶  ┌─ P.runnext 空? ── 是 ──▶ 放 runnext
+                           │
+                           └─ 否 ──▶ runq 满? ─ 否 ─▶ 放 runq 尾
+                                        │
+                                        └─ 是 ─▶ 拿出一半到 globrunq
+</code></pre><h2 id="52-m-的调度循环-schedule">5.2 M 的调度循环 schedule()</h2>
+<p>每个绑定了 P 的 M 都在跑一个永不停歇的调度循环，核心逻辑（伪代码）：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// 极简伪代码，表达 findRunnable 的取 G 优先级
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kd">func</span> <span class="nf">schedule</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="k">for</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">		<span class="kd">var</span> <span class="nx">g</span> <span class="o">*</span><span class="nx">g</span>
+</span></span><span class="line"><span class="cl">		<span class="c1">// 1. 每调度 61 次，强制从全局队列取一次，防止全局队列饿死
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>		<span class="k">if</span> <span class="nx">schedtick</span><span class="o">%</span><span class="mi">61</span> <span class="o">==</span> <span class="mi">0</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">			<span class="nx">g</span> <span class="p">=</span> <span class="nf">globrunqget</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">		<span class="p">}</span>
+</span></span><span class="line"><span class="cl">		<span class="c1">// 2. 先看本地 runnext / 本地队列
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>		<span class="k">if</span> <span class="nx">g</span> <span class="o">==</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">			<span class="nx">g</span> <span class="p">=</span> <span class="nf">runqget</span><span class="p">(</span><span class="nx">p</span><span class="p">)</span> <span class="c1">// 含 runnext
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>		<span class="p">}</span>
+</span></span><span class="line"><span class="cl">		<span class="c1">// 3. 本地空了，去全局队列取一批
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>		<span class="k">if</span> <span class="nx">g</span> <span class="o">==</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">			<span class="nx">g</span> <span class="p">=</span> <span class="nf">globrunqget</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">		<span class="p">}</span>
+</span></span><span class="line"><span class="cl">		<span class="c1">// 4. 还没有？检查 netpoller 是否有网络就绪的 G
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>		<span class="k">if</span> <span class="nx">g</span> <span class="o">==</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">			<span class="nx">g</span> <span class="p">=</span> <span class="nf">netpoll</span><span class="p">(</span><span class="kc">false</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">		<span class="p">}</span>
+</span></span><span class="line"><span class="cl">		<span class="c1">// 5. 仍没有 —— work-stealing：从其他 P 偷
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>		<span class="k">if</span> <span class="nx">g</span> <span class="o">==</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">			<span class="nx">g</span> <span class="p">=</span> <span class="nf">stealWork</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">		<span class="p">}</span>
+</span></span><span class="line"><span class="cl">		<span class="c1">// 6. 真的没活干：解绑 P，M 进入休眠，等待被唤醒
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>		<span class="k">if</span> <span class="nx">g</span> <span class="o">==</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">			<span class="nf">stopm</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">			<span class="k">continue</span>
+</span></span><span class="line"><span class="cl">		<span class="p">}</span>
+</span></span><span class="line"><span class="cl">		<span class="nf">execute</span><span class="p">(</span><span class="nx">g</span><span class="p">)</span> <span class="c1">// 切到 g 的栈，运行用户代码
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>取 G 的优先级顺序总结：</p>
+<pre tabindex="0"><code>runnext ▶ 本地 runq ▶ 全局 globrunq ▶ netpoller ▶ 偷其他 P ▶ 休眠
+（且每 61 次调度插一次全局队列，避免全局队列被本地队列饿死）
+</code></pre><p><code>execute(g)</code> 会把 G 状态置为 <code>_Grunning</code>，用 <code>gogo</code>（汇编）从 g0 栈切到 G 的栈，恢复 <code>g.sched</code> 里保存的 SP/PC，开始跑用户代码。G 让出时再切回 g0 栈继续 <code>schedule()</code>。</p>
+<hr>
+<h1 id="6-work-stealing-工作窃取">6. work-stealing 工作窃取</h1>
+<p>当一个 P 的本地队列和全局队列都空了，它不会闲着，而是去**&ldquo;偷&quot;其他 P 的活**，这就是 work-stealing，保证各 CPU 核心负载均衡。</p>
+<h2 id="61-偷取规则">6.1 偷取规则</h2>
+<ul>
+<li>从<strong>随机选一个受害者 P</strong> 开始（随机化避免多个 M 同时盯上同一个 P）；</li>
+<li>一次偷取目标 P 本地队列中<strong>一半</strong>的 G（&ldquo;偷一半&quot;是经典策略：既拿到足够多的活减少偷取频率，又不会把对方掏空导致对方立刻反过来偷你）；</li>
+<li>遍历所有 P 若干轮仍偷不到，才考虑检查 netpoller、最后休眠；</li>
+<li>偷取时还会尝试偷对方的 <code>runnext</code>（但会稍作等待，因为 runnext 的 G 通常马上要被本 P 执行）。</li>
+</ul>
+<pre tabindex="0"><code>偷取前:
+  P0(空)                 P1: [G1 G2 G3 G4 G5 G6]
+       │ 随机选中 P1，偷一半
+       ▼
+偷取后:
+  P0: [G1 G2 G3]         P1: [G4 G5 G6]
+</code></pre><h2 id="62-自旋线程spinning-m">6.2 自旋线程（spinning M）</h2>
+<p>为了让&quot;有活马上有人干&rdquo;，运行时会保留少量<strong>自旋 M</strong>：这些 M 没有 G 可跑，但不立即休眠，而是自旋地反复尝试 work-stealing 和查 netpoller。当有新 G 产生时，自旋 M 能立刻抢到，避免&quot;新建线程/唤醒线程&quot;的延迟。自旋 M 的数量受控（不超过忙碌 P 的数量），在响应速度和 CPU 空转之间取平衡。</p>
+<hr>
+<h1 id="7-调度时机与抢占">7. 调度时机与抢占</h1>
+<p>Go 调度器是<strong>协作式 + 抢占式</strong>混合。理解在哪些点会发生调度，是排查&quot;某个 goroutine 卡死不让出&quot;问题的关键。</p>
+<h2 id="71-主动让出gopark--gosched">7.1 主动让出（gopark / Gosched）</h2>
+<p>大多数调度是 G <strong>自愿</strong>让出 CPU 的：</p>
+<ul>
+<li><strong>channel 收发阻塞</strong>、<code>sync.Mutex</code> 抢锁失败、<code>time.Sleep</code>、等待 <code>WaitGroup</code> 等：调用 <code>gopark</code>，把 G 置为 <code>_Gwaiting</code>，解绑当前 M，M 转去跑别的 G。条件满足时通过 <code>goready</code> 把 G 重新变 <code>_Grunnable</code> 入队。</li>
+<li><strong><code>runtime.Gosched()</code></strong>：程序员显式让出，把当前 G 放回全局队列，立刻触发一次调度，但 G 仍是 <code>_Grunnable</code>（不阻塞）。</li>
+</ul>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kn">package</span> <span class="nx">main</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kn">import</span> <span class="p">(</span>
+</span></span><span class="line"><span class="cl">	<span class="s">&#34;fmt&#34;</span>
+</span></span><span class="line"><span class="cl">	<span class="s">&#34;runtime&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">main</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="k">go</span> <span class="kd">func</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">		<span class="k">for</span> <span class="nx">i</span> <span class="o">:=</span> <span class="mi">0</span><span class="p">;</span> <span class="nx">i</span> <span class="p">&lt;</span> <span class="mi">3</span><span class="p">;</span> <span class="nx">i</span><span class="o">++</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">			<span class="nx">fmt</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="s">&#34;子 goroutine:&#34;</span><span class="p">,</span> <span class="nx">i</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">			<span class="nx">runtime</span><span class="p">.</span><span class="nf">Gosched</span><span class="p">()</span> <span class="c1">// 主动让出，给别人机会
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>		<span class="p">}</span>
+</span></span><span class="line"><span class="cl">	<span class="p">}()</span>
+</span></span><span class="line"><span class="cl">	<span class="k">for</span> <span class="nx">i</span> <span class="o">:=</span> <span class="mi">0</span><span class="p">;</span> <span class="nx">i</span> <span class="p">&lt;</span> <span class="mi">3</span><span class="p">;</span> <span class="nx">i</span><span class="o">++</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">		<span class="nx">fmt</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="s">&#34;main:&#34;</span><span class="p">,</span> <span class="nx">i</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">		<span class="nx">runtime</span><span class="p">.</span><span class="nf">Gosched</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">	<span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><h2 id="72-抢占式调度的演进">7.2 抢占式调度的演进</h2>
+<p>如果一个 G 既不做系统调用、也不碰 channel，就在那里 <code>for {}</code> 死循环，纯协作式调度它永远不会让出，其他 G 就会饿死。Go 的抢占经历了三个阶段：</p>
+<p><strong>① Go 1.0：完全协作式</strong>——只有函数调用序言的栈检查点才可能被&quot;标记抢占&rdquo;。死循环里若没有函数调用，无从插入检查点，无法抢占。</p>
+<p><strong>② Go 1.2 ~ 1.13：基于栈标记的协作式抢占</strong>——<code>sysmon</code> 监控线程发现某 G 运行超过 <strong>10ms</strong>，就把它的 <code>stackguard0</code> 设成一个特殊值（<code>stackPreempt</code>）。当该 G 下次<strong>发生函数调用</strong>、执行栈检查序言时，发现这个标记就主动让出。缺陷依旧：<strong>没有函数调用的紧密循环无法被抢占</strong>。</p>
+<p>经典的&quot;卡死&quot;例子（Go 1.13 及以前，<code>GOMAXPROCS=1</code> 时会一直打印不出 &ldquo;done&rdquo;）：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kn">package</span> <span class="nx">main</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kn">import</span> <span class="p">(</span>
+</span></span><span class="line"><span class="cl">	<span class="s">&#34;fmt&#34;</span>
+</span></span><span class="line"><span class="cl">	<span class="s">&#34;runtime&#34;</span>
+</span></span><span class="line"><span class="cl">	<span class="s">&#34;time&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">main</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">runtime</span><span class="p">.</span><span class="nf">GOMAXPROCS</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">	<span class="k">go</span> <span class="kd">func</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">		<span class="k">for</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">		<span class="p">}</span> <span class="c1">// 紧密死循环，无函数调用，Go 1.13 及以前无法被抢占
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="p">}()</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">time</span><span class="p">.</span><span class="nf">Sleep</span><span class="p">(</span><span class="nx">time</span><span class="p">.</span><span class="nx">Millisecond</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">fmt</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="s">&#34;done&#34;</span><span class="p">)</span> <span class="c1">// Go 1.14+ 能打印，1.13- 卡死
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span></code></pre></div><p><strong>③ Go 1.14+：基于信号的异步抢占（asynchronous preemption）</strong>——这是关键突破。<code>sysmon</code> 发现 G 运行超时后，向该 G 所在的 M（线程）发送一个 <strong><code>SIGURG</code> 信号</strong>。信号处理程序在被中断的线程上跑，运行时借机检查并在<strong>安全点</strong>把当前 G 挂起、切回调度器。由于信号可以打断任意执行中的指令流（不再依赖函数调用），<strong>紧密死循环也能被抢占了</strong>。上面那段代码在 Go 1.14 及以后能正常打印 <code>done</code>。</p>
+<p>抢占演进对比：</p>
+<table>
+<thead>
+<tr>
+<th>版本</th>
+<th>机制</th>
+<th>触发条件</th>
+<th>能否抢占死循环</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Go 1.0</td>
+<td>协作式</td>
+<td>栈检查点</td>
+<td>❌</td>
+</tr>
+<tr>
+<td>Go 1.2~1.13</td>
+<td>协作式 + 栈标记</td>
+<td>运行 &gt;10ms 且有函数调用</td>
+<td>❌（无函数调用时不行）</td>
+</tr>
+<tr>
+<td>Go 1.14+</td>
+<td>异步抢占（信号 SIGURG）</td>
+<td>运行 &gt;10ms</td>
+<td>✅</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h1 id="8-系统调用与网络轮询">8. 系统调用与网络轮询</h1>
+<p>阻塞是调度器最需要小心处理的场景：一个 G 阻塞了，绝不能让它把整个 M（线程）连同 P 一起拖住，导致 P 上其他 G 无法运行。</p>
+<h2 id="81-阻塞式系统调用与-handoff">8.1 阻塞式系统调用与 handoff</h2>
+<p>当 G 要执行一个可能长时间阻塞的系统调用（如读写文件、<code>syscall.Read</code>）时：</p>
+<pre tabindex="0"><code>进入 syscall 前 (entersyscall):
+   M0 ── P (runq: G2 G3 G4)      G1 即将 syscall
+
+系统调用阻塞后，sysmon 或 M 自己触发 handoff:
+   M0 ── (脱离 P，陷在 syscall)   G1 (阻塞在内核)
+          │
+          └─ P 被交给空闲/新建的 M1
+   M1 ── P (runq: G2 G3 G4)      ← G2/G3/G4 继续被执行，不受 G1 拖累
+
+系统调用返回后 (exitsyscall):
+   M0 尝试重新获取一个 P：
+     - 抢到原来的 P 或空闲 P → 继续执行 G1
+     - 抢不到 → G1 变 _Grunnable 放入全局队列，M0 休眠进空闲池
+</code></pre><p>具体流程：</p>
+<ol>
+<li>G 进入系统调用前调用 <code>entersyscall</code>，把 P 的状态标记为 <code>_Psyscall</code>，并<strong>记录 P 与 M 的解绑意图</strong>（此时 M 仍暂时持有 P）。</li>
+<li>若系统调用很快返回，M 直接拿回 P 继续跑，零开销。</li>
+<li>若系统调用阻塞较久，<strong><code>sysmon</code> 监控线程</strong>发现 P 处于 <code>_Psyscall</code> 且超时（约 20μs），就执行 <strong>handoff</strong>：把 P 从阻塞的 M 上剥离，交给一个空闲 M（没有就新建），让 P 上其余的 G 继续跑。</li>
+<li>阻塞的系统调用返回后（<code>exitsyscall</code>），原 M 尝试重新获取一个 P；获取不到就把当前 G 放回全局队列，自己进入空闲 M 池睡眠。</li>
+</ol>
+<p>这套 handoff 机制保证了：<strong>即使成百上千个 G 同时阻塞在系统调用上，只要有 P 空出来就能被别的线程接管，不会浪费 CPU</strong>。</p>
+<h2 id="82-netpoller--网络-io-不阻塞线程">8.2 netpoller — 网络 I/O 不阻塞线程</h2>
+<p>如果每个网络读写都走上面的&quot;阻塞系统调用 + handoff + 新建线程&quot;路径，高并发下会创建海量线程。Go 用 <strong>netpoller（网络轮询器）</strong> 把网络 I/O 变成非阻塞的：</p>
+<ul>
+<li>Go 把所有 socket 都设为<strong>非阻塞模式</strong>，底层统一注册到操作系统的 I/O 多路复用机制：<strong>Linux 用 epoll、macOS/BSD 用 kqueue、Windows 用 IOCP</strong>。</li>
+<li>当一个 G 对未就绪的 socket 做读/写，会得到 <code>EAGAIN</code>。运行时不让线程阻塞，而是把该 G 挂起（<code>_Gwaiting</code>），并在 netpoller 里注册&quot;这个 fd 可读/可写时唤醒这个 G&rdquo;，然后 M <strong>立刻转去执行 P 上的其他 G</strong>。</li>
+<li>调度循环里（<code>findRunnable</code>）会周期性调用 <code>netpoll</code>，<code>sysmon</code> 也会调用；一旦 epoll/kqueue 报告某些 fd 就绪，就把对应的 G 批量变回 <code>_Grunnable</code>、重新入队。</li>
+</ul>
+<pre tabindex="0"><code>       用户代码看起来是&#34;阻塞&#34;的:
+       conn.Read(buf)  ← 写起来同步、直观
+
+       运行时底层实际:
+       ┌──────────────────────────────────────────────────────────┐
+       │ socket not ready -&gt; G parked (_Gwaiting)                 │
+       │ fd registered into epoll/kqueue, M runs other G          │
+       │ ... (M never idles) ...                                  │
+       │ epoll reports fd readable -&gt; netpoll wakes G -&gt; requeue  │
+       └──────────────────────────────────────────────────────────┘
+</code></pre><p><strong>这就是 Go 网络编程的魔法</strong>：你用<strong>同步阻塞的代码风格</strong>（<code>conn.Read</code> / <code>conn.Write</code>）写业务，运行时在底层帮你转成 epoll 事件驱动的<strong>非阻塞 I/O</strong>，用少数几个线程扛住海量连接（类似 C10K 里 epoll 的效果，但对开发者完全透明）。</p>
+<h2 id="83-sysmon-监控线程">8.3 sysmon 监控线程</h2>
+<p><code>sysmon</code> 是一个<strong>不绑定 P 的特殊后台 M</strong>，在后台独立循环（初始每 20μs 一次，逐步退避到最长 10ms 一次），承担全局巡检职责：</p>
+<ul>
+<li><strong>抢占</strong>：给运行超过 10ms 的 G 发信号，触发异步抢占；</li>
+<li><strong>syscall handoff</strong>：把长时间卡在系统调用的 P 从 M 上剥离；</li>
+<li><strong>netpoll</strong>：定期轮询网络就绪事件，唤醒等待 I/O 的 G；</li>
+<li><strong>强制 GC</strong>：距上次 GC 超过 2 分钟则强制触发；</li>
+<li><strong>归还内存</strong>：把长期空闲的内存 span 交还给操作系统。</li>
+</ul>
+<p>sysmon 是整个调度器的&quot;看门狗&quot;，很多&quot;全局公平性&quot;的保证都靠它。</p>
+<hr>
+<h1 id="9-gomaxprocs">9. GOMAXPROCS</h1>
+<p><code>GOMAXPROCS</code> 决定了 <strong>P 的数量</strong>，也就是<strong>同一时刻最多有多少个 G 在并行执行用户代码</strong>（真正的 CPU 并行度）。</p>
+<h2 id="91-默认值与设置">9.1 默认值与设置</h2>
+<p>从 Go 1.5 起，<code>GOMAXPROCS</code> 默认等于机器的<strong>逻辑 CPU 核数</strong>（<code>runtime.NumCPU()</code>）。可以在运行时查询和设置：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kn">package</span> <span class="nx">main</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kn">import</span> <span class="p">(</span>
+</span></span><span class="line"><span class="cl">	<span class="s">&#34;fmt&#34;</span>
+</span></span><span class="line"><span class="cl">	<span class="s">&#34;runtime&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">main</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">fmt</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="s">&#34;逻辑 CPU 数:&#34;</span><span class="p">,</span> <span class="nx">runtime</span><span class="p">.</span><span class="nf">NumCPU</span><span class="p">())</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">fmt</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="s">&#34;当前 GOMAXPROCS:&#34;</span><span class="p">,</span> <span class="nx">runtime</span><span class="p">.</span><span class="nf">GOMAXPROCS</span><span class="p">(</span><span class="mi">0</span><span class="p">))</span> <span class="c1">// 传 0 表示只查询不修改
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl">	<span class="nx">old</span> <span class="o">:=</span> <span class="nx">runtime</span><span class="p">.</span><span class="nf">GOMAXPROCS</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span> <span class="c1">// 设为 2，返回旧值
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="nx">fmt</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="s">&#34;旧 GOMAXPROCS:&#34;</span><span class="p">,</span> <span class="nx">old</span><span class="p">,</span> <span class="s">&#34;→ 新值:&#34;</span><span class="p">,</span> <span class="nx">runtime</span><span class="p">.</span><span class="nf">GOMAXPROCS</span><span class="p">(</span><span class="mi">0</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>也可用环境变量 <code>GOMAXPROCS=4 ./app</code> 设置。</p>
+<h2 id="92-容器里的大坑">9.2 容器里的大坑</h2>
+<p>这是<strong>生产环境高频事故点</strong>：在 Kubernetes / Docker 里，即使给容器设了 <code>limits.cpu: 2</code>（2 核），<code>runtime.NumCPU()</code> 读到的仍是<strong>宿主机的物理核数</strong>（比如 64），于是 GOMAXPROCS 被设成 64。</p>
+<p>后果：</p>
+<ul>
+<li>运行时以为有 64 个核，创建 64 个 P、大量并行调度；</li>
+<li>但 CFS 配额只允许用 2 核的 CPU 时间，一旦超额就被内核<strong>限流（throttling）</strong>、强制暂停；</li>
+<li>结果是频繁的上下文切换、调度抖动、P99 延迟飙升，性能反而下降。</li>
+</ul>
+<p><strong>解决方案：<code>uber-go/automaxprocs</code></strong>。它读取 cgroup 的 CPU quota，把 GOMAXPROCS 自动设成与容器配额匹配的值。用法极简，匿名导入即可：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kn">import</span> <span class="nx">_</span> <span class="s">&#34;go.uber.org/automaxprocs&#34;</span> <span class="c1">// 匿名导入，init 时自动按 cgroup quota 设置 GOMAXPROCS
+</span></span></span></code></pre></div><blockquote>
+<p>补充：<strong>Go 1.25 起标准运行时已内置容器感知</strong>，会读取 cgroup CPU 限额自动调整默认 GOMAXPROCS。但很多线上项目仍跑在旧版本 Go 上，automaxprocs 仍是稳妥选择。</p>
+</blockquote>
+<h2 id="93-该设多少">9.3 该设多少</h2>
+<ul>
+<li><strong>CPU 密集型</strong>：设为 CPU 核数（默认值即可），P 太多只会徒增调度和缓存开销。</li>
+<li><strong>I/O 密集型</strong>：GOMAXPROCS 主要影响并行<strong>计算</strong>度，I/O 阻塞由 netpoller 和 handoff 处理，与 P 数量关系不大；一般保持默认。并发度靠开更多 goroutine，而不是调大 GOMAXPROCS。</li>
+<li><strong>容器内</strong>：务必让它匹配 cgroup 配额（automaxprocs 或 Go 1.25+）。</li>
+</ul>
+<hr>
+<h1 id="10-优化与实践">10. 优化与实践</h1>
+<h2 id="101-控制-goroutine-数量用-worker-pool">10.1 控制 goroutine 数量：用 worker pool</h2>
+<p>goroutine 虽廉价，但<strong>无限制地开</strong>依然会耗尽内存、拖垮调度器，尤其是&quot;每个请求/每条数据开一个 goroutine&quot;的写法遇到流量洪峰时。用<strong>带缓冲的信号量或 worker pool</strong> 限流：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kn">package</span> <span class="nx">main</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kn">import</span> <span class="p">(</span>
+</span></span><span class="line"><span class="cl">	<span class="s">&#34;fmt&#34;</span>
+</span></span><span class="line"><span class="cl">	<span class="s">&#34;sync&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">main</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">tasks</span> <span class="o">:=</span> <span class="nb">make</span><span class="p">([]</span><span class="kt">int</span><span class="p">,</span> <span class="mi">100</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">	<span class="k">for</span> <span class="nx">i</span> <span class="o">:=</span> <span class="k">range</span> <span class="nx">tasks</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">		<span class="nx">tasks</span><span class="p">[</span><span class="nx">i</span><span class="p">]</span> <span class="p">=</span> <span class="nx">i</span>
+</span></span><span class="line"><span class="cl">	<span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">	<span class="kd">const</span> <span class="nx">maxConcurrency</span> <span class="p">=</span> <span class="mi">10</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">sem</span> <span class="o">:=</span> <span class="nb">make</span><span class="p">(</span><span class="kd">chan</span> <span class="kd">struct</span><span class="p">{},</span> <span class="nx">maxConcurrency</span><span class="p">)</span> <span class="c1">// 信号量：最多 10 个并发
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="kd">var</span> <span class="nx">wg</span> <span class="nx">sync</span><span class="p">.</span><span class="nx">WaitGroup</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">	<span class="k">for</span> <span class="nx">_</span><span class="p">,</span> <span class="nx">t</span> <span class="o">:=</span> <span class="k">range</span> <span class="nx">tasks</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">		<span class="nx">wg</span><span class="p">.</span><span class="nf">Add</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">		<span class="nx">sem</span> <span class="o">&lt;-</span> <span class="kd">struct</span><span class="p">{}{}</span> <span class="c1">// 占一个名额，满了就阻塞（限流）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>		<span class="k">go</span> <span class="kd">func</span><span class="p">(</span><span class="nx">task</span> <span class="kt">int</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">			<span class="k">defer</span> <span class="nx">wg</span><span class="p">.</span><span class="nf">Done</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">			<span class="k">defer</span> <span class="kd">func</span><span class="p">()</span> <span class="p">{</span> <span class="o">&lt;-</span><span class="nx">sem</span> <span class="p">}()</span> <span class="c1">// 释放名额
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>			<span class="nx">_</span> <span class="p">=</span> <span class="nx">task</span>                 <span class="c1">// 处理任务...
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>		<span class="p">}(</span><span class="nx">t</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">	<span class="p">}</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">wg</span><span class="p">.</span><span class="nf">Wait</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">fmt</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="s">&#34;全部完成，峰值并发不超过&#34;</span><span class="p">,</span> <span class="nx">maxConcurrency</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>生产中更推荐成熟库如 <code>golang.org/x/sync/errgroup</code>（配合 <code>SetLimit</code>）或 <code>ants</code> 协程池。</p>
+<h2 id="102-协程泄漏goroutine-leak">10.2 协程泄漏（goroutine leak）</h2>
+<p>goroutine 阻塞在永远不会满足的条件上（channel 无人收发、无超时的等待），就永远不退出，栈内存无法回收——这就是<strong>协程泄漏</strong>，是 Go 服务内存缓慢增长、最终 OOM 的头号原因。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// ❌ 泄漏示例：ch 无人接收，goroutine 永远阻塞在发送
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kd">func</span> <span class="nf">leak</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="nx">ch</span> <span class="o">:=</span> <span class="nb">make</span><span class="p">(</span><span class="kd">chan</span> <span class="kt">int</span><span class="p">)</span> <span class="c1">// 无缓冲
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="k">go</span> <span class="kd">func</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">		<span class="nx">ch</span> <span class="o">&lt;-</span> <span class="mi">42</span> <span class="c1">// 阻塞在此，因为没有接收方，函数返回后这个 G 永久泄漏
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>	<span class="p">}()</span>
+</span></span><span class="line"><span class="cl">	<span class="c1">// 忘记接收，或提前 return
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// ✅ 用 context 控制生命周期，可被取消
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kd">func</span> <span class="nf">worker</span><span class="p">(</span><span class="nx">ctx</span> <span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span> <span class="nx">ch</span> <span class="o">&lt;-</span><span class="kd">chan</span> <span class="kt">int</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">	<span class="k">for</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">		<span class="k">select</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">		<span class="k">case</span> <span class="o">&lt;-</span><span class="nx">ctx</span><span class="p">.</span><span class="nf">Done</span><span class="p">():</span> <span class="c1">// 收到取消信号，干净退出，避免泄漏
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>			<span class="k">return</span>
+</span></span><span class="line"><span class="cl">		<span class="k">case</span> <span class="nx">v</span> <span class="o">:=</span> <span class="o">&lt;-</span><span class="nx">ch</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">			<span class="nx">_</span> <span class="p">=</span> <span class="nx">v</span> <span class="c1">// 处理
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>		<span class="p">}</span>
+</span></span><span class="line"><span class="cl">	<span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><strong>排查手段</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kn">import</span> <span class="s">&#34;runtime&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="nx">fmt</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="s">&#34;当前 goroutine 数:&#34;</span><span class="p">,</span> <span class="nx">runtime</span><span class="p">.</span><span class="nf">NumGoroutine</span><span class="p">())</span> <span class="c1">// 持续上涨即怀疑泄漏
+</span></span></span></code></pre></div><p>配合 <code>net/http/pprof</code> 访问 <code>/debug/pprof/goroutine?debug=1</code> 看每个 goroutine 卡在哪一行；测试里可用 <code>go.uber.org/goleak</code> 自动检测。</p>
+<h2 id="103-观测调度godebug-schedtrace">10.3 观测调度：GODEBUG schedtrace</h2>
+<p><code>GODEBUG=schedtrace=1000</code> 让运行时<strong>每 1000ms 打印一次调度器状态摘要</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="nv">GODEBUG</span><span class="o">=</span><span class="nv">schedtrace</span><span class="o">=</span><span class="m">1000</span> ./app
+</span></span><span class="line"><span class="cl"><span class="c1"># 输出示例：</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># SCHED 1005ms: gomaxprocs=8 idleprocs=6 threads=12 spinningthreads=1 idlethreads=4 runqueue=0 [0 1 0 0 2 0 0 0]</span>
+</span></span></code></pre></div><p>字段含义：</p>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>gomaxprocs</code></td>
+<td>P 的数量</td>
+</tr>
+<tr>
+<td><code>idleprocs</code></td>
+<td>空闲的 P 数量（越多说明越闲）</td>
+</tr>
+<tr>
+<td><code>threads</code></td>
+<td>M（线程）总数</td>
+</tr>
+<tr>
+<td><code>spinningthreads</code></td>
+<td>正在自旋找活的 M 数</td>
+</tr>
+<tr>
+<td><code>idlethreads</code></td>
+<td>空闲的 M 数</td>
+</tr>
+<tr>
+<td><code>runqueue</code></td>
+<td>全局运行队列中的 G 数量</td>
+</tr>
+<tr>
+<td><code>[...]</code></td>
+<td>各 P 本地队列中的 G 数量（判断负载是否均衡）</td>
+</tr>
+</tbody>
+</table>
+<p>加 <code>scheddetail=1</code>（配合 <code>schedtrace</code>）能打印每个 P、M、G 的详细状态，用于深度调试。<code>runqueue</code> 或某个本地队列长期堆积，说明 CPU 打满或存在调度不均。</p>
+<hr>
+<h1 id="11-高频面试题">11. 高频面试题</h1>
+<p><strong>Q1：GMP 模型是什么？G、M、P 各代表什么？</strong></p>
+<p>GMP 是 Go 运行时的调度模型。<strong>G</strong> 是 goroutine，代表一个用户态执行单元（含栈和执行上下文）；<strong>M</strong> 是 machine，即操作系统内核线程，是真正占用 CPU 干活的实体；<strong>P</strong> 是 processor（逻辑处理器），是&quot;执行 G 所需的资源/许可证&quot;，数量固定为 <code>GOMAXPROCS</code>，持有本地运行队列和 mcache。<strong>M 必须绑定一个 P 才能执行 G</strong>。这样 Go 把海量 G 复用（M:N 调度）到少量线程上，兼顾了轻量、并行和缓存局部性。</p>
+<p><strong>Q2：为什么要引入 P？没有 P 的 GM 模型有什么问题？</strong></p>
+<p>早期 GM 模型只有一个受<strong>全局锁</strong>保护的全局运行队列，所有 M 抢锁调度 G，锁竞争严重；G 在 M 间频繁迁移破坏 CPU 缓存局部性；mcache 挂在 M 上导致阻塞的 M 也白占内存。引入 P 后：<strong>每个 P 有自己的本地队列，绝大多数调度无锁</strong>；G 优先在同 P 上调度，保住局部性；mcache 挂到 P，M 阻塞时把 P 连同 mcache 交给别的 M，内存不浪费。</p>
+<p><strong>Q3：work-stealing 是什么？为什么偷一半？</strong></p>
+<p>工作窃取：当某个 P 的本地队列和全局队列都空了，它随机选另一个 P，偷取其本地队列<strong>一半</strong>的 G 来执行，实现负载均衡、避免 CPU 空转。偷一半是权衡：偷太少则很快又要再偷、频繁偷取有开销；偷太多会把对方掏空，导致对方立刻反过来偷你，来回震荡。取一半最稳。</p>
+<p><strong>Q4：goroutine 和线程有什么区别？</strong></p>
+<p>① 调度者：线程由操作系统内核调度，goroutine 由 Go 运行时在用户态调度；② 栈：线程栈固定且大（默认 8MB），goroutine 初始仅 2KB 且可动态伸缩；③ 切换开销：线程切换要陷内核（~μs），goroutine 切换在用户态（~ns）；④ 创建成本：线程涉及内核对象和大栈，goroutine 只需分配 g 结构和小栈；⑤ 数量级：线程几千顶天，goroutine 可达百万。本质是 M:N 模型——多个 goroutine 复用到少量线程上。</p>
+<p><strong>Q5：抢占式调度是怎么演进的？Go 1.14 解决了什么问题？</strong></p>
+<p>Go 1.0 是纯协作式，只有栈检查点能被抢占；Go 1.2~1.13 引入基于栈标记的协作式抢占（sysmon 发现 G 跑超 10ms 就打标记，G 下次函数调用时让出），但<strong>没有函数调用的紧密死循环无法被抢占</strong>，会饿死其他 G（尤其 GOMAXPROCS=1 时）。Go 1.14 引入<strong>基于信号（SIGURG）的异步抢占</strong>：sysmon 向目标线程发信号，信号处理程序在安全点挂起当前 G，因为信号能打断任意指令流，<strong>死循环也能被抢占</strong>，彻底解决了这个问题。</p>
+<p><strong>Q6：一个 goroutine 执行阻塞系统调用，会不会阻塞其他 goroutine？</strong></p>
+<p>不会。G 进入系统调用前（<code>entersyscall</code>）P 被标记为 <code>_Psyscall</code>。若系统调用短暂返回，M 直接拿回 P 继续跑。若阻塞较久，<code>sysmon</code> 会执行 <strong>handoff</strong>：把 P 从阻塞的 M 上剥离，交给空闲或新建的 M，让 P 上其余 G 继续执行。系统调用返回后，原 M 尝试重新获取 P，拿不到就把 G 放回全局队列、自己休眠。因此单个 G 的阻塞系统调用不会拖累同 P 上的其他 G。</p>
+<p><strong>Q7：netpoller 是什么？Go 如何用同步代码写出高性能网络程序？</strong></p>
+<p>netpoller 是 Go 运行时集成的网络轮询器，底层基于 epoll（Linux）/ kqueue（BSD/macOS）/ IOCP（Windows）。所有 socket 被设为非阻塞，当 G 读写未就绪的 socket 时，运行时不阻塞线程，而是把 G 挂起（<code>_Gwaiting</code>）并把 fd 注册进 netpoller，M 立刻去跑别的 G；fd 就绪后 netpoll 唤醒对应 G 重新入队。于是开发者用<strong>同步阻塞风格</strong>的代码（<code>conn.Read</code>），运行时底层帮你转成<strong>非阻塞事件驱动 I/O</strong>，用少量线程扛住海量连接。</p>
+<p><strong>Q8：GOMAXPROCS 应该设多少？容器里有什么坑？</strong></p>
+<p><code>GOMAXPROCS</code> 决定 P 的数量即并行执行用户代码的最大线程数，默认等于 CPU 逻辑核数，通常保持默认即可（CPU 密集型设为核数，I/O 密集靠多开 goroutine 而非调大它）。容器里的坑：<code>runtime.NumCPU()</code> 读到的是宿主机核数而非 cgroup 限额，导致 P 过多、被 CFS 限流、调度抖动、延迟飙升。解决办法是用 <code>uber-go/automaxprocs</code> 按 cgroup quota 自动设置，或升级到 Go 1.25+（运行时已内置容器感知）。</p>
+<p><strong>Q9：什么是协程泄漏？如何排查？</strong></p>
+<p>goroutine 阻塞在永远无法满足的条件（无人收发的 channel、无超时的等待、未取消的循环）上而永不退出，其栈内存无法回收，导致内存持续增长最终 OOM。排查：<code>runtime.NumGoroutine()</code> 观察数量是否持续上涨；<code>net/http/pprof</code> 的 <code>/debug/pprof/goroutine</code> 看 goroutine 都卡在哪；测试用 <code>go.uber.org/goleak</code>。预防：channel 操作配合 <code>select</code> + <code>context</code> 取消或超时，确保每个 goroutine 都有明确的退出路径。</p>
+<p><strong>Q10：g0 是什么？runnext 又是什么？</strong></p>
+<p><strong>g0</strong> 是每个 M 专属的调度 goroutine，栈较大，专门用来执行调度器代码、GC、栈增长等运行时逻辑；用户 G 与 g0 之间切换就是&quot;业务代码&quot;与&quot;运行时代码&quot;的切换。<strong>runnext</strong> 是每个 P 上一个特殊的&quot;下一个执行&quot;槽，优先级高于本地队列——新建或刚被唤醒的 G 会先放这里，让它极可能被立即执行，利于父子 goroutine 的缓存局部性和低延迟唤醒。</p>
+<hr>
+<h1 id="小结">小结</h1>
+<p>本章围绕 Go 的并发引擎，自底向上讲透了 goroutine 与 GMP 调度模型：</p>
+<ul>
+<li><strong>三级抽象</strong>：进程 → 线程 → 协程。goroutine 是用户态调度、初始栈仅 2KB 且可伸缩的廉价执行单元，切换开销比线程低一个数量级，因此能轻松启动百万级。</li>
+<li><strong>GMP 三组件</strong>：G（goroutine，含栈与状态机）、M（内核线程，真正占 CPU，每个 M 有 g0）、P（逻辑处理器，持本地队列与 mcache，数量 = GOMAXPROCS）。<strong>M 必须绑 P 才能跑 G</strong>，实现 M:N 调度。</li>
+<li><strong>调度流程</strong>：新 G 优先进 P 的 runnext / 本地 runq，满了溢出到全局队列；M 的 <code>schedule</code> 循环按 <code>runnext ▶ 本地队列 ▶ 全局队列 ▶ netpoller ▶ 偷取</code> 的优先级找活，并每 61 次插一次全局队列保公平。</li>
+<li><strong>负载均衡</strong>：work-stealing 从其他 P 偷一半 G；自旋 M 让新活能被立即执行。</li>
+<li><strong>抢占演进</strong>：协作式 → 栈标记协作式 → Go 1.14 基于 SIGURG 信号的异步抢占，终于能抢占无函数调用的死循环。</li>
+<li><strong>阻塞处理</strong>：系统调用用 handoff 把 P 交给别的 M，避免拖累同 P 的 G；netpoller 用 epoll/kqueue 把网络 I/O 变非阻塞，让你用同步代码写出高并发；sysmon 后台看门狗统管抢占、handoff、netpoll、GC。</li>
+<li><strong>实践要点</strong>：容器里用 automaxprocs 修正 GOMAXPROCS；用 worker pool / 信号量控制 goroutine 数量；警惕协程泄漏，用 context 保证退出路径；用 <code>GODEBUG=schedtrace</code> 与 pprof 观测调度。</li>
+</ul>
+<p>理解 GMP，你才能真正解释清楚&quot;为什么 Go 能用同步代码写出百万并发&quot;，也能在遇到调度抖动、协程泄漏、容器限流时快速定位。下一章我们将深入 channel 与 select 的实现原理。</p>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2026-01-02</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/golang/">golang</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/golang/golang_15_channel%E4%B8%8Eselect%E5%8E%9F%E7%90%86/" class="prev" rel="prev" title="Go-15 channel 与 select 原理"><i class="fas fa-angle-left fa-fw"></i>Go-15 channel 与 select 原理</a>
+            <a href="/posts/golang/golang_13_%E9%94%99%E8%AF%AF%E5%A4%84%E7%90%86%E6%9C%80%E4%BD%B3%E5%AE%9E%E8%B7%B5/" class="next" rel="next" title="Go-13 错误处理最佳实践">Go-13 错误处理最佳实践<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2026-01-02T00:14:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Go-14 goroutine 与 GMP 调度模型"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>pgsql-29 慢查询分析 - xingliuhua博客</title><meta name="Description" content="系统讲解 PostgreSQL 慢查询定位与优化全流程：慢查询日志、pg_stat_statements、auto_explain、当前活动会话排查、典型慢查询模式与优化手段，对比 MySQL 慢日志"><meta property="og:title" content="pgsql-29 慢查询分析" />
+<meta property="og:description" content="系统讲解 PostgreSQL 慢查询定位与优化全流程：慢查询日志、pg_stat_statements、auto_explain、当前活动会话排查、典型慢查询模式与优化手段，对比 MySQL 慢日志" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/pgsql/pgsql_29_%E6%85%A2%E6%9F%A5%E8%AF%A2%E5%88%86%E6%9E%90/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2025-09-25T09:14:00+08:00" />
+<meta property="article:modified_time" content="2025-09-25T09:14:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="pgsql-29 慢查询分析"/>
+<meta name="twitter:description" content="系统讲解 PostgreSQL 慢查询定位与优化全流程：慢查询日志、pg_stat_statements、auto_explain、当前活动会话排查、典型慢查询模式与优化手段，对比 MySQL 慢日志"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/pgsql/pgsql_29_%E6%85%A2%E6%9F%A5%E8%AF%A2%E5%88%86%E6%9E%90/" /><link rel="prev" href="https://xingliuhua.github.io/posts/pgsql/pgsql_30_%E5%88%86%E5%8C%BA%E8%A1%A8%E6%8A%80%E6%9C%AF/" /><link rel="next" href="https://xingliuhua.github.io/posts/pgsql/pgsql_28_%E9%85%8D%E7%BD%AE%E5%8F%82%E6%95%B0%E8%B0%83%E4%BC%98/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "pgsql-29 慢查询分析",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/pgsql\/pgsql_29_%E6%85%A2%E6%9F%A5%E8%AF%A2%E5%88%86%E6%9E%90\/"
+        },"genre": "posts","keywords": "pgsql","wordcount":  1693 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/pgsql\/pgsql_29_%E6%85%A2%E6%9F%A5%E8%AF%A2%E5%88%86%E6%9E%90\/","datePublished": "2025-09-25T09:14:00+08:00","dateModified": "2025-09-25T09:14:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "系统讲解 PostgreSQL 慢查询定位与优化全流程：慢查询日志、pg_stat_statements、auto_explain、当前活动会话排查、典型慢查询模式与优化手段，对比 MySQL 慢日志"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">pgsql-29 慢查询分析</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2025-09-25">2025-09-25</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 1693 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 4 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-概述">1. 概述</a></li>
+    <li><a href="#2-发现慢查询">2. 发现慢查询</a>
+      <ol>
+        <li><a href="#21-慢查询日志">2.1 慢查询日志</a></li>
+        <li><a href="#22-pg_stat_statements核心工具">2.2 pg_stat_statements（核心工具）</a></li>
+        <li><a href="#23-auto_explain自动抓执行计划">2.3 auto_explain（自动抓执行计划）</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-定位当前正在运行的慢查询阻塞">3. 定位当前正在运行的慢查询/阻塞</a></li>
+    <li><a href="#4-分析单条查询explain">4. 分析单条查询：EXPLAIN</a></li>
+    <li><a href="#5-典型慢查询模式与优化">5. 典型慢查询模式与优化</a>
+      <ol>
+        <li><a href="#51-深分页优化示例">5.1 深分页优化示例</a></li>
+      </ol>
+    </li>
+    <li><a href="#6-优化流程总结">6. 优化流程总结</a></li>
+    <li><a href="#7-面试高频问答">7. 面试高频问答</a></li>
+    <li><a href="#8-下一步">8. 下一步</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><h1 id="1-概述">1. 概述</h1>
+<p>慢查询分析是数据库性能优化最实用的技能。完整流程分三步：<strong>发现慢查询 → 定位原因 → 优化验证</strong>。本篇覆盖 PG 的各类分析工具与实战套路。</p>
+<blockquote>
+<p>对比 MySQL：MySQL 用 <code>slow_query_log</code> + <code>mysqldumpslow</code>/<code>pt-query-digest</code> 分析慢日志。PostgreSQL 的对应能力更强——<code>pg_stat_statements</code> 扩展直接在内存里聚合每条 SQL 的统计（无需解析日志），是 PG 慢查询分析的核心工具。</p>
+</blockquote>
+<h1 id="2-发现慢查询">2. 发现慢查询</h1>
+<h2 id="21-慢查询日志">2.1 慢查询日志</h2>
+<p>记录执行时间超过阈值的 SQL 到日志文件。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="c1"># postgresql.conf</span>
+</span></span><span class="line"><span class="cl"><span class="na">log_min_duration_statement</span> <span class="o">=</span> <span class="s">1000     # 记录超过 1000ms 的查询（-1关闭，0记录全部）</span>
+</span></span><span class="line"><span class="cl"><span class="na">log_line_prefix</span> <span class="o">=</span> <span class="s">&#39;%m [%p] %u@%d &#39;    # 时间 进程 用户@库</span>
+</span></span><span class="line"><span class="cl"><span class="na">log_checkpoints</span> <span class="o">=</span> <span class="s">on</span>
+</span></span><span class="line"><span class="cl"><span class="na">log_lock_waits</span> <span class="o">=</span> <span class="s">on                   # 记录锁等待（排查阻塞）</span>
+</span></span><span class="line"><span class="cl"><span class="na">log_temp_files</span> <span class="o">=</span> <span class="s">0                    # 记录使用临时文件的查询（work_mem不足信号）</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="k">ALTER</span><span class="w"> </span><span class="k">SYSTEM</span><span class="w"> </span><span class="k">SET</span><span class="w"> </span><span class="n">log_min_duration_statement</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;500ms&#39;</span><span class="p">;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">SELECT</span><span class="w"> </span><span class="n">pg_reload_conf</span><span class="p">();</span><span class="w">
+</span></span></span></code></pre></div><h2 id="22-pg_stat_statements核心工具">2.2 pg_stat_statements（核心工具）</h2>
+<p>在内存中聚合每条规范化 SQL 的执行统计，是找出&quot;最该优化的 SQL&quot;的首选。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="na">shared_preload_libraries</span> <span class="o">=</span> <span class="s">&#39;pg_stat_statements&#39;   # 需重启</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="k">CREATE</span><span class="w"> </span><span class="n">EXTENSION</span><span class="w"> </span><span class="n">pg_stat_statements</span><span class="p">;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 按总耗时排序找热点SQL（最该优化的）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="k">substring</span><span class="p">(</span><span class="n">query</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">80</span><span class="p">)</span><span class="w">          </span><span class="k">AS</span><span class="w"> </span><span class="n">query</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="n">calls</span><span class="w">                            </span><span class="k">AS</span><span class="w"> </span><span class="err">调用次数</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="n">round</span><span class="p">(</span><span class="n">total_exec_time</span><span class="p">::</span><span class="nb">numeric</span><span class="p">,</span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="err">总耗时</span><span class="n">ms</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="n">round</span><span class="p">(</span><span class="n">mean_exec_time</span><span class="p">::</span><span class="nb">numeric</span><span class="p">,</span><span class="mi">2</span><span class="p">)</span><span class="w">  </span><span class="k">AS</span><span class="w"> </span><span class="err">平均</span><span class="n">ms</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="n">round</span><span class="p">(</span><span class="n">stddev_exec_time</span><span class="p">::</span><span class="nb">numeric</span><span class="p">,</span><span class="mi">2</span><span class="p">)</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="err">抖动</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="k">rows</span><span class="w">                             </span><span class="k">AS</span><span class="w"> </span><span class="err">返回行</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">FROM</span><span class="w"> </span><span class="n">pg_stat_statements</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">ORDER</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="n">total_exec_time</span><span class="w"> </span><span class="k">DESC</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">LIMIT</span><span class="w"> </span><span class="mi">20</span><span class="p">;</span><span class="w">
+</span></span></span></code></pre></div><ul>
+<li><strong>按 total_exec_time 排序</strong>：找出&quot;累计最耗资源&quot;的（可能单次不慢但调用极频繁）。</li>
+<li><strong>按 mean_exec_time 排序</strong>：找出&quot;单次最慢&quot;的。</li>
+<li>优化重点应是&quot;总耗时&quot;高的——那才是系统真正的负担。</li>
+</ul>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="c1">-- 命中率相关（缓存命中差的查询 IO 重）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="n">query</span><span class="p">,</span><span class="w"> </span><span class="n">shared_blks_hit</span><span class="p">,</span><span class="w"> </span><span class="n">shared_blks_read</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">FROM</span><span class="w"> </span><span class="n">pg_stat_statements</span><span class="w"> </span><span class="k">ORDER</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="n">shared_blks_read</span><span class="w"> </span><span class="k">DESC</span><span class="w"> </span><span class="k">LIMIT</span><span class="w"> </span><span class="mi">10</span><span class="p">;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">SELECT</span><span class="w"> </span><span class="n">pg_stat_statements_reset</span><span class="p">();</span><span class="w">   </span><span class="c1">-- 清零重新统计
+</span></span></span></code></pre></div><h2 id="23-auto_explain自动抓执行计划">2.3 auto_explain（自动抓执行计划）</h2>
+<p>自动把慢查询的执行计划写入日志，省去手动复现。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="na">shared_preload_libraries</span> <span class="o">=</span> <span class="s">&#39;auto_explain&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="na">auto_explain.log_min_duration</span> <span class="o">=</span> <span class="s">&#39;2s&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="na">auto_explain.log_analyze</span> <span class="o">=</span> <span class="s">on</span>
+</span></span><span class="line"><span class="cl"><span class="na">auto_explain.log_buffers</span> <span class="o">=</span> <span class="s">on</span>
+</span></span></code></pre></div><h1 id="3-定位当前正在运行的慢查询阻塞">3. 定位当前正在运行的慢查询/阻塞</h1>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="c1">-- 当前运行超过5秒的查询
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="n">pid</span><span class="p">,</span><span class="w"> </span><span class="n">now</span><span class="p">()</span><span class="o">-</span><span class="n">query_start</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="err">已运行</span><span class="p">,</span><span class="w"> </span><span class="k">state</span><span class="p">,</span><span class="w"> </span><span class="n">wait_event_type</span><span class="p">,</span><span class="w"> </span><span class="n">wait_event</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">       </span><span class="k">substring</span><span class="p">(</span><span class="n">query</span><span class="p">,</span><span class="mi">1</span><span class="p">,</span><span class="mi">80</span><span class="p">)</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">query</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">FROM</span><span class="w"> </span><span class="n">pg_stat_activity</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">WHERE</span><span class="w"> </span><span class="k">state</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;active&#39;</span><span class="w"> </span><span class="k">AND</span><span class="w"> </span><span class="n">now</span><span class="p">()</span><span class="o">-</span><span class="n">query_start</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="nb">interval</span><span class="w"> </span><span class="s1">&#39;5 seconds&#39;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">ORDER</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="err">已运行</span><span class="w"> </span><span class="k">DESC</span><span class="p">;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 找阻塞源头（谁把别人堵住了）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="n">pid</span><span class="p">,</span><span class="w"> </span><span class="n">pg_blocking_pids</span><span class="p">(</span><span class="n">pid</span><span class="p">)</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="err">被谁阻塞</span><span class="p">,</span><span class="w"> </span><span class="n">query</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">FROM</span><span class="w"> </span><span class="n">pg_stat_activity</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="k">cardinality</span><span class="p">(</span><span class="n">pg_blocking_pids</span><span class="p">(</span><span class="n">pid</span><span class="p">))</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 终止失控查询
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="n">pg_cancel_backend</span><span class="p">(</span><span class="n">pid</span><span class="p">);</span><span class="w">      </span><span class="c1">-- 温和取消
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="n">pg_terminate_backend</span><span class="p">(</span><span class="n">pid</span><span class="p">);</span><span class="w">   </span><span class="c1">-- 强制断开
+</span></span></span></code></pre></div><h1 id="4-分析单条查询explain">4. 分析单条查询：EXPLAIN</h1>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="k">EXPLAIN</span><span class="w"> </span><span class="p">(</span><span class="k">ANALYZE</span><span class="p">,</span><span class="w"> </span><span class="n">BUFFERS</span><span class="p">,</span><span class="w"> </span><span class="k">VERBOSE</span><span class="p">)</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">SELECT</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">orders</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="n">user_id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">100</span><span class="w"> </span><span class="k">ORDER</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="n">created_at</span><span class="w"> </span><span class="k">DESC</span><span class="w"> </span><span class="k">LIMIT</span><span class="w"> </span><span class="mi">20</span><span class="p">;</span><span class="w">
+</span></span></span></code></pre></div><p>重点看（详见 <a href="https://xingliuhua.github.io/posts/pgsql/pgsql_26_%E6%9F%A5%E8%AF%A2%E4%BC%98%E5%8C%96%E4%B8%8E%E6%89%A7%E8%A1%8C%E8%AE%A1%E5%88%92/" rel="">查询优化与执行计划</a>）：</p>
+<ul>
+<li><code>Seq Scan</code> 大表 → 缺索引或索引失效。</li>
+<li><strong>估算行数 vs 实际行数</strong>差距大 → 统计信息过期，需 ANALYZE。</li>
+<li><code>Rows Removed by Filter</code> 很大 → 索引过滤不精准。</li>
+<li>出现 <code>external merge Disk</code> → work_mem 不足，排序落盘。</li>
+</ul>
+<h1 id="5-典型慢查询模式与优化">5. 典型慢查询模式与优化</h1>
+<table>
+<thead>
+<tr>
+<th>症状</th>
+<th>常见原因</th>
+<th>优化手段</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>大表 Seq Scan</td>
+<td>缺索引/索引失效</td>
+<td>建索引、修正 SQL（见 <a href="https://xingliuhua.github.io/posts/pgsql/pgsql_25_%E7%B4%A2%E5%BC%95%E4%BC%98%E5%8C%96%E7%AD%96%E7%95%A5/" rel="">索引优化策略</a>）</td>
+</tr>
+<tr>
+<td>估算严重偏离实际</td>
+<td>统计过期</td>
+<td><code>ANALYZE</code>，或提高统计目标</td>
+</tr>
+<tr>
+<td>排序落盘（Disk）</td>
+<td>work_mem 不足</td>
+<td>会话级调大 work_mem，或加索引消除排序</td>
+</tr>
+<tr>
+<td><code>SELECT *</code> 拉太多列</td>
+<td>未走覆盖索引、传输大</td>
+<td>只查需要的列</td>
+</tr>
+<tr>
+<td>深分页 <code>OFFSET 100000</code></td>
+<td>扫描并丢弃大量行</td>
+<td>改用游标/键集分页（WHERE id &gt; 上次最大id）</td>
+</tr>
+<tr>
+<td>N+1 查询</td>
+<td>应用循环里逐条查</td>
+<td>改批量 IN 查询或 JOIN</td>
+</tr>
+<tr>
+<td>隐式类型转换</td>
+<td>索引失效</td>
+<td>匹配参数类型</td>
+</tr>
+</tbody>
+</table>
+<h2 id="51-深分页优化示例">5.1 深分页优化示例</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="c1">-- ❌ 慢：OFFSET 越大越慢
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">orders</span><span class="w"> </span><span class="k">ORDER</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="n">id</span><span class="w"> </span><span class="k">LIMIT</span><span class="w"> </span><span class="mi">20</span><span class="w"> </span><span class="k">OFFSET</span><span class="w"> </span><span class="mi">100000</span><span class="p">;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- ✅ 键集分页（Keyset Pagination）：记住上一页最后一个id
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">orders</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="n">id</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">100000</span><span class="w"> </span><span class="k">ORDER</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="n">id</span><span class="w"> </span><span class="k">LIMIT</span><span class="w"> </span><span class="mi">20</span><span class="p">;</span><span class="w">
+</span></span></span></code></pre></div><h1 id="6-优化流程总结">6. 优化流程总结</h1>
+<ol>
+<li><code>pg_stat_statements</code> 找出 total_exec_time 最高的 SQL。</li>
+<li>对该 SQL 跑 <code>EXPLAIN (ANALYZE, BUFFERS)</code> 看执行计划。</li>
+<li>判断瓶颈：缺索引？统计过期？排序落盘？SQL 写法差？</li>
+<li>针对性优化（建索引、改 SQL、ANALYZE、调 work_mem）。</li>
+<li>再次 EXPLAIN ANALYZE 验证，对比前后耗时。</li>
+<li>上线后持续用 pg_stat_statements 监控。</li>
+</ol>
+<h1 id="7-面试高频问答">7. 面试高频问答</h1>
+<p><strong>Q1：怎么找出系统里最该优化的 SQL？</strong>
+用 pg_stat_statements 按 total_exec_time 排序——累计耗时最高的最值得优化（可能单次不慢但调用极频繁），而不是只看单次最慢的。</p>
+<p><strong>Q2：pg_stat_statements 和慢查询日志的区别？</strong>
+慢日志按阈值记录到文件、需事后解析；pg_stat_statements 在内存实时聚合规范化 SQL 的调用次数、总/平均耗时、IO 等，更适合找热点。两者互补。</p>
+<p><strong>Q3：一条查询突然变慢，怎么排查？</strong>
+先 EXPLAIN ANALYZE 看是否走了索引、估算与实际行数是否偏离（统计过期）、是否排序落盘；再看 pg_stat_activity 是否被锁阻塞。</p>
+<p><strong>Q4：EXPLAIN 里估算行数和实际差很多说明什么？</strong>
+统计信息过期或数据分布特殊，导致优化器选错计划。执行 ANALYZE 更新统计，必要时 <code>ALTER TABLE ... ALTER COLUMN ... SET STATISTICS</code> 提高采样精度。</p>
+<p><strong>Q5：深分页（大 OFFSET）为什么慢？怎么优化？</strong>
+OFFSET 需扫描并丢弃前面所有行，越翻越慢。改用键集分页：记住上一页最后一条的排序键，用 <code>WHERE key &gt; last_key</code> 定位，配合索引可稳定高效。</p>
+<h1 id="8-下一步">8. 下一步</h1>
+<p>学习 <a href="https://xingliuhua.github.io/posts/pgsql/pgsql_30_%E5%88%86%E5%8C%BA%E8%A1%A8%E6%8A%80%E6%9C%AF/" rel="">分区表技术</a>，用分区应对超大表。</p>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2025-09-25</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/pgsql/">pgsql</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/pgsql/pgsql_30_%E5%88%86%E5%8C%BA%E8%A1%A8%E6%8A%80%E6%9C%AF/" class="prev" rel="prev" title="pgsql-30 分区表技术"><i class="fas fa-angle-left fa-fw"></i>pgsql-30 分区表技术</a>
+            <a href="/posts/pgsql/pgsql_28_%E9%85%8D%E7%BD%AE%E5%8F%82%E6%95%B0%E8%B0%83%E4%BC%98/" class="next" rel="next" title="pgsql-28 配置参数调优">pgsql-28 配置参数调优<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2025-09-25T09:14:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"pgsql-29 慢查询分析"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

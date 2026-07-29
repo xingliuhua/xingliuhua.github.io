@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>pgsql-31 连接池与连接管理 - xingliuhua博客</title><meta name="Description" content="讲解 PostgreSQL 进程连接模型为何需要连接池、PgBouncer 三种池化模式、应用层连接池参数、连接泄漏排查，并对比 MySQL 线程模型"><meta property="og:title" content="pgsql-31 连接池与连接管理" />
+<meta property="og:description" content="讲解 PostgreSQL 进程连接模型为何需要连接池、PgBouncer 三种池化模式、应用层连接池参数、连接泄漏排查，并对比 MySQL 线程模型" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/pgsql/pgsql_31_%E8%BF%9E%E6%8E%A5%E6%B1%A0%E4%B8%8E%E8%BF%9E%E6%8E%A5%E7%AE%A1%E7%90%86/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2025-09-25T09:12:00+08:00" />
+<meta property="article:modified_time" content="2025-09-25T09:12:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="pgsql-31 连接池与连接管理"/>
+<meta name="twitter:description" content="讲解 PostgreSQL 进程连接模型为何需要连接池、PgBouncer 三种池化模式、应用层连接池参数、连接泄漏排查，并对比 MySQL 线程模型"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/pgsql/pgsql_31_%E8%BF%9E%E6%8E%A5%E6%B1%A0%E4%B8%8E%E8%BF%9E%E6%8E%A5%E7%AE%A1%E7%90%86/" /><link rel="prev" href="https://xingliuhua.github.io/posts/pgsql/pgsql_32_wal%E4%B8%8E%E6%A3%80%E6%9F%A5%E7%82%B9%E6%9C%BA%E5%88%B6/" /><link rel="next" href="https://xingliuhua.github.io/posts/pgsql/pgsql_30_%E5%88%86%E5%8C%BA%E8%A1%A8%E6%8A%80%E6%9C%AF/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "pgsql-31 连接池与连接管理",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/pgsql\/pgsql_31_%E8%BF%9E%E6%8E%A5%E6%B1%A0%E4%B8%8E%E8%BF%9E%E6%8E%A5%E7%AE%A1%E7%90%86\/"
+        },"genre": "posts","keywords": "pgsql","wordcount":  1911 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/pgsql\/pgsql_31_%E8%BF%9E%E6%8E%A5%E6%B1%A0%E4%B8%8E%E8%BF%9E%E6%8E%A5%E7%AE%A1%E7%90%86\/","datePublished": "2025-09-25T09:12:00+08:00","dateModified": "2025-09-25T09:12:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "讲解 PostgreSQL 进程连接模型为何需要连接池、PgBouncer 三种池化模式、应用层连接池参数、连接泄漏排查，并对比 MySQL 线程模型"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">pgsql-31 连接池与连接管理</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2025-09-25">2025-09-25</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 1911 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 4 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-概述">1. 概述</a></li>
+    <li><a href="#2-为什么不能一味调大-max_connections">2. 为什么不能一味调大 max_connections？</a></li>
+    <li><a href="#3-pgbouncer最常用的外部连接池">3. PgBouncer（最常用的外部连接池）</a>
+      <ol>
+        <li><a href="#31-安装配置">3.1 安装配置</a></li>
+        <li><a href="#32-三种池化模式面试重点">3.2 三种池化模式（面试重点）</a></li>
+      </ol>
+    </li>
+    <li><a href="#4-应用层连接池">4. 应用层连接池</a>
+      <ol>
+        <li><a href="#41-go-示例pgxpool">4.1 Go 示例（pgxpool）</a></li>
+        <li><a href="#42-连接池参数怎么定">4.2 连接池参数怎么定？</a></li>
+      </ol>
+    </li>
+    <li><a href="#5-连接泄漏与排查">5. 连接泄漏与排查</a></li>
+    <li><a href="#6-最佳实践">6. 最佳实践</a></li>
+    <li><a href="#7-面试高频问答">7. 面试高频问答</a></li>
+    <li><a href="#8-下一步">8. 下一步</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><h1 id="1-概述">1. 概述</h1>
+<p>连接管理是 PostgreSQL 高并发场景的关键，也是 PG 区别于 MySQL 的重要架构点。</p>
+<p><strong>核心问题：PostgreSQL 每个连接是一个独立的操作系统进程</strong>（不是线程）。这带来两个后果：</p>
+<ol>
+<li>每个连接占用可观内存（几 MB 起）、建立/销毁成本高。</li>
+<li>连接数一多，进程调度和内存开销急剧上升，几百个直连就可能拖垮数据库。</li>
+</ol>
+<p>因此 PG 强烈依赖<strong>连接池</strong>来复用连接、限制并发。</p>
+<blockquote>
+<p>对比 MySQL：MySQL 采用<strong>线程模型</strong>（一连接一线程，甚至线程池），单连接开销远小于 PG 的进程，所以 MySQL 能承受更多直连。这就是为什么&quot;连接池对 PG 几乎是必需，对 MySQL 是优化项&quot;——这是常考的架构差异。</p>
+</blockquote>
+<h1 id="2-为什么不能一味调大-max_connections">2. 为什么不能一味调大 max_connections？</h1>
+<pre tabindex="0"><code>每个连接 ≈ 一个进程 ≈ 若干 MB 内存 + work_mem 潜在占用 + 上下文切换成本
+</code></pre><ul>
+<li><code>max_connections = 1000</code> 看似能扛更多并发，实则大量连接空闲也占资源，活跃时争抢 CPU/内存反而更慢。</li>
+<li>经验：<strong>max_connections 设 100-300</strong>，真实并发靠连接池在前面复用。</li>
+</ul>
+<p><strong>关键洞察</strong>：数据库真正能并行干活的数量约等于 <code>CPU核数 + 磁盘数</code>，几十个足矣。成百上千的应用连接应通过连接池收敛成少量数据库连接。</p>
+<h1 id="3-pgbouncer最常用的外部连接池">3. PgBouncer（最常用的外部连接池）</h1>
+<p>PgBouncer 是轻量级连接池中间件，应用连它、它连数据库，在中间复用。</p>
+<h2 id="31-安装配置">3.1 安装配置</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">sudo apt install pgbouncer
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="c1"># /etc/pgbouncer/pgbouncer.ini</span>
+</span></span><span class="line"><span class="cl"><span class="k">[databases]</span>
+</span></span><span class="line"><span class="cl"><span class="na">mydb</span> <span class="o">=</span> <span class="s">host=127.0.0.1 port=5432 dbname=mydb</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">[pgbouncer]</span>
+</span></span><span class="line"><span class="cl"><span class="na">listen_addr</span> <span class="o">=</span> <span class="s">0.0.0.0</span>
+</span></span><span class="line"><span class="cl"><span class="na">listen_port</span> <span class="o">=</span> <span class="s">6432</span>
+</span></span><span class="line"><span class="cl"><span class="na">auth_type</span> <span class="o">=</span> <span class="s">md5</span>
+</span></span><span class="line"><span class="cl"><span class="na">auth_file</span> <span class="o">=</span> <span class="s">/etc/pgbouncer/userlist.txt</span>
+</span></span><span class="line"><span class="cl"><span class="na">pool_mode</span> <span class="o">=</span> <span class="s">transaction          # 池化模式（见下）</span>
+</span></span><span class="line"><span class="cl"><span class="na">max_client_conn</span> <span class="o">=</span> <span class="s">1000           # 允许多少应用连接进来</span>
+</span></span><span class="line"><span class="cl"><span class="na">default_pool_size</span> <span class="o">=</span> <span class="s">25           # 实际到数据库的连接数（每个库）</span>
+</span></span></code></pre></div><p>应用改为连接 PgBouncer 的 6432 端口即可，无需改代码。</p>
+<h2 id="32-三种池化模式面试重点">3.2 三种池化模式（面试重点）</h2>
+<table>
+<thead>
+<tr>
+<th>模式</th>
+<th>复用粒度</th>
+<th>说明</th>
+<th>适用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>session</strong></td>
+<td>会话</td>
+<td>客户端断开才归还连接</td>
+<td>最安全，但复用率低</td>
+</tr>
+<tr>
+<td><strong>transaction</strong></td>
+<td>事务</td>
+<td>每个事务结束就归还</td>
+<td><strong>最常用</strong>，复用率高</td>
+</tr>
+<tr>
+<td><strong>statement</strong></td>
+<td>语句</td>
+<td>每条语句后归还</td>
+<td>复用最高，但禁多语句事务</td>
+</tr>
+</tbody>
+</table>
+<p><strong>transaction 模式</strong>是绝大多数场景的选择：既大幅复用连接，又保持事务完整。</p>
+<p>⚠️ <strong>注意</strong>：transaction/statement 模式下<strong>不能使用会话级特性</strong>（如 <code>SET</code>、预备语句 prepared statement、<code>LISTEN/NOTIFY</code>、临时表），因为连接在事务间会被别的客户端复用。用了会出错——这是常见坑。</p>
+<h1 id="4-应用层连接池">4. 应用层连接池</h1>
+<p>除了 PgBouncer，应用框架/驱动自带连接池（如 Go 的 <code>pgxpool</code>、Java 的 HikariCP、Python 的 SQLAlchemy pool）。两者可叠加使用。</p>
+<h2 id="41-go-示例pgxpool">4.1 Go 示例（pgxpool）</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="nx">config</span><span class="p">,</span> <span class="nx">_</span> <span class="o">:=</span> <span class="nx">pgxpool</span><span class="p">.</span><span class="nf">ParseConfig</span><span class="p">(</span><span class="s">&#34;postgres://user:pwd@localhost:5432/mydb&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="nx">config</span><span class="p">.</span><span class="nx">MaxConns</span> <span class="p">=</span> <span class="mi">20</span>                        <span class="c1">// 池最大连接
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">config</span><span class="p">.</span><span class="nx">MinConns</span> <span class="p">=</span> <span class="mi">5</span>                         <span class="c1">// 保持的最小空闲连接
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">config</span><span class="p">.</span><span class="nx">MaxConnLifetime</span> <span class="p">=</span> <span class="nx">time</span><span class="p">.</span><span class="nx">Hour</span>         <span class="c1">// 连接最长存活（定期重建避免老化）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">config</span><span class="p">.</span><span class="nx">MaxConnIdleTime</span> <span class="p">=</span> <span class="mi">30</span> <span class="o">*</span> <span class="nx">time</span><span class="p">.</span><span class="nx">Minute</span>  <span class="c1">// 空闲超时回收
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">pool</span><span class="p">,</span> <span class="nx">_</span> <span class="o">:=</span> <span class="nx">pgxpool</span><span class="p">.</span><span class="nf">NewWithConfig</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">config</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="k">defer</span> <span class="nx">pool</span><span class="p">.</span><span class="nf">Close</span><span class="p">()</span>
+</span></span></code></pre></div><h2 id="42-连接池参数怎么定">4.2 连接池参数怎么定？</h2>
+<ul>
+<li><strong>MaxConns 不是越大越好</strong>：应用池总和不应超过数据库能高效处理的连接数。常用经验公式起点：<code>连接数 ≈ (核数 × 2) + 磁盘数</code>。</li>
+<li>多实例部署时：<code>所有应用实例的池大小之和 ≤ 数据库 max_connections</code>（还要留余量给运维连接）。</li>
+</ul>
+<h1 id="5-连接泄漏与排查">5. 连接泄漏与排查</h1>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="c1">-- 查看当前连接数与状态分布
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="k">state</span><span class="p">,</span><span class="w"> </span><span class="k">count</span><span class="p">(</span><span class="o">*</span><span class="p">)</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">pg_stat_activity</span><span class="w"> </span><span class="k">GROUP</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="k">state</span><span class="p">;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- active=执行中  idle=空闲  idle in transaction=开了事务没提交(危险!)
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 揪出长时间 idle in transaction 的连接（连接泄漏/忘记提交）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">SELECT</span><span class="w"> </span><span class="n">pid</span><span class="p">,</span><span class="w"> </span><span class="n">usename</span><span class="p">,</span><span class="w"> </span><span class="n">now</span><span class="p">()</span><span class="o">-</span><span class="n">state_change</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">idle_time</span><span class="p">,</span><span class="w"> </span><span class="n">query</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">FROM</span><span class="w"> </span><span class="n">pg_stat_activity</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="k">WHERE</span><span class="w"> </span><span class="k">state</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;idle in transaction&#39;</span><span class="w"> </span><span class="k">AND</span><span class="w"> </span><span class="n">now</span><span class="p">()</span><span class="o">-</span><span class="n">state_change</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="nb">interval</span><span class="w"> </span><span class="s1">&#39;5 min&#39;</span><span class="p">;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="c1">-- 自动清理：设置空闲事务超时（PG 会自动断开这类连接）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">ALTER</span><span class="w"> </span><span class="k">SYSTEM</span><span class="w"> </span><span class="k">SET</span><span class="w"> </span><span class="n">idle_in_transaction_session_timeout</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;10min&#39;</span><span class="p">;</span><span class="w">
+</span></span></span></code></pre></div><blockquote>
+<p><code>idle in transaction</code> 是重点排查对象：它既占连接，又钉住 MVCC 快照阻止 VACUUM（见 <a href="https://xingliuhua.github.io/posts/pgsql/pgsql_27_vacuum%E4%B8%8E%E8%A1%A8%E8%86%A8%E8%83%80/" rel="">VACUUM与表膨胀</a>），危害极大。</p>
+</blockquote>
+<h1 id="6-最佳实践">6. 最佳实践</h1>
+<ol>
+<li>生产用 PgBouncer（transaction 模式）+ 应用层连接池叠加。</li>
+<li>max_connections 保持 100-300，靠池复用。</li>
+<li>应用池大小设合理，多实例总和不超库上限。</li>
+<li>设 <code>idle_in_transaction_session_timeout</code> 防连接泄漏钉住快照。</li>
+<li>transaction 模式下避免会话级特性（SET/prepared/临时表）。</li>
+<li>监控 pg_stat_activity 的连接状态分布。</li>
+</ol>
+<h1 id="7-面试高频问答">7. 面试高频问答</h1>
+<p><strong>Q1：为什么 PostgreSQL 特别需要连接池？</strong>
+PG 每个连接是一个独立进程，内存和调度开销大，连接数多会拖垮数据库；连接池把大量应用连接复用成少量数据库连接。MySQL 是线程模型开销小，对连接池依赖没这么强。</p>
+<p><strong>Q2：PgBouncer 有哪三种池化模式？怎么选？</strong>
+session（会话级，最安全复用低）、transaction（事务级，最常用）、statement（语句级，复用最高但限制多）。绝大多数选 transaction。</p>
+<p><strong>Q3：transaction 模式有什么坑？</strong>
+连接在事务间会被别的客户端复用，因此不能依赖会话级状态：SET 参数、prepared statement、临时表、LISTEN/NOTIFY 都可能出错。</p>
+<p><strong>Q4：max_connections 是不是越大越好？</strong>
+不是。连接过多空闲占资源、活跃争抢 CPU 内存反而更慢。数据库真正并行能力约等于核数+磁盘数，应设中等值并靠连接池复用。</p>
+<p><strong>Q5：idle in transaction 状态有什么危害？</strong>
+它开着事务却不提交，既占用连接，又钉住 MVCC 旧快照阻止 VACUUM 回收死元组导致表膨胀。用 idle_in_transaction_session_timeout 自动清理。</p>
+<h1 id="8-下一步">8. 下一步</h1>
+<p>学习 <a href="https://xingliuhua.github.io/posts/pgsql/pgsql_32_wal%E4%B8%8E%E6%A3%80%E6%9F%A5%E7%82%B9%E6%9C%BA%E5%88%B6/" rel="">WAL与检查点机制</a>，理解持久化与崩溃恢复。</p>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2025-09-25</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/pgsql/">pgsql</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/pgsql/pgsql_32_wal%E4%B8%8E%E6%A3%80%E6%9F%A5%E7%82%B9%E6%9C%BA%E5%88%B6/" class="prev" rel="prev" title="pgsql-32 WAL与检查点机制"><i class="fas fa-angle-left fa-fw"></i>pgsql-32 WAL与检查点机制</a>
+            <a href="/posts/pgsql/pgsql_30_%E5%88%86%E5%8C%BA%E8%A1%A8%E6%8A%80%E6%9C%AF/" class="next" rel="next" title="pgsql-30 分区表技术">pgsql-30 分区表技术<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2025-09-25T09:12:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"pgsql-31 连接池与连接管理"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>
