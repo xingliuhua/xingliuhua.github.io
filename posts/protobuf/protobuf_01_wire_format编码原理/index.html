@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>Protobuf-01 从 wire format 开始：一个字节一个字节读懂编码 - xingliuhua博客</title><meta name="Description" content="Protobuf 的二进制编码格式：varint 变长整数、ZigZag 编码、tag 的位构成、六种 wire type、packed 打包编码，手工解码一段字节流，并由编码格式反推出各种语法规则的由来"><meta property="og:title" content="Protobuf-01 从 wire format 开始：一个字节一个字节读懂编码" />
+<meta property="og:description" content="Protobuf 的二进制编码格式：varint 变长整数、ZigZag 编码、tag 的位构成、六种 wire type、packed 打包编码，手工解码一段字节流，并由编码格式反推出各种语法规则的由来" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/protobuf/protobuf_01_wire_format%E7%BC%96%E7%A0%81%E5%8E%9F%E7%90%86/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2026-07-29T16:00:00+08:00" />
+<meta property="article:modified_time" content="2026-07-29T16:00:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="Protobuf-01 从 wire format 开始：一个字节一个字节读懂编码"/>
+<meta name="twitter:description" content="Protobuf 的二进制编码格式：varint 变长整数、ZigZag 编码、tag 的位构成、六种 wire type、packed 打包编码，手工解码一段字节流，并由编码格式反推出各种语法规则的由来"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/protobuf/protobuf_01_wire_format%E7%BC%96%E7%A0%81%E5%8E%9F%E7%90%86/" /><link rel="prev" href="https://xingliuhua.github.io/posts/protobuf/protobuf_02_proto3%E8%AF%AD%E6%B3%95%E5%AE%8C%E5%85%A8%E6%8C%87%E5%8D%97/" /><link rel="next" href="https://xingliuhua.github.io/posts/nginx/nginx_14_%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98%E6%B1%87%E6%80%BB/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Protobuf-01 从 wire format 开始：一个字节一个字节读懂编码",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/protobuf\/protobuf_01_wire_format%E7%BC%96%E7%A0%81%E5%8E%9F%E7%90%86\/"
+        },"genre": "posts","keywords": "protobuf","wordcount":  4235 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/protobuf\/protobuf_01_wire_format%E7%BC%96%E7%A0%81%E5%8E%9F%E7%90%86\/","datePublished": "2026-07-29T16:00:00+08:00","dateModified": "2026-07-29T16:00:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "Protobuf 的二进制编码格式：varint 变长整数、ZigZag 编码、tag 的位构成、六种 wire type、packed 打包编码，手工解码一段字节流，并由编码格式反推出各种语法规则的由来"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">Protobuf-01 从 wire format 开始：一个字节一个字节读懂编码</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2026-07-29">2026-07-29</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 4235 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 9 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-先做个实验">1. 先做个实验</a></li>
+    <li><a href="#2-tag字段号与-wire-type-的合体">2. tag：字段号与 wire type 的合体</a></li>
+    <li><a href="#3-varint变长整数编码">3. varint：变长整数编码</a>
+      <ol>
+        <li><a href="#31-负数的陷阱一个--1-要-10-个字节">3.1 负数的陷阱：一个 -1 要 10 个字节</a></li>
+        <li><a href="#32-zigzagsint32--sint64-的解法">3.2 ZigZag：sint32 / sint64 的解法</a></li>
+      </ol>
+    </li>
+    <li><a href="#4-len长度前缀类型">4. LEN：长度前缀类型</a>
+      <ol>
+        <li><a href="#41-字符串">4.1 字符串</a></li>
+        <li><a href="#42-嵌套-message">4.2 嵌套 message</a></li>
+        <li><a href="#43-packedrepeated-数值的打包">4.3 packed：repeated 数值的打包</a></li>
+      </ol>
+    </li>
+    <li><a href="#5-完整解码练习">5. 完整解码练习</a></li>
+    <li><a href="#6-于是那些规则都不用背了">6. 于是，那些规则都不用背了</a></li>
+    <li><a href="#7-一个容易踩的坑不要拿序列化结果做等价判断">7. 一个容易踩的坑：不要拿序列化结果做等价判断</a></li>
+    <li><a href="#8-小结">8. 小结</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><blockquote>
+<p>本文是 Protobuf 系列的第 1 篇。</p>
+<p>大多数教程从「怎么写 .proto」讲起，本系列反过来，<strong>先讲字节</strong>。原因很简单：不懂编码格式的人，只能把「字段号不能改」「1–15 号珍贵」「required 有害」「string 和 bytes 可以互换」当成一堆互不相干的戒律死记；懂了编码格式，它们全都是同一个事实的推论。这一篇读完，后面几篇的规则你基本可以自己推出来。</p>
+</blockquote>
+<h1 id="1-先做个实验">1. 先做个实验</h1>
+<p>定义一个最简单的消息：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-protobuf" data-lang="protobuf"><span class="line"><span class="cl"><span class="n">syntax</span> <span class="o">=</span> <span class="s">&#34;proto3&#34;</span><span class="p">;</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span><span class="kd">message</span> <span class="nc">Test1</span> <span class="p">{</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span>  <span class="kt">int32</span> <span class="n">a</span> <span class="o">=</span> <span class="mi">1</span><span class="p">;</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span><span class="p">}</span><span class="err">
+</span></span></span></code></pre></div><p>给 <code>a</code> 赋值 150，序列化，然后把结果按十六进制打印出来：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="nx">m</span> <span class="o">:=</span> <span class="o">&amp;</span><span class="nx">pb</span><span class="p">.</span><span class="nx">Test1</span><span class="p">{</span><span class="nx">A</span><span class="p">:</span> <span class="mi">150</span><span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="nx">b</span><span class="p">,</span> <span class="nx">_</span> <span class="o">:=</span> <span class="nx">proto</span><span class="p">.</span><span class="nf">Marshal</span><span class="p">(</span><span class="nx">m</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="nx">fmt</span><span class="p">.</span><span class="nf">Printf</span><span class="p">(</span><span class="s">&#34;% x\n&#34;</span><span class="p">,</span> <span class="nx">b</span><span class="p">)</span>   <span class="c1">// 08 96 01
+</span></span></span></code></pre></div><p>三个字节：<code>08 96 01</code>。</p>
+<p>对比一下 JSON 的 <code>{&quot;a&quot;:150}</code>——9 个字节，而且其中 6 个字节花在字段名和标点上。Protobuf 用 3 个字节表达了同样的信息，秘密就在这三个字节的结构里：</p>
+<pre tabindex="0"><code>08        96 01
+└─ tag    └─ value
+</code></pre><p><strong>Protobuf 的消息，本质上就是一串 <code>(tag, value)</code> 记录的顺序拼接</strong>，没有开头、没有结尾、没有分隔符、没有字段名。就这么简单。剩下的所有复杂性，都在于 tag 和 value 各自怎么编码。</p>
+<h1 id="2-tag字段号与-wire-type-的合体">2. tag：字段号与 wire type 的合体</h1>
+<p>第一个字节 <code>0x08</code> 是 tag，它是一个 varint（见下一节），解开后是一个整数，内部由两部分位拼成：</p>
+<pre tabindex="0"><code>tag = (field_number &lt;&lt; 3) | wire_type
+</code></pre><p>也就是<strong>低 3 位是 wire type，其余高位是字段号</strong>。</p>
+<p><code>0x08</code> = <code>0b0000_1000</code>：低 3 位 <code>000</code> = wire type 0，高位 <code>1</code> = 字段号 1。正好对应我们定义的 <code>int32 a = 1</code>。</p>
+<p>wire type 只有 3 位，所以最多 8 种，实际用到 6 种：</p>
+<table>
+<thead>
+<tr>
+<th>wire type</th>
+<th>名称</th>
+<th>含义</th>
+<th>对应的 .proto 类型</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td>VARINT</td>
+<td>变长整数</td>
+<td><code>int32</code> <code>int64</code> <code>uint32</code> <code>uint64</code> <code>sint32</code> <code>sint64</code> <code>bool</code> <code>enum</code></td>
+</tr>
+<tr>
+<td>1</td>
+<td>I64</td>
+<td>固定 8 字节</td>
+<td><code>fixed64</code> <code>sfixed64</code> <code>double</code></td>
+</tr>
+<tr>
+<td>2</td>
+<td>LEN</td>
+<td>长度前缀 + 内容</td>
+<td><code>string</code> <code>bytes</code> 嵌套 message、packed repeated</td>
+</tr>
+<tr>
+<td>3</td>
+<td>SGROUP</td>
+<td>group 开始</td>
+<td>已废弃</td>
+</tr>
+<tr>
+<td>4</td>
+<td>EGROUP</td>
+<td>group 结束</td>
+<td>已废弃</td>
+</tr>
+<tr>
+<td>5</td>
+<td>I32</td>
+<td>固定 4 字节</td>
+<td><code>fixed32</code> <code>sfixed32</code> <code>float</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>这张表是整个 Protobuf 兼容性规则的源头</strong>，第 6 节会回来算账。</p>
+<h1 id="3-varint变长整数编码">3. varint：变长整数编码</h1>
+<p>varint 是 Protobuf 里最核心的编码技巧：<strong>小的数字占用少的字节</strong>。</p>
+<p>规则只有两条：</p>
+<ol>
+<li>每个字节用<strong>低 7 位存数据</strong>，最高位（MSB）是<strong>延续位</strong>——为 1 表示「后面还有字节」，为 0 表示「我是最后一个字节」。</li>
+<li>字节序是<strong>低位组在前</strong>（little-endian group order）。</li>
+</ol>
+<p>手工编码 150：</p>
+<pre tabindex="0"><code>150            = 0b1001_0110
+按 7 位分组     = 0b0000001  0010110      (高位组   低位组)
+低位组在前      = 0010110  0000001
+第一组加延续位 1 = 1_0010110 = 0x96
+最后一组延续位 0 = 0_0000001 = 0x01
+结果            = 96 01
+</code></pre><p>反过来解码 <code>96 01</code>：</p>
+<pre tabindex="0"><code>0x96 = 1_0010110  → MSB=1，还有后续，取 7 位 0010110
+0x01 = 0_0000001  → MSB=0，结束，   取 7 位 0000001
+拼接（后来的在高位）= 0000001 0010110 = 0b10010110 = 150
+</code></pre><p>于是我们得到 varint 的字节数规律：</p>
+<table>
+<thead>
+<tr>
+<th>数值范围</th>
+<th>字节数</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0 ~ 127</td>
+<td>1</td>
+</tr>
+<tr>
+<td>128 ~ 16,383</td>
+<td>2</td>
+</tr>
+<tr>
+<td>16,384 ~ 2,097,151</td>
+<td>3</td>
+</tr>
+<tr>
+<td>…</td>
+<td>…</td>
+</tr>
+<tr>
+<td>最大 64 位无符号</td>
+<td>10</td>
+</tr>
+</tbody>
+</table>
+<h2 id="31-负数的陷阱一个--1-要-10-个字节">3.1 负数的陷阱：一个 -1 要 10 个字节</h2>
+<p>varint 没有对「高位全是 1」做任何优化，而负数在补码表示下高位全是 1。更糟的是，<strong><code>int32</code> 的负数会先被符号扩展成 64 位再编码</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="nx">m</span> <span class="o">:=</span> <span class="o">&amp;</span><span class="nx">pb</span><span class="p">.</span><span class="nx">Test1</span><span class="p">{</span><span class="nx">A</span><span class="p">:</span> <span class="o">-</span><span class="mi">1</span><span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="nx">b</span><span class="p">,</span> <span class="nx">_</span> <span class="o">:=</span> <span class="nx">proto</span><span class="p">.</span><span class="nf">Marshal</span><span class="p">(</span><span class="nx">m</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="nx">fmt</span><span class="p">.</span><span class="nf">Printf</span><span class="p">(</span><span class="s">&#34;% x\n&#34;</span><span class="p">,</span> <span class="nx">b</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="c1">// 08 ff ff ff ff ff ff ff ff ff 01   ← tag 1 字节 + value 整整 10 字节
+</span></span></span></code></pre></div><p>所以官方文档里那句「如果字段可能有负值，请改用 <code>sint32</code>」不是玄学：<strong><code>int32</code> 存任何负数都固定占 10 字节</strong>。</p>
+<h2 id="32-zigzagsint32--sint64-的解法">3.2 ZigZag：sint32 / sint64 的解法</h2>
+<p><code>sint32</code>、<code>sint64</code> 在 varint 之前先做一层 <strong>ZigZag 变换</strong>，把有符号数「折叠」到无符号数上，让绝对值小的数（不论正负）都映射成小的无符号数：</p>
+<pre tabindex="0"><code>sint32:  encoded = (n &lt;&lt; 1) ^ (n &gt;&gt; 31)
+sint64:  encoded = (n &lt;&lt; 1) ^ (n &gt;&gt; 63)
+解码:     n = (encoded &gt;&gt; 1) ^ -(encoded &amp; 1)
+</code></pre><p>效果就是正负交替排列（这也是 ZigZag 这个名字的来历）：</p>
+<table>
+<thead>
+<tr>
+<th>原值</th>
+<th>编码后</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td>0</td>
+</tr>
+<tr>
+<td>-1</td>
+<td>1</td>
+</tr>
+<tr>
+<td>1</td>
+<td>2</td>
+</tr>
+<tr>
+<td>-2</td>
+<td>3</td>
+</tr>
+<tr>
+<td>2</td>
+<td>4</td>
+</tr>
+<tr>
+<td>…</td>
+<td>…</td>
+</tr>
+<tr>
+<td>2147483647</td>
+<td>4294967294</td>
+</tr>
+<tr>
+<td>-2147483648</td>
+<td>4294967295</td>
+</tr>
+</tbody>
+</table>
+<p>于是 <code>-1</code> 只需 1 个字节，而不是 10 个。</p>
+<p><strong>选型结论</strong>：</p>
+<ul>
+<li>值几乎总是非负 → <code>int32</code> / <code>int64</code></li>
+<li>值可能为负、且绝对值通常较小 → <code>sint32</code> / <code>sint64</code></li>
+<li>值几乎总是很大（比如哈希、随机 ID） → <code>fixed32</code> / <code>fixed64</code>（固定长度反而更省，varint 编码大数要 5 或 10 字节）</li>
+</ul>
+<h1 id="4-len长度前缀类型">4. LEN：长度前缀类型</h1>
+<p>wire type 2 的结构是 <code>tag + 长度(varint) + 内容</code>。它承载了四类东西：<strong>字符串、字节串、嵌套 message、packed repeated 字段</strong>。</p>
+<h2 id="41-字符串">4.1 字符串</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-protobuf" data-lang="protobuf"><span class="line"><span class="cl"><span class="kd">message</span> <span class="nc">Test2</span> <span class="p">{</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span>  <span class="kt">string</span> <span class="n">b</span> <span class="o">=</span> <span class="mi">2</span><span class="p">;</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span><span class="p">}</span><span class="err">
+</span></span></span></code></pre></div><p><code>b = &quot;testing&quot;</code>：</p>
+<pre tabindex="0"><code>12          tag：(2 &lt;&lt; 3) | 2 = 18 = 0x12
+07          长度 7
+74 65 73 74 69 6e 67    &#34;testing&#34; 的 UTF-8 字节
+</code></pre><h2 id="42-嵌套-message">4.2 嵌套 message</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-protobuf" data-lang="protobuf"><span class="line"><span class="cl"><span class="kd">message</span> <span class="nc">Test3</span> <span class="p">{</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span>  <span class="n">Test1</span> <span class="n">c</span> <span class="o">=</span> <span class="mi">3</span><span class="p">;</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span><span class="p">}</span><span class="err">
+</span></span></span></code></pre></div><p><code>c.a = 150</code>：</p>
+<pre tabindex="0"><code>1a          tag：(3 &lt;&lt; 3) | 2 = 26 = 0x1a
+03          长度 3
+08 96 01    ← Test1 自己的完整编码，原封不动嵌在这里
+</code></pre><p><strong>嵌套 message 的编码就是它独立序列化的结果，前面加一个长度</strong>。这也解释了为什么把一个 message 字段的类型改成 <code>bytes</code> 在 wire 层面是兼容的——它们本来就长得一样。</p>
+<h2 id="43-packedrepeated-数值的打包">4.3 packed：repeated 数值的打包</h2>
+<p>假设：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-protobuf" data-lang="protobuf"><span class="line"><span class="cl"><span class="kd">message</span> <span class="nc">Test5</span> <span class="p">{</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span>  <span class="k">repeated</span> <span class="kt">int32</span> <span class="n">f</span> <span class="o">=</span> <span class="mi">6</span><span class="p">;</span>   <span class="c1">// proto3 中数值型 repeated 默认 packed
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span><span class="err">
+</span></span></span></code></pre></div><p>赋值 <code>[3, 270, 86942]</code>：</p>
+<pre tabindex="0"><code>32                tag：(6 &lt;&lt; 3) | 2 = 50 = 0x32   ← 注意是 LEN，不是 VARINT
+06                总长度 6 字节
+03                3
+8e 02             270
+9e a7 05          86942
+</code></pre><p>如果不 packed（proto2 的默认行为），每个元素都要重复一遍 tag：</p>
+<pre tabindex="0"><code>30 03           tag + 3
+30 8e 02        tag + 270
+30 9e a7 05     tag + 86942
+</code></pre><p>9 字节 vs 8 字节，这里差别不大；但存 100 个小整数时差别是 <strong>200 字节 vs 102 字节</strong>——省掉的正是 99 个重复的 tag。</p>
+<blockquote>
+<p><code>string</code>、<code>bytes</code>、嵌套 message 的 repeated <strong>不能</strong> packed（它们本身就是 LEN，长度不定），所以只有数值类型（含 <code>bool</code>、<code>enum</code>）才有 packed 概念。</p>
+</blockquote>
+<h1 id="5-完整解码练习">5. 完整解码练习</h1>
+<p>给你一段字节流，不看 .proto 文件，试着读出结构：</p>
+<pre tabindex="0"><code>0a 03 61 62 63 10 e8 07 1a 04 08 01 10 02 28 96 01
+</code></pre><p>一步步来：</p>
+<table>
+<thead>
+<tr>
+<th>字节</th>
+<th>解析</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>0a</code></td>
+<td>tag = 10 → 字段号 1，wire type 2（LEN）</td>
+</tr>
+<tr>
+<td><code>03 61 62 63</code></td>
+<td>长度 3，内容 <code>&quot;abc&quot;</code></td>
+</tr>
+<tr>
+<td><code>10</code></td>
+<td>tag = 16 → 字段号 2，wire type 0（VARINT）</td>
+</tr>
+<tr>
+<td><code>e8 07</code></td>
+<td>varint = 0x68 + (0x07 &laquo; 7) = 104 + 896 = <strong>1000</strong></td>
+</tr>
+<tr>
+<td><code>1a</code></td>
+<td>tag = 26 → 字段号 3，wire type 2（LEN）</td>
+</tr>
+<tr>
+<td><code>04 08 01 10 02</code></td>
+<td>长度 4，是个嵌套 message：字段 1 = 1，字段 2 = 2</td>
+</tr>
+<tr>
+<td><code>28</code></td>
+<td>tag = 40 → 字段号 5，wire type 0</td>
+</tr>
+<tr>
+<td><code>96 01</code></td>
+<td>varint = <strong>150</strong></td>
+</tr>
+</tbody>
+</table>
+<p>所以原始定义大约长这样（注意字段 4 不存在——可能被删了，也可能只是没赋值，<strong>从字节流无法区分</strong>）：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-protobuf" data-lang="protobuf"><span class="line"><span class="cl"><span class="kd">message</span> <span class="nc">Demo</span> <span class="p">{</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span>  <span class="kt">string</span> <span class="n">name</span> <span class="o">=</span> <span class="mi">1</span><span class="p">;</span>      <span class="c1">// &#34;abc&#34;
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>  <span class="kt">int32</span> <span class="n">count</span> <span class="o">=</span> <span class="mi">2</span><span class="p">;</span>      <span class="c1">// 1000
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>  <span class="n">Inner</span> <span class="n">inner</span> <span class="o">=</span> <span class="mi">3</span><span class="p">;</span>      <span class="c1">// {1, 2}
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>  <span class="kt">int32</span> <span class="n">extra</span> <span class="o">=</span> <span class="mi">5</span><span class="p">;</span>      <span class="c1">// 150
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span><span class="err">
+</span></span></span></code></pre></div><p>不想手算的话，官方工具可以直接干这件事，<strong>连 .proto 文件都不需要</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 十六进制转二进制文件</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;0a0361626310e8071a040801100228 9601&#34;</span> <span class="p">|</span> tr -d <span class="s1">&#39; &#39;</span> <span class="p">|</span> xxd -r -p &gt; msg.bin
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 无需 schema，直接猜结构</span>
+</span></span><span class="line"><span class="cl">protoc --decode_raw &lt; msg.bin
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 有 schema 时，解出字段名</span>
+</span></span><span class="line"><span class="cl">protoc --decode<span class="o">=</span>Demo demo.proto &lt; msg.bin
+</span></span></code></pre></div><p>更专业的检视工具是官方的 <strong>protoscope</strong>，能双向转换字节流和可读文本：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">go install github.com/protocolbuffers/protoscope/cmd/protoscope@latest
+</span></span><span class="line"><span class="cl">protoscope msg.bin
+</span></span></code></pre></div><h1 id="6-于是那些规则都不用背了">6. 于是，那些规则都不用背了</h1>
+<p>现在回头看常见的 Protobuf 规则，它们全部是上面这套编码的直接推论。</p>
+<p><strong>① 为什么字段号一旦使用就不能改？</strong>
+因为字节流里根本没有字段名，<strong>字段号就是字段唯一的身份</strong>。改了号，旧数据里的那个字段对新代码来说就变成了「一个不认识的字段」。</p>
+<p><strong>② 为什么改字段名是安全的？</strong>
+同上——名字不参与二进制编码。但要注意：<strong>JSON 和 text format 是用名字的</strong>，所以改名对这两种格式是破坏性的，对外 API 要谨慎。</p>
+<p><strong>③ 为什么字段号 1–15 要留给高频字段？</strong>
+tag 本身是 varint。字段号 15 时 tag 最大是 <code>15 &lt;&lt; 3 | 7 = 127</code>，刚好在单字节 varint 的上限内；字段号 16 时 tag ≥ 128，就要占 2 个字节了。<strong>每个高频字段每条消息省 1 字节</strong>，量大时很可观。</p>
+<p><strong>④ 为什么最大字段号是 2^29 - 1？</strong>
+tag 作为 32 位 varint 最多能表达 32 位，低 3 位被 wire type 占掉，剩下 29 位给字段号 → 最大 <code>2^29 - 1 = 536,870,911</code>。</p>
+<p><strong>⑤ 为什么解析器能跳过不认识的字段（向前兼容的根基）？</strong>
+因为 tag 里带着 wire type，解析器即使不认识字段号，也<strong>知道该跳过多少字节</strong>：VARINT 一直读到 MSB=0，LEN 读出长度直接跳，I32/I64 固定跳 4/8 字节。正因如此，新版发的数据老版能读，老版转发时还能把这些未知字段原样带回去（proto3 从 3.5 起恢复了这一行为）。</p>
+<p><strong>⑥ 为什么 <code>int32</code> <code>int64</code> <code>uint32</code> <code>uint64</code> <code>bool</code> <code>enum</code> 之间可以互换？</strong>
+它们共用 wire type 0，字节流完全同构。<strong>但要小心值域截断</strong>：把 <code>int64</code> 的大值读成 <code>int32</code>，行为等同于 C++ 里的强制转换（高位被砍掉）。</p>
+<p><strong>⑦ 为什么 <code>sint32</code> 不能和 <code>int32</code> 互换？</strong>
+虽然都是 wire type 0，但 sint 多了一层 ZigZag。同样的字节，用 <code>int32</code> 读到 2，用 <code>sint32</code> 读到 1——<strong>不报错，静默读出错误的值</strong>，这类 bug 极难排查。</p>
+<p><strong>⑧ 为什么 <code>string</code> / <code>bytes</code> / 嵌套 message 之间兼容？</strong>
+都是 LEN。<code>string</code> 换 <code>bytes</code> 总是安全；<code>bytes</code> 换 <code>string</code> 要求内容是合法 UTF-8；嵌套 message 换 <code>bytes</code> 得到的就是它的序列化结果。</p>
+<p><strong>⑨ 为什么同一个非 repeated 字段重复出现不报错？</strong>
+解析器就是顺序扫描：标量字段<strong>后来的覆盖先前的</strong>（last-one-wins），message 字段则<strong>递归合并</strong>。这正是「<code>string</code>/<code>bytes</code>/message 的 singular ↔ repeated 可以互换」的原因——多个值来了，取最后一个即可。</p>
+<p><strong>⑩ 那为什么数值类型的 singular ↔ repeated 不安全？</strong>
+因为 proto3 里数值型 repeated <strong>默认 packed</strong>，wire type 是 2；而 singular 数值是 wire type 0。两者对不上，解析直接失败（某些库会报 <code>expects wire type 0 but found 2</code>）。</p>
+<p><strong>⑪ 为什么 <code>map</code> 和 <code>repeated</code> entry message 兼容？</strong>
+因为 map 只是语法糖，编译器把它展开成 <code>repeated MapEntry</code>，其中 <code>key = 1</code>、<code>value = 2</code>。字节层面二者完全一致。</p>
+<p><strong>⑫ 为什么 <code>required</code> 是个错误的设计？</strong>
+序列化格式本身完全没有「必填」的表达方式——<code>required</code> 纯粹是运行时的校验逻辑。而校验规则一旦写进 schema 就无法安全地改（放宽会让旧版拒绝解析，收紧会让旧数据全部失效），所以 proto3 干脆移除了它，把校验交回业务层。</p>
+<h1 id="7-一个容易踩的坑不要拿序列化结果做等价判断">7. 一个容易踩的坑：不要拿序列化结果做等价判断</h1>
+<p>看到这里你可能会想：既然序列化是确定的，那比较两个消息是不是相等，直接比字节不就行了？</p>
+<p><strong>不行。</strong> Protobuf 明确<strong>不保证</strong>序列化字节的稳定性：</p>
+<ul>
+<li>字段的写出顺序不作保证（实现通常按字段号升序，但这是实现细节而非规范）；</li>
+<li><strong>map 的迭代顺序是随机的</strong>，Go 的 map 遍历顺序每次都不同；</li>
+<li>未知字段会被原样保留并透传，不同来源的消息可能带着不同的未知字段；</li>
+<li>同一个值的 varint 编码在极端情况下可以有冗余表示。</li>
+</ul>
+<p>所以：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// ❌ 错：既可能漏判也可能误判
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">b1</span><span class="p">,</span> <span class="nx">_</span> <span class="o">:=</span> <span class="nx">proto</span><span class="p">.</span><span class="nf">Marshal</span><span class="p">(</span><span class="nx">m1</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="nx">b2</span><span class="p">,</span> <span class="nx">_</span> <span class="o">:=</span> <span class="nx">proto</span><span class="p">.</span><span class="nf">Marshal</span><span class="p">(</span><span class="nx">m2</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="nx">same</span> <span class="o">:=</span> <span class="nx">bytes</span><span class="p">.</span><span class="nf">Equal</span><span class="p">(</span><span class="nx">b1</span><span class="p">,</span> <span class="nx">b2</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// ✅ 对：用语义比较
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">same</span> <span class="o">:=</span> <span class="nx">proto</span><span class="p">.</span><span class="nf">Equal</span><span class="p">(</span><span class="nx">m1</span><span class="p">,</span> <span class="nx">m2</span><span class="p">)</span>
+</span></span></code></pre></div><p>同理，<strong>不要对「重新序列化的结果」做签名或哈希校验</strong>。Go 里虽然有确定性选项：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="nx">b</span><span class="p">,</span> <span class="nx">_</span> <span class="o">:=</span> <span class="nx">proto</span><span class="p">.</span><span class="nx">MarshalOptions</span><span class="p">{</span><span class="nx">Deterministic</span><span class="p">:</span> <span class="kc">true</span><span class="p">}.</span><span class="nf">Marshal</span><span class="p">(</span><span class="nx">m</span><span class="p">)</span>
+</span></span></code></pre></div><p>但它只保证同一个二进制版本内 map 顺序稳定，官方明确<strong>不承诺跨语言、跨版本的字节一致</strong>。需要签名时，请对<strong>收到的原始字节</strong>签名，而不是解析后重新编码的字节。</p>
+<h1 id="8-小结">8. 小结</h1>
+<ul>
+<li>Protobuf 消息 = 一串 <code>(tag, value)</code>，没有字段名、没有分隔符，这是它比 JSON 小的根本原因。</li>
+<li><code>tag = (字段号 &lt;&lt; 3) | wire type</code>，低 3 位决定「该怎么读接下来的字节」，也决定了「不认识的字段该跳过多少字节」。</li>
+<li>六种 wire type 里真正常用的是三种：VARINT(0)、LEN(2)、I32/I64(5/1)。<strong>同 wire type 的类型之间大多可以安全互换，跨 wire type 一律不行。</strong></li>
+<li>varint 让小整数省空间，代价是负数极其浪费（<code>int32</code> 存负数固定 10 字节），<code>sint</code> 用 ZigZag 解决这个问题。</li>
+<li>proto3 的数值型 repeated 默认 packed，省掉重复 tag，同时也让它和 singular 数值不再兼容。</li>
+<li>序列化字节<strong>不是</strong>规范化表示，判等用 <code>proto.Equal</code>，签名用原始字节。</li>
+</ul>
+<p>下一篇进入语法层，把 proto3 的完整写法过一遍——你会发现大部分规则都在本篇有了解释。</p>
+<hr>
+<p><strong>系列目录</strong></p>
+<ol>
+<li><strong>从 wire format 开始：一个字节一个字节读懂编码</strong>（本篇）</li>
+<li><a href="https://xingliuhua.github.io/posts/protobuf/protobuf_02_proto3%E8%AF%AD%E6%B3%95%E5%AE%8C%E5%85%A8%E6%8C%87%E5%8D%97/" rel="">proto3 语法完全指南</a></li>
+<li><a href="https://xingliuhua.github.io/posts/protobuf/protobuf_03_%E5%AD%98%E5%9C%A8%E6%80%A7presence%E8%AF%A6%E8%A7%A3/" rel="">存在性 presence：Protobuf 最难的一章</a></li>
+<li><a href="https://xingliuhua.github.io/posts/protobuf/protobuf_04_schema%E6%BC%94%E8%BF%9B%E4%B8%8E%E5%85%BC%E5%AE%B9%E6%80%A7/" rel="">schema 演进与兼容性：哪些改动会炸</a></li>
+<li><a href="https://xingliuhua.github.io/posts/protobuf/protobuf_05_WellKnownTypes%E4%B8%8EJSON%E6%98%A0%E5%B0%84/" rel="">Well-Known Types 与 JSON 映射</a></li>
+<li><a href="https://xingliuhua.github.io/posts/protobuf/protobuf_06_Go%E5%B7%A5%E7%A8%8B%E5%8C%96%E5%AE%9E%E8%B7%B5/" rel="">Go 工程化实践：buf 工具链与 API 用法</a></li>
+<li><a href="https://xingliuhua.github.io/posts/protobuf/protobuf_07_proto2%E4%B8%8Eeditions/" rel="">proto2 与 Protobuf Editions</a></li>
+</ol>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2026-07-29</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/protobuf/">protobuf</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/protobuf/protobuf_02_proto3%E8%AF%AD%E6%B3%95%E5%AE%8C%E5%85%A8%E6%8C%87%E5%8D%97/" class="prev" rel="prev" title="Protobuf-02 proto3 语法完全指南"><i class="fas fa-angle-left fa-fw"></i>Protobuf-02 proto3 语法完全指南</a>
+            <a href="/posts/nginx/nginx_14_%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98%E6%B1%87%E6%80%BB/" class="next" rel="next" title="Nginx-14 高频面试题汇总">Nginx-14 高频面试题汇总<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2026-07-29T16:00:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Protobuf-01 从 wire format 开始：一个字节一个字节读懂编码"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

@@ -1,0 +1,1610 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>Redis-08 事务、Lua 脚本与 Pipeline - xingliuhua博客</title><meta name="Description" content="MULTI/EXEC/WATCH 与乐观锁、Redis 事务的 ACID 分析与不支持回滚的原因、Lua 脚本原子性与工程实践、Function 持久化脚本、Pipeline 对比选型"><meta property="og:title" content="Redis-08 事务、Lua 脚本与 Pipeline" />
+<meta property="og:description" content="MULTI/EXEC/WATCH 与乐观锁、Redis 事务的 ACID 分析与不支持回滚的原因、Lua 脚本原子性与工程实践、Function 持久化脚本、Pipeline 对比选型" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/redis/redis_08_%E4%BA%8B%E5%8A%A1_Lua%E8%84%9A%E6%9C%AC%E4%B8%8EPipeline/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2025-11-01T13:00:00+08:00" />
+<meta property="article:modified_time" content="2025-11-01T13:00:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="Redis-08 事务、Lua 脚本与 Pipeline"/>
+<meta name="twitter:description" content="MULTI/EXEC/WATCH 与乐观锁、Redis 事务的 ACID 分析与不支持回滚的原因、Lua 脚本原子性与工程实践、Function 持久化脚本、Pipeline 对比选型"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/redis/redis_08_%E4%BA%8B%E5%8A%A1_Lua%E8%84%9A%E6%9C%AC%E4%B8%8EPipeline/" /><link rel="prev" href="https://xingliuhua.github.io/posts/redis/redis_09_%E5%8F%91%E5%B8%83%E8%AE%A2%E9%98%85%E4%B8%8E%E6%B6%88%E6%81%AF%E9%98%9F%E5%88%97/" /><link rel="next" href="https://xingliuhua.github.io/posts/redis/redis_07_%E6%8C%81%E4%B9%85%E5%8C%96RDB%E4%B8%8EAOF/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Redis-08 事务、Lua 脚本与 Pipeline",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/redis\/redis_08_%E4%BA%8B%E5%8A%A1_Lua%E8%84%9A%E6%9C%AC%E4%B8%8EPipeline\/"
+        },"genre": "posts","keywords": "redis","wordcount":  17196 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/redis\/redis_08_%E4%BA%8B%E5%8A%A1_Lua%E8%84%9A%E6%9C%AC%E4%B8%8EPipeline\/","datePublished": "2025-11-01T13:00:00+08:00","dateModified": "2025-11-01T13:00:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "MULTI/EXEC/WATCH 与乐观锁、Redis 事务的 ACID 分析与不支持回滚的原因、Lua 脚本原子性与工程实践、Function 持久化脚本、Pipeline 对比选型"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">Redis-08 事务、Lua 脚本与 Pipeline</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2025-11-01">2025-11-01</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 17196 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 35 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-redis-事务">1. Redis 事务</a>
+      <ol>
+        <li><a href="#11-基本命令">1.1 基本命令</a></li>
+        <li><a href="#12-一个基本例子">1.2 一个基本例子</a></li>
+        <li><a href="#13-实现原理">1.3 实现原理</a></li>
+        <li><a href="#14-事务不可嵌套">1.4 事务不可嵌套</a></li>
+        <li><a href="#15-两类错误的处理完全不同">1.5 两类错误的处理完全不同</a>
+          <ol>
+            <li><a href="#错误一入队时的错误语法错误--命令不存在">错误一：入队时的错误（语法错误 / 命令不存在）</a></li>
+            <li><a href="#错误二执行时的错误类型错误--运行时错误">错误二：执行时的错误（类型错误 / 运行时错误）</a></li>
+          </ol>
+        </li>
+        <li><a href="#16-为什么-redis-事务不支持回滚">1.6 为什么 Redis 事务不支持回滚</a></li>
+        <li><a href="#17-watch-与乐观锁">1.7 WATCH 与乐观锁</a>
+          <ol>
+            <li><a href="#用法">用法</a></li>
+            <li><a href="#完整的重试逻辑go-伪代码">完整的重试逻辑（Go 伪代码）</a></li>
+            <li><a href="#watch-的实现原理">WATCH 的实现原理</a></li>
+            <li><a href="#watch-的适用场景与局限">WATCH 的适用场景与局限</a></li>
+          </ol>
+        </li>
+      </ol>
+    </li>
+    <li><a href="#2-redis-事务的-acid-分析">2. Redis 事务的 ACID 分析</a>
+      <ol>
+        <li><a href="#21-原子性atomicity-部分满足">2.1 原子性（Atomicity）—— 部分满足</a></li>
+        <li><a href="#22-一致性consistency-满足">2.2 一致性（Consistency）—— 满足</a></li>
+        <li><a href="#23-隔离性isolation-满足且是最高级别">2.3 隔离性（Isolation）—— 满足（且是最高级别）</a></li>
+        <li><a href="#24-持久性durability-不满足">2.4 持久性（Durability）—— 不满足</a></li>
+        <li><a href="#25-acid-总结表">2.5 ACID 总结表</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-lua-脚本">3. Lua 脚本</a>
+      <ol>
+        <li><a href="#31-为什么用-lua">3.1 为什么用 Lua</a></li>
+        <li><a href="#32-基本命令">3.2 基本命令</a></li>
+        <li><a href="#33-第一个例子">3.3 第一个例子</a></li>
+        <li><a href="#34-keys-和-argv-的区别重要">3.4 KEYS 和 ARGV 的区别（重要）</a></li>
+        <li><a href="#35-rediscall-与-redispcall">3.5 redis.call 与 redis.pcall</a></li>
+        <li><a href="#36-类型转换规则">3.6 类型转换规则</a>
+          <ol>
+            <li><a href="#redis--lua">Redis → Lua</a></li>
+            <li><a href="#lua--redis">Lua → Redis</a></li>
+            <li><a href="#四个必知的坑">四个必知的坑</a></li>
+          </ol>
+        </li>
+        <li><a href="#37-evalsha-与脚本缓存">3.7 EVALSHA 与脚本缓存</a></li>
+        <li><a href="#38-脚本的复制方式">3.8 脚本的复制方式</a></li>
+        <li><a href="#39-脚本的阻塞风险">3.9 脚本的阻塞风险</a>
+          <ol>
+            <li><a href="#超时与救援">超时与救援</a></li>
+          </ol>
+        </li>
+        <li><a href="#310-实用脚本示例">3.10 实用脚本示例</a></li>
+        <li><a href="#311-脚本里可用的辅助-api">3.11 脚本里可用的辅助 API</a></li>
+        <li><a href="#312-内置库的限制">3.12 内置库的限制</a></li>
+      </ol>
+    </li>
+    <li><a href="#4-function70">4. Function（7.0+）</a>
+      <ol>
+        <li><a href="#41-eval-的痛点">4.1 EVAL 的痛点</a></li>
+        <li><a href="#42-function-的改进">4.2 Function 的改进</a></li>
+        <li><a href="#43-用法">4.3 用法</a></li>
+        <li><a href="#44-完整例子">4.4 完整例子</a></li>
+        <li><a href="#45-脚本标志flags">4.5 脚本标志（flags）</a></li>
+        <li><a href="#46-什么时候用-function">4.6 什么时候用 Function</a></li>
+      </ol>
+    </li>
+    <li><a href="#5-pipeline-与四种方案的选型">5. Pipeline 与四种方案的选型</a>
+      <ol>
+        <li><a href="#51-四种批量原子方案对比">5.1 四种批量/原子方案对比</a></li>
+        <li><a href="#52-决策树">5.2 决策树</a></li>
+        <li><a href="#53-为什么-lua-通常优于-multiexec">5.3 为什么 Lua 通常优于 MULTI/EXEC</a></li>
+        <li><a href="#54-pipeline-的使用注意补充">5.4 Pipeline 的使用注意（补充）</a></li>
+      </ol>
+    </li>
+    <li><a href="#6-高频面试题">6. 高频面试题</a></li>
+    <li><a href="#小结">小结</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><h1 id="1-redis-事务">1. Redis 事务</h1>
+<h2 id="11-基本命令">1.1 基本命令</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">MULTI               <span class="c1"># 开启事务，之后的命令进入队列</span>
+</span></span><span class="line"><span class="cl">... 命令 ...         <span class="c1"># 每条命令返回 QUEUED，不执行</span>
+</span></span><span class="line"><span class="cl">EXEC                <span class="c1"># 执行队列里的所有命令，返回结果数组</span>
+</span></span><span class="line"><span class="cl">DISCARD             <span class="c1"># 放弃事务，清空队列</span>
+</span></span><span class="line"><span class="cl">WATCH key <span class="o">[</span>key...<span class="o">]</span>  <span class="c1"># 监视 key，如果 EXEC 前它被改动，事务就失败</span>
+</span></span><span class="line"><span class="cl">UNWATCH             <span class="c1"># 取消所有监视</span>
+</span></span></code></pre></div><h2 id="12-一个基本例子">1.2 一个基本例子</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">127.0.0.1:6379&gt; MULTI
+</span></span><span class="line"><span class="cl">OK
+</span></span><span class="line"><span class="cl">127.0.0.1:6379<span class="o">(</span>TX<span class="o">)</span>&gt; SET account:A <span class="m">100</span>
+</span></span><span class="line"><span class="cl">QUEUED
+</span></span><span class="line"><span class="cl">127.0.0.1:6379<span class="o">(</span>TX<span class="o">)</span>&gt; SET account:B <span class="m">200</span>
+</span></span><span class="line"><span class="cl">QUEUED
+</span></span><span class="line"><span class="cl">127.0.0.1:6379<span class="o">(</span>TX<span class="o">)</span>&gt; INCRBY account:A -50
+</span></span><span class="line"><span class="cl">QUEUED
+</span></span><span class="line"><span class="cl">127.0.0.1:6379<span class="o">(</span>TX<span class="o">)</span>&gt; INCRBY account:B <span class="m">50</span>
+</span></span><span class="line"><span class="cl">QUEUED
+</span></span><span class="line"><span class="cl">127.0.0.1:6379<span class="o">(</span>TX<span class="o">)</span>&gt; EXEC
+</span></span><span class="line"><span class="cl">1<span class="o">)</span> OK
+</span></span><span class="line"><span class="cl">2<span class="o">)</span> OK
+</span></span><span class="line"><span class="cl">3<span class="o">)</span> <span class="o">(</span>integer<span class="o">)</span> <span class="m">50</span>
+</span></span><span class="line"><span class="cl">4<span class="o">)</span> <span class="o">(</span>integer<span class="o">)</span> <span class="m">250</span>
+</span></span></code></pre></div><p>注意 <code>redis-cli</code> 的提示符变成了 <code>(TX)</code>，表示当前处于事务上下文中。</p>
+<h2 id="13-实现原理">1.3 实现原理</h2>
+<p>事务的实现出乎意料地简单：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="k">typedef</span> <span class="k">struct</span> <span class="n">client</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="p">...</span>
+</span></span><span class="line"><span class="cl">    <span class="n">multiState</span> <span class="n">mstate</span><span class="p">;</span>      <span class="c1">// 事务状态
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="kt">int</span> <span class="n">flags</span><span class="p">;</span>              <span class="c1">// CLIENT_MULTI / CLIENT_DIRTY_CAS / CLIENT_DIRTY_EXEC
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">list</span> <span class="o">*</span><span class="n">watched_keys</span><span class="p">;</span>     <span class="c1">// 该客户端监视的 key 列表
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span> <span class="n">client</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">typedef</span> <span class="k">struct</span> <span class="n">multiState</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="n">multiCmd</span> <span class="o">*</span><span class="n">commands</span><span class="p">;</span>     <span class="c1">// 命令队列（数组）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="kt">int</span> <span class="n">count</span><span class="p">;</span>              <span class="c1">// 队列里的命令数
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="p">...</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span> <span class="n">multiState</span><span class="p">;</span>
+</span></span></code></pre></div><p><strong>流程</strong>：</p>
+<pre tabindex="0"><code>1. MULTI：给 client 打上 CLIENT_MULTI 标志
+
+2. 后续每条命令进入 processCommand 后：
+   ├─ 发现有 CLIENT_MULTI 标志
+   ├─ 【先做基本检查】：命令是否存在、参数个数是否正确
+   │   ├─ 检查失败 → 返回错误 + 给 client 打上 CLIENT_DIRTY_EXEC 标志
+   │   └─ 检查通过 → 把命令追加到 mstate.commands 队列，返回 QUEUED
+   └─ 例外：MULTI/EXEC/DISCARD/WATCH/RESET/QUIT 会被【立即执行】而不入队
+
+3. EXEC：
+   ├─ 如果有 CLIENT_DIRTY_EXEC 标志（入队时有命令语法错误）
+   │   → 【拒绝执行整个事务】，返回 EXECABORT，清空队列
+   ├─ 如果有 CLIENT_DIRTY_CAS 标志（WATCH 的 key 被改过）
+   │   → 【放弃事务】，返回 nil
+   └─ 否则：【连续地、不被打断地】逐条执行队列里的所有命令，
+      把每条的结果收集成一个数组返回
+</code></pre><p><strong>关键点：事务的&quot;原子性&quot;来自单线程</strong>——<code>EXEC</code> 是一条命令，它在执行期间不会被其他客户端的命令打断。所以整个队列是&quot;连续执行&quot;的。</p>
+<h2 id="14-事务不可嵌套">1.4 事务不可嵌套</h2>
+<p><strong>Redis 的事务不支持嵌套。</strong> 已经处于事务状态的客户端再发一次 <code>MULTI</code>，服务端只是返回一个错误，然后继续等待命令入队：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">127.0.0.1:6379&gt; MULTI
+</span></span><span class="line"><span class="cl">OK
+</span></span><span class="line"><span class="cl">127.0.0.1:6379<span class="o">(</span>TX<span class="o">)</span>&gt; SET k1 v1
+</span></span><span class="line"><span class="cl">QUEUED
+</span></span><span class="line"><span class="cl">127.0.0.1:6379<span class="o">(</span>TX<span class="o">)</span>&gt; MULTI
+</span></span><span class="line"><span class="cl"><span class="o">(</span>error<span class="o">)</span> ERR MULTI calls can not be nested
+</span></span><span class="line"><span class="cl">127.0.0.1:6379<span class="o">(</span>TX<span class="o">)</span>&gt; SET k2 v2
+</span></span><span class="line"><span class="cl">QUEUED
+</span></span><span class="line"><span class="cl">127.0.0.1:6379<span class="o">(</span>TX<span class="o">)</span>&gt; EXEC          ← 【注意】事务本身没有被破坏
+</span></span><span class="line"><span class="cl">1<span class="o">)</span> OK
+</span></span><span class="line"><span class="cl">2<span class="o">)</span> OK
+</span></span></code></pre></div><p><strong>注意这个错误的特殊性</strong>：它<strong>不会</strong>给客户端打上 <code>CLIENT_DIRTY_EXEC</code> 标志，所以<strong>不会导致整个事务被放弃</strong>（和&quot;命令不存在&quot;这类入队错误不同）。事务照常执行，只是那次多余的 <code>MULTI</code> 被忽略了。</p>
+<p><strong>实践含义</strong>：如果用了封装了事务的框架/中间件，要小心&quot;外层已经开了事务、内层代码又开一次&quot;的情况——不会报致命错误，但内层代码可能误以为自己开了一个独立的事务，实际上它的命令被合并进了外层事务，<code>EXEC</code> 的时机也不由它控制。</p>
+<p>相关的还有 <code>RESET</code> 命令（6.2+），它能把连接彻底重置回初始状态（退出事务、取消订阅、清空 WATCH、重置认证），排查连接状态混乱时很有用：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">127.0.0.1:6379<span class="o">(</span>TX<span class="o">)</span>&gt; RESET
+</span></span><span class="line"><span class="cl">+RESET
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt;                   ← 已退出事务状态
+</span></span></code></pre></div><h2 id="15-两类错误的处理完全不同">1.5 两类错误的处理完全不同</h2>
+<p>这是<strong>面试必考</strong>的细节。</p>
+<h3 id="错误一入队时的错误语法错误--命令不存在">错误一：入队时的错误（语法错误 / 命令不存在）</h3>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">127.0.0.1:6379&gt; MULTI
+</span></span><span class="line"><span class="cl">OK
+</span></span><span class="line"><span class="cl">127.0.0.1:6379<span class="o">(</span>TX<span class="o">)</span>&gt; SET k1 v1
+</span></span><span class="line"><span class="cl">QUEUED
+</span></span><span class="line"><span class="cl">127.0.0.1:6379<span class="o">(</span>TX<span class="o">)</span>&gt; WRONGCOMMAND k2 v2
+</span></span><span class="line"><span class="cl"><span class="o">(</span>error<span class="o">)</span> ERR unknown <span class="nb">command</span> <span class="s1">&#39;WRONGCOMMAND&#39;</span>      ← 入队时就报错
+</span></span><span class="line"><span class="cl">127.0.0.1:6379<span class="o">(</span>TX<span class="o">)</span>&gt; SET k3 v3
+</span></span><span class="line"><span class="cl">QUEUED
+</span></span><span class="line"><span class="cl">127.0.0.1:6379<span class="o">(</span>TX<span class="o">)</span>&gt; EXEC
+</span></span><span class="line"><span class="cl"><span class="o">(</span>error<span class="o">)</span> EXECABORT Transaction discarded because of previous errors.
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; GET k1
+</span></span><span class="line"><span class="cl"><span class="o">(</span>nil<span class="o">)</span>        ← k1 也没有被设置！整个事务被放弃
+</span></span></code></pre></div><p><strong>结论：入队时的错误会导致整个事务被放弃，一条命令都不执行。</strong></p>
+<p>这类错误包括：命令不存在、参数个数不对。因为 Redis 在入队时就能检测出来。</p>
+<h3 id="错误二执行时的错误类型错误--运行时错误">错误二：执行时的错误（类型错误 / 运行时错误）</h3>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">127.0.0.1:6379&gt; SET str <span class="s2">&#34;hello&#34;</span>
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; MULTI
+</span></span><span class="line"><span class="cl">OK
+</span></span><span class="line"><span class="cl">127.0.0.1:6379<span class="o">(</span>TX<span class="o">)</span>&gt; SET k1 v1
+</span></span><span class="line"><span class="cl">QUEUED
+</span></span><span class="line"><span class="cl">127.0.0.1:6379<span class="o">(</span>TX<span class="o">)</span>&gt; LPUSH str a        ← 语法完全正确，能入队
+</span></span><span class="line"><span class="cl">QUEUED
+</span></span><span class="line"><span class="cl">127.0.0.1:6379<span class="o">(</span>TX<span class="o">)</span>&gt; SET k3 v3
+</span></span><span class="line"><span class="cl">QUEUED
+</span></span><span class="line"><span class="cl">127.0.0.1:6379<span class="o">(</span>TX<span class="o">)</span>&gt; EXEC
+</span></span><span class="line"><span class="cl">1<span class="o">)</span> OK                                                          ← k1 成功
+</span></span><span class="line"><span class="cl">2<span class="o">)</span> <span class="o">(</span>error<span class="o">)</span> WRONGTYPE Operation against a key holding...        ← 这条失败
+</span></span><span class="line"><span class="cl">3<span class="o">)</span> OK                                                          ← k3 【仍然成功】
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; MGET k1 k3
+</span></span><span class="line"><span class="cl">1<span class="o">)</span> <span class="s2">&#34;v1&#34;</span>
+</span></span><span class="line"><span class="cl">2<span class="o">)</span> <span class="s2">&#34;v3&#34;</span>      ← 都在！没有回滚
+</span></span></code></pre></div><p><strong>结论：执行时的错误只影响那一条命令，其他命令继续执行，且已执行的命令不会回滚。</strong></p>
+<p>这就是**&ldquo;Redis 事务不支持回滚&rdquo;**的具体表现。</p>
+<h2 id="16-为什么-redis-事务不支持回滚">1.6 为什么 Redis 事务不支持回滚</h2>
+<p>这是高频面试题，Redis 官方文档给出了明确的理由：</p>
+<p><strong>（1）Redis 认为只有&quot;编程错误&quot;才会导致命令执行失败</strong></p>
+<p>执行时错误的原因基本只有一种：<strong>你对一个 key 用了它不支持的命令</strong>（比如对 string 用 <code>LPUSH</code>）。这种错误应该在<strong>开发和测试阶段</strong>就被发现，是程序的 bug，而不是生产环境的正常业务状态。</p>
+<p>对比关系型数据库：SQL 事务需要回滚，是因为失败原因可能是<strong>正常的业务约束</strong>（唯一键冲突、外键约束、check 约束、死锁）。这些是运行时才能确定的合法失败，必须回滚。</p>
+<p>Redis 没有这些约束机制，所以&quot;失败&quot;几乎必然意味着代码写错了。</p>
+<p><strong>（2）不支持回滚让 Redis 内部实现更简单、更快</strong></p>
+<p>支持回滚意味着要为每条命令记录 undo 信息（旧值），这需要：</p>
+<ul>
+<li>额外的内存（保存旧值，如果是个大集合就很可怕）；</li>
+<li>额外的 CPU（拷贝旧值）；</li>
+<li>复杂的实现（每种数据结构都要实现自己的 undo 逻辑）。</li>
+</ul>
+<p>antirez 的观点是：为了处理一种&quot;本该在开发阶段消除的错误&quot;，让所有正常操作都付出性能代价，不值得。</p>
+<p><strong>（3）AOF 的&quot;后写日志&quot;机制也不支持回滚</strong></p>
+<p>第 7 篇讲过，Redis 的 AOF 是<strong>命令执行成功后才记录</strong>的（不是 WAL）。没有 undo log，从机制上就没法回滚。</p>
+<p><strong>记住这个结论</strong>：Redis 事务保证的是「<strong>这批命令会被连续地、不被其他客户端打断地执行完</strong>」，而不是「<strong>要么全成功要么全失败</strong>」。</p>
+<h2 id="17-watch-与乐观锁">1.7 WATCH 与乐观锁</h2>
+<p><code>MULTI/EXEC</code> 只保证命令连续执行，但<strong>无法实现&quot;读取-判断-写入&quot;的原子操作</strong>（因为事务里的命令看不到彼此的结果）。</p>
+<p>比如&quot;如果余额足够就扣款&quot;：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 错误的想法</span>
+</span></span><span class="line"><span class="cl">MULTI
+</span></span><span class="line"><span class="cl">GET balance          <span class="c1"># QUEUED，返回不了实际值，没法判断</span>
+</span></span><span class="line"><span class="cl">DECRBY balance <span class="m">100</span>   <span class="c1"># 无法根据上面的值决定要不要执行</span>
+</span></span><span class="line"><span class="cl">EXEC
+</span></span></code></pre></div><p><code>WATCH</code> 就是为了解决这个问题，它实现了一种<strong>乐观锁（CAS，Check-And-Set）</strong>。</p>
+<h3 id="用法">用法</h3>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">WATCH balance                        <span class="c1"># 1. 监视 key</span>
+</span></span><span class="line"><span class="cl"><span class="nv">val</span><span class="o">=</span><span class="k">$(</span>GET balance<span class="k">)</span>                   <span class="c1"># 2. 读取当前值（在事务外读）</span>
+</span></span><span class="line"><span class="cl"><span class="k">if</span> <span class="o">[</span> <span class="nv">$val</span> -ge <span class="m">100</span> <span class="o">]</span><span class="p">;</span> <span class="k">then</span>            <span class="c1"># 3. 在客户端做业务判断</span>
+</span></span><span class="line"><span class="cl">    MULTI
+</span></span><span class="line"><span class="cl">    DECRBY balance <span class="m">100</span>
+</span></span><span class="line"><span class="cl">    EXEC                             <span class="c1"># 4. 如果 balance 在 WATCH 后被别人改过，</span>
+</span></span><span class="line"><span class="cl">                                     <span class="c1">#    EXEC 返回 nil，事务不执行</span>
+</span></span><span class="line"><span class="cl"><span class="k">else</span>
+</span></span><span class="line"><span class="cl">    UNWATCH
+</span></span><span class="line"><span class="cl"><span class="k">fi</span>
+</span></span></code></pre></div><p>如果 <code>EXEC</code> 返回 <code>nil</code>，说明期间有人修改了被监视的 key，需要<strong>重试整个流程</strong>。</p>
+<h3 id="完整的重试逻辑go-伪代码">完整的重试逻辑（Go 伪代码）</h3>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// go-redis 的 Watch 封装了重试模板
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kd">const</span> <span class="nx">maxRetries</span> <span class="p">=</span> <span class="mi">5</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">decreaseBalance</span><span class="p">(</span><span class="nx">ctx</span> <span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span> <span class="nx">rdb</span> <span class="o">*</span><span class="nx">redis</span><span class="p">.</span><span class="nx">Client</span><span class="p">,</span> <span class="nx">key</span> <span class="kt">string</span><span class="p">,</span> <span class="nx">amount</span> <span class="kt">int64</span><span class="p">)</span> <span class="kt">error</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">txf</span> <span class="o">:=</span> <span class="kd">func</span><span class="p">(</span><span class="nx">tx</span> <span class="o">*</span><span class="nx">redis</span><span class="p">.</span><span class="nx">Tx</span><span class="p">)</span> <span class="kt">error</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="c1">// 1. 在 WATCH 之后读取当前值
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="nx">balance</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">tx</span><span class="p">.</span><span class="nf">Get</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">key</span><span class="p">).</span><span class="nf">Int64</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="o">&amp;&amp;</span> <span class="nx">err</span> <span class="o">!=</span> <span class="nx">redis</span><span class="p">.</span><span class="nx">Nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="k">return</span> <span class="nx">err</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">        <span class="c1">// 2. 业务判断
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="k">if</span> <span class="nx">balance</span> <span class="p">&lt;</span> <span class="nx">amount</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="k">return</span> <span class="nx">errors</span><span class="p">.</span><span class="nf">New</span><span class="p">(</span><span class="s">&#34;余额不足&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">        <span class="c1">// 3. 在 MULTI 里写入
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="nx">_</span><span class="p">,</span> <span class="nx">err</span> <span class="p">=</span> <span class="nx">tx</span><span class="p">.</span><span class="nf">TxPipelined</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="kd">func</span><span class="p">(</span><span class="nx">pipe</span> <span class="nx">redis</span><span class="p">.</span><span class="nx">Pipeliner</span><span class="p">)</span> <span class="kt">error</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">pipe</span><span class="p">.</span><span class="nf">DecrBy</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">key</span><span class="p">,</span> <span class="nx">amount</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">            <span class="k">return</span> <span class="kc">nil</span>
+</span></span><span class="line"><span class="cl">        <span class="p">})</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="nx">err</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="k">for</span> <span class="nx">i</span> <span class="o">:=</span> <span class="mi">0</span><span class="p">;</span> <span class="nx">i</span> <span class="p">&lt;</span> <span class="nx">maxRetries</span><span class="p">;</span> <span class="nx">i</span><span class="o">++</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">err</span> <span class="o">:=</span> <span class="nx">rdb</span><span class="p">.</span><span class="nf">Watch</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">txf</span><span class="p">,</span> <span class="nx">key</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="nx">err</span> <span class="o">==</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="k">return</span> <span class="kc">nil</span>            <span class="c1">// 成功
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="nx">err</span> <span class="o">==</span> <span class="nx">redis</span><span class="p">.</span><span class="nx">TxFailedErr</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="k">continue</span>              <span class="c1">// WATCH 的 key 被改了，重试
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="nx">err</span>                <span class="c1">// 其他错误
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="nx">errors</span><span class="p">.</span><span class="nf">New</span><span class="p">(</span><span class="s">&#34;达到最大重试次数&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><h3 id="watch-的实现原理">WATCH 的实现原理</h3>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="c1">// 每个 redisDb 里有一个 watched_keys 字典
+</span></span></span><span class="line"><span class="cl"><span class="c1">// key → 监视这个 key 的所有客户端列表
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">typedef</span> <span class="k">struct</span> <span class="n">redisDb</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="p">...</span>
+</span></span><span class="line"><span class="cl">    <span class="n">dict</span> <span class="o">*</span><span class="n">watched_keys</span><span class="p">;</span>    <span class="c1">// key → list of clients
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span> <span class="n">redisDb</span><span class="p">;</span>
+</span></span></code></pre></div><p><strong>流程</strong>：</p>
+<pre tabindex="0"><code>1. WATCH key：
+   ├─ 把 (key → client) 记录到 db-&gt;watched_keys
+   └─ 同时在 client-&gt;watched_keys 里也记一份（方便 UNWATCH 时清理）
+
+2. 任何客户端修改某个 key 时（signalModifiedKey）：
+   ├─ 查 db-&gt;watched_keys 看有谁在监视这个 key
+   └─ 给所有监视者打上 CLIENT_DIRTY_CAS 标志
+
+3. EXEC 时检查 CLIENT_DIRTY_CAS：
+   ├─ 有标志 → 放弃事务，返回 nil
+   └─ 无标志 → 正常执行
+
+4. EXEC / DISCARD / UNWATCH 之后，清空该 client 的所有监视
+</code></pre><p><strong>几个重要细节</strong>：</p>
+<ol>
+<li><strong><code>WATCH</code> 必须在 <code>MULTI</code> 之前执行</strong>。在 <code>MULTI</code> 之后执行 <code>WATCH</code> 会报错 <code>WATCH inside MULTI is not allowed</code>；</li>
+<li><strong>只要 key 被&quot;修改&quot;就算 dirty，不管改成什么值</strong>。即使把 key 改成和原来一样的值（<code>SET k v</code> 两次），也会触发 dirty。这是<strong>基于版本而非基于值</strong>的判断；</li>
+<li><strong>key 被删除、过期也算修改</strong>；</li>
+<li><strong><code>EXEC</code>、<code>DISCARD</code>、<code>UNWATCH</code> 都会清空监视</strong>，所以每次重试都要重新 <code>WATCH</code>；</li>
+<li><strong><code>EXEC</code> 无论成功失败都会清空监视</strong>——这点很重要，如果不清空，客户端可能因为陈旧的 dirty 标志导致后续事务全部失败；</li>
+<li><strong><code>WATCH</code> 是&quot;连接级别&quot;的</strong>：不同连接的 WATCH 互不影响，连接断开自动清理。</li>
+</ol>
+<h3 id="watch-的适用场景与局限">WATCH 的适用场景与局限</h3>
+<p><strong>适合</strong>：并发冲突较少的场景（乐观锁的本质假设）。</p>
+<p><strong>不适合</strong>：</p>
+<ol>
+<li><strong>高并发热点 key</strong>：冲突率高，重试次数多，性能很差（活锁风险）。这种场景应该用 <strong>Lua 脚本</strong>（一次搞定，无需重试）或<strong>分布式锁</strong>（悲观锁）；</li>
+<li><strong>Cluster 模式下跨 slot 的 WATCH</strong>：所有被监视的 key 和事务里的 key 必须在同一个 slot；</li>
+<li><strong>需要跨多个 key 做复杂判断</strong>：Lua 更清晰。</li>
+</ol>
+<p><strong>实践结论：绝大多数需要 <code>WATCH</code> 的场景，用 Lua 脚本会更简单、更高效。</strong> <code>WATCH</code> 现在主要的价值是在&quot;不能用 Lua&quot;（比如脚本太复杂、或者需要在客户端做涉及外部系统的判断）时的备选方案。</p>
+<hr>
+<h1 id="2-redis-事务的-acid-分析">2. Redis 事务的 ACID 分析</h1>
+<p>这是必考题，要逐个维度精确回答。</p>
+<h2 id="21-原子性atomicity-部分满足">2.1 原子性（Atomicity）—— 部分满足</h2>
+<p><strong>标准定义</strong>：事务中的操作要么全部成功，要么全部失败（失败要回滚）。</p>
+<p><strong>Redis 的情况</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th>是否原子</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>正常执行完</td>
+<td>✅ 所有命令连续执行，不被其他客户端打断</td>
+</tr>
+<tr>
+<td><strong>入队时语法错误</strong></td>
+<td>✅ 整个事务被拒绝，一条都不执行（满足原子性）</td>
+</tr>
+<tr>
+<td><strong>执行时错误</strong>（如类型错误）</td>
+<td>❌ <strong>失败的那条报错，其他命令继续执行且不回滚</strong></td>
+</tr>
+<tr>
+<td><strong><code>EXEC</code> 执行过程中 Redis 进程崩溃</strong></td>
+<td>❌ <strong>可能只执行了一部分</strong>（AOF 里可能只有半个事务）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>结论：Redis 事务不满足严格的原子性，因为不支持回滚。</strong></p>
+<p>关于最后一种情况（进程崩溃）的补充：Redis 会在 AOF 里用 <code>MULTI</code>/<code>EXEC</code> 包裹事务命令，重启加载时如果发现 AOF 里有不完整的事务（有 <code>MULTI</code> 没有 <code>EXEC</code>），<strong>会丢弃这个不完整的事务</strong>。所以从 AOF 恢复的角度，事务是原子的。但如果是 <code>appendfsync everysec</code> 且崩溃时事务只刷了一半到磁盘，就会丢失部分。</p>
+<p><code>redis-check-aof --fix</code> 也会处理这种情况。</p>
+<h2 id="22-一致性consistency-满足">2.2 一致性（Consistency）—— 满足</h2>
+<p><strong>标准定义</strong>：事务执行前后，数据库都处于&quot;合法&quot;状态（满足所有约束）。</p>
+<p><strong>Redis 的情况</strong>：Redis 没有关系型数据库那样的约束（唯一键、外键、check），所谓&quot;一致性&quot;在这里主要指&quot;数据不会因为事务而进入错乱的中间状态&quot;。</p>
+<p>从这个角度看：</p>
+<ul>
+<li>入队错误 → 事务不执行，数据不变，一致；</li>
+<li>执行错误 → 错误的命令不生效，其他命令的效果都是合法的单命令效果，数据结构没有损坏，一致；</li>
+<li>崩溃 → 内存数据丢失（重启从持久化文件恢复），恢复出来的是某个合法状态，一致。</li>
+</ul>
+<p><strong>结论：满足一致性</strong>（但这个&quot;一致性&quot;的含金量比 RDBMS 低很多，因为约束本来就少）。</p>
+<h2 id="23-隔离性isolation-满足且是最高级别">2.3 隔离性（Isolation）—— 满足（且是最高级别）</h2>
+<p><strong>标准定义</strong>：并发事务之间互不干扰。</p>
+<p><strong>Redis 的情况</strong>：<strong>完全满足，而且天然就是最高隔离级别（串行化 Serializable）。</strong></p>
+<p>原因非常简单：<strong>Redis 是单线程执行命令的</strong>。<code>EXEC</code> 作为一条命令，它执行期间不可能有其他客户端的命令插入。所有事务在时间轴上就是严格串行的。</p>
+<p>所以关系型数据库里的那些隔离性问题——<strong>脏读、不可重复读、幻读</strong>——在 Redis 里<strong>根本不可能发生</strong>（在 <code>EXEC</code> 内部）。</p>
+<p>但有个重要的<strong>注意点</strong>：</p>
+<p><strong><code>WATCH</code> + 事务外的 <code>GET</code> 这个组合，中间是有窗口的</strong>：</p>
+<pre tabindex="0"><code>WATCH balance      ← 时刻 T1
+GET balance        ← 时刻 T2，读到 100
+                   ← 时刻 T3，【别的客户端把 balance 改成 50】
+MULTI
+DECRBY balance 100
+EXEC               ← 时刻 T4，检测到 dirty，返回 nil，事务不执行 ✅
+</code></pre><p><code>WATCH</code> 机制正是为了让这个窗口里的修改能被检测到。所以<strong>隔离性的保证依赖于你正确使用了 <code>WATCH</code></strong>。如果不用 <code>WATCH</code> 而在事务外读取再在事务内写入，就会出现类似&quot;丢失更新&quot;的问题——但这不是 Redis 隔离性的缺陷，而是使用方式的问题。</p>
+<h2 id="24-持久性durability-不满足">2.4 持久性（Durability）—— 不满足</h2>
+<p><strong>标准定义</strong>：事务提交后，数据永久保存，即使系统崩溃也不丢。</p>
+<p><strong>Redis 的情况</strong>：事务的持久性<strong>完全取决于持久化配置</strong>，与事务机制本身无关。</p>
+<table>
+<thead>
+<tr>
+<th>配置</th>
+<th>持久性</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>无持久化</td>
+<td>❌ 完全不持久</td>
+</tr>
+<tr>
+<td>RDB</td>
+<td>❌ 两次快照之间的事务全部可能丢失</td>
+</tr>
+<tr>
+<td>AOF <code>everysec</code></td>
+<td>❌ 最多丢 1~2 秒（可能包含刚提交的事务）</td>
+</tr>
+<tr>
+<td>AOF <code>always</code></td>
+<td>⚠️ 接近满足，但仍有极小窗口（且性能代价大）</td>
+</tr>
+<tr>
+<td><strong>主从复制</strong></td>
+<td>❌ 异步复制，主节点宕机可能丢失未同步的事务</td>
+</tr>
+</tbody>
+</table>
+<p><strong>结论：Redis 事务不满足持久性。</strong> 即使 <code>appendfsync always</code>，加上异步主从复制的存在，也不能保证事务提交后数据绝对不丢。</p>
+<h2 id="25-acid-总结表">2.5 ACID 总结表</h2>
+<table>
+<thead>
+<tr>
+<th>特性</th>
+<th>是否满足</th>
+<th>关键原因</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>原子性 A</strong></td>
+<td><strong>部分满足</strong></td>
+<td>命令连续执行；入队错误会整体放弃；但<strong>执行时错误不回滚</strong>（无 undo log）</td>
+</tr>
+<tr>
+<td><strong>一致性 C</strong></td>
+<td><strong>满足</strong></td>
+<td>无复杂约束，数据不会进入非法中间状态</td>
+</tr>
+<tr>
+<td><strong>隔离性 I</strong></td>
+<td><strong>满足（串行化）</strong></td>
+<td><strong>单线程执行</strong>，<code>EXEC</code> 期间不被打断，天然最高隔离级别</td>
+</tr>
+<tr>
+<td><strong>持久性 D</strong></td>
+<td><strong>不满足</strong></td>
+<td>取决于持久化配置；即使 <code>always</code> 也有窗口 + 异步复制会丢</td>
+</tr>
+</tbody>
+</table>
+<p><strong>一句话记忆</strong>：<strong>Redis 事务 = 隔离性满分 + 一致性满分 + 原子性打折 + 持久性不及格。</strong></p>
+<hr>
+<h1 id="3-lua-脚本">3. Lua 脚本</h1>
+<p>Lua 脚本是 Redis 事务的&quot;更强替代品&quot;，<strong>实际工程中远比 <code>MULTI/EXEC</code> 常用</strong>。</p>
+<h2 id="31-为什么用-lua">3.1 为什么用 Lua</h2>
+<p>Lua 脚本相比事务的三大优势：</p>
+<ol>
+<li><strong>真正的原子性</strong>：整个脚本作为<strong>一条命令</strong>执行，期间绝对不会被打断；</li>
+<li><strong>可以有逻辑</strong>：能读取中间结果、做条件判断、循环——这是事务完全做不到的；</li>
+<li><strong>减少网络往返</strong>：把多次交互的逻辑一次性发到服务端执行。</li>
+</ol>
+<p>所以任何&quot;读取-判断-写入&quot;的原子操作，Lua 都是首选。</p>
+<h2 id="32-基本命令">3.2 基本命令</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">EVAL script numkeys key <span class="o">[</span>key ...<span class="o">]</span> arg <span class="o">[</span>arg ...<span class="o">]</span>
+</span></span><span class="line"><span class="cl">EVALSHA sha1 numkeys key <span class="o">[</span>key ...<span class="o">]</span> arg <span class="o">[</span>arg ...<span class="o">]</span>
+</span></span><span class="line"><span class="cl">SCRIPT LOAD script          <span class="c1"># 预加载脚本，返回 SHA1</span>
+</span></span><span class="line"><span class="cl">SCRIPT EXISTS sha1 <span class="o">[</span>sha1<span class="o">]</span>   <span class="c1"># 检查脚本是否已缓存</span>
+</span></span><span class="line"><span class="cl">SCRIPT FLUSH <span class="o">[</span>ASYNC<span class="p">|</span>SYNC<span class="o">]</span>   <span class="c1"># 清空脚本缓存</span>
+</span></span><span class="line"><span class="cl">SCRIPT KILL                 <span class="c1"># 杀死正在执行的脚本（仅当它还没执行过写命令）</span>
+</span></span><span class="line"><span class="cl">EVAL_RO / EVALSHA_RO        <span class="c1"># 7.0+ 只读脚本，可在从节点执行</span>
+</span></span></code></pre></div><h2 id="33-第一个例子">3.3 第一个例子</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">127.0.0.1:6379&gt; EVAL <span class="s2">&#34;return 1&#34;</span> <span class="m">0</span>
+</span></span><span class="line"><span class="cl"><span class="o">(</span>integer<span class="o">)</span> <span class="m">1</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; EVAL <span class="s2">&#34;return redis.call(&#39;SET&#39;, KEYS[1], ARGV[1])&#34;</span> <span class="m">1</span> name tom
+</span></span><span class="line"><span class="cl">OK
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; EVAL <span class="s2">&#34;return redis.call(&#39;GET&#39;, KEYS[1])&#34;</span> <span class="m">1</span> name
+</span></span><span class="line"><span class="cl"><span class="s2">&#34;tom&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># KEYS 和 ARGV 都是从 1 开始的数组（Lua 传统）</span>
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; EVAL <span class="s2">&#34;return {KEYS[1], KEYS[2], ARGV[1]}&#34;</span> <span class="m">2</span> k1 k2 a1
+</span></span><span class="line"><span class="cl">1<span class="o">)</span> <span class="s2">&#34;k1&#34;</span>
+</span></span><span class="line"><span class="cl">2<span class="o">)</span> <span class="s2">&#34;k2&#34;</span>
+</span></span><span class="line"><span class="cl">3<span class="o">)</span> <span class="s2">&#34;a1&#34;</span>
+</span></span></code></pre></div><h2 id="34-keys-和-argv-的区别重要">3.4 KEYS 和 ARGV 的区别（重要）</h2>
+<pre tabindex="0"><code>EVAL script numkeys key1 key2 ... arg1 arg2 ...
+                ↑      └──── KEYS ────┘ └── ARGV ──┘
+             这个数字决定了前几个参数是 key
+</code></pre><p><strong>为什么要把 key 和普通参数分开？</strong> 这不是&quot;风格问题&quot;，而是<strong>必需的</strong>：</p>
+<ol>
+<li><strong>Cluster 模式必须知道脚本会操作哪些 key</strong>，才能判断它们是否在同一个 slot、路由到哪个节点。如果把 key 藏在 ARGV 里，Redis 无法做正确的路由，会导致数据错乱；</li>
+<li><strong><code>WATCH</code>/复制/ACL 权限检查</strong>也需要知道涉及的 key。</li>
+</ol>
+<p><strong>所以铁律是：脚本里所有访问的 key 都必须通过 <code>KEYS</code> 传入，绝不能在脚本里硬编码或用 ARGV 拼接 key 名。</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-lua" data-lang="lua"><span class="line"><span class="cl"><span class="c1">-- ❌ 错误：key 硬编码在脚本里</span>
+</span></span><span class="line"><span class="cl"><span class="kr">return</span> <span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;GET&#39;</span><span class="p">,</span> <span class="s1">&#39;user:1001&#39;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">-- ❌ 错误：用 ARGV 拼 key 名</span>
+</span></span><span class="line"><span class="cl"><span class="kr">return</span> <span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;GET&#39;</span><span class="p">,</span> <span class="s1">&#39;user:&#39;</span> <span class="o">..</span> <span class="n">ARGV</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">-- ✅ 正确</span>
+</span></span><span class="line"><span class="cl"><span class="kr">return</span> <span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;GET&#39;</span><span class="p">,</span> <span class="n">KEYS</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+</span></span></code></pre></div><p>违反这条铁律在单机模式下&quot;能跑&quot;，但迁移到 Cluster 时会莫名其妙地出错（Redis 7.0+ 在集群模式下会直接报错 <code>Script attempted to access a non local key in a cluster node</code>）。</p>
+<h2 id="35-rediscall-与-redispcall">3.5 redis.call 与 redis.pcall</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-lua" data-lang="lua"><span class="line"><span class="cl"><span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;GET&#39;</span><span class="p">,</span> <span class="n">KEYS</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>    <span class="c1">-- 出错时【直接抛出错误，中断整个脚本】</span>
+</span></span><span class="line"><span class="cl"><span class="n">redis.pcall</span><span class="p">(</span><span class="s1">&#39;GET&#39;</span><span class="p">,</span> <span class="n">KEYS</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>   <span class="c1">-- 出错时【返回一个 error table】，脚本可以继续处理</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-lua" data-lang="lua"><span class="line"><span class="cl"><span class="c1">-- 用 pcall 做容错</span>
+</span></span><span class="line"><span class="cl"><span class="kd">local</span> <span class="n">ok</span> <span class="o">=</span> <span class="n">redis.pcall</span><span class="p">(</span><span class="s1">&#39;LPUSH&#39;</span><span class="p">,</span> <span class="n">KEYS</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="n">ARGV</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+</span></span><span class="line"><span class="cl"><span class="kr">if</span> <span class="n">ok.err</span> <span class="kr">then</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">-- 类型错误等，做降级处理</span>
+</span></span><span class="line"><span class="cl">    <span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;DEL&#39;</span><span class="p">,</span> <span class="n">KEYS</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+</span></span><span class="line"><span class="cl">    <span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;LPUSH&#39;</span><span class="p">,</span> <span class="n">KEYS</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="n">ARGV</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+</span></span><span class="line"><span class="cl"><span class="kr">end</span>
+</span></span></code></pre></div><p><strong>注意一个致命细节</strong>：Lua 脚本<strong>同样不支持回滚</strong>！如果脚本执行到一半出错，<strong>前面已经执行的写命令不会撤销</strong>。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-lua" data-lang="lua"><span class="line"><span class="cl"><span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;SET&#39;</span><span class="p">,</span> <span class="n">KEYS</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="s1">&#39;a&#39;</span><span class="p">)</span>      <span class="c1">-- 成功执行</span>
+</span></span><span class="line"><span class="cl"><span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;LPUSH&#39;</span><span class="p">,</span> <span class="n">KEYS</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="s1">&#39;b&#39;</span><span class="p">)</span>    <span class="c1">-- 类型错误！脚本中断</span>
+</span></span><span class="line"><span class="cl"><span class="c1">-- 结果：KEYS[1] 已经被设成了 &#39;a&#39;，不会回滚</span>
+</span></span></code></pre></div><p>所以<strong>写脚本时要把所有校验放在前面，所有写操作放在后面</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-lua" data-lang="lua"><span class="line"><span class="cl"><span class="c1">-- ✅ 正确的结构：先校验，再写入</span>
+</span></span><span class="line"><span class="cl"><span class="kd">local</span> <span class="n">balance</span> <span class="o">=</span> <span class="n">tonumber</span><span class="p">(</span><span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;GET&#39;</span><span class="p">,</span> <span class="n">KEYS</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span> <span class="ow">or</span> <span class="s1">&#39;0&#39;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="kd">local</span> <span class="n">amount</span> <span class="o">=</span> <span class="n">tonumber</span><span class="p">(</span><span class="n">ARGV</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+</span></span><span class="line"><span class="cl"><span class="kr">if</span> <span class="n">balance</span> <span class="o">&lt;</span> <span class="n">amount</span> <span class="kr">then</span>
+</span></span><span class="line"><span class="cl">    <span class="kr">return</span> <span class="mi">0</span>          <span class="c1">-- 校验失败，此时还没有任何写操作</span>
+</span></span><span class="line"><span class="cl"><span class="kr">end</span>
+</span></span><span class="line"><span class="cl"><span class="c1">-- 校验都通过了，开始写</span>
+</span></span><span class="line"><span class="cl"><span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;DECRBY&#39;</span><span class="p">,</span> <span class="n">KEYS</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="n">amount</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;INCRBY&#39;</span><span class="p">,</span> <span class="n">KEYS</span><span class="p">[</span><span class="mi">2</span><span class="p">],</span> <span class="n">amount</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="kr">return</span> <span class="mi">1</span>
+</span></span></code></pre></div><h2 id="36-类型转换规则">3.6 类型转换规则</h2>
+<p>Lua 和 Redis 的类型系统不同，转换规则必须记住（<strong>很容易踩坑</strong>）：</p>
+<h3 id="redis--lua">Redis → Lua</h3>
+<table>
+<thead>
+<tr>
+<th>Redis 返回</th>
+<th>Lua 收到</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>整数（<code>:1</code>）</td>
+<td>number</td>
+</tr>
+<tr>
+<td>批量字符串（<code>$3\r\nabc</code>）</td>
+<td>string</td>
+</tr>
+<tr>
+<td>数组（<code>*2</code>）</td>
+<td>table（从 1 开始的数组）</td>
+</tr>
+<tr>
+<td><strong>nil（<code>$-1</code>）</strong></td>
+<td><strong><code>false</code></strong>（不是 nil！）</td>
+</tr>
+<tr>
+<td>简单字符串（<code>+OK</code>）</td>
+<td>table：<code>{ok = &quot;OK&quot;}</code></td>
+</tr>
+<tr>
+<td>错误（<code>-ERR ...</code>）</td>
+<td>table：<code>{err = &quot;ERR ...&quot;}</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="lua--redis">Lua → Redis</h3>
+<table>
+<thead>
+<tr>
+<th>Lua 返回</th>
+<th>Redis 收到</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>number</td>
+<td><strong>整数（小数部分被截断！）</strong></td>
+</tr>
+<tr>
+<td>string</td>
+<td>批量字符串</td>
+</tr>
+<tr>
+<td>table（数组）</td>
+<td>数组（<strong>遇到第一个 nil 就截断</strong>）</td>
+</tr>
+<tr>
+<td><strong><code>false</code></strong></td>
+<td><strong>nil</strong></td>
+</tr>
+<tr>
+<td><strong><code>true</code></strong></td>
+<td><strong>整数 1</strong></td>
+</tr>
+<tr>
+<td>table <code>{ok=&quot;...&quot;}</code></td>
+<td>简单字符串</td>
+</tr>
+<tr>
+<td>table <code>{err=&quot;...&quot;}</code></td>
+<td>错误</td>
+</tr>
+<tr>
+<td>无返回值</td>
+<td>nil</td>
+</tr>
+</tbody>
+</table>
+<h3 id="四个必知的坑">四个必知的坑</h3>
+<p><strong>坑一：Lua 的 number 转 Redis 会丢小数</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">127.0.0.1:6379&gt; EVAL <span class="s2">&#34;return 3.99&#34;</span> <span class="m">0</span>
+</span></span><span class="line"><span class="cl"><span class="o">(</span>integer<span class="o">)</span> <span class="m">3</span>        <span class="c1"># ⚠️ 小数被截断！</span>
+</span></span></code></pre></div><p><strong>解决</strong>：返回浮点数要转成字符串：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-lua" data-lang="lua"><span class="line"><span class="cl"><span class="kr">return</span> <span class="n">tostring</span><span class="p">(</span><span class="mf">3.99</span><span class="p">)</span>         <span class="c1">-- &#34;3.99&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="c1">-- 或者用 Redis 的类型转换</span>
+</span></span><span class="line"><span class="cl"><span class="kr">return</span> <span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;INCRBYFLOAT&#39;</span><span class="p">,</span> <span class="n">KEYS</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="n">ARGV</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>   <span class="c1">-- 返回的是字符串</span>
+</span></span></code></pre></div><p><strong>坑二：key 不存在时 Lua 收到 <code>false</code> 而不是 nil</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-lua" data-lang="lua"><span class="line"><span class="cl"><span class="kd">local</span> <span class="n">v</span> <span class="o">=</span> <span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;GET&#39;</span><span class="p">,</span> <span class="n">KEYS</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+</span></span><span class="line"><span class="cl"><span class="kr">if</span> <span class="n">v</span> <span class="o">==</span> <span class="kc">nil</span> <span class="kr">then</span>        <span class="c1">-- ❌ 永远不成立！</span>
+</span></span><span class="line"><span class="cl">    <span class="p">...</span>
+</span></span><span class="line"><span class="cl"><span class="kr">end</span>
+</span></span><span class="line"><span class="cl"><span class="kr">if</span> <span class="n">v</span> <span class="o">==</span> <span class="kc">false</span> <span class="kr">then</span>      <span class="c1">-- ✅ 正确</span>
+</span></span><span class="line"><span class="cl">    <span class="p">...</span>
+</span></span><span class="line"><span class="cl"><span class="kr">end</span>
+</span></span><span class="line"><span class="cl"><span class="kr">if</span> <span class="ow">not</span> <span class="n">v</span> <span class="kr">then</span>           <span class="c1">-- ✅ 也正确（false 和 nil 都是 falsy）</span>
+</span></span><span class="line"><span class="cl">    <span class="p">...</span>
+</span></span><span class="line"><span class="cl"><span class="kr">end</span>
+</span></span></code></pre></div><p><strong>坑三：table 里的 nil 会截断数组</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">127.0.0.1:6379&gt; EVAL <span class="s2">&#34;return {1, 2, nil, 4}&#34;</span> <span class="m">0</span>
+</span></span><span class="line"><span class="cl">1<span class="o">)</span> <span class="o">(</span>integer<span class="o">)</span> <span class="m">1</span>
+</span></span><span class="line"><span class="cl">2<span class="o">)</span> <span class="o">(</span>integer<span class="o">)</span> <span class="m">2</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ⚠️ 3 和 4 都丢了！因为遇到 nil 就停止</span>
+</span></span></code></pre></div><p><strong>解决</strong>：不要在返回的数组里放 nil，用空字符串或特殊标记代替。</p>
+<p><strong>坑四：所有参数都是字符串</strong></p>
+<p><code>ARGV</code> 里的所有内容都是<strong>字符串</strong>，做数值运算必须显式转换：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-lua" data-lang="lua"><span class="line"><span class="cl"><span class="c1">-- ❌ 错误：字符串比较，&#34;10&#34; &lt; &#34;9&#34; 是 true（字典序！）</span>
+</span></span><span class="line"><span class="cl"><span class="kr">if</span> <span class="n">ARGV</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">&lt;</span> <span class="n">ARGV</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span> <span class="kr">then</span> <span class="p">...</span> <span class="kr">end</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">-- ✅ 正确</span>
+</span></span><span class="line"><span class="cl"><span class="kr">if</span> <span class="n">tonumber</span><span class="p">(</span><span class="n">ARGV</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span> <span class="o">&lt;</span> <span class="n">tonumber</span><span class="p">(</span><span class="n">ARGV</span><span class="p">[</span><span class="mi">2</span><span class="p">])</span> <span class="kr">then</span> <span class="p">...</span> <span class="kr">end</span>
+</span></span></code></pre></div><p>同样，<code>redis.call('GET', ...)</code> 返回的也是字符串。</p>
+<h2 id="37-evalsha-与脚本缓存">3.7 EVALSHA 与脚本缓存</h2>
+<p>每次 <code>EVAL</code> 都要传输完整的脚本文本，如果脚本有几 KB 而 QPS 很高，网络开销就很可观。</p>
+<p><strong>Redis 会缓存所有执行过的脚本</strong>（以 SHA1 为 key，保存在 <code>server.lua_scripts</code> 字典里），可以用 <code>EVALSHA</code> 只传 SHA1（40 个字符）来执行。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">127.0.0.1:6379&gt; SCRIPT LOAD <span class="s2">&#34;return redis.call(&#39;GET&#39;, KEYS[1])&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="s2">&#34;4e6d8fc8bb01276962cce5371fa795a7763657ae&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; EVALSHA 4e6d8fc8bb01276962cce5371fa795a7763657ae <span class="m">1</span> name
+</span></span><span class="line"><span class="cl"><span class="s2">&#34;tom&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; SCRIPT EXISTS 4e6d8fc8bb01276962cce5371fa795a7763657ae
+</span></span><span class="line"><span class="cl">1<span class="o">)</span> <span class="o">(</span>integer<span class="o">)</span> <span class="m">1</span>
+</span></span></code></pre></div><p><strong>标准的客户端实现模式</strong>（几乎所有客户端库都这么做）：</p>
+<pre tabindex="0"><code>1. 先尝试 EVALSHA &lt;sha1&gt;
+2. 如果返回 NOSCRIPT 错误（脚本不在缓存里）
+   → 降级为 EVAL &lt;完整脚本&gt;（这会自动把它加入缓存）
+3. 之后就都能用 EVALSHA 了
+</code></pre><p>go-redis 的 <code>redis.NewScript()</code> 就封装了这个逻辑：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">var</span> <span class="nx">decrScript</span> <span class="p">=</span> <span class="nx">redis</span><span class="p">.</span><span class="nf">NewScript</span><span class="p">(</span><span class="s">`
+</span></span></span><span class="line"><span class="cl"><span class="s">    local v = tonumber(redis.call(&#39;GET&#39;, KEYS[1]) or &#39;0&#39;)
+</span></span></span><span class="line"><span class="cl"><span class="s">    if v &lt; tonumber(ARGV[1]) then return 0 end
+</span></span></span><span class="line"><span class="cl"><span class="s">    redis.call(&#39;DECRBY&#39;, KEYS[1], ARGV[1])
+</span></span></span><span class="line"><span class="cl"><span class="s">    return 1
+</span></span></span><span class="line"><span class="cl"><span class="s">`</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// Run 内部会先试 EVALSHA，NOSCRIPT 时自动回退到 EVAL
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">res</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">decrScript</span><span class="p">.</span><span class="nf">Run</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">rdb</span><span class="p">,</span> <span class="p">[]</span><span class="kt">string</span><span class="p">{</span><span class="s">&#34;balance&#34;</span><span class="p">},</span> <span class="mi">100</span><span class="p">).</span><span class="nf">Int</span><span class="p">()</span>
+</span></span></code></pre></div><p><strong>脚本缓存的几个重要注意点</strong>：</p>
+<ol>
+<li><strong>脚本缓存不持久化</strong>：<code>SCRIPT FLUSH</code>、<strong>重启</strong>、<code>DEBUG RELOAD</code> 都会清空。所以客户端必须实现 NOSCRIPT 回退，不能假设脚本永远在缓存里；</li>
+<li><strong>缓存会无限增长</strong>：Redis 不会自动淘汰脚本缓存。如果你的代码<strong>动态生成脚本</strong>（比如把参数拼进脚本文本），每个变体都会占一份缓存，长期运行会造成<strong>内存泄漏</strong>。这是&quot;参数必须走 ARGV 而不是拼进脚本&quot;的另一个理由；</li>
+<li><strong>主从与集群的缓存不共享</strong>：脚本缓存是每个节点独立的。5.0 之前 <code>SCRIPT LOAD</code> 不会传播到从节点（所以从节点上 <code>EVALSHA</code> 可能 NOSCRIPT）；主从切换后新主节点可能没有这个脚本的缓存。7.0 的 <strong>Function</strong> 解决了这个问题。</li>
+</ol>
+<h2 id="38-脚本的复制方式">3.8 脚本的复制方式</h2>
+<p><strong>Redis 5.0 之前</strong>：脚本以<strong>脚本本身</strong>（verbatim）的方式复制到从节点和 AOF——从节点会重新执行一遍这个脚本。</p>
+<p>这带来一个严格要求：<strong>脚本必须是确定性的</strong>，否则主从数据会不一致。所以那时 Redis：</p>
+<ul>
+<li><strong>禁止在脚本里用 <code>math.random</code></strong>（除非先调 <code>math.randomseed</code>，且 Redis 替换了随机数生成器保证主从种子相同）；</li>
+<li><strong>禁止用 <code>TIME</code>、<code>SRANDMEMBER</code>、<code>SPOP</code></strong> 等非确定性命令（除非之后不再写入）；</li>
+<li>报错 <code>Write commands not allowed after non deterministic commands</code>。</li>
+</ul>
+<p><strong>Redis 5.0 之后（7.0 起成为唯一方式）</strong>：改成<strong>效果复制（effects replication）</strong>——只把脚本<strong>产生的实际写命令</strong>包在一个 <code>MULTI/EXEC</code> 里传播。</p>
+<p>好处：</p>
+<ol>
+<li><strong>脚本可以随意使用随机数、时间等非确定性操作</strong>；</li>
+<li><strong>从节点不用重新执行脚本</strong>，省 CPU；</li>
+<li>传播的内容更小（只有实际的写命令）。</li>
+</ol>
+<p>第 7 篇讲的&quot;效果复制&quot;就是这个机制。</p>
+<p><strong>一个相关的细节</strong>：为了让脚本行为确定，<strong>脚本执行期间&quot;时间是冻结的&quot;</strong>——脚本内所有的过期判断都用脚本开始执行时的时间。这避免了&quot;脚本前半段 key 还在，后半段就过期了&quot;的不一致。</p>
+<h2 id="39-脚本的阻塞风险">3.9 脚本的阻塞风险</h2>
+<p><strong>Lua 脚本执行期间，Redis 完全不响应其他任何命令</strong>（因为它就是一条命令，单线程串行）。</p>
+<p>所以<strong>脚本里绝不能有耗时操作</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-lua" data-lang="lua"><span class="line"><span class="cl"><span class="c1">-- ❌ 灾难：死循环，Redis 永久卡死</span>
+</span></span><span class="line"><span class="cl"><span class="kr">while</span> <span class="kc">true</span> <span class="kr">do</span> <span class="kr">end</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">-- ❌ 灾难：遍历百万级集合</span>
+</span></span><span class="line"><span class="cl"><span class="kd">local</span> <span class="n">all</span> <span class="o">=</span> <span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;SMEMBERS&#39;</span><span class="p">,</span> <span class="n">KEYS</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>   <span class="c1">-- 假设有 100 万成员</span>
+</span></span><span class="line"><span class="cl"><span class="kr">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">v</span> <span class="kr">in</span> <span class="n">ipairs</span><span class="p">(</span><span class="n">all</span><span class="p">)</span> <span class="kr">do</span>
+</span></span><span class="line"><span class="cl">    <span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;SET&#39;</span><span class="p">,</span> <span class="s1">&#39;copy:&#39;</span> <span class="o">..</span> <span class="n">v</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>        <span class="c1">-- 100 万次写</span>
+</span></span><span class="line"><span class="cl"><span class="kr">end</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">-- ❌ 危险：循环次数由外部参数决定，没有上限</span>
+</span></span><span class="line"><span class="cl"><span class="kr">for</span> <span class="n">i</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span> <span class="n">tonumber</span><span class="p">(</span><span class="n">ARGV</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span> <span class="kr">do</span> <span class="p">...</span> <span class="kr">end</span>
+</span></span></code></pre></div><h3 id="超时与救援">超时与救援</h3>
+<pre tabindex="0"><code class="language-conf" data-lang="conf">busy-reply-threshold 5000      # 旧名 lua-time-limit，单位毫秒，默认 5000
+</code></pre><p><strong>这个配置的含义常被误解</strong>：它<strong>不是&quot;脚本超时就杀掉&quot;</strong>，而是&quot;脚本运行超过这个时间后，Redis 开始对其他客户端返回 <code>BUSY</code> 错误&quot;。</p>
+<pre tabindex="0"><code>脚本运行 &gt; busy-reply-threshold 后：
+├─ Redis 【仍然继续执行脚本】（不会自动终止！）
+├─ 但开始处理事件循环，对其他客户端的命令返回：
+│  -BUSY Redis is busy running a script. You can only call
+│        SCRIPT KILL or SHUTDOWN NOSAVE.
+└─ 只接受两个命令：SCRIPT KILL 和 SHUTDOWN NOSAVE
+</code></pre><p><strong>救援手段</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 情况一：脚本还没执行过任何写命令</span>
+</span></span><span class="line"><span class="cl">redis-cli SCRIPT KILL       <span class="c1"># 可以安全终止</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 情况二：脚本已经执行过写命令</span>
+</span></span><span class="line"><span class="cl">redis-cli SCRIPT KILL
+</span></span><span class="line"><span class="cl"><span class="c1"># (error) UNKILLABLE Sorry the script already executed write commands</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#         against the dataset. You can either wait the script termination</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#         or kill the server in a hard way using the SHUTDOWN NOSAVE command.</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 只能：</span>
+</span></span><span class="line"><span class="cl">redis-cli SHUTDOWN NOSAVE   <span class="c1"># ⚠️ 强制关闭，丢失内存中未持久化的数据</span>
+</span></span></code></pre></div><p><strong>为什么写过数据的脚本不能 kill</strong>：因为杀掉会留下&quot;执行了一半&quot;的数据状态，而且这个半成品状态<strong>无法正确地复制给从节点</strong>（效果复制只在脚本成功结束时才发送），会造成主从永久不一致。Redis 宁愿让你等或者重启，也不允许产生不一致。</p>
+<p><strong>这是一个真实的、灾难级的线上事故场景</strong>：一个有 bug 的 Lua 脚本导致整个 Redis 集群不可用，且唯一的解法是重启丢数据。所以：</p>
+<ol>
+<li><strong>脚本必须简短</strong>，最好是&quot;几个命令 + 简单判断&quot;；</li>
+<li><strong>循环次数必须有明确上限</strong>，且上限要小（比如几百）；</li>
+<li><strong>上线前必须在测试环境用生产规模的数据验证</strong>；</li>
+<li><strong>不要在脚本里遍历不可控大小的集合</strong>。</li>
+</ol>
+<h2 id="310-实用脚本示例">3.10 实用脚本示例</h2>
+<p><strong>（1）安全释放分布式锁</strong>（最经典的 Lua 用途）</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-lua" data-lang="lua"><span class="line"><span class="cl"><span class="c1">-- KEYS[1] = 锁的 key，ARGV[1] = 锁的持有者标识（uuid）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">-- 只有锁还是我的，才删除它</span>
+</span></span><span class="line"><span class="cl"><span class="kr">if</span> <span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;GET&#39;</span><span class="p">,</span> <span class="n">KEYS</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span> <span class="o">==</span> <span class="n">ARGV</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="kr">then</span>
+</span></span><span class="line"><span class="cl">    <span class="kr">return</span> <span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;DEL&#39;</span><span class="p">,</span> <span class="n">KEYS</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+</span></span><span class="line"><span class="cl"><span class="kr">else</span>
+</span></span><span class="line"><span class="cl">    <span class="kr">return</span> <span class="mi">0</span>
+</span></span><span class="line"><span class="cl"><span class="kr">end</span>
+</span></span></code></pre></div><p>为什么必须用 Lua：如果分成 <code>GET</code> + 判断 + <code>DEL</code> 三步，可能在 <code>GET</code> 之后锁刚好过期并被别人获取，然后你的 <code>DEL</code> 就删掉了<strong>别人的锁</strong>。</p>
+<p><strong>（2）令牌桶限流</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-lua" data-lang="lua"><span class="line"><span class="cl"><span class="c1">-- KEYS[1]=桶的key  ARGV[1]=容量  ARGV[2]=每秒生成速率  ARGV[3]=当前毫秒  ARGV[4]=请求令牌数</span>
+</span></span><span class="line"><span class="cl"><span class="kd">local</span> <span class="n">key</span> <span class="o">=</span> <span class="n">KEYS</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl"><span class="kd">local</span> <span class="n">capacity</span> <span class="o">=</span> <span class="n">tonumber</span><span class="p">(</span><span class="n">ARGV</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+</span></span><span class="line"><span class="cl"><span class="kd">local</span> <span class="n">rate</span> <span class="o">=</span> <span class="n">tonumber</span><span class="p">(</span><span class="n">ARGV</span><span class="p">[</span><span class="mi">2</span><span class="p">])</span>
+</span></span><span class="line"><span class="cl"><span class="kd">local</span> <span class="n">now</span> <span class="o">=</span> <span class="n">tonumber</span><span class="p">(</span><span class="n">ARGV</span><span class="p">[</span><span class="mi">3</span><span class="p">])</span>
+</span></span><span class="line"><span class="cl"><span class="kd">local</span> <span class="n">requested</span> <span class="o">=</span> <span class="n">tonumber</span><span class="p">(</span><span class="n">ARGV</span><span class="p">[</span><span class="mi">4</span><span class="p">])</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">local</span> <span class="n">bucket</span> <span class="o">=</span> <span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;HMGET&#39;</span><span class="p">,</span> <span class="n">key</span><span class="p">,</span> <span class="s1">&#39;tokens&#39;</span><span class="p">,</span> <span class="s1">&#39;ts&#39;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="kd">local</span> <span class="n">tokens</span> <span class="o">=</span> <span class="n">tonumber</span><span class="p">(</span><span class="n">bucket</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+</span></span><span class="line"><span class="cl"><span class="kd">local</span> <span class="n">last_ts</span> <span class="o">=</span> <span class="n">tonumber</span><span class="p">(</span><span class="n">bucket</span><span class="p">[</span><span class="mi">2</span><span class="p">])</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kr">if</span> <span class="n">tokens</span> <span class="o">==</span> <span class="kc">nil</span> <span class="kr">then</span>
+</span></span><span class="line"><span class="cl">    <span class="n">tokens</span> <span class="o">=</span> <span class="n">capacity</span>
+</span></span><span class="line"><span class="cl">    <span class="n">last_ts</span> <span class="o">=</span> <span class="n">now</span>
+</span></span><span class="line"><span class="cl"><span class="kr">else</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">-- 按经过的时间补充令牌</span>
+</span></span><span class="line"><span class="cl">    <span class="kd">local</span> <span class="n">delta</span> <span class="o">=</span> <span class="n">math.max</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">now</span> <span class="o">-</span> <span class="n">last_ts</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="n">tokens</span> <span class="o">=</span> <span class="n">math.min</span><span class="p">(</span><span class="n">capacity</span><span class="p">,</span> <span class="n">tokens</span> <span class="o">+</span> <span class="n">delta</span> <span class="o">*</span> <span class="n">rate</span> <span class="o">/</span> <span class="mi">1000</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="n">last_ts</span> <span class="o">=</span> <span class="n">now</span>
+</span></span><span class="line"><span class="cl"><span class="kr">end</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">local</span> <span class="n">allowed</span> <span class="o">=</span> <span class="mi">0</span>
+</span></span><span class="line"><span class="cl"><span class="kr">if</span> <span class="n">tokens</span> <span class="o">&gt;=</span> <span class="n">requested</span> <span class="kr">then</span>
+</span></span><span class="line"><span class="cl">    <span class="n">tokens</span> <span class="o">=</span> <span class="n">tokens</span> <span class="o">-</span> <span class="n">requested</span>
+</span></span><span class="line"><span class="cl">    <span class="n">allowed</span> <span class="o">=</span> <span class="mi">1</span>
+</span></span><span class="line"><span class="cl"><span class="kr">end</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;HMSET&#39;</span><span class="p">,</span> <span class="n">key</span><span class="p">,</span> <span class="s1">&#39;tokens&#39;</span><span class="p">,</span> <span class="n">tokens</span><span class="p">,</span> <span class="s1">&#39;ts&#39;</span><span class="p">,</span> <span class="n">last_ts</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;PEXPIRE&#39;</span><span class="p">,</span> <span class="n">key</span><span class="p">,</span> <span class="n">math.ceil</span><span class="p">(</span><span class="n">capacity</span> <span class="o">/</span> <span class="n">rate</span> <span class="o">*</span> <span class="mi">1000</span><span class="p">)</span> <span class="o">+</span> <span class="mi">1000</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="kr">return</span> <span class="n">allowed</span>
+</span></span></code></pre></div><p><strong>（3）滑动窗口限流</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-lua" data-lang="lua"><span class="line"><span class="cl"><span class="c1">-- KEYS[1]=限流key  ARGV[1]=当前毫秒  ARGV[2]=窗口毫秒  ARGV[3]=限制次数  ARGV[4]=唯一member</span>
+</span></span><span class="line"><span class="cl"><span class="kd">local</span> <span class="n">key</span> <span class="o">=</span> <span class="n">KEYS</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl"><span class="kd">local</span> <span class="n">now</span> <span class="o">=</span> <span class="n">tonumber</span><span class="p">(</span><span class="n">ARGV</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+</span></span><span class="line"><span class="cl"><span class="kd">local</span> <span class="n">window</span> <span class="o">=</span> <span class="n">tonumber</span><span class="p">(</span><span class="n">ARGV</span><span class="p">[</span><span class="mi">2</span><span class="p">])</span>
+</span></span><span class="line"><span class="cl"><span class="kd">local</span> <span class="n">limit</span> <span class="o">=</span> <span class="n">tonumber</span><span class="p">(</span><span class="n">ARGV</span><span class="p">[</span><span class="mi">3</span><span class="p">])</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;ZREMRANGEBYSCORE&#39;</span><span class="p">,</span> <span class="n">key</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">now</span> <span class="o">-</span> <span class="n">window</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="kd">local</span> <span class="n">count</span> <span class="o">=</span> <span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;ZCARD&#39;</span><span class="p">,</span> <span class="n">key</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="kr">if</span> <span class="n">count</span> <span class="o">&gt;=</span> <span class="n">limit</span> <span class="kr">then</span>
+</span></span><span class="line"><span class="cl">    <span class="kr">return</span> <span class="mi">0</span>
+</span></span><span class="line"><span class="cl"><span class="kr">end</span>
+</span></span><span class="line"><span class="cl"><span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;ZADD&#39;</span><span class="p">,</span> <span class="n">key</span><span class="p">,</span> <span class="n">now</span><span class="p">,</span> <span class="n">ARGV</span><span class="p">[</span><span class="mi">4</span><span class="p">])</span>
+</span></span><span class="line"><span class="cl"><span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;PEXPIRE&#39;</span><span class="p">,</span> <span class="n">key</span><span class="p">,</span> <span class="n">window</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="kr">return</span> <span class="mi">1</span>
+</span></span></code></pre></div><p><strong>（4）库存扣减（防超卖）</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-lua" data-lang="lua"><span class="line"><span class="cl"><span class="c1">-- KEYS[1]=库存key  KEYS[2]=已售用户集合  ARGV[1]=用户ID  ARGV[2]=购买数量</span>
+</span></span><span class="line"><span class="cl"><span class="kd">local</span> <span class="n">stock</span> <span class="o">=</span> <span class="n">tonumber</span><span class="p">(</span><span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;GET&#39;</span><span class="p">,</span> <span class="n">KEYS</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span> <span class="ow">or</span> <span class="s1">&#39;0&#39;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="kd">local</span> <span class="n">qty</span> <span class="o">=</span> <span class="n">tonumber</span><span class="p">(</span><span class="n">ARGV</span><span class="p">[</span><span class="mi">2</span><span class="p">])</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">-- 1. 校验：一人一单</span>
+</span></span><span class="line"><span class="cl"><span class="kr">if</span> <span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;SISMEMBER&#39;</span><span class="p">,</span> <span class="n">KEYS</span><span class="p">[</span><span class="mi">2</span><span class="p">],</span> <span class="n">ARGV</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span> <span class="o">==</span> <span class="mi">1</span> <span class="kr">then</span>
+</span></span><span class="line"><span class="cl">    <span class="kr">return</span> <span class="o">-</span><span class="mi">1</span>        <span class="c1">-- 已购买过</span>
+</span></span><span class="line"><span class="cl"><span class="kr">end</span>
+</span></span><span class="line"><span class="cl"><span class="c1">-- 2. 校验：库存足够</span>
+</span></span><span class="line"><span class="cl"><span class="kr">if</span> <span class="n">stock</span> <span class="o">&lt;</span> <span class="n">qty</span> <span class="kr">then</span>
+</span></span><span class="line"><span class="cl">    <span class="kr">return</span> <span class="o">-</span><span class="mi">2</span>        <span class="c1">-- 库存不足</span>
+</span></span><span class="line"><span class="cl"><span class="kr">end</span>
+</span></span><span class="line"><span class="cl"><span class="c1">-- 3. 所有校验通过，执行写入</span>
+</span></span><span class="line"><span class="cl"><span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;DECRBY&#39;</span><span class="p">,</span> <span class="n">KEYS</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="n">qty</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;SADD&#39;</span><span class="p">,</span> <span class="n">KEYS</span><span class="p">[</span><span class="mi">2</span><span class="p">],</span> <span class="n">ARGV</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+</span></span><span class="line"><span class="cl"><span class="kr">return</span> <span class="mi">1</span>             <span class="c1">-- 成功</span>
+</span></span></code></pre></div><p>注意这个脚本的结构：<strong>所有校验在前，所有写入在后</strong>——因为 Lua 不能回滚。</p>
+<p><strong>（5）批量获取并删除到期的延迟任务</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-lua" data-lang="lua"><span class="line"><span class="cl"><span class="kd">local</span> <span class="n">tasks</span> <span class="o">=</span> <span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;ZRANGEBYSCORE&#39;</span><span class="p">,</span> <span class="n">KEYS</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="mi">0</span><span class="p">,</span> <span class="n">ARGV</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="s1">&#39;LIMIT&#39;</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">ARGV</span><span class="p">[</span><span class="mi">2</span><span class="p">])</span>
+</span></span><span class="line"><span class="cl"><span class="kr">if</span> <span class="o">#</span><span class="n">tasks</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="kr">then</span>
+</span></span><span class="line"><span class="cl">    <span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;ZREM&#39;</span><span class="p">,</span> <span class="n">KEYS</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="n">unpack</span><span class="p">(</span><span class="n">tasks</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl"><span class="kr">end</span>
+</span></span><span class="line"><span class="cl"><span class="kr">return</span> <span class="n">tasks</span>
+</span></span></code></pre></div><p>注意 <code>unpack</code> 有参数个数限制（Lua 的栈限制，通常约 8000），所以 <code>LIMIT</code> 的第二个参数要控制在几百以内。</p>
+<p><strong>（6）原子的&quot;设置并返回是否首次&quot;</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-lua" data-lang="lua"><span class="line"><span class="cl"><span class="c1">-- 用于&#34;只有第一次才发通知&#34;这类幂等场景</span>
+</span></span><span class="line"><span class="cl"><span class="kr">if</span> <span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;SETNX&#39;</span><span class="p">,</span> <span class="n">KEYS</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="n">ARGV</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span> <span class="o">==</span> <span class="mi">1</span> <span class="kr">then</span>
+</span></span><span class="line"><span class="cl">    <span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;EXPIRE&#39;</span><span class="p">,</span> <span class="n">KEYS</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="n">ARGV</span><span class="p">[</span><span class="mi">2</span><span class="p">])</span>
+</span></span><span class="line"><span class="cl">    <span class="kr">return</span> <span class="mi">1</span>
+</span></span><span class="line"><span class="cl"><span class="kr">end</span>
+</span></span><span class="line"><span class="cl"><span class="kr">return</span> <span class="mi">0</span>
+</span></span></code></pre></div><h2 id="311-脚本里可用的辅助-api">3.11 脚本里可用的辅助 API</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-lua" data-lang="lua"><span class="line"><span class="cl"><span class="c1">-- 日志（会写到 Redis 的日志文件）</span>
+</span></span><span class="line"><span class="cl"><span class="n">redis.log</span><span class="p">(</span><span class="n">redis.LOG_WARNING</span><span class="p">,</span> <span class="s2">&#34;something happened: &#34;</span> <span class="o">..</span> <span class="n">tostring</span><span class="p">(</span><span class="n">x</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl"><span class="c1">-- 级别：redis.LOG_DEBUG / LOG_VERBOSE / LOG_NOTICE / LOG_WARNING</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">-- JSON 编解码（Redis 内置了 cjson 库）</span>
+</span></span><span class="line"><span class="cl"><span class="kd">local</span> <span class="n">obj</span> <span class="o">=</span> <span class="n">cjson.decode</span><span class="p">(</span><span class="n">ARGV</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+</span></span><span class="line"><span class="cl"><span class="kd">local</span> <span class="n">str</span> <span class="o">=</span> <span class="n">cjson.encode</span><span class="p">({</span><span class="n">id</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span> <span class="n">name</span> <span class="o">=</span> <span class="s2">&#34;tom&#34;</span><span class="p">})</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">-- SHA1、Base64（内置库）</span>
+</span></span><span class="line"><span class="cl"><span class="kd">local</span> <span class="n">hash</span> <span class="o">=</span> <span class="n">redis.sha1hex</span><span class="p">(</span><span class="s2">&#34;hello&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="kd">local</span> <span class="n">encoded</span> <span class="o">=</span> <span class="n">cmsgpack.pack</span><span class="p">(</span><span class="n">obj</span><span class="p">)</span>     <span class="c1">-- MessagePack</span>
+</span></span><span class="line"><span class="cl"><span class="kd">local</span> <span class="n">bits</span> <span class="o">=</span> <span class="n">bit.band</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">)</span>            <span class="c1">-- 位运算库</span>
+</span></span><span class="line"><span class="cl"><span class="kd">local</span> <span class="n">ok</span><span class="p">,</span> <span class="n">err</span> <span class="o">=</span> <span class="n">pcall</span><span class="p">(</span><span class="kr">function</span><span class="p">()</span> <span class="p">...</span> <span class="kr">end</span><span class="p">)</span>   <span class="c1">-- Lua 原生的错误捕获</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">-- 返回自定义错误</span>
+</span></span><span class="line"><span class="cl"><span class="kr">return</span> <span class="n">redis.error_reply</span><span class="p">(</span><span class="s2">&#34;my custom error&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="kr">return</span> <span class="p">{</span><span class="n">err</span> <span class="o">=</span> <span class="s2">&#34;my custom error&#34;</span><span class="p">}</span>       <span class="c1">-- 等价</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">-- 返回状态回复</span>
+</span></span><span class="line"><span class="cl"><span class="kr">return</span> <span class="n">redis.status_reply</span><span class="p">(</span><span class="s2">&#34;DONE&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="kr">return</span> <span class="p">{</span><span class="n">ok</span> <span class="o">=</span> <span class="s2">&#34;DONE&#34;</span><span class="p">}</span>                   <span class="c1">-- 等价</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">-- 控制复制行为（一般不需要动）</span>
+</span></span><span class="line"><span class="cl"><span class="n">redis.replicate_commands</span><span class="p">()</span>             <span class="c1">-- 5.0+ 默认就是效果复制</span>
+</span></span><span class="line"><span class="cl"><span class="n">redis.set_repl</span><span class="p">(</span><span class="n">redis.REPL_NONE</span><span class="p">)</span>        <span class="c1">-- 让后续命令不复制（危险，会造成主从不一致）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">-- 7.0+ 声明脚本标志（在脚本第一行）</span>
+</span></span><span class="line"><span class="cl"><span class="o">#</span><span class="err">!</span><span class="n">lua</span> <span class="n">flags</span><span class="o">=</span><span class="n">no</span><span class="o">-</span><span class="n">writes</span>                  <span class="c1">-- 声明为只读脚本，可在从节点执行</span>
+</span></span></code></pre></div><h2 id="312-内置库的限制">3.12 内置库的限制</h2>
+<p>Redis 的 Lua 沙箱做了严格限制：</p>
+<ul>
+<li><strong>禁止 <code>require</code></strong>：不能加载外部模块；</li>
+<li><strong>禁止文件 IO</strong>（<code>io</code>、<code>os.execute</code>）；</li>
+<li><strong>禁止网络访问</strong>；</li>
+<li><strong>全局变量被禁止</strong>（7.0+ 更严格）：脚本里 <code>x = 1</code> 会报错 <code>Script attempted to create global variable</code>，必须用 <code>local x = 1</code>。这是为了防止脚本之间互相污染。</li>
+</ul>
+<p>可用的库：<code>base</code>、<code>table</code>、<code>string</code>、<code>math</code>、<code>struct</code>、<code>cjson</code>、<code>cmsgpack</code>、<code>bit</code>、<code>os.time</code>/<code>os.clock</code>（部分）。</p>
+<hr>
+<h1 id="4-function70">4. Function（7.0+）</h1>
+<p>Function 是 7.0 引入的&quot;下一代脚本机制&quot;，用来解决 <code>EVAL</code>/<code>EVALSHA</code> 的痛点。</p>
+<h2 id="41-eval-的痛点">4.1 EVAL 的痛点</h2>
+<ol>
+<li><strong>脚本缓存不持久化</strong>：重启、<code>SCRIPT FLUSH</code> 后缓存丢失，客户端必须实现 NOSCRIPT 回退逻辑；</li>
+<li><strong>主从/切换后缓存不一致</strong>：新主节点可能没有该脚本；</li>
+<li><strong>脚本是&quot;匿名&quot;的</strong>：只有 SHA1，运维完全不知道 <code>4e6d8fc8...</code> 是干什么的；</li>
+<li><strong>无法复用代码</strong>：多个脚本共享的逻辑只能复制粘贴；</li>
+<li><strong>应用和脚本耦合</strong>：脚本文本嵌在应用代码里，更新脚本要发版。</li>
+</ol>
+<h2 id="42-function-的改进">4.2 Function 的改进</h2>
+<table>
+<thead>
+<tr>
+<th>特性</th>
+<th>EVAL / 脚本缓存</th>
+<th>Function</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>持久化</strong></td>
+<td>❌ 重启丢失</td>
+<td>✅ <strong>存入 RDB/AOF，重启保留</strong></td>
+</tr>
+<tr>
+<td><strong>复制到从节点</strong></td>
+<td>只有效果（脚本本身不复制）</td>
+<td>✅ <strong>函数库本身会复制</strong></td>
+</tr>
+<tr>
+<td><strong>命名</strong></td>
+<td>匿名（只有 SHA1）</td>
+<td>✅ <strong>有库名和函数名</strong></td>
+</tr>
+<tr>
+<td><strong>代码组织</strong></td>
+<td>单个脚本</td>
+<td>✅ <strong>库（library）可含多个函数，可共享辅助函数</strong></td>
+</tr>
+<tr>
+<td><strong>客户端要处理 NOSCRIPT</strong></td>
+<td>是</td>
+<td>✅ <strong>不需要</strong></td>
+</tr>
+<tr>
+<td><strong>管理与观测</strong></td>
+<td>只能 <code>SCRIPT EXISTS</code></td>
+<td>✅ <code>FUNCTION LIST/STATS/DUMP</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="43-用法">4.3 用法</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">FUNCTION LOAD <span class="o">[</span>REPLACE<span class="o">]</span> <span class="s2">&#34;&lt;library code&gt;&#34;</span>
+</span></span><span class="line"><span class="cl">FUNCTION DELETE &lt;library-name&gt;
+</span></span><span class="line"><span class="cl">FUNCTION LIST <span class="o">[</span>LIBRARYNAME name<span class="o">]</span> <span class="o">[</span>WITHCODE<span class="o">]</span>
+</span></span><span class="line"><span class="cl">FUNCTION FLUSH <span class="o">[</span>ASYNC<span class="p">|</span>SYNC<span class="o">]</span>
+</span></span><span class="line"><span class="cl">FUNCTION DUMP                 <span class="c1"># 序列化所有函数库（用于备份/迁移）</span>
+</span></span><span class="line"><span class="cl">FUNCTION RESTORE &lt;payload&gt; <span class="o">[</span>FLUSH<span class="p">|</span>APPEND<span class="p">|</span>REPLACE<span class="o">]</span>
+</span></span><span class="line"><span class="cl">FUNCTION STATS                <span class="c1"># 正在执行的函数、各引擎的函数数量</span>
+</span></span><span class="line"><span class="cl">FCALL &lt;<span class="k">function</span>&gt; numkeys key... arg...      <span class="c1"># 调用函数</span>
+</span></span><span class="line"><span class="cl">FCALL_RO &lt;<span class="k">function</span>&gt; numkeys key... arg...   <span class="c1"># 只调用只读函数（可在从节点执行）</span>
+</span></span></code></pre></div><h2 id="44-完整例子">4.4 完整例子</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-lua" data-lang="lua"><span class="line"><span class="cl"><span class="cp">#!lua name=mylib</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">-- 内部辅助函数（不对外暴露）</span>
+</span></span><span class="line"><span class="cl"><span class="kd">local</span> <span class="kr">function</span> <span class="nf">check_positive</span><span class="p">(</span><span class="n">n</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="kd">local</span> <span class="n">v</span> <span class="o">=</span> <span class="n">tonumber</span><span class="p">(</span><span class="n">n</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="kr">if</span> <span class="n">v</span> <span class="o">==</span> <span class="kc">nil</span> <span class="ow">or</span> <span class="n">v</span> <span class="o">&lt;=</span> <span class="mi">0</span> <span class="kr">then</span>
+</span></span><span class="line"><span class="cl">        <span class="n">error</span><span class="p">(</span><span class="s1">&#39;invalid amount&#39;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="kr">end</span>
+</span></span><span class="line"><span class="cl">    <span class="kr">return</span> <span class="n">v</span>
+</span></span><span class="line"><span class="cl"><span class="kr">end</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">-- 注册对外函数：转账</span>
+</span></span><span class="line"><span class="cl"><span class="n">redis.register_function</span><span class="p">(</span><span class="s1">&#39;transfer&#39;</span><span class="p">,</span> <span class="kr">function</span><span class="p">(</span><span class="n">keys</span><span class="p">,</span> <span class="n">args</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="kd">local</span> <span class="n">amount</span> <span class="o">=</span> <span class="n">check_positive</span><span class="p">(</span><span class="n">args</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+</span></span><span class="line"><span class="cl">    <span class="kd">local</span> <span class="n">from</span> <span class="o">=</span> <span class="n">tonumber</span><span class="p">(</span><span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;GET&#39;</span><span class="p">,</span> <span class="n">keys</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span> <span class="ow">or</span> <span class="s1">&#39;0&#39;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="kr">if</span> <span class="n">from</span> <span class="o">&lt;</span> <span class="n">amount</span> <span class="kr">then</span>
+</span></span><span class="line"><span class="cl">        <span class="kr">return</span> <span class="n">redis.error_reply</span><span class="p">(</span><span class="s1">&#39;insufficient balance&#39;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="kr">end</span>
+</span></span><span class="line"><span class="cl">    <span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;DECRBY&#39;</span><span class="p">,</span> <span class="n">keys</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="n">amount</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;INCRBY&#39;</span><span class="p">,</span> <span class="n">keys</span><span class="p">[</span><span class="mi">2</span><span class="p">],</span> <span class="n">amount</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="kr">return</span> <span class="mi">1</span>
+</span></span><span class="line"><span class="cl"><span class="kr">end</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">-- 注册只读函数（声明 no-writes 标志后可在从节点执行）</span>
+</span></span><span class="line"><span class="cl"><span class="n">redis.register_function</span><span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="n">function_name</span> <span class="o">=</span> <span class="s1">&#39;get_balance&#39;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="n">callback</span> <span class="o">=</span> <span class="kr">function</span><span class="p">(</span><span class="n">keys</span><span class="p">,</span> <span class="n">args</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="kr">return</span> <span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;GET&#39;</span><span class="p">,</span> <span class="n">keys</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+</span></span><span class="line"><span class="cl">    <span class="kr">end</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="n">flags</span> <span class="o">=</span> <span class="p">{</span><span class="s1">&#39;no-writes&#39;</span><span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>加载和调用：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 加载（通常从文件读入）</span>
+</span></span><span class="line"><span class="cl">$ redis-cli -x FUNCTION LOAD REPLACE &lt; mylib.lua
+</span></span><span class="line"><span class="cl"><span class="s2">&#34;mylib&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 调用</span>
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; SET acct:A <span class="m">1000</span>
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; SET acct:B <span class="m">0</span>
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; FCALL transfer <span class="m">2</span> acct:A acct:B <span class="m">300</span>
+</span></span><span class="line"><span class="cl"><span class="o">(</span>integer<span class="o">)</span> <span class="m">1</span>
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; MGET acct:A acct:B
+</span></span><span class="line"><span class="cl">1<span class="o">)</span> <span class="s2">&#34;700&#34;</span>
+</span></span><span class="line"><span class="cl">2<span class="o">)</span> <span class="s2">&#34;300&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 只读函数可以在从节点上调用</span>
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; FCALL_RO get_balance <span class="m">1</span> acct:A
+</span></span><span class="line"><span class="cl"><span class="s2">&#34;700&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 查看已加载的库</span>
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; FUNCTION LIST
+</span></span><span class="line"><span class="cl">1<span class="o">)</span> 1<span class="o">)</span> <span class="s2">&#34;library_name&#34;</span>
+</span></span><span class="line"><span class="cl">   2<span class="o">)</span> <span class="s2">&#34;mylib&#34;</span>
+</span></span><span class="line"><span class="cl">   3<span class="o">)</span> <span class="s2">&#34;engine&#34;</span>
+</span></span><span class="line"><span class="cl">   4<span class="o">)</span> <span class="s2">&#34;LUA&#34;</span>
+</span></span><span class="line"><span class="cl">   5<span class="o">)</span> <span class="s2">&#34;functions&#34;</span>
+</span></span><span class="line"><span class="cl">   6<span class="o">)</span> 1<span class="o">)</span> 1<span class="o">)</span> <span class="s2">&#34;name&#34;</span>
+</span></span><span class="line"><span class="cl">         2<span class="o">)</span> <span class="s2">&#34;transfer&#34;</span>
+</span></span><span class="line"><span class="cl">         3<span class="o">)</span> <span class="s2">&#34;description&#34;</span>
+</span></span><span class="line"><span class="cl">         4<span class="o">)</span> <span class="o">(</span>nil<span class="o">)</span>
+</span></span><span class="line"><span class="cl">         5<span class="o">)</span> <span class="s2">&#34;flags&#34;</span>
+</span></span><span class="line"><span class="cl">         6<span class="o">)</span> <span class="o">(</span>empty array<span class="o">)</span>
+</span></span><span class="line"><span class="cl">      2<span class="o">)</span> 1<span class="o">)</span> <span class="s2">&#34;name&#34;</span>
+</span></span><span class="line"><span class="cl">         2<span class="o">)</span> <span class="s2">&#34;get_balance&#34;</span>
+</span></span><span class="line"><span class="cl">         ...
+</span></span><span class="line"><span class="cl">         5<span class="o">)</span> <span class="s2">&#34;flags&#34;</span>
+</span></span><span class="line"><span class="cl">         6<span class="o">)</span> 1<span class="o">)</span> <span class="s2">&#34;no-writes&#34;</span>
+</span></span></code></pre></div><p><strong>注意函数签名的变化</strong>：Function 用 <code>function(keys, args)</code> 的参数形式，<strong>不再用全局的 <code>KEYS</code>/<code>ARGV</code></strong>（而且下标依然从 1 开始）。</p>
+<h2 id="45-脚本标志flags">4.5 脚本标志（flags）</h2>
+<p>7.0 引入了脚本标志，让 Redis 能对脚本做更智能的处理：</p>
+<table>
+<thead>
+<tr>
+<th>flag</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>no-writes</code></td>
+<td>脚本不做任何写操作 → <strong>可以在从节点执行</strong>、OOM 时也允许执行、可用 <code>FCALL_RO</code>/<code>EVAL_RO</code></td>
+</tr>
+<tr>
+<td><code>allow-oom</code></td>
+<td>内存超限时也允许执行（默认写脚本会被拒绝）</td>
+</tr>
+<tr>
+<td><code>allow-stale</code></td>
+<td>允许在&quot;与主节点失联的从节点&quot;上执行</td>
+</tr>
+<tr>
+<td><code>no-cluster</code></td>
+<td>声明脚本不能在集群模式下运行</td>
+</tr>
+<tr>
+<td><code>allow-cross-slot-keys</code></td>
+<td>7.0+ 允许访问不同 slot 的 key（危险，慎用）</td>
+</tr>
+</tbody>
+</table>
+<p>EVAL 也支持在脚本第一行用 shebang 声明：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-lua" data-lang="lua"><span class="line"><span class="cl"><span class="cp">#!lua flags=no-writes</span>
+</span></span><span class="line"><span class="cl"><span class="kr">return</span> <span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;GET&#39;</span><span class="p">,</span> <span class="n">KEYS</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+</span></span></code></pre></div><p><strong>为什么这很有用</strong>：7.0 之前 Redis 无法知道一个脚本是否会写数据，所以<strong>保守地假设所有脚本都会写</strong>，导致：</p>
+<ul>
+<li>脚本不能在只读从节点上执行；</li>
+<li>内存超限（OOM）时所有脚本都被拒绝，即使它只是读数据。</li>
+</ul>
+<p>有了 <code>no-writes</code> 声明，这些限制就解除了。</p>
+<h2 id="46-什么时候用-function">4.6 什么时候用 Function</h2>
+<p><strong>推荐用 Function 的场景</strong>：</p>
+<ul>
+<li>脚本逻辑复杂、需要拆分成多个函数复用；</li>
+<li>有多个应用共用同一套 Redis 逻辑（把逻辑放服务端，避免各应用重复实现）；</li>
+<li>想让脚本&quot;部署&quot;和&quot;应用发版&quot;解耦（DBA 可以独立更新函数库）；</li>
+<li>需要运维可观测性（能看到有哪些函数、叫什么）。</li>
+</ul>
+<p><strong>继续用 EVAL 的场景</strong>：</p>
+<ul>
+<li>简单的几行脚本（分布式锁释放、原子计数），用 <code>NewScript</code> 封装已经足够；</li>
+<li>需要兼容 7.0 以下的版本；</li>
+<li>现有代码库已经大量使用 EVAL（迁移成本大于收益）。</li>
+</ul>
+<p>实际上目前工业界仍以 <strong>EVAL + 客户端封装</strong> 为主，Function 的采用率还不高。但了解它是必要的。</p>
+<hr>
+<h1 id="5-pipeline-与四种方案的选型">5. Pipeline 与四种方案的选型</h1>
+<p>第 5 篇讲了 Pipeline 的原理（省 RTT + 省系统调用 + 省事件循环轮次），这里做完整对比。</p>
+<h2 id="51-四种批量原子方案对比">5.1 四种批量/原子方案对比</h2>
+<table>
+<thead>
+<tr>
+<th>方案</th>
+<th>网络往返</th>
+<th>原子性</th>
+<th>命令间可依赖</th>
+<th>服务端阻塞</th>
+<th>主要用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>逐条命令</strong></td>
+<td>N 次</td>
+<td>单条原子</td>
+<td>是</td>
+<td>无</td>
+<td>简单场景</td>
+</tr>
+<tr>
+<td><strong><code>MGET</code>/<code>MSET</code></strong></td>
+<td>1 次</td>
+<td><strong>是</strong></td>
+<td>否</td>
+<td>短</td>
+<td>同类型批量读写</td>
+</tr>
+<tr>
+<td><strong>Pipeline</strong></td>
+<td>1 次</td>
+<td><strong>否</strong></td>
+<td>否</td>
+<td>无（可被打断）</td>
+<td><strong>纯性能优化</strong></td>
+</tr>
+<tr>
+<td><strong><code>MULTI</code>/<code>EXEC</code></strong></td>
+<td>1~2 次</td>
+<td><strong>是</strong>（不回滚）</td>
+<td>否（除 <code>WATCH</code>）</td>
+<td>执行期间</td>
+<td>需要连续执行</td>
+</tr>
+<tr>
+<td><strong>Lua 脚本</strong></td>
+<td>1 次</td>
+<td><strong>是</strong>（不回滚）</td>
+<td><strong>是</strong></td>
+<td>执行期间</td>
+<td><strong>需要逻辑判断的原子操作</strong></td>
+</tr>
+</tbody>
+</table>
+<h2 id="52-决策树">5.2 决策树</h2>
+<pre tabindex="0"><code>需要保证多个命令的原子性吗？
+├─ 不需要 → 只是想快
+│   ├─ 命令类型相同（都是 GET/SET） → MGET / MSET
+│   └─ 命令类型不同 → Pipeline
+└─ 需要
+    ├─ 需要读取中间结果做判断吗？
+    │   ├─ 需要 → 【Lua 脚本】（首选）
+    │   │           └─ 逻辑复杂/需要复用 → Function
+    │   └─ 不需要 → MULTI/EXEC（放进 pipeline 一起发）
+    └─ 判断逻辑必须在客户端做（涉及外部系统调用等）？
+        → WATCH + MULTI/EXEC 的乐观锁重试
+</code></pre><h2 id="53-为什么-lua-通常优于-multiexec">5.3 为什么 Lua 通常优于 MULTI/EXEC</h2>
+<p>实际工程里，<strong>Lua 脚本几乎全面取代了 <code>MULTI/EXEC</code></strong>：</p>
+<ol>
+<li><strong>能做条件判断</strong>：这是决定性的优势。绝大多数&quot;原子操作&quot;需求本质上是&quot;读取-判断-写入&quot;，事务做不到；</li>
+<li><strong>不需要 WATCH 重试</strong>：Lua 是一次成功的悲观执行，<code>WATCH</code> 是可能反复失败的乐观锁。高并发热点 key 上 <code>WATCH</code> 的重试率极高，性能很差；</li>
+<li><strong>网络往返更少</strong>：<code>WATCH</code> 方案至少要 <code>WATCH</code> → <code>GET</code> → <code>MULTI</code> → <code>EXEC</code> 多轮交互，Lua 一次搞定；</li>
+<li><strong>代码更集中易读</strong>：业务逻辑写在一个脚本里，而不是散在客户端的重试循环中。</li>
+</ol>
+<p><strong><code>MULTI/EXEC</code> 现在的主要价值</strong>：</p>
+<ul>
+<li><strong>配合 pipeline 做&quot;一批无依赖的写入&quot;</strong>（比如同时更新多个计数器），比 Lua 更轻量（不用启动 Lua 解释器）；</li>
+<li><strong><code>WATCH</code> 用于&quot;判断逻辑必须在客户端&quot;</strong> 的场景（例如需要调用外部 API 才能决定是否提交）。</li>
+</ul>
+<h2 id="54-pipeline-的使用注意补充">5.4 Pipeline 的使用注意（补充）</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// go-redis 的两种 pipeline
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">pipe</span> <span class="o">:=</span> <span class="nx">rdb</span><span class="p">.</span><span class="nf">Pipeline</span><span class="p">()</span>          <span class="c1">// 普通 pipeline，无原子性
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">pipe</span> <span class="o">:=</span> <span class="nx">rdb</span><span class="p">.</span><span class="nf">TxPipeline</span><span class="p">()</span>        <span class="c1">// 自动用 MULTI/EXEC 包裹，有原子性
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl"><span class="k">for</span> <span class="nx">i</span> <span class="o">:=</span> <span class="mi">0</span><span class="p">;</span> <span class="nx">i</span> <span class="p">&lt;</span> <span class="mi">1000</span><span class="p">;</span> <span class="nx">i</span><span class="o">++</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">pipe</span><span class="p">.</span><span class="nf">Set</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">fmt</span><span class="p">.</span><span class="nf">Sprintf</span><span class="p">(</span><span class="s">&#34;k%d&#34;</span><span class="p">,</span> <span class="nx">i</span><span class="p">),</span> <span class="nx">i</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="nx">cmds</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">pipe</span><span class="p">.</span><span class="nf">Exec</span><span class="p">(</span><span class="nx">ctx</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// ⚠️ 关键：即使 err != nil，也要遍历 cmds 检查每条命令的结果
+</span></span></span><span class="line"><span class="cl"><span class="c1">// err 只反映&#34;整体是否有错&#34;，具体哪条失败要看各个 cmd.Err()
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">for</span> <span class="nx">_</span><span class="p">,</span> <span class="nx">cmd</span> <span class="o">:=</span> <span class="k">range</span> <span class="nx">cmds</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">cmd</span><span class="p">.</span><span class="nf">Err</span><span class="p">()</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">log</span><span class="p">.</span><span class="nf">Printf</span><span class="p">(</span><span class="s">&#34;命令失败: %v, err: %v&#34;</span><span class="p">,</span> <span class="nx">cmd</span><span class="p">.</span><span class="nf">Args</span><span class="p">(),</span> <span class="nx">cmd</span><span class="p">.</span><span class="nf">Err</span><span class="p">())</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>要点复述（第 5 篇提过，这里强调易错点）：</p>
+<ol>
+<li><strong>每批 100~1000 条</strong>，不要一次几万条——回复全堆在服务端输出缓冲区和客户端接收缓冲区里，可能触发 <code>client-output-buffer-limit</code> 或撑爆内存；</li>
+<li><strong>不要在 pipeline 里放阻塞命令</strong>（<code>BLPOP</code>），会把整批卡住；</li>
+<li><strong>集群模式要按节点分组</strong>（成熟客户端会自动做，但要注意 <code>TxPipeline</code> 在集群下<strong>不能跨 slot</strong>）；</li>
+<li><strong>必须检查每条命令的错误</strong>，不能只看 <code>Exec</code> 的返回值。</li>
+</ol>
+<hr>
+<h1 id="6-高频面试题">6. 高频面试题</h1>
+<p><strong>Q1：Redis 事务的实现原理是什么？</strong></p>
+<p>非常简单，核心是<strong>命令队列 + 单线程</strong>：</p>
+<ol>
+<li><strong><code>MULTI</code></strong>：给 client 打上 <code>CLIENT_MULTI</code> 标志；</li>
+<li><strong>后续命令</strong>：在 <code>processCommand</code> 里发现有该标志，就<strong>只做基本检查</strong>（命令是否存在、参数个数是否正确），检查通过则<strong>追加到 <code>client-&gt;mstate.commands</code> 队列</strong>并返回 <code>QUEUED</code>，不执行。检查失败则报错并打上 <code>CLIENT_DIRTY_EXEC</code> 标志。（<code>MULTI</code>/<code>EXEC</code>/<code>DISCARD</code>/<code>WATCH</code>/<code>RESET</code> 例外，会立即执行）；</li>
+<li><strong><code>EXEC</code></strong>：
+<ul>
+<li>有 <code>CLIENT_DIRTY_EXEC</code>（入队时有语法错误）→ 返回 <code>EXECABORT</code>，<strong>整个事务放弃</strong>；</li>
+<li>有 <code>CLIENT_DIRTY_CAS</code>（WATCH 的 key 被改）→ 返回 nil，放弃；</li>
+<li>否则<strong>连续执行队列里所有命令</strong>，结果打包成数组返回。</li>
+</ul>
+</li>
+</ol>
+<p><strong>原子性来自单线程</strong>：<code>EXEC</code> 本身是一条命令，执行期间不会被其他客户端打断。</p>
+<p><strong>Q2：Redis 事务满足 ACID 吗？</strong></p>
+<table>
+<thead>
+<tr>
+<th>特性</th>
+<th>是否满足</th>
+<th>原因</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>原子性</strong></td>
+<td><strong>部分</strong></td>
+<td>命令连续执行；<strong>入队错误</strong>会整体放弃（满足）；但<strong>执行时错误不回滚</strong>（不满足）</td>
+</tr>
+<tr>
+<td><strong>一致性</strong></td>
+<td><strong>满足</strong></td>
+<td>没有复杂约束，数据不会进入非法中间状态</td>
+</tr>
+<tr>
+<td><strong>隔离性</strong></td>
+<td><strong>满足（串行化）</strong></td>
+<td><strong>单线程执行</strong>，天然最高隔离级别，不存在脏读/不可重复读/幻读</td>
+</tr>
+<tr>
+<td><strong>持久性</strong></td>
+<td><strong>不满足</strong></td>
+<td>取决于持久化配置；<code>everysec</code> 丢 1~2 秒；即使 <code>always</code> 也有窗口；<strong>异步主从复制还会丢</strong></td>
+</tr>
+</tbody>
+</table>
+<p>一句话：<strong>隔离性满分、一致性满分、原子性打折、持久性不及格。</strong></p>
+<p><strong>Q3：Redis 事务为什么不支持回滚？</strong></p>
+<p>Redis 官方给出的理由：</p>
+<ol>
+<li>
+<p><strong>Redis 认为执行失败只可能是&quot;编程错误&quot;</strong>：执行时错误几乎只有一种成因——对某个 key 用了它不支持的命令（如对 string 用 <code>LPUSH</code>）。这属于<strong>应该在开发测试阶段消除的 bug</strong>，不是生产环境的正常业务状态。</p>
+<p>对比 RDBMS：SQL 事务需要回滚是因为失败原因可能是<strong>正常的业务约束</strong>（唯一键冲突、外键、死锁），这些是运行时才能确定的合法失败。Redis 没有这些约束机制。</p>
+</li>
+<li>
+<p><strong>不支持回滚让实现更简单、性能更好</strong>：回滚需要为每条命令保存 undo 信息（旧值），这要付出额外内存（大集合的旧值可能很大）、额外 CPU（拷贝）、和复杂的实现（每种数据结构都要实现 undo）。为了处理一种&quot;本该消除的 bug&quot;让所有正常操作付代价，不值得。</p>
+</li>
+<li>
+<p><strong>AOF 是&quot;后写日志&quot;</strong>（不是 WAL），命令执行成功后才记录，<strong>机制上就没有 undo log</strong>。</p>
+</li>
+</ol>
+<p><strong>记住结论</strong>：Redis 事务保证的是「这批命令<strong>连续执行不被打断</strong>」，不是「要么全成功要么全失败」。</p>
+<p><strong>Q4：事务中命令出错，前面的命令会回滚吗？两类错误有什么区别？</strong></p>
+<p><strong>不会回滚。</strong> 但两类错误的处理方式截然不同：</p>
+<p><strong>（1）入队时错误</strong>（命令不存在、参数个数不对）：Redis 在入队阶段就能发现，会给 client 打 <code>CLIENT_DIRTY_EXEC</code> 标志。<code>EXEC</code> 时<strong>整个事务被拒绝</strong>，返回 <code>EXECABORT</code>，<strong>一条命令都不执行</strong>。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">MULTI
+</span></span><span class="line"><span class="cl">SET k1 v1              <span class="c1"># QUEUED</span>
+</span></span><span class="line"><span class="cl">WRONGCMD k2            <span class="c1"># (error) 入队就报错</span>
+</span></span><span class="line"><span class="cl">EXEC                   <span class="c1"># (error) EXECABORT，k1 也没被设置</span>
+</span></span></code></pre></div><p><strong>（2）执行时错误</strong>（类型错误等）：语法正确所以能入队，只有真正执行时才失败。<strong>只有那一条命令失败，其他命令全部正常执行且不回滚</strong>。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">SET str <span class="s2">&#34;hello&#34;</span>
+</span></span><span class="line"><span class="cl">MULTI
+</span></span><span class="line"><span class="cl">SET k1 v1              <span class="c1"># QUEUED</span>
+</span></span><span class="line"><span class="cl">LPUSH str a            <span class="c1"># QUEUED（语法没问题）</span>
+</span></span><span class="line"><span class="cl">SET k3 v3              <span class="c1"># QUEUED</span>
+</span></span><span class="line"><span class="cl">EXEC
+</span></span><span class="line"><span class="cl"><span class="c1"># 1) OK</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 2) (error) WRONGTYPE ...</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 3) OK          ← k1 和 k3 都成功了</span>
+</span></span></code></pre></div><p><strong>Q5：<code>WATCH</code> 是怎么实现的？它是乐观锁还是悲观锁？</strong></p>
+<p><strong>乐观锁（CAS，Check-And-Set）</strong>：不加锁，先操作，提交时检查有没有冲突，有冲突就放弃重试。</p>
+<p><strong>实现</strong>：</p>
+<ol>
+<li>每个 <code>redisDb</code> 有一个 <strong><code>watched_keys</code> 字典</strong>（key → 监视它的客户端列表）；</li>
+<li><code>WATCH key</code> 把 (key → client) 记入这个字典，同时在 client 自己的 <code>watched_keys</code> 里也记一份；</li>
+<li><strong>任何客户端修改某个 key 时</strong>（<code>signalModifiedKey</code>），查 <code>watched_keys</code> 找到所有监视者，给它们打上 <strong><code>CLIENT_DIRTY_CAS</code></strong> 标志；</li>
+<li><code>EXEC</code> 时检查该标志：有 → <strong>放弃事务返回 nil</strong>；无 → 正常执行；</li>
+<li><code>EXEC</code>/<code>DISCARD</code>/<code>UNWATCH</code> 之后清空该 client 的所有监视。</li>
+</ol>
+<p><strong>重要细节</strong>：</p>
+<ul>
+<li><strong>只要 key 被&quot;修改&quot;就算 dirty，与改成什么值无关</strong>——即使 <code>SET k v</code> 改成和原来一样的值也会触发。这是<strong>基于版本而非基于值</strong>的判断；</li>
+<li>key 被删除、过期也算修改；</li>
+<li><strong><code>WATCH</code> 必须在 <code>MULTI</code> 之前</strong>，在事务里执行会报错；</li>
+<li>客户端必须实现<strong>重试循环</strong>，因为 <code>EXEC</code> 返回 nil 时业务还没完成。</li>
+</ul>
+<p><strong>Q6：<code>WATCH</code> 和 Lua 脚本，什么时候用哪个？</strong></p>
+<p><strong>优先用 Lua</strong>，绝大多数场景 Lua 更好：</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>WATCH + MULTI</th>
+<th>Lua</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>冲突处理</td>
+<td>失败重试（乐观锁）</td>
+<td>一次成功（服务端串行执行）</td>
+</tr>
+<tr>
+<td>高并发热点 key</td>
+<td><strong>很差</strong>（重试率高，可能活锁）</td>
+<td><strong>好</strong></td>
+</tr>
+<tr>
+<td>网络往返</td>
+<td>至少 4 轮（WATCH/GET/MULTI/EXEC）</td>
+<td><strong>1 轮</strong></td>
+</tr>
+<tr>
+<td>代码组织</td>
+<td>散在客户端重试循环里</td>
+<td>集中在脚本里</td>
+</tr>
+<tr>
+<td>判断逻辑位置</td>
+<td>客户端</td>
+<td>服务端</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>WATCH</code> 仍然有用的唯一场景</strong>：<strong>判断逻辑必须在客户端执行</strong>——比如需要调用外部 API、查询数据库、或者做复杂的业务计算才能决定是否提交。这时 Lua 做不到（沙箱禁止网络访问）。</p>
+<p><strong>Q7：Lua 脚本为什么是原子的？它会阻塞 Redis 吗？</strong></p>
+<p><strong>原子性来源</strong>：Redis 把整个脚本当作<strong>一条命令</strong>执行。因为命令执行是单线程串行的，脚本执行期间<strong>不可能有其他客户端的命令插入</strong>。</p>
+<p><strong>会阻塞，而且是严重的阻塞风险</strong>：脚本执行期间 Redis <strong>完全不响应任何其他命令</strong>。</p>
+<p><code>busy-reply-threshold</code>（默认 5000ms，旧名 <code>lua-time-limit</code>）<strong>不是&quot;超时就杀掉&quot;</strong>，而是&quot;超过这个时间后开始对其他客户端返回 <code>BUSY</code> 错误&quot;，<strong>脚本本身仍在继续跑</strong>。此时只接受两个命令：</p>
+<ul>
+<li><strong><code>SCRIPT KILL</code></strong>：只有<strong>脚本还没执行过任何写命令</strong>时才能成功；</li>
+<li><strong><code>SHUTDOWN NOSAVE</code></strong>：脚本已经写过数据时的唯一出路，<strong>强制关闭并丢失内存中未持久化的数据</strong>。</li>
+</ul>
+<p><strong>为什么写过数据的脚本不能 kill</strong>：杀掉会留下&quot;执行了一半&quot;的状态，而这个半成品状态<strong>无法正确复制给从节点</strong>（效果复制只在脚本成功结束时才发送），会造成<strong>主从永久不一致</strong>。Redis 宁愿让你重启也不允许不一致。</p>
+<p><strong>所以铁律</strong>：脚本必须简短、循环次数必须有小的明确上限、绝不遍历大小不可控的集合、上线前用生产规模数据验证。</p>
+<p><strong>Q8：为什么 Lua 脚本里的 key 必须通过 KEYS 传入？</strong></p>
+<p><strong>不是编码风格问题，是硬性要求</strong>：</p>
+<ol>
+<li><strong>Cluster 模式必须知道脚本涉及哪些 key</strong>，才能判断它们是否在同一 slot、把请求路由到正确的节点。如果 key 藏在 ARGV 里或在脚本里拼接，Redis 无法正确路由，会读写到错误的节点上；</li>
+<li><strong>ACL 权限检查</strong>需要知道涉及的 key（<code>~pattern</code> 形式的 key 权限）；</li>
+<li>复制、<code>WATCH</code> 相关机制也依赖它。</li>
+</ol>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-lua" data-lang="lua"><span class="line"><span class="cl"><span class="c1">-- ❌ key 硬编码</span>
+</span></span><span class="line"><span class="cl"><span class="kr">return</span> <span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;GET&#39;</span><span class="p">,</span> <span class="s1">&#39;user:1001&#39;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="c1">-- ❌ 用 ARGV 拼 key</span>
+</span></span><span class="line"><span class="cl"><span class="kr">return</span> <span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;GET&#39;</span><span class="p">,</span> <span class="s1">&#39;user:&#39;</span> <span class="o">..</span> <span class="n">ARGV</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+</span></span><span class="line"><span class="cl"><span class="c1">-- ✅ 正确</span>
+</span></span><span class="line"><span class="cl"><span class="kr">return</span> <span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;GET&#39;</span><span class="p">,</span> <span class="n">KEYS</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+</span></span></code></pre></div><p>违规在单机上&quot;能跑&quot;，但迁到 Cluster 会莫名出错。<strong>Redis 7.0+ 在集群模式下会直接报错</strong>：<code>Script attempted to access a non local key in a cluster node</code>。</p>
+<p>另外还有个副作用：<strong>把参数拼进脚本文本会导致每个变体都占一份脚本缓存</strong>，而脚本缓存不会自动淘汰，长期运行造成内存泄漏。</p>
+<p><strong>Q9：<code>EVAL</code> 和 <code>EVALSHA</code> 的区别？为什么客户端要处理 NOSCRIPT？</strong></p>
+<p><code>EVAL</code> 每次传输完整脚本文本；<code>EVALSHA</code> 只传 40 字符的 SHA1，Redis 从<strong>脚本缓存</strong>里找对应脚本执行。脚本几 KB 且高 QPS 时，网络开销差别很大。</p>
+<p><strong>必须处理 <code>NOSCRIPT</code> 的原因</strong>：<strong>脚本缓存不持久化</strong>。以下情况都会让缓存失效：</p>
+<ul>
+<li>Redis <strong>重启</strong>；</li>
+<li>执行了 <code>SCRIPT FLUSH</code>；</li>
+<li><strong>主从切换</strong>后新主节点没有这个脚本的缓存；</li>
+<li>客户端连到了一个新扩容的节点。</li>
+</ul>
+<p><strong>标准模式</strong>：</p>
+<pre tabindex="0"><code>1. 先试 EVALSHA &lt;sha1&gt;
+2. 收到 NOSCRIPT 错误 → 降级为 EVAL &lt;完整脚本&gt;（会自动加入缓存）
+3. 之后继续用 EVALSHA
+</code></pre><p>go-redis 的 <code>redis.NewScript()</code> / Java Redisson 等客户端都封装了这个逻辑，直接用它们的封装即可。</p>
+<p><strong>7.0 的 Function 解决了这个问题</strong>：函数库<strong>会被持久化到 RDB/AOF、会复制到从节点</strong>，所以不需要 NOSCRIPT 回退。</p>
+<p><strong>Q10：Lua 脚本的类型转换有哪些坑？</strong></p>
+<p><strong>四个必知的坑</strong>：</p>
+<p><strong>（1）Lua number 转 Redis 会截断小数</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">EVAL <span class="s2">&#34;return 3.99&#34;</span> <span class="m">0</span>    →   <span class="o">(</span>integer<span class="o">)</span> <span class="m">3</span>
+</span></span></code></pre></div><p>解决：返回浮点要 <code>tostring(3.99)</code>。</p>
+<p><strong>（2）Redis 的 nil 在 Lua 里是 <code>false</code> 而不是 <code>nil</code></strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-lua" data-lang="lua"><span class="line"><span class="cl"><span class="kd">local</span> <span class="n">v</span> <span class="o">=</span> <span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;GET&#39;</span><span class="p">,</span> <span class="n">KEYS</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+</span></span><span class="line"><span class="cl"><span class="kr">if</span> <span class="n">v</span> <span class="o">==</span> <span class="kc">nil</span> <span class="kr">then</span> <span class="p">...</span> <span class="kr">end</span>     <span class="c1">-- ❌ 永远不成立</span>
+</span></span><span class="line"><span class="cl"><span class="kr">if</span> <span class="n">v</span> <span class="o">==</span> <span class="kc">false</span> <span class="kr">then</span> <span class="p">...</span> <span class="kr">end</span>   <span class="c1">-- ✅</span>
+</span></span><span class="line"><span class="cl"><span class="kr">if</span> <span class="ow">not</span> <span class="n">v</span> <span class="kr">then</span> <span class="p">...</span> <span class="kr">end</span>        <span class="c1">-- ✅</span>
+</span></span></code></pre></div><p><strong>（3）返回的 table 里有 nil 会截断数组</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">EVAL <span class="s2">&#34;return {1, 2, nil, 4}&#34;</span> <span class="m">0</span>    →   只返回 <span class="m">1</span> 和 <span class="m">2</span>
+</span></span></code></pre></div><p><strong>（4）ARGV 和 redis.call 的返回值都是字符串</strong>，做数值比较必须 <code>tonumber</code>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-lua" data-lang="lua"><span class="line"><span class="cl"><span class="kr">if</span> <span class="n">ARGV</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">&lt;</span> <span class="n">ARGV</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span> <span class="kr">then</span> <span class="p">...</span> <span class="kr">end</span>              <span class="c1">-- ❌ 字典序！&#34;10&#34; &lt; &#34;9&#34; 为 true</span>
+</span></span><span class="line"><span class="cl"><span class="kr">if</span> <span class="n">tonumber</span><span class="p">(</span><span class="n">ARGV</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span> <span class="o">&lt;</span> <span class="n">tonumber</span><span class="p">(</span><span class="n">ARGV</span><span class="p">[</span><span class="mi">2</span><span class="p">])</span> <span class="kr">then</span>  <span class="c1">-- ✅</span>
+</span></span></code></pre></div><p>另外：Lua 的 <code>true</code> 转成 Redis 的整数 1，<code>false</code> 转成 nil。</p>
+<p><strong>Q11：Lua 脚本是怎么复制到从节点的？</strong></p>
+<p><strong>5.0 之前：脚本复制（verbatim）</strong>——把 <code>EVAL</code> 命令本身传给从节点，从节点重新执行一遍脚本。</p>
+<p>这要求<strong>脚本必须是确定性的</strong>，否则主从数据不一致。所以那时 Redis 禁止在脚本里用 <code>math.random</code>、<code>TIME</code>、以及 <code>SPOP</code>/<code>SRANDMEMBER</code> 等非确定性命令后再写入（报错 <code>Write commands not allowed after non deterministic commands</code>）。</p>
+<p><strong>5.0 之后（7.0 起是唯一方式）：效果复制（effects replication）</strong>——只把脚本<strong>产生的实际写命令</strong>包在 <code>MULTI/EXEC</code> 里传播。</p>
+<p>好处：</p>
+<ol>
+<li><strong>脚本可以自由使用随机数和时间</strong>；</li>
+<li><strong>从节点不用重新执行脚本</strong>，省 CPU；</li>
+<li>传播内容更小。</li>
+</ol>
+<p>配套细节：<strong>脚本执行期间&quot;时间是冻结的&quot;</strong>——所有过期判断都用脚本开始时的时间，避免&quot;脚本前半段 key 还在、后半段过期了&quot;造成主从不一致。</p>
+<p><strong>Q12：Function 和 EVAL 有什么区别？</strong></p>
+<p>Function（7.0+）解决 EVAL 的五个痛点：</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>EVAL/脚本缓存</th>
+<th>Function</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>持久化</strong></td>
+<td>❌ 重启丢失，要处理 NOSCRIPT</td>
+<td>✅ <strong>写入 RDB/AOF，重启保留</strong></td>
+</tr>
+<tr>
+<td><strong>复制</strong></td>
+<td>只复制效果，脚本本身不复制</td>
+<td>✅ <strong>函数库本身复制到从节点</strong></td>
+</tr>
+<tr>
+<td><strong>命名</strong></td>
+<td>匿名（只有 SHA1，运维看不懂）</td>
+<td>✅ <strong>有库名和函数名</strong></td>
+</tr>
+<tr>
+<td><strong>代码组织</strong></td>
+<td>单个脚本，逻辑只能复制粘贴</td>
+<td>✅ <strong>一个库多个函数，可共享辅助函数</strong></td>
+</tr>
+<tr>
+<td><strong>可观测</strong></td>
+<td>只有 <code>SCRIPT EXISTS</code></td>
+<td>✅ <code>FUNCTION LIST/STATS/DUMP</code></td>
+</tr>
+<tr>
+<td>调用</td>
+<td><code>EVAL</code>/<code>EVALSHA</code></td>
+<td><code>FCALL</code>/<code>FCALL_RO</code></td>
+</tr>
+<tr>
+<td>参数形式</td>
+<td>全局 <code>KEYS</code>/<code>ARGV</code></td>
+<td><code>function(keys, args)</code></td>
+</tr>
+</tbody>
+</table>
+<p>另外 7.0 引入了<strong>脚本标志</strong>（<code>no-writes</code>、<code>allow-oom</code>、<code>allow-stale</code>、<code>no-cluster</code>）。其中 <strong><code>no-writes</code> 很实用</strong>：声明脚本只读后，它就<strong>可以在从节点上执行</strong>、且在内存超限时也不被拒绝。7.0 之前 Redis 无法知道脚本是否会写，只能保守地假设所有脚本都写。</p>
+<p><strong>Q13：Pipeline 是事务吗？</strong></p>
+<p><strong>不是。</strong> Pipeline 是<strong>客户端</strong>的批量发送技巧，服务端并不知道这些命令&quot;属于一批&quot;。</p>
+<p>具体差别：</p>
+<ul>
+<li>Pipeline 里的命令<strong>可能被其他客户端的命令插入</strong>（Redis 只保证每条命令自身原子）；</li>
+<li>某条命令失败<strong>不影响其他命令</strong>；</li>
+<li>目的是<strong>性能</strong>（省 RTT、省系统调用、省事件循环轮次），不是原子性。</li>
+</ul>
+<p>要原子性有两个选择：<strong><code>MULTI/EXEC</code></strong>（可以整个塞进一个 pipeline 里发，兼得原子性和一次 RTT）或 <strong>Lua</strong>。</p>
+<p>很多客户端提供了 <code>TxPipeline</code>（go-redis）/ <code>SessionCallback</code>（Spring Data Redis），本质就是&quot;用 MULTI/EXEC 包裹的 pipeline&quot;。</p>
+<p><strong>Q14：一个&quot;读取-判断-写入&quot;的原子操作，有几种实现方式？怎么选？</strong></p>
+<p>以&quot;库存足够就扣减&quot;为例，四种方式：</p>
+<p><strong>（1）Lua 脚本（首选）</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-lua" data-lang="lua"><span class="line"><span class="cl"><span class="kr">if</span> <span class="n">tonumber</span><span class="p">(</span><span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;GET&#39;</span><span class="p">,</span> <span class="n">KEYS</span><span class="p">[</span><span class="mi">1</span><span class="p">]))</span> <span class="o">&gt;=</span> <span class="n">tonumber</span><span class="p">(</span><span class="n">ARGV</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span> <span class="kr">then</span>
+</span></span><span class="line"><span class="cl">    <span class="kr">return</span> <span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;DECRBY&#39;</span><span class="p">,</span> <span class="n">KEYS</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="n">ARGV</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+</span></span><span class="line"><span class="cl"><span class="kr">end</span>
+</span></span><span class="line"><span class="cl"><span class="kr">return</span> <span class="o">-</span><span class="mi">1</span>
+</span></span></code></pre></div><p>一次往返、服务端原子、无需重试。<strong>绝大多数情况选这个。</strong></p>
+<p><strong>（2）WATCH 乐观锁</strong></p>
+<p>需要重试循环，冲突率高时性能差。仅在<strong>判断逻辑必须在客户端</strong>（要调外部 API/查库）时用。</p>
+<p><strong>（3）利用原子命令的返回值</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># DECRBY 会返回扣减后的值，如果为负说明超卖了，再补回来</span>
+</span></span><span class="line"><span class="cl"><span class="nv">result</span><span class="o">=</span><span class="k">$(</span>DECRBY stock 1<span class="k">)</span>
+</span></span><span class="line"><span class="cl"><span class="k">if</span> <span class="o">[</span> <span class="nv">$result</span> -lt <span class="m">0</span> <span class="o">]</span><span class="p">;</span> <span class="k">then</span>
+</span></span><span class="line"><span class="cl">    INCRBY stock <span class="m">1</span>        <span class="c1"># 回滚</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">echo</span> <span class="s2">&#34;库存不足&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="k">fi</span>
+</span></span></code></pre></div><p><strong>优点</strong>：不需要 Lua，一条命令搞定，性能最好。
+<strong>缺点</strong>：有&quot;瞬间为负&quot;的中间状态（如果有其他逻辑在读这个值会看到负数），且回滚不是原子的。<strong>秒杀场景实际常用这招</strong>（配合下游校验）。</p>
+<p><strong>（4）分布式锁（悲观锁）</strong></p>
+<p>开销最大（加锁 + 业务 + 解锁至少 3 次往返），只在&quot;临界区里要做的事很复杂、耗时长、涉及多个系统&quot;时才用。见第 13 篇。</p>
+<hr>
+<h1 id="小结">小结</h1>
+<ul>
+<li><strong>Redis 事务 = <code>MULTI</code> 打标志 + 命令入队 + <code>EXEC</code> 连续执行</strong>；原子性来自<strong>单线程</strong>（<code>EXEC</code> 是一条命令，执行期间不被打断）。</li>
+<li><strong>两类错误处理截然不同</strong>：<strong>入队错误</strong>（命令不存在/参数错）→ <code>EXEC</code> 返回 <code>EXECABORT</code>，<strong>整个事务放弃</strong>；<strong>执行时错误</strong>（类型错误）→ 只有那条失败，<strong>其他命令继续执行且不回滚</strong>。</li>
+<li><strong>事务不可嵌套</strong>：事务中再发 <code>MULTI</code> 返回 <code>ERR MULTI calls can not be nested</code>，但<strong>不会打 <code>CLIENT_DIRTY_EXEC</code> 标志、不会导致事务被放弃</strong>（与入队错误不同）。<code>RESET</code>（6.2+）可以把连接彻底重置回初始状态。</li>
+<li><strong>不支持回滚的三个原因</strong>：Redis 认为执行失败只可能是编程 bug（RDBMS 的失败可能是正常业务约束）、支持回滚要付出内存/CPU/复杂度代价、<strong>AOF 是&quot;后写日志&quot;没有 undo log</strong>。</li>
+<li><strong>ACID</strong>：<strong>原子性部分满足</strong>（不回滚）、<strong>一致性满足</strong>、<strong>隔离性满足且是串行化</strong>（单线程天然最高级别）、<strong>持久性不满足</strong>（取决于持久化 + 异步复制会丢）。</li>
+<li><strong><code>WATCH</code> 是乐观锁（CAS）</strong>：靠 <code>db-&gt;watched_keys</code> 字典 + <code>CLIENT_DIRTY_CAS</code> 标志实现；<strong>只要 key 被修改就 dirty，与改成什么值无关</strong>；必须在 <code>MULTI</code> 前执行；<code>EXEC</code>/<code>DISCARD</code>/<code>UNWATCH</code> 后清空监视，所以重试要重新 <code>WATCH</code>。</li>
+<li><strong>Lua 脚本三大优势</strong>：真正原子（整个脚本是一条命令）、<strong>能做条件判断</strong>（事务做不到）、省网络往返。<strong>实际工程中已基本取代 <code>MULTI/EXEC</code></strong>。</li>
+<li><strong>Lua 也不能回滚</strong>——所以必须把<strong>所有校验写在前面、所有写操作写在后面</strong>。</li>
+<li><strong>key 必须走 <code>KEYS</code> 传入</strong>（Cluster 路由和 ACL 检查需要），且能避免脚本缓存无限膨胀。7.0+ 集群下违规会直接报错。</li>
+<li><strong>类型转换四坑</strong>：number 转 Redis 会<strong>截断小数</strong>、Redis 的 nil 在 Lua 里是 <strong><code>false</code></strong>、返回 table 遇 nil <strong>截断数组</strong>、所有参数和返回值都是<strong>字符串</strong>（比较要 <code>tonumber</code>）。</li>
+<li><strong>脚本阻塞是灾难级风险</strong>：<code>busy-reply-threshold</code> <strong>不会杀掉脚本</strong>，只是开始对其他客户端返回 <code>BUSY</code>；<strong>写过数据的脚本无法 <code>SCRIPT KILL</code></strong>，唯一出路是 <code>SHUTDOWN NOSAVE</code>（丢数据）。脚本必须简短、循环有小上限。</li>
+<li><strong>脚本缓存不持久化</strong>（重启/<code>SCRIPT FLUSH</code>/主从切换都会丢），客户端<strong>必须实现 <code>EVALSHA</code> → <code>NOSCRIPT</code> → <code>EVAL</code> 的回退</strong>；用客户端库的 <code>NewScript</code> 封装。</li>
+<li><strong>5.0 起改为效果复制</strong>（只传播实际写命令），所以脚本可以自由用随机数/时间；脚本执行期间<strong>时间冻结</strong>保证主从一致。</li>
+<li><strong>Function（7.0+）</strong> 的核心改进：<strong>持久化 + 复制函数库本身 + 有名字 + 可组织多函数</strong>，不再需要处理 NOSCRIPT；<strong><code>no-writes</code> 标志</strong>让只读脚本能在从节点执行。</li>
+<li><strong>选型</strong>：不要原子性 → <code>MGET</code>/<code>MSET</code> 或 Pipeline；要原子性且需判断 → <strong>Lua</strong>；要原子性但无依赖 → <code>MULTI/EXEC</code>（塞进 pipeline）；判断逻辑必须在客户端 → <code>WATCH</code> 重试。</li>
+</ul>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2025-11-01</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/redis/">redis</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/redis/redis_09_%E5%8F%91%E5%B8%83%E8%AE%A2%E9%98%85%E4%B8%8E%E6%B6%88%E6%81%AF%E9%98%9F%E5%88%97/" class="prev" rel="prev" title="Redis-09 发布订阅与消息队列"><i class="fas fa-angle-left fa-fw"></i>Redis-09 发布订阅与消息队列</a>
+            <a href="/posts/redis/redis_07_%E6%8C%81%E4%B9%85%E5%8C%96RDB%E4%B8%8EAOF/" class="next" rel="next" title="Redis-07 持久化：RDB 与 AOF">Redis-07 持久化：RDB 与 AOF<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2025-11-01T13:00:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Redis-08 事务、Lua 脚本与 Pipeline"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

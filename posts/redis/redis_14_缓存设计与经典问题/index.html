@@ -1,0 +1,1744 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>Redis-14 缓存设计与经典问题 - xingliuhua博客</title><meta name="Description" content="缓存穿透/击穿/雪崩的成因与解法、缓存与数据库一致性的四种方案对比、延迟双删与 binlog 订阅、多级缓存架构、大key热key治理、秒杀实战"><meta property="og:title" content="Redis-14 缓存设计与经典问题" />
+<meta property="og:description" content="缓存穿透/击穿/雪崩的成因与解法、缓存与数据库一致性的四种方案对比、延迟双删与 binlog 订阅、多级缓存架构、大key热key治理、秒杀实战" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/redis/redis_14_%E7%BC%93%E5%AD%98%E8%AE%BE%E8%AE%A1%E4%B8%8E%E7%BB%8F%E5%85%B8%E9%97%AE%E9%A2%98/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2025-11-01T10:00:00+08:00" />
+<meta property="article:modified_time" content="2025-11-01T10:00:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="Redis-14 缓存设计与经典问题"/>
+<meta name="twitter:description" content="缓存穿透/击穿/雪崩的成因与解法、缓存与数据库一致性的四种方案对比、延迟双删与 binlog 订阅、多级缓存架构、大key热key治理、秒杀实战"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/redis/redis_14_%E7%BC%93%E5%AD%98%E8%AE%BE%E8%AE%A1%E4%B8%8E%E7%BB%8F%E5%85%B8%E9%97%AE%E9%A2%98/" /><link rel="prev" href="https://xingliuhua.github.io/posts/redis/redis_15_%E6%80%A7%E8%83%BD%E4%BC%98%E5%8C%96%E4%B8%8E%E7%BA%BF%E4%B8%8A%E9%97%AE%E9%A2%98%E6%8E%92%E6%9F%A5/" /><link rel="next" href="https://xingliuhua.github.io/posts/redis/redis_13_%E5%88%86%E5%B8%83%E5%BC%8F%E9%94%81/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Redis-14 缓存设计与经典问题",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/redis\/redis_14_%E7%BC%93%E5%AD%98%E8%AE%BE%E8%AE%A1%E4%B8%8E%E7%BB%8F%E5%85%B8%E9%97%AE%E9%A2%98\/"
+        },"genre": "posts","keywords": "redis","wordcount":  19001 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/redis\/redis_14_%E7%BC%93%E5%AD%98%E8%AE%BE%E8%AE%A1%E4%B8%8E%E7%BB%8F%E5%85%B8%E9%97%AE%E9%A2%98\/","datePublished": "2025-11-01T10:00:00+08:00","dateModified": "2025-11-01T10:00:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "缓存穿透/击穿/雪崩的成因与解法、缓存与数据库一致性的四种方案对比、延迟双删与 binlog 订阅、多级缓存架构、大key热key治理、秒杀实战"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">Redis-14 缓存设计与经典问题</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2025-11-01">2025-11-01</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 19001 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 38 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-缓存的基本模式">1. 缓存的基本模式</a>
+      <ol>
+        <li><a href="#11-cache-aside旁路缓存最常用">1.1 Cache Aside（旁路缓存，最常用）</a></li>
+        <li><a href="#12-readwrite-through读写穿透">1.2 Read/Write Through（读写穿透）</a></li>
+        <li><a href="#13-write-behind异步写回">1.3 Write Behind（异步写回）</a></li>
+        <li><a href="#14-三种模式对比">1.4 三种模式对比</a></li>
+      </ol>
+    </li>
+    <li><a href="#2-缓存穿透">2. 缓存穿透</a>
+      <ol>
+        <li><a href="#21-什么是缓存穿透">2.1 什么是缓存穿透</a></li>
+        <li><a href="#22-解法一缓存空值最简单实用">2.2 解法一：缓存空值（最简单实用）</a></li>
+        <li><a href="#23-解法二布隆过滤器">2.3 解法二：布隆过滤器</a>
+          <ol>
+            <li><a href="#用-redisbloom-模块推荐">用 RedisBloom 模块（推荐）</a></li>
+            <li><a href="#业务代码集成">业务代码集成</a></li>
+            <li><a href="#自己用-bitmap-实现不推荐但要知道">自己用 Bitmap 实现（不推荐但要知道）</a></li>
+          </ol>
+        </li>
+        <li><a href="#24-解法三参数校验与限流">2.4 解法三：参数校验与限流</a></li>
+        <li><a href="#25-三种解法对比">2.5 三种解法对比</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-缓存击穿">3. 缓存击穿</a>
+      <ol>
+        <li><a href="#31-什么是缓存击穿">3.1 什么是缓存击穿</a></li>
+        <li><a href="#32-解法一互斥锁最常用">3.2 解法一：互斥锁（最常用）</a></li>
+        <li><a href="#33-解法二逻辑过期永不过期--后台刷新">3.3 解法二：逻辑过期（永不过期 + 后台刷新）</a></li>
+        <li><a href="#34-解法三热点-key-提前预热与永不过期">3.4 解法三：热点 key 提前预热与永不过期</a></li>
+        <li><a href="#35-三种解法对比">3.5 三种解法对比</a></li>
+      </ol>
+    </li>
+    <li><a href="#4-缓存雪崩">4. 缓存雪崩</a>
+      <ol>
+        <li><a href="#41-什么是缓存雪崩">4.1 什么是缓存雪崩</a></li>
+        <li><a href="#42-解法一ttl-加随机抖动针对成因一">4.2 解法一：TTL 加随机抖动（针对成因一）</a></li>
+        <li><a href="#43-解法二多级缓存针对成因二">4.3 解法二：多级缓存（针对成因二）</a></li>
+        <li><a href="#44-解法三熔断降级与限流">4.4 解法三：熔断降级与限流</a></li>
+        <li><a href="#45-解法四redis-高可用">4.5 解法四：Redis 高可用</a></li>
+        <li><a href="#46-解法五缓存预热">4.6 解法五：缓存预热</a></li>
+        <li><a href="#47-三大问题总结对比">4.7 三大问题总结对比</a></li>
+      </ol>
+    </li>
+    <li><a href="#5-缓存与数据库一致性">5. 缓存与数据库一致性</a>
+      <ol>
+        <li><a href="#51-先明确一个前提">5.1 先明确一个前提</a></li>
+        <li><a href="#52-四种组合方案">5.2 四种组合方案</a>
+          <ol>
+            <li><a href="#方案一先更新数据库再更新缓存-不推荐">方案一：先更新数据库，再更新缓存（❌ 不推荐）</a></li>
+            <li><a href="#方案二先删除缓存再更新数据库-不推荐">方案二：先删除缓存，再更新数据库（❌ 不推荐）</a></li>
+            <li><a href="#方案三先更新数据库再删除缓存-推荐cache-aside">方案三：先更新数据库，再删除缓存（✅ <strong>推荐</strong>，Cache Aside）</a></li>
+            <li><a href="#方案四先删除缓存再更新数据库然后延迟再删一次延迟双删">方案四：先删除缓存，再更新数据库，然后延迟再删一次（延迟双删）</a></li>
+          </ol>
+        </li>
+        <li><a href="#53-更可靠的方案订阅-binlog">5.3 更可靠的方案：订阅 binlog</a></li>
+        <li><a href="#54-兜底手段">5.4 兜底手段</a></li>
+        <li><a href="#55-读写分离带来的额外问题">5.5 读写分离带来的额外问题</a></li>
+        <li><a href="#56-一致性方案总结">5.6 一致性方案总结</a></li>
+      </ol>
+    </li>
+    <li><a href="#6-大-key-与热-key-治理">6. 大 key 与热 key 治理</a>
+      <ol>
+        <li><a href="#61-大-key">6.1 大 key</a></li>
+        <li><a href="#62-热-key">6.2 热 key</a></li>
+      </ol>
+    </li>
+    <li><a href="#7-秒杀场景实战">7. 秒杀场景实战</a>
+      <ol>
+        <li><a href="#71-核心挑战">7.1 核心挑战</a></li>
+        <li><a href="#72-完整分层设计">7.2 完整分层设计</a></li>
+        <li><a href="#73-关键代码">7.3 关键代码</a></li>
+        <li><a href="#74-关键设计点复盘">7.4 关键设计点复盘</a></li>
+      </ol>
+    </li>
+    <li><a href="#8-高频面试题">8. 高频面试题</a></li>
+    <li><a href="#小结">小结</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><h1 id="1-缓存的基本模式">1. 缓存的基本模式</h1>
+<p>在讲问题之前，先明确缓存的三种经典读写模式。</p>
+<h2 id="11-cache-aside旁路缓存最常用">1.1 Cache Aside（旁路缓存，最常用）</h2>
+<p><strong>读</strong>：</p>
+<pre tabindex="0"><code>1. 先读缓存
+2. 命中 → 直接返回
+3. 未命中 → 读数据库 → 写入缓存 → 返回
+</code></pre><p><strong>写</strong>：</p>
+<pre tabindex="0"><code>1. 更新数据库
+2. 【删除】缓存（不是更新缓存）
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">GetUser</span><span class="p">(</span><span class="nx">ctx</span> <span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span> <span class="nx">id</span> <span class="kt">int64</span><span class="p">)</span> <span class="p">(</span><span class="o">*</span><span class="nx">User</span><span class="p">,</span> <span class="kt">error</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">key</span> <span class="o">:=</span> <span class="nx">fmt</span><span class="p">.</span><span class="nf">Sprintf</span><span class="p">(</span><span class="s">&#34;user:%d&#34;</span><span class="p">,</span> <span class="nx">id</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// 1. 读缓存
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">val</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">rdb</span><span class="p">.</span><span class="nf">Get</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">key</span><span class="p">).</span><span class="nf">Result</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">err</span> <span class="o">==</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="kd">var</span> <span class="nx">u</span> <span class="nx">User</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">json</span><span class="p">.</span><span class="nf">Unmarshal</span><span class="p">([]</span><span class="nb">byte</span><span class="p">(</span><span class="nx">val</span><span class="p">),</span> <span class="o">&amp;</span><span class="nx">u</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="o">&amp;</span><span class="nx">u</span><span class="p">,</span> <span class="kc">nil</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">err</span> <span class="o">!=</span> <span class="nx">redis</span><span class="p">.</span><span class="nx">Nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="kc">nil</span><span class="p">,</span> <span class="nx">err</span>     <span class="c1">// Redis 故障，可以选择降级直接读 DB
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// 2. 缓存未命中，读数据库
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">u</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">db</span><span class="p">.</span><span class="nf">GetUser</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">id</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="kc">nil</span><span class="p">,</span> <span class="nx">err</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// 3. 回写缓存（带随机 TTL 抖动）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">data</span><span class="p">,</span> <span class="nx">_</span> <span class="o">:=</span> <span class="nx">json</span><span class="p">.</span><span class="nf">Marshal</span><span class="p">(</span><span class="nx">u</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">ttl</span> <span class="o">:=</span> <span class="nx">time</span><span class="p">.</span><span class="nx">Hour</span> <span class="o">+</span> <span class="nx">time</span><span class="p">.</span><span class="nf">Duration</span><span class="p">(</span><span class="nx">rand</span><span class="p">.</span><span class="nf">Intn</span><span class="p">(</span><span class="mi">300</span><span class="p">))</span><span class="o">*</span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">rdb</span><span class="p">.</span><span class="nf">Set</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">key</span><span class="p">,</span> <span class="nx">data</span><span class="p">,</span> <span class="nx">ttl</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="nx">u</span><span class="p">,</span> <span class="kc">nil</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">UpdateUser</span><span class="p">(</span><span class="nx">ctx</span> <span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span> <span class="nx">u</span> <span class="o">*</span><span class="nx">User</span><span class="p">)</span> <span class="kt">error</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// 1. 先更新数据库
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">if</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">db</span><span class="p">.</span><span class="nf">UpdateUser</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">u</span><span class="p">);</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="nx">err</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// 2. 再删除缓存
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">rdb</span><span class="p">.</span><span class="nf">Del</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">fmt</span><span class="p">.</span><span class="nf">Sprintf</span><span class="p">(</span><span class="s">&#34;user:%d&#34;</span><span class="p">,</span> <span class="nx">u</span><span class="p">.</span><span class="nx">ID</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="kc">nil</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><strong>特点</strong>：应用代码同时管理缓存和数据库，逻辑清晰，是<strong>绝大多数业务的选择</strong>。</p>
+<h2 id="12-readwrite-through读写穿透">1.2 Read/Write Through（读写穿透）</h2>
+<p>应用只跟缓存打交道，由<strong>缓存服务</strong>负责同步数据库：</p>
+<pre tabindex="0"><code>读：应用 → 缓存服务 →（未命中时）缓存服务自己去读 DB 并回填 → 返回应用
+写：应用 → 缓存服务 → 缓存服务【同步】写 DB 和缓存
+</code></pre><p><strong>特点</strong>：应用逻辑最简单，但需要一个&quot;缓存服务&quot;层（如 Amazon DAX、某些 ORM 的二级缓存、Ehcache）。Redis 本身不提供这个能力，需要自己封装或用中间件。</p>
+<h2 id="13-write-behind异步写回">1.3 Write Behind（异步写回）</h2>
+<pre tabindex="0"><code>写：应用 → 只写缓存（立即返回）→ 缓存服务【异步批量】刷到数据库
+</code></pre><p><strong>特点</strong>：写性能最好（合并多次写、批量落库），但<strong>有丢数据风险</strong>（缓存挂了未刷盘的数据就没了）。</p>
+<p><strong>适用场景</strong>：能容忍丢失的高频写入，如<strong>阅读量、点赞数</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// 高频写只落 Redis
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">rdb</span><span class="p">.</span><span class="nf">HIncrBy</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="s">&#34;article:views&#34;</span><span class="p">,</span> <span class="nx">articleID</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// 定时任务（如每分钟）批量刷到数据库
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kd">func</span> <span class="nf">FlushViews</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">views</span><span class="p">,</span> <span class="nx">_</span> <span class="o">:=</span> <span class="nx">rdb</span><span class="p">.</span><span class="nf">HGetAll</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="s">&#34;article:views&#34;</span><span class="p">).</span><span class="nf">Result</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// 批量 UPDATE 到数据库
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">db</span><span class="p">.</span><span class="nf">BatchUpdateViews</span><span class="p">(</span><span class="nx">views</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// 注意：这里有并发问题，正确做法是用 HGETALL + DEL 的 Lua 或者按时间分 key
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span></code></pre></div><h2 id="14-三种模式对比">1.4 三种模式对比</h2>
+<table>
+<thead>
+<tr>
+<th>模式</th>
+<th>读性能</th>
+<th>写性能</th>
+<th>一致性</th>
+<th>实现复杂度</th>
+<th>适用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Cache Aside</strong></td>
+<td>高</td>
+<td>中</td>
+<td>最终一致</td>
+<td><strong>低</strong></td>
+<td><strong>绝大多数业务</strong></td>
+</tr>
+<tr>
+<td>Read/Write Through</td>
+<td>高</td>
+<td>中低</td>
+<td>较强</td>
+<td>高（需缓存服务）</td>
+<td>有成熟中间件时</td>
+</tr>
+<tr>
+<td>Write Behind</td>
+<td>高</td>
+<td><strong>最高</strong></td>
+<td><strong>弱</strong>（可能丢）</td>
+<td>中</td>
+<td>计数器等可容忍丢失的高频写</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h1 id="2-缓存穿透">2. 缓存穿透</h1>
+<h2 id="21-什么是缓存穿透">2.1 什么是缓存穿透</h2>
+<p><strong>查询一个数据库里也不存在的数据</strong>。因为数据库返回空，通常代码不会写缓存，导致<strong>每次请求都穿过缓存打到数据库</strong>。</p>
+<pre tabindex="0"><code>请求 GET /user/-1
+→ 查 Redis：不存在
+→ 查 MySQL：不存在
+→ 【不写缓存】（因为没数据可写）
+→ 返回空
+
+下一次同样的请求，重复整个流程 → 数据库被反复查询
+</code></pre><p><strong>危害</strong>：如果被恶意攻击（用随机 ID 疯狂请求不存在的数据），<strong>数据库会被瞬间打爆</strong>。这是一种典型的攻击手法。</p>
+<p><strong>正常业务里也会发生</strong>：比如爬虫遍历不存在的 ID、前端 bug 传了错误参数、业务逻辑允许查询任意 ID。</p>
+<h2 id="22-解法一缓存空值最简单实用">2.2 解法一：缓存空值（最简单实用）</h2>
+<p><strong>查不到数据时也写一个&quot;空值标记&quot;到缓存</strong>，并设一个<strong>较短的 TTL</strong>。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">GetUser</span><span class="p">(</span><span class="nx">ctx</span> <span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span> <span class="nx">id</span> <span class="kt">int64</span><span class="p">)</span> <span class="p">(</span><span class="o">*</span><span class="nx">User</span><span class="p">,</span> <span class="kt">error</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">key</span> <span class="o">:=</span> <span class="nx">fmt</span><span class="p">.</span><span class="nf">Sprintf</span><span class="p">(</span><span class="s">&#34;user:%d&#34;</span><span class="p">,</span> <span class="nx">id</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="nx">val</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">rdb</span><span class="p">.</span><span class="nf">Get</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">key</span><span class="p">).</span><span class="nf">Result</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">err</span> <span class="o">==</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="nx">val</span> <span class="o">==</span> <span class="s">&#34;&#34;</span> <span class="o">||</span> <span class="nx">val</span> <span class="o">==</span> <span class="s">&#34;NULL&#34;</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="k">return</span> <span class="kc">nil</span><span class="p">,</span> <span class="nx">ErrNotFound</span>      <span class="c1">// 【命中空值缓存】，直接返回
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">        <span class="kd">var</span> <span class="nx">u</span> <span class="nx">User</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">json</span><span class="p">.</span><span class="nf">Unmarshal</span><span class="p">([]</span><span class="nb">byte</span><span class="p">(</span><span class="nx">val</span><span class="p">),</span> <span class="o">&amp;</span><span class="nx">u</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="o">&amp;</span><span class="nx">u</span><span class="p">,</span> <span class="kc">nil</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="nx">u</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">db</span><span class="p">.</span><span class="nf">GetUser</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">id</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">err</span> <span class="o">==</span> <span class="nx">sql</span><span class="p">.</span><span class="nx">ErrNoRows</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="c1">// 【关键】数据不存在也写缓存，但 TTL 要短（如 60 秒）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="nx">rdb</span><span class="p">.</span><span class="nf">Set</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">key</span><span class="p">,</span> <span class="s">&#34;NULL&#34;</span><span class="p">,</span> <span class="mi">60</span><span class="o">*</span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="kc">nil</span><span class="p">,</span> <span class="nx">ErrNotFound</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="kc">nil</span><span class="p">,</span> <span class="nx">err</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="nx">data</span><span class="p">,</span> <span class="nx">_</span> <span class="o">:=</span> <span class="nx">json</span><span class="p">.</span><span class="nf">Marshal</span><span class="p">(</span><span class="nx">u</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">rdb</span><span class="p">.</span><span class="nf">Set</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">key</span><span class="p">,</span> <span class="nx">data</span><span class="p">,</span> <span class="nx">time</span><span class="p">.</span><span class="nx">Hour</span><span class="o">+</span><span class="nf">randomJitter</span><span class="p">())</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="nx">u</span><span class="p">,</span> <span class="kc">nil</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><strong>注意点</strong>：</p>
+<ol>
+<li><strong>TTL 必须短</strong>（30~300 秒）。因为这个数据将来可能真的被创建，TTL 太长会导致&quot;数据已创建但查不到&quot;；</li>
+<li><strong>空值要能和&quot;正常的空字符串&quot;区分开</strong>。用一个特殊标记（如 <code>&quot;NULL&quot;</code>、<code>&quot;\x00&quot;</code>）或者用一个独立的 key 前缀；</li>
+<li><strong>数据创建时要主动删除空值缓存</strong>：</li>
+</ol>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">CreateUser</span><span class="p">(</span><span class="nx">ctx</span> <span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span> <span class="nx">u</span> <span class="o">*</span><span class="nx">User</span><span class="p">)</span> <span class="kt">error</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">db</span><span class="p">.</span><span class="nf">CreateUser</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">u</span><span class="p">);</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="nx">err</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">rdb</span><span class="p">.</span><span class="nf">Del</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">fmt</span><span class="p">.</span><span class="nf">Sprintf</span><span class="p">(</span><span class="s">&#34;user:%d&#34;</span><span class="p">,</span> <span class="nx">u</span><span class="p">.</span><span class="nx">ID</span><span class="p">))</span>   <span class="c1">// 删掉可能存在的空值缓存
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">return</span> <span class="kc">nil</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><ol start="4">
+<li><strong>缺点：如果攻击者用大量随机 ID，会产生海量空值缓存占用内存</strong>。所以要配合限流和布隆过滤器。</li>
+</ol>
+<h2 id="23-解法二布隆过滤器">2.3 解法二：布隆过滤器</h2>
+<p><strong>布隆过滤器（Bloom Filter）</strong> 是一个概率型数据结构，能高效判断&quot;某个元素<strong>一定不存在</strong>&quot;。</p>
+<p><strong>原理</strong>：</p>
+<pre tabindex="0"><code>1. 一个长度为 m 的位数组（初始全 0）+ k 个独立的哈希函数
+2. 【添加元素】：用 k 个哈希函数算出 k 个位置，把这些位都置 1
+3. 【查询元素】：算出 k 个位置
+   ├─ 【任意一位是 0】→ 【一定不存在】（100% 确定）
+   └─ 【全部是 1】→ 【可能存在】（有误判可能，因为这些位可能是别的元素置的）
+</code></pre><p><strong>核心特性</strong>：</p>
+<ul>
+<li><strong>没有假阴性（false negative）</strong>：说不存在就一定不存在；</li>
+<li><strong>有假阳性（false positive）</strong>：说存在可能实际不存在（误判率可控）；</li>
+<li><strong>不支持删除</strong>（删一个元素可能把别的元素共用的位也清掉了）。计数布隆过滤器（Counting Bloom Filter）可以删，但内存翻几倍。</li>
+</ul>
+<p><strong>误判率公式</strong>：</p>
+<pre tabindex="0"><code>误判率 p ≈ (1 - e^(-kn/m))^k
+
+其中 n = 元素个数，m = 位数组长度，k = 哈希函数个数
+最优 k = (m/n) * ln2
+最优 m = -n * ln(p) / (ln2)^2
+</code></pre><p><strong>实用估算</strong>：<strong>1 亿个元素、1% 误判率，约需 114MB</strong>；误判率降到 0.1% 需要 171MB。</p>
+<h3 id="用-redisbloom-模块推荐">用 RedisBloom 模块（推荐）</h3>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 安装模块后</span>
+</span></span><span class="line"><span class="cl">BF.RESERVE users 0.001 <span class="m">100000000</span>       <span class="c1"># 误判率 0.1%，预期 1 亿元素</span>
+</span></span><span class="line"><span class="cl">BF.ADD users <span class="m">1001</span>                       <span class="c1"># 添加</span>
+</span></span><span class="line"><span class="cl">BF.MADD users <span class="m">1002</span> <span class="m">1003</span> <span class="m">1004</span>            <span class="c1"># 批量添加</span>
+</span></span><span class="line"><span class="cl">BF.EXISTS users <span class="m">1001</span>                    <span class="c1"># 1 = 可能存在，0 = 一定不存在</span>
+</span></span><span class="line"><span class="cl">BF.MEXISTS users <span class="m">1001</span> <span class="m">9999</span>              <span class="c1"># 批量查询</span>
+</span></span><span class="line"><span class="cl">BF.INFO users                           <span class="c1"># 查看容量、已插入数、误判率等</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 可扩展布隆过滤器（超出容量自动扩容，但误判率会上升）</span>
+</span></span><span class="line"><span class="cl">BF.RESERVE users 0.001 <span class="m">1000000</span> EXPANSION <span class="m">2</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># NONSCALING 表示不扩容，满了报错</span>
+</span></span></code></pre></div><h3 id="业务代码集成">业务代码集成</h3>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">GetUser</span><span class="p">(</span><span class="nx">ctx</span> <span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span> <span class="nx">id</span> <span class="kt">int64</span><span class="p">)</span> <span class="p">(</span><span class="o">*</span><span class="nx">User</span><span class="p">,</span> <span class="kt">error</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// 【第一道防线】布隆过滤器
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">exists</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">rdb</span><span class="p">.</span><span class="nf">Do</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="s">&#34;BF.EXISTS&#34;</span><span class="p">,</span> <span class="s">&#34;bf:users&#34;</span><span class="p">,</span> <span class="nx">id</span><span class="p">).</span><span class="nf">Bool</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">err</span> <span class="o">==</span> <span class="kc">nil</span> <span class="o">&amp;&amp;</span> <span class="p">!</span><span class="nx">exists</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="kc">nil</span><span class="p">,</span> <span class="nx">ErrNotFound</span>     <span class="c1">// 【一定不存在，直接返回，不查 DB】
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// 【第二道防线】空值缓存 + 正常缓存
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="c1">// ...（同 2.2）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// 新增数据时要加入布隆过滤器
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kd">func</span> <span class="nf">CreateUser</span><span class="p">(</span><span class="nx">ctx</span> <span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span> <span class="nx">u</span> <span class="o">*</span><span class="nx">User</span><span class="p">)</span> <span class="kt">error</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">db</span><span class="p">.</span><span class="nf">CreateUser</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">u</span><span class="p">);</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="nx">err</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">rdb</span><span class="p">.</span><span class="nf">Do</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="s">&#34;BF.ADD&#34;</span><span class="p">,</span> <span class="s">&#34;bf:users&#34;</span><span class="p">,</span> <span class="nx">u</span><span class="p">.</span><span class="nx">ID</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">rdb</span><span class="p">.</span><span class="nf">Del</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">fmt</span><span class="p">.</span><span class="nf">Sprintf</span><span class="p">(</span><span class="s">&#34;user:%d&#34;</span><span class="p">,</span> <span class="nx">u</span><span class="p">.</span><span class="nx">ID</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="kc">nil</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><strong>布隆过滤器的实践难点</strong>：</p>
+<ol>
+<li><strong>需要预热</strong>：上线时要把已有的全部 ID 灌进去（几亿条数据的初始化可能要跑很久，用 <code>BF.MADD</code> 批量 + pipeline）；</li>
+<li><strong>不能删除</strong>：数据被删除后布隆过滤器里还在，会有误判（但只是多查一次 DB + 命中空值缓存，可接受）。要清理只能<strong>定期重建</strong>；</li>
+<li><strong>误判率与内存的权衡</strong>：误判率每降 10 倍，内存增加约 1.44 倍；</li>
+<li><strong>容量要预估准确</strong>：实际元素超过预设容量后误判率会<strong>急剧上升</strong>（<code>BF.RESERVE</code> 时留 2~3 倍余量，或用 <code>EXPANSION</code> 自动扩容）；</li>
+<li><strong>需要 RedisBloom 模块</strong>：自建 Redis 要额外装模块（云厂商的 Redis 通常已内置，如阿里云 Tair）。</li>
+</ol>
+<h3 id="自己用-bitmap-实现不推荐但要知道">自己用 Bitmap 实现（不推荐但要知道）</h3>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-lua" data-lang="lua"><span class="line"><span class="cl"><span class="c1">-- 添加：用多个哈希函数把 element 映射到 bitmap 的多个位</span>
+</span></span><span class="line"><span class="cl"><span class="c1">-- 查询：GETBIT 全为 1 才&#34;可能存在&#34;</span>
+</span></span></code></pre></div><p>不推荐自己实现的原因：哈希函数的质量、扩容、误判率控制都很难做好，而 RedisBloom 是经过验证的实现。</p>
+<h2 id="24-解法三参数校验与限流">2.4 解法三：参数校验与限流</h2>
+<p><strong>最基础但最容易被忽略的一层</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// 1. 参数合法性校验（挡住明显非法的请求）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">if</span> <span class="nx">id</span> <span class="o">&lt;=</span> <span class="mi">0</span> <span class="o">||</span> <span class="nx">id</span> <span class="p">&gt;</span> <span class="nx">maxValidID</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="kc">nil</span><span class="p">,</span> <span class="nx">ErrInvalidParam</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// 2. 对&#34;缓存未命中&#34;的请求做限流
+</span></span></span><span class="line"><span class="cl"><span class="c1">// 正常业务的缓存命中率应该 &gt; 95%，如果某个 IP/用户的未命中率异常高，
+</span></span></span><span class="line"><span class="cl"><span class="c1">// 说明它在扫描不存在的数据 → 限流或拉黑
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">if</span> <span class="nf">missRate</span><span class="p">(</span><span class="nx">clientIP</span><span class="p">)</span> <span class="p">&gt;</span> <span class="mf">0.5</span> <span class="o">&amp;&amp;</span> <span class="nf">missCount</span><span class="p">(</span><span class="nx">clientIP</span><span class="p">)</span> <span class="p">&gt;</span> <span class="mi">100</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="kc">nil</span><span class="p">,</span> <span class="nx">ErrTooManyRequests</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><h2 id="25-三种解法对比">2.5 三种解法对比</h2>
+<table>
+<thead>
+<tr>
+<th>方案</th>
+<th>内存开销</th>
+<th>实现复杂度</th>
+<th>效果</th>
+<th>适用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>缓存空值</strong></td>
+<td>中（恶意攻击时会很大）</td>
+<td><strong>低</strong></td>
+<td>好</td>
+<td><strong>首选，几乎所有场景</strong></td>
+</tr>
+<tr>
+<td><strong>布隆过滤器</strong></td>
+<td><strong>低</strong>（1 亿 ID 约 114MB）</td>
+<td>中高（要预热、不能删）</td>
+<td><strong>最好</strong></td>
+<td>ID 空间大、有恶意攻击风险</td>
+</tr>
+<tr>
+<td><strong>参数校验 + 限流</strong></td>
+<td>无</td>
+<td>低</td>
+<td>一般（挡不住合法范围内的随机 ID）</td>
+<td><strong>必备的基础防线</strong></td>
+</tr>
+</tbody>
+</table>
+<p><strong>生产建议：三者结合</strong>。参数校验做第一道，布隆过滤器做第二道（数据量大时），空值缓存做第三道。</p>
+<hr>
+<h1 id="3-缓存击穿">3. 缓存击穿</h1>
+<h2 id="31-什么是缓存击穿">3.1 什么是缓存击穿</h2>
+<p><strong>一个热点 key 突然过期</strong>，导致大量并发请求同时发现缓存未命中，<strong>全部涌向数据库</strong>。</p>
+<pre tabindex="0"><code>某个热点商品的缓存 TTL 到了，缓存失效的那一瞬间：
+1 万个并发请求同时发现缓存未命中
+→ 1 万个请求同时查数据库（查的是同一条数据！）
+→ 数据库瞬间过载
+→ 1 万个请求又同时写缓存（重复的无效写入）
+</code></pre><p><strong>和穿透的区别</strong>：</p>
+<ul>
+<li><strong>穿透</strong>：数据<strong>在数据库里也不存在</strong>，问题是&quot;无效查询反复打到 DB&quot;；</li>
+<li><strong>击穿</strong>：数据<strong>存在</strong>，只是缓存刚好失效，问题是&quot;瞬间的并发全部打到 DB&quot;。</li>
+</ul>
+<h2 id="32-解法一互斥锁最常用">3.2 解法一：互斥锁（最常用）</h2>
+<p><strong>只让一个请求去查数据库，其他请求等待或降级。</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">GetHotData</span><span class="p">(</span><span class="nx">ctx</span> <span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span> <span class="nx">id</span> <span class="kt">int64</span><span class="p">)</span> <span class="p">(</span><span class="o">*</span><span class="nx">Data</span><span class="p">,</span> <span class="kt">error</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">key</span> <span class="o">:=</span> <span class="nx">fmt</span><span class="p">.</span><span class="nf">Sprintf</span><span class="p">(</span><span class="s">&#34;data:%d&#34;</span><span class="p">,</span> <span class="nx">id</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// 1. 先读缓存
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">if</span> <span class="nx">val</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">rdb</span><span class="p">.</span><span class="nf">Get</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">key</span><span class="p">).</span><span class="nf">Result</span><span class="p">();</span> <span class="nx">err</span> <span class="o">==</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="nf">unmarshal</span><span class="p">(</span><span class="nx">val</span><span class="p">),</span> <span class="kc">nil</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// 2. 缓存未命中，尝试获取&#34;重建锁&#34;
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">lockKey</span> <span class="o">:=</span> <span class="s">&#34;lock:rebuild:&#34;</span> <span class="o">+</span> <span class="nx">key</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">token</span> <span class="o">:=</span> <span class="nx">uuid</span><span class="p">.</span><span class="nf">NewString</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">ok</span><span class="p">,</span> <span class="nx">_</span> <span class="o">:=</span> <span class="nx">rdb</span><span class="p">.</span><span class="nf">SetNX</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">lockKey</span><span class="p">,</span> <span class="nx">token</span><span class="p">,</span> <span class="mi">10</span><span class="o">*</span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">).</span><span class="nf">Result</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">ok</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="c1">// 【拿到锁】：负责查库并回填缓存
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="k">defer</span> <span class="nx">unlockScript</span><span class="p">.</span><span class="nf">Run</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">rdb</span><span class="p">,</span> <span class="p">[]</span><span class="kt">string</span><span class="p">{</span><span class="nx">lockKey</span><span class="p">},</span> <span class="nx">token</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">        <span class="c1">// 【重要】拿到锁后要再查一次缓存（Double Check）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="c1">// 因为可能在等锁的过程中别人已经填好了
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="k">if</span> <span class="nx">val</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">rdb</span><span class="p">.</span><span class="nf">Get</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">key</span><span class="p">).</span><span class="nf">Result</span><span class="p">();</span> <span class="nx">err</span> <span class="o">==</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="k">return</span> <span class="nf">unmarshal</span><span class="p">(</span><span class="nx">val</span><span class="p">),</span> <span class="kc">nil</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">        <span class="nx">data</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">db</span><span class="p">.</span><span class="nf">Get</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">id</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="k">return</span> <span class="kc">nil</span><span class="p">,</span> <span class="nx">err</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">rdb</span><span class="p">.</span><span class="nf">Set</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">key</span><span class="p">,</span> <span class="nf">marshal</span><span class="p">(</span><span class="nx">data</span><span class="p">),</span> <span class="nx">time</span><span class="p">.</span><span class="nx">Hour</span><span class="o">+</span><span class="nf">randomJitter</span><span class="p">())</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="nx">data</span><span class="p">,</span> <span class="kc">nil</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// 【没拿到锁】：三种策略选一种
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="c1">// 策略 A：短暂等待后重试读缓存（推荐）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">for</span> <span class="nx">i</span> <span class="o">:=</span> <span class="mi">0</span><span class="p">;</span> <span class="nx">i</span> <span class="p">&lt;</span> <span class="mi">5</span><span class="p">;</span> <span class="nx">i</span><span class="o">++</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">time</span><span class="p">.</span><span class="nf">Sleep</span><span class="p">(</span><span class="mi">50</span> <span class="o">*</span> <span class="nx">time</span><span class="p">.</span><span class="nx">Millisecond</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="nx">val</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">rdb</span><span class="p">.</span><span class="nf">Get</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">key</span><span class="p">).</span><span class="nf">Result</span><span class="p">();</span> <span class="nx">err</span> <span class="o">==</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="k">return</span> <span class="nf">unmarshal</span><span class="p">(</span><span class="nx">val</span><span class="p">),</span> <span class="kc">nil</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="kc">nil</span><span class="p">,</span> <span class="nx">ErrTimeout</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// 策略 B：直接返回旧值/默认值（降级，可用性最好）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="c1">// 策略 C：直接查数据库（放弃保护，只在 DB 能承受时用）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span></code></pre></div><p><strong>关键点</strong>：</p>
+<ol>
+<li><strong>拿到锁后必须再查一次缓存（Double Check）</strong>——避免重复查库；</li>
+<li><strong>锁的 TTL 要足够长</strong>（覆盖查库 + 回填的时间），但也不能太长（持锁者崩溃时其他请求要等太久）；</li>
+<li><strong>没拿到锁的请求不要无限等待</strong>，要有超时和降级。</li>
+</ol>
+<p><strong>更进一步：用 Go 的 <code>singleflight</code> 在进程内先合并一次</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kn">import</span> <span class="s">&#34;golang.org/x/sync/singleflight&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">var</span> <span class="nx">g</span> <span class="nx">singleflight</span><span class="p">.</span><span class="nx">Group</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">GetHotData</span><span class="p">(</span><span class="nx">ctx</span> <span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span> <span class="nx">id</span> <span class="kt">int64</span><span class="p">)</span> <span class="p">(</span><span class="o">*</span><span class="nx">Data</span><span class="p">,</span> <span class="kt">error</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">key</span> <span class="o">:=</span> <span class="nx">fmt</span><span class="p">.</span><span class="nf">Sprintf</span><span class="p">(</span><span class="s">&#34;data:%d&#34;</span><span class="p">,</span> <span class="nx">id</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">val</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">rdb</span><span class="p">.</span><span class="nf">Get</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">key</span><span class="p">).</span><span class="nf">Result</span><span class="p">();</span> <span class="nx">err</span> <span class="o">==</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="nf">unmarshal</span><span class="p">(</span><span class="nx">val</span><span class="p">),</span> <span class="kc">nil</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// 【进程内合并】：同一进程内的 N 个并发请求只有 1 个真正执行
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">v</span><span class="p">,</span> <span class="nx">err</span><span class="p">,</span> <span class="nx">_</span> <span class="o">:=</span> <span class="nx">g</span><span class="p">.</span><span class="nf">Do</span><span class="p">(</span><span class="nx">key</span><span class="p">,</span> <span class="kd">func</span><span class="p">()</span> <span class="p">(</span><span class="kd">interface</span><span class="p">{},</span> <span class="kt">error</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="c1">// 这里再用分布式锁做跨进程的合并
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="k">return</span> <span class="nf">getWithDistributedLock</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">key</span><span class="p">,</span> <span class="nx">id</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="p">})</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="kc">nil</span><span class="p">,</span> <span class="nx">err</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="nx">v</span><span class="p">.(</span><span class="o">*</span><span class="nx">Data</span><span class="p">),</span> <span class="kc">nil</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><strong>两层合并的效果</strong>：假设 100 台机器、每台 100 个并发 = 1 万并发请求：</p>
+<ul>
+<li><code>singleflight</code> 把每台机器的 100 个请求合并成 1 个 → 变成 100 个请求；</li>
+<li>分布式锁把 100 个请求合并成 1 个 → <strong>最终只有 1 个请求到数据库</strong>。</li>
+</ul>
+<p>这是生产环境的标准做法。</p>
+<h2 id="33-解法二逻辑过期永不过期--后台刷新">3.3 解法二：逻辑过期（永不过期 + 后台刷新）</h2>
+<p><strong>思路</strong>：缓存<strong>不设物理 TTL</strong>（或设一个很长的），而是在 value 里存一个<strong>逻辑过期时间</strong>。读取时如果发现逻辑过期，<strong>返回旧数据的同时</strong>异步触发更新。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">type</span> <span class="nx">CacheValue</span> <span class="kd">struct</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">Data</span>      <span class="nx">json</span><span class="p">.</span><span class="nx">RawMessage</span> <span class="s">`json:&#34;data&#34;`</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">ExpireAt</span>  <span class="kt">int64</span>           <span class="s">`json:&#34;expire_at&#34;`</span>   <span class="c1">// 逻辑过期时间戳
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">GetHotData</span><span class="p">(</span><span class="nx">ctx</span> <span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span> <span class="nx">id</span> <span class="kt">int64</span><span class="p">)</span> <span class="p">(</span><span class="o">*</span><span class="nx">Data</span><span class="p">,</span> <span class="kt">error</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">key</span> <span class="o">:=</span> <span class="nx">fmt</span><span class="p">.</span><span class="nf">Sprintf</span><span class="p">(</span><span class="s">&#34;data:%d&#34;</span><span class="p">,</span> <span class="nx">id</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="nx">val</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">rdb</span><span class="p">.</span><span class="nf">Get</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">key</span><span class="p">).</span><span class="nf">Result</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">err</span> <span class="o">==</span> <span class="nx">redis</span><span class="p">.</span><span class="nx">Nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="c1">// 缓存完全没有（首次访问或被淘汰）→ 同步查库（走 3.2 的互斥锁逻辑）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="k">return</span> <span class="nf">getWithLock</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">key</span><span class="p">,</span> <span class="nx">id</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="kc">nil</span><span class="p">,</span> <span class="nx">err</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="kd">var</span> <span class="nx">cv</span> <span class="nx">CacheValue</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">json</span><span class="p">.</span><span class="nf">Unmarshal</span><span class="p">([]</span><span class="nb">byte</span><span class="p">(</span><span class="nx">val</span><span class="p">),</span> <span class="o">&amp;</span><span class="nx">cv</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">time</span><span class="p">.</span><span class="nf">Now</span><span class="p">().</span><span class="nf">Unix</span><span class="p">()</span> <span class="p">&lt;</span> <span class="nx">cv</span><span class="p">.</span><span class="nx">ExpireAt</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="c1">// 【未逻辑过期】，直接返回
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="k">return</span> <span class="nf">unmarshal</span><span class="p">(</span><span class="nx">cv</span><span class="p">.</span><span class="nx">Data</span><span class="p">),</span> <span class="kc">nil</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// 【已逻辑过期】：尝试获取锁，异步重建
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">lockKey</span> <span class="o">:=</span> <span class="s">&#34;lock:rebuild:&#34;</span> <span class="o">+</span> <span class="nx">key</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">ok</span><span class="p">,</span> <span class="nx">_</span> <span class="o">:=</span> <span class="nx">rdb</span><span class="p">.</span><span class="nf">SetNX</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">lockKey</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">10</span><span class="o">*</span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">).</span><span class="nf">Result</span><span class="p">();</span> <span class="nx">ok</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">go</span> <span class="kd">func</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="k">defer</span> <span class="nx">rdb</span><span class="p">.</span><span class="nf">Del</span><span class="p">(</span><span class="nx">context</span><span class="p">.</span><span class="nf">Background</span><span class="p">(),</span> <span class="nx">lockKey</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">data</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">db</span><span class="p">.</span><span class="nf">Get</span><span class="p">(</span><span class="nx">context</span><span class="p">.</span><span class="nf">Background</span><span class="p">(),</span> <span class="nx">id</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">            <span class="k">if</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">                <span class="k">return</span>
+</span></span><span class="line"><span class="cl">            <span class="p">}</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">newCV</span> <span class="o">:=</span> <span class="nx">CacheValue</span><span class="p">{</span>
+</span></span><span class="line"><span class="cl">                <span class="nx">Data</span><span class="p">:</span>     <span class="nf">marshal</span><span class="p">(</span><span class="nx">data</span><span class="p">),</span>
+</span></span><span class="line"><span class="cl">                <span class="nx">ExpireAt</span><span class="p">:</span> <span class="nx">time</span><span class="p">.</span><span class="nf">Now</span><span class="p">().</span><span class="nf">Add</span><span class="p">(</span><span class="nx">time</span><span class="p">.</span><span class="nx">Hour</span><span class="p">).</span><span class="nf">Unix</span><span class="p">(),</span>
+</span></span><span class="line"><span class="cl">            <span class="p">}</span>
+</span></span><span class="line"><span class="cl">            <span class="c1">// 【注意】物理上不设 TTL 或设很长的 TTL
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>            <span class="nx">rdb</span><span class="p">.</span><span class="nf">Set</span><span class="p">(</span><span class="nx">context</span><span class="p">.</span><span class="nf">Background</span><span class="p">(),</span> <span class="nx">key</span><span class="p">,</span> <span class="nf">marshal</span><span class="p">(</span><span class="nx">newCV</span><span class="p">),</span> <span class="mi">0</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}()</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// 【关键】无论是否拿到锁，都【立即返回旧数据】
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">return</span> <span class="nf">unmarshal</span><span class="p">(</span><span class="nx">cv</span><span class="p">.</span><span class="nx">Data</span><span class="p">),</span> <span class="kc">nil</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><strong>优点</strong>：</p>
+<ul>
+<li><strong>永远不会有请求阻塞等待</strong>（可用性最好）；</li>
+<li><strong>数据库压力最小</strong>（只有一个后台请求）。</li>
+</ul>
+<p><strong>缺点</strong>：</p>
+<ul>
+<li><strong>会返回一段时间的旧数据</strong>（不适合对实时性要求高的场景）；</li>
+<li><strong>实现更复杂</strong>（要处理 value 结构、后台任务、异常情况）；</li>
+<li><strong>不设 TTL 意味着 key 永久占用内存</strong>（要靠 <code>maxmemory</code> 淘汰或定期清理，否则冷数据永久堆积）。</li>
+</ul>
+<h2 id="34-解法三热点-key-提前预热与永不过期">3.4 解法三：热点 key 提前预热与永不过期</h2>
+<p>对于<strong>已知的热点</strong>（如秒杀商品、首页推荐位）：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// 1. 活动开始前预热缓存
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kd">func</span> <span class="nf">WarmUp</span><span class="p">(</span><span class="nx">ctx</span> <span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span> <span class="nx">hotIDs</span> <span class="p">[]</span><span class="kt">int64</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">for</span> <span class="nx">_</span><span class="p">,</span> <span class="nx">id</span> <span class="o">:=</span> <span class="k">range</span> <span class="nx">hotIDs</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">data</span><span class="p">,</span> <span class="nx">_</span> <span class="o">:=</span> <span class="nx">db</span><span class="p">.</span><span class="nf">Get</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">id</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">rdb</span><span class="p">.</span><span class="nf">Set</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">fmt</span><span class="p">.</span><span class="nf">Sprintf</span><span class="p">(</span><span class="s">&#34;data:%d&#34;</span><span class="p">,</span> <span class="nx">id</span><span class="p">),</span> <span class="nf">marshal</span><span class="p">(</span><span class="nx">data</span><span class="p">),</span> <span class="mi">0</span><span class="p">)</span>   <span class="c1">// 不设 TTL
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// 2. 后台定时任务主动刷新（而不是等它过期）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kd">func</span> <span class="nf">RefreshHotKeys</span><span class="p">(</span><span class="nx">ctx</span> <span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">ticker</span> <span class="o">:=</span> <span class="nx">time</span><span class="p">.</span><span class="nf">NewTicker</span><span class="p">(</span><span class="mi">5</span> <span class="o">*</span> <span class="nx">time</span><span class="p">.</span><span class="nx">Minute</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">for</span> <span class="k">range</span> <span class="nx">ticker</span><span class="p">.</span><span class="nx">C</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">for</span> <span class="nx">_</span><span class="p">,</span> <span class="nx">id</span> <span class="o">:=</span> <span class="k">range</span> <span class="nf">getHotIDs</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">data</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">db</span><span class="p">.</span><span class="nf">Get</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">id</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">            <span class="k">if</span> <span class="nx">err</span> <span class="o">==</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">                <span class="nx">rdb</span><span class="p">.</span><span class="nf">Set</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">fmt</span><span class="p">.</span><span class="nf">Sprintf</span><span class="p">(</span><span class="s">&#34;data:%d&#34;</span><span class="p">,</span> <span class="nx">id</span><span class="p">),</span> <span class="nf">marshal</span><span class="p">(</span><span class="nx">data</span><span class="p">),</span> <span class="mi">0</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">            <span class="p">}</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><h2 id="35-三种解法对比">3.5 三种解法对比</h2>
+<table>
+<thead>
+<tr>
+<th>方案</th>
+<th>数据库压力</th>
+<th>请求延迟</th>
+<th>数据实时性</th>
+<th>复杂度</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>互斥锁</strong></td>
+<td>低（1 个请求）</td>
+<td><strong>部分请求要等待</strong></td>
+<td>好</td>
+<td>中</td>
+</tr>
+<tr>
+<td><strong>逻辑过期</strong></td>
+<td><strong>最低</strong></td>
+<td><strong>无等待</strong></td>
+<td><strong>差</strong>（返回旧数据）</td>
+<td>高</td>
+</tr>
+<tr>
+<td><strong>预热 + 主动刷新</strong></td>
+<td>最低</td>
+<td>无等待</td>
+<td>中（取决于刷新间隔）</td>
+<td>低（但要维护热点列表）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>生产选择</strong>：</p>
+<ul>
+<li><strong>一般热点</strong>：<code>singleflight</code> + 分布式锁（互斥锁方案）；</li>
+<li><strong>超级热点且能容忍旧数据</strong>：逻辑过期；</li>
+<li><strong>已知的、数量有限的热点</strong>：预热 + 主动刷新（最稳）。</li>
+</ul>
+<hr>
+<h1 id="4-缓存雪崩">4. 缓存雪崩</h1>
+<h2 id="41-什么是缓存雪崩">4.1 什么是缓存雪崩</h2>
+<p><strong>大量 key 同时失效</strong>，或者<strong>缓存服务整体不可用</strong>，导致所有请求打到数据库，数据库被压垮，进而整个系统崩溃。</p>
+<p><strong>两种成因</strong>：</p>
+<p><strong>成因一：大量 key 同时过期</strong></p>
+<pre tabindex="0"><code>凌晨 2 点批量导入了 100 万条数据，都设了 TTL = 3600 秒
+→ 凌晨 3 点这 100 万个 key 【同时失效】
+→ 所有请求穿透到数据库
+→ 数据库被打爆
+</code></pre><p><strong>成因二：Redis 实例宕机</strong></p>
+<pre tabindex="0"><code>Redis 主节点宕机 → 缓存完全不可用
+→ 所有请求打到数据库（原本 95% 的请求由缓存承担）
+→ 数据库瞬间承受 20 倍流量 → 崩溃
+→ 服务全面不可用
+</code></pre><h2 id="42-解法一ttl-加随机抖动针对成因一">4.2 解法一：TTL 加随机抖动（针对成因一）</h2>
+<p><strong>最简单也最有效</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// ❌ 所有 key 的 TTL 完全相同
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">rdb</span><span class="p">.</span><span class="nf">Set</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">key</span><span class="p">,</span> <span class="nx">val</span><span class="p">,</span> <span class="nx">time</span><span class="p">.</span><span class="nx">Hour</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// ✅ 加随机抖动，把过期时间打散
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kd">func</span> <span class="nf">randomTTL</span><span class="p">(</span><span class="nx">base</span> <span class="nx">time</span><span class="p">.</span><span class="nx">Duration</span><span class="p">)</span> <span class="nx">time</span><span class="p">.</span><span class="nx">Duration</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// 基础 1 小时 + 0~10 分钟随机
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">return</span> <span class="nx">base</span> <span class="o">+</span> <span class="nx">time</span><span class="p">.</span><span class="nf">Duration</span><span class="p">(</span><span class="nx">rand</span><span class="p">.</span><span class="nf">Intn</span><span class="p">(</span><span class="mi">600</span><span class="p">))</span><span class="o">*</span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="nx">rdb</span><span class="p">.</span><span class="nf">Set</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">key</span><span class="p">,</span> <span class="nx">val</span><span class="p">,</span> <span class="nf">randomTTL</span><span class="p">(</span><span class="nx">time</span><span class="p">.</span><span class="nx">Hour</span><span class="p">))</span>
+</span></span></code></pre></div><p><strong>双重好处</strong>（第 6 篇提过）：</p>
+<ol>
+<li>避免缓存雪崩；</li>
+<li><strong>均摊 Redis 自身的过期删除压力</strong>（避免某个 100ms 周期内有几百万 key 要删，把 25ms 的时间预算撑爆）。</li>
+</ol>
+<p><strong>抖动幅度建议</strong>：基础 TTL 的 <strong>10%~30%</strong>。</p>
+<h2 id="43-解法二多级缓存针对成因二">4.3 解法二：多级缓存（针对成因二）</h2>
+<p><strong>在应用进程内加一层本地缓存</strong>，Redis 挂了还有本地缓存兜底。</p>
+<pre tabindex="0"><code>请求 → 【本地缓存（进程内）】→ 【Redis】→ 【数据库】
+        L1: 微秒级        L2: 毫秒级     L3: 十毫秒级
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kn">import</span> <span class="s">&#34;github.com/dgraph-io/ristretto&#34;</span>   <span class="c1">// 或 bigcache / freecache / go-cache
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl"><span class="kd">var</span> <span class="nx">localCache</span> <span class="o">*</span><span class="nx">ristretto</span><span class="p">.</span><span class="nx">Cache</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">GetData</span><span class="p">(</span><span class="nx">ctx</span> <span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span> <span class="nx">id</span> <span class="kt">int64</span><span class="p">)</span> <span class="p">(</span><span class="o">*</span><span class="nx">Data</span><span class="p">,</span> <span class="kt">error</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">key</span> <span class="o">:=</span> <span class="nx">fmt</span><span class="p">.</span><span class="nf">Sprintf</span><span class="p">(</span><span class="s">&#34;data:%d&#34;</span><span class="p">,</span> <span class="nx">id</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// L1：本地缓存
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">if</span> <span class="nx">v</span><span class="p">,</span> <span class="nx">found</span> <span class="o">:=</span> <span class="nx">localCache</span><span class="p">.</span><span class="nf">Get</span><span class="p">(</span><span class="nx">key</span><span class="p">);</span> <span class="nx">found</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="nx">v</span><span class="p">.(</span><span class="o">*</span><span class="nx">Data</span><span class="p">),</span> <span class="kc">nil</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// L2：Redis
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">val</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">rdb</span><span class="p">.</span><span class="nf">Get</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">key</span><span class="p">).</span><span class="nf">Result</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">err</span> <span class="o">==</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">data</span> <span class="o">:=</span> <span class="nf">unmarshal</span><span class="p">(</span><span class="nx">val</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="c1">// 回填本地缓存，TTL 要【短】（因为无法及时感知失效）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="nx">localCache</span><span class="p">.</span><span class="nf">SetWithTTL</span><span class="p">(</span><span class="nx">key</span><span class="p">,</span> <span class="nx">data</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">30</span><span class="o">*</span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="nx">data</span><span class="p">,</span> <span class="kc">nil</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// L3：数据库（用 singleflight + 分布式锁保护）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">data</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nf">getFromDBWithProtection</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">id</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="kc">nil</span><span class="p">,</span> <span class="nx">err</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">rdb</span><span class="p">.</span><span class="nf">Set</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">key</span><span class="p">,</span> <span class="nf">marshal</span><span class="p">(</span><span class="nx">data</span><span class="p">),</span> <span class="nf">randomTTL</span><span class="p">(</span><span class="nx">time</span><span class="p">.</span><span class="nx">Hour</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">localCache</span><span class="p">.</span><span class="nf">SetWithTTL</span><span class="p">(</span><span class="nx">key</span><span class="p">,</span> <span class="nx">data</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">30</span><span class="o">*</span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="nx">data</span><span class="p">,</span> <span class="kc">nil</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><strong>本地缓存的关键取舍</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>TTL 要短</strong>（10~60 秒）</td>
+<td>因为无法及时感知数据变更，只能靠过期收敛</td>
+</tr>
+<tr>
+<td><strong>只缓存热点</strong></td>
+<td>本地内存有限，缓存全部数据会 OOM</td>
+</tr>
+<tr>
+<td><strong>一致性最弱</strong></td>
+<td>N 台机器有 N 份副本，更新时无法保证全部同步</td>
+</tr>
+<tr>
+<td><strong>失效通知</strong></td>
+<td>可以用 Redis pub/sub 广播失效（但会丢消息，仍需 TTL 兜底，见第 9 篇）</td>
+</tr>
+</tbody>
+</table>
+<p>**Redis 6.0 的客户端缓存（Client-side Caching）**是这个模式的官方实现：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">CLIENT TRACKING ON            <span class="c1"># 开启键追踪（需要 RESP3）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 客户端本地缓存 GET 到的数据</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 服务端在 key 被修改时【主动推送 invalidate 消息】给缓存了它的客户端</span>
+</span></span></code></pre></div><p>它比自己用 pub/sub 广播更精准（服务端记录了每个客户端缓存了哪些 key，只推给相关客户端）。</p>
+<h2 id="44-解法三熔断降级与限流">4.4 解法三：熔断降级与限流</h2>
+<p><strong>核心思想：保护数据库，宁可部分请求失败也不能让 DB 崩溃。</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// 1. 限流：限制到数据库的并发量
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kd">var</span> <span class="nx">dbSemaphore</span> <span class="p">=</span> <span class="nb">make</span><span class="p">(</span><span class="kd">chan</span> <span class="kd">struct</span><span class="p">{},</span> <span class="mi">100</span><span class="p">)</span>   <span class="c1">// 最多 100 个并发查库
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">getFromDB</span><span class="p">(</span><span class="nx">ctx</span> <span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span> <span class="nx">id</span> <span class="kt">int64</span><span class="p">)</span> <span class="p">(</span><span class="o">*</span><span class="nx">Data</span><span class="p">,</span> <span class="kt">error</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">select</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">case</span> <span class="nx">dbSemaphore</span> <span class="o">&lt;-</span> <span class="kd">struct</span><span class="p">{}{}:</span>
+</span></span><span class="line"><span class="cl">        <span class="k">defer</span> <span class="kd">func</span><span class="p">()</span> <span class="p">{</span> <span class="o">&lt;-</span><span class="nx">dbSemaphore</span> <span class="p">}()</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="nx">db</span><span class="p">.</span><span class="nf">Get</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">id</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">case</span> <span class="o">&lt;-</span><span class="nx">time</span><span class="p">.</span><span class="nf">After</span><span class="p">(</span><span class="mi">50</span> <span class="o">*</span> <span class="nx">time</span><span class="p">.</span><span class="nx">Millisecond</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="kc">nil</span><span class="p">,</span> <span class="nx">ErrSystemBusy</span>       <span class="c1">// 【快速失败，保护数据库】
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// 2. 熔断：数据库错误率过高时直接返回降级数据
+</span></span></span><span class="line"><span class="cl"><span class="c1">// 用 sony/gobreaker 或 alibaba/sentinel-golang
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kd">var</span> <span class="nx">cb</span> <span class="p">=</span> <span class="nx">gobreaker</span><span class="p">.</span><span class="nf">NewCircuitBreaker</span><span class="p">(</span><span class="nx">gobreaker</span><span class="p">.</span><span class="nx">Settings</span><span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">Name</span><span class="p">:</span>        <span class="s">&#34;db-query&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">MaxRequests</span><span class="p">:</span> <span class="mi">10</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">Interval</span><span class="p">:</span>    <span class="mi">10</span> <span class="o">*</span> <span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">Timeout</span><span class="p">:</span>     <span class="mi">30</span> <span class="o">*</span> <span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">ReadyToTrip</span><span class="p">:</span> <span class="kd">func</span><span class="p">(</span><span class="nx">counts</span> <span class="nx">gobreaker</span><span class="p">.</span><span class="nx">Counts</span><span class="p">)</span> <span class="kt">bool</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="nx">counts</span><span class="p">.</span><span class="nx">Requests</span> <span class="o">&gt;=</span> <span class="mi">20</span> <span class="o">&amp;&amp;</span>
+</span></span><span class="line"><span class="cl">            <span class="nb">float64</span><span class="p">(</span><span class="nx">counts</span><span class="p">.</span><span class="nx">TotalFailures</span><span class="p">)</span><span class="o">/</span><span class="nb">float64</span><span class="p">(</span><span class="nx">counts</span><span class="p">.</span><span class="nx">Requests</span><span class="p">)</span> <span class="p">&gt;</span> <span class="mf">0.5</span>
+</span></span><span class="line"><span class="cl">    <span class="p">},</span>
+</span></span><span class="line"><span class="cl"><span class="p">})</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="nx">result</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">cb</span><span class="p">.</span><span class="nf">Execute</span><span class="p">(</span><span class="kd">func</span><span class="p">()</span> <span class="p">(</span><span class="kd">interface</span><span class="p">{},</span> <span class="kt">error</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="nx">db</span><span class="p">.</span><span class="nf">Get</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">id</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="p">})</span>
+</span></span><span class="line"><span class="cl"><span class="k">if</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="nf">getDefaultData</span><span class="p">(),</span> <span class="kc">nil</span>    <span class="c1">// 【降级：返回兜底数据】
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span></code></pre></div><h2 id="45-解法四redis-高可用">4.5 解法四：Redis 高可用</h2>
+<p>从架构上减少&quot;Redis 整体不可用&quot;的概率：</p>
+<ul>
+<li><strong>主从 + 哨兵</strong>（第 11 篇）：主节点挂了自动切换，10~35 秒恢复；</li>
+<li><strong>Cluster</strong>（第 12 篇）：一个分片挂了只影响 1/N 的数据（配 <code>cluster-require-full-coverage no</code>）；</li>
+<li><strong>跨机房部署</strong>：避免机房级故障；</li>
+<li><strong>持久化</strong>（第 7 篇）：重启后能快速恢复数据，避免&quot;空缓存重启&quot;引发雪崩。</li>
+</ul>
+<h2 id="46-解法五缓存预热">4.6 解法五：缓存预热</h2>
+<p><strong>Redis 重启后如果是空的，所有请求都会穿透到数据库</strong>——这本身就是一次雪崩。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// 服务启动时预热核心数据
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kd">func</span> <span class="nf">WarmUpCache</span><span class="p">(</span><span class="nx">ctx</span> <span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">)</span> <span class="kt">error</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">hotIDs</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">db</span><span class="p">.</span><span class="nf">GetHotDataIDs</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="mi">10000</span><span class="p">)</span>    <span class="c1">// 取最热的 1 万条
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">if</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="nx">err</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// 分批预热，避免瞬间压垮数据库
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">for</span> <span class="nx">i</span> <span class="o">:=</span> <span class="mi">0</span><span class="p">;</span> <span class="nx">i</span> <span class="p">&lt;</span> <span class="nb">len</span><span class="p">(</span><span class="nx">hotIDs</span><span class="p">);</span> <span class="nx">i</span> <span class="o">+=</span> <span class="mi">100</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">end</span> <span class="o">:=</span> <span class="nf">min</span><span class="p">(</span><span class="nx">i</span><span class="o">+</span><span class="mi">100</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="nx">hotIDs</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">batch</span> <span class="o">:=</span> <span class="nx">hotIDs</span><span class="p">[</span><span class="nx">i</span><span class="p">:</span><span class="nx">end</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">        <span class="nx">items</span><span class="p">,</span> <span class="nx">_</span> <span class="o">:=</span> <span class="nx">db</span><span class="p">.</span><span class="nf">BatchGet</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">batch</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">pipe</span> <span class="o">:=</span> <span class="nx">rdb</span><span class="p">.</span><span class="nf">Pipeline</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">        <span class="k">for</span> <span class="nx">_</span><span class="p">,</span> <span class="nx">item</span> <span class="o">:=</span> <span class="k">range</span> <span class="nx">items</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">pipe</span><span class="p">.</span><span class="nf">Set</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">fmt</span><span class="p">.</span><span class="nf">Sprintf</span><span class="p">(</span><span class="s">&#34;data:%d&#34;</span><span class="p">,</span> <span class="nx">item</span><span class="p">.</span><span class="nx">ID</span><span class="p">),</span>
+</span></span><span class="line"><span class="cl">                <span class="nf">marshal</span><span class="p">(</span><span class="nx">item</span><span class="p">),</span> <span class="nf">randomTTL</span><span class="p">(</span><span class="nx">time</span><span class="p">.</span><span class="nx">Hour</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">pipe</span><span class="p">.</span><span class="nf">Exec</span><span class="p">(</span><span class="nx">ctx</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">        <span class="nx">time</span><span class="p">.</span><span class="nf">Sleep</span><span class="p">(</span><span class="mi">50</span> <span class="o">*</span> <span class="nx">time</span><span class="p">.</span><span class="nx">Millisecond</span><span class="p">)</span>      <span class="c1">// 限速
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="kc">nil</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><strong>更彻底的做法</strong>：如果 Redis 开了持久化（AOF/RDB），重启会自动恢复数据，就不需要预热。这是<strong>开启持久化的一个重要理由</strong>——即使 Redis 只做缓存，持久化也能避免&quot;重启即雪崩&quot;。</p>
+<h2 id="47-三大问题总结对比">4.7 三大问题总结对比</h2>
+<table>
+<thead>
+<tr>
+<th></th>
+<th><strong>缓存穿透</strong></th>
+<th><strong>缓存击穿</strong></th>
+<th><strong>缓存雪崩</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>数据是否存在于 DB</strong></td>
+<td><strong>不存在</strong></td>
+<td>存在</td>
+<td>存在</td>
+</tr>
+<tr>
+<td><strong>失效的 key 数量</strong></td>
+<td>不涉及（本来就没有）</td>
+<td><strong>一个热点 key</strong></td>
+<td><strong>大量 key</strong> 或整个 Redis</td>
+</tr>
+<tr>
+<td><strong>成因</strong></td>
+<td>查询不存在的数据</td>
+<td>热点 key 突然过期</td>
+<td>批量 key 同时过期 / Redis 宕机</td>
+</tr>
+<tr>
+<td><strong>核心解法</strong></td>
+<td><strong>空值缓存 + 布隆过滤器</strong></td>
+<td><strong>互斥锁 / 逻辑过期</strong></td>
+<td><strong>TTL 随机抖动 + 多级缓存 + 熔断限流 + 高可用</strong></td>
+</tr>
+<tr>
+<td><strong>辅助手段</strong></td>
+<td>参数校验、限流</td>
+<td>预热、主动刷新</td>
+<td>预热、持久化</td>
+</tr>
+</tbody>
+</table>
+<p><strong>记忆口诀</strong>：</p>
+<ul>
+<li><strong>穿透</strong>：查<strong>不存在</strong>的 → 用<strong>空值/布隆</strong>挡住；</li>
+<li><strong>击穿</strong>：<strong>一个热点</strong>过期 → 用<strong>锁</strong>只放一个进去；</li>
+<li><strong>雪崩</strong>：<strong>大量</strong>同时失效 → <strong>打散 TTL</strong> + <strong>多级缓存</strong> + <strong>限流熔断</strong>。</li>
+</ul>
+<hr>
+<h1 id="5-缓存与数据库一致性">5. 缓存与数据库一致性</h1>
+<p>这是缓存领域<strong>最核心也最容易答错</strong>的问题。</p>
+<h2 id="51-先明确一个前提">5.1 先明确一个前提</h2>
+<p><strong>只要缓存和数据库是两个独立的系统，就不可能有&quot;完美的强一致&quot;。</strong></p>
+<p>因为&quot;更新数据库&quot;和&quot;更新/删除缓存&quot;是两个独立的操作，无法原子化（除非引入分布式事务，但那个代价高到不可接受，且 Redis 不支持 XA）。</p>
+<p>所以问题不是&quot;怎么做到强一致&quot;，而是&quot;<strong>怎么让不一致的窗口尽可能小、发生概率尽可能低、并且能自动收敛</strong>&quot;。</p>
+<h2 id="52-四种组合方案">5.2 四种组合方案</h2>
+<p>写操作有两个维度的选择：<strong>更新缓存 vs 删除缓存</strong>、<strong>先操作 DB vs 先操作缓存</strong>。四种组合：</p>
+<h3 id="方案一先更新数据库再更新缓存-不推荐">方案一：先更新数据库，再更新缓存（❌ 不推荐）</h3>
+<p><strong>问题一：并发写导致脏数据</strong></p>
+<pre tabindex="0"><code>时刻 T1：线程 A 更新数据库为 v1
+时刻 T2：线程 B 更新数据库为 v2
+时刻 T3：线程 B 更新缓存为 v2
+时刻 T4：线程 A 更新缓存为 v1     ← 【A 的缓存写入晚到了】
+结果：数据库 = v2，缓存 = v1 【永久不一致】
+</code></pre><p>因为两个线程的&quot;更新 DB&quot;和&quot;更新缓存&quot;之间的执行顺序不可控（网络延迟、GC、调度），<strong>这个不一致是永久的</strong>（除非 TTL 到了）。</p>
+<p><strong>问题二：浪费</strong></p>
+<p>如果这个数据写多读少，每次写都更新缓存，但缓存可能根本没被读过就又被更新了——做了大量无用功。</p>
+<p><strong>问题三：更新逻辑可能很复杂</strong></p>
+<p>如果缓存的值不是数据库字段的直接映射（比如是多表 join + 计算的结果），&ldquo;更新缓存&quot;就要重新执行整套计算逻辑，容易出错。</p>
+<h3 id="方案二先删除缓存再更新数据库-不推荐">方案二：先删除缓存，再更新数据库（❌ 不推荐）</h3>
+<p><strong>问题：并发读写导致脏数据</strong></p>
+<pre tabindex="0"><code>时刻 T1：线程 A（写）删除缓存
+时刻 T2：线程 B（读）缓存未命中 → 读数据库，拿到【旧值】
+时刻 T3：线程 A（写）更新数据库为新值
+时刻 T4：线程 B（读）把【旧值】写入缓存
+结果：数据库 = 新值，缓存 = 旧值 【不一致，且会持续到 TTL 过期】
+</code></pre><p><strong>这个问题发生概率很高</strong>，因为&quot;读数据库 + 写缓存&rdquo;（T2→T4）通常比&quot;更新数据库&quot;（T3）快，两者很容易交错。</p>
+<h3 id="方案三先更新数据库再删除缓存-推荐cache-aside">方案三：先更新数据库，再删除缓存（✅ <strong>推荐</strong>，Cache Aside）</h3>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">Update</span><span class="p">(</span><span class="nx">ctx</span> <span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span> <span class="nx">u</span> <span class="o">*</span><span class="nx">User</span><span class="p">)</span> <span class="kt">error</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">db</span><span class="p">.</span><span class="nf">Update</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">u</span><span class="p">);</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>    <span class="c1">// 1. 先更新 DB
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="k">return</span> <span class="nx">err</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">rdb</span><span class="p">.</span><span class="nf">Del</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nf">key</span><span class="p">(</span><span class="nx">u</span><span class="p">.</span><span class="nx">ID</span><span class="p">))</span>                       <span class="c1">// 2. 再删缓存
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">return</span> <span class="kc">nil</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><strong>这是业界标准方案</strong>（Facebook 的论文《Scaling Memcache at Facebook》也是这个思路）。</p>
+<p><strong>它也有理论上的不一致场景，但概率极低</strong>：</p>
+<pre tabindex="0"><code>时刻 T1：缓存刚好【失效】（TTL 到期）
+时刻 T2：线程 B（读）缓存未命中 → 开始读数据库，拿到旧值 v0
+时刻 T3：线程 A（写）更新数据库为 v1
+时刻 T4：线程 A（写）删除缓存（此时缓存本来就是空的，删了也没用）
+时刻 T5：线程 B（读）把旧值 v0 写入缓存
+结果：缓存 = v0（旧），数据库 = v1 【不一致】
+</code></pre><p><strong>为什么概率极低</strong>：需要同时满足三个条件：</p>
+<ol>
+<li><strong>缓存刚好在这个时刻失效</strong>；</li>
+<li><strong>有并发的读和写</strong>；</li>
+<li><strong>读操作的&quot;查库 + 写缓存&quot;（T2→T5）耗时要长于写操作的&quot;更新库 + 删缓存&quot;（T3→T4）</strong>。</li>
+</ol>
+<p>而实际上<strong>读操作（一次 SELECT + 一次 SET）几乎总是比写操作（一次 UPDATE，可能涉及锁、日志、索引维护）快</strong>，所以第三个条件很难满足。</p>
+<p><strong>为什么&quot;删除&quot;优于&quot;更新&quot;</strong>：</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>删除缓存</th>
+<th>更新缓存</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>并发写的脏数据风险</td>
+<td><strong>低</strong></td>
+<td><strong>高</strong>（方案一的问题）</td>
+</tr>
+<tr>
+<td>写多读少时的开销</td>
+<td><strong>低</strong>（懒加载，只在被读时才重建）</td>
+<td>高（每次写都算一遍）</td>
+</tr>
+<tr>
+<td>复杂计算值的正确性</td>
+<td><strong>好</strong>（重建时走统一的读路径）</td>
+<td>差（要复制一遍计算逻辑）</td>
+</tr>
+</tbody>
+</table>
+<h3 id="方案四先删除缓存再更新数据库然后延迟再删一次延迟双删">方案四：先删除缓存，再更新数据库，然后延迟再删一次（延迟双删）</h3>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">Update</span><span class="p">(</span><span class="nx">ctx</span> <span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span> <span class="nx">u</span> <span class="o">*</span><span class="nx">User</span><span class="p">)</span> <span class="kt">error</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">rdb</span><span class="p">.</span><span class="nf">Del</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nf">key</span><span class="p">(</span><span class="nx">u</span><span class="p">.</span><span class="nx">ID</span><span class="p">))</span>                       <span class="c1">// 1. 先删缓存
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">if</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">db</span><span class="p">.</span><span class="nf">Update</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">u</span><span class="p">);</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>     <span class="c1">// 2. 更新数据库
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="k">return</span> <span class="nx">err</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// 3. 【延迟】再删一次，清掉可能在步骤 1、2 之间被写入的旧值
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">time</span><span class="p">.</span><span class="nf">AfterFunc</span><span class="p">(</span><span class="mi">500</span><span class="o">*</span><span class="nx">time</span><span class="p">.</span><span class="nx">Millisecond</span><span class="p">,</span> <span class="kd">func</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">rdb</span><span class="p">.</span><span class="nf">Del</span><span class="p">(</span><span class="nx">context</span><span class="p">.</span><span class="nf">Background</span><span class="p">(),</span> <span class="nf">key</span><span class="p">(</span><span class="nx">u</span><span class="p">.</span><span class="nx">ID</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl">    <span class="p">})</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="kc">nil</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><strong>目的</strong>：解决方案二的问题——第二次删除会清掉那个&quot;在删除和更新之间被并发读写入的旧值&quot;。</p>
+<p><strong>问题</strong>：</p>
+<ol>
+<li><strong>延迟多久无法确定</strong>：要覆盖&quot;并发读的查库 + 写缓存&quot;耗时，还要考虑<strong>主从延迟</strong>（如果读的是 MySQL 从库，可能还要等主从同步完成）。设短了没用，设长了不一致窗口反而更大；</li>
+<li><strong>实现别扭</strong>：<code>time.AfterFunc</code> 在进程崩溃时会丢失；用消息队列做延迟又增加了复杂度；</li>
+<li><strong>仍然不能保证 100% 一致</strong>（如果延迟期间又有并发读写）。</li>
+</ol>
+<p><strong>实践中的定位</strong>：<strong>延迟双删不是标准方案</strong>，它是&quot;方案三 + 额外保险&quot;的一种加强，主要用在<strong>读写分离且主从延迟明显</strong>的场景。大多数情况直接用方案三就够了。</p>
+<h2 id="53-更可靠的方案订阅-binlog">5.3 更可靠的方案：订阅 binlog</h2>
+<p><strong>思路</strong>：不在业务代码里删缓存，而是<strong>订阅数据库的 binlog</strong>，由一个独立的服务来删缓存。</p>
+<pre tabindex="0"><code>业务代码 → 只更新数据库（不管缓存）
+              ↓
+         MySQL binlog
+              ↓
+     Canal / Debezium / Maxwell（伪装成 MySQL 从库）
+              ↓
+         消息队列（Kafka/RocketMQ）
+              ↓
+       缓存更新服务 → 删除/更新 Redis
+</code></pre><p><strong>优点</strong>：</p>
+<ol>
+<li><strong>业务代码完全解耦</strong>——业务只管写数据库，不用关心缓存（大幅降低出错概率，也避免了&quot;某处代码忘了删缓存&quot;）；</li>
+<li><strong>可靠</strong>——binlog 是数据库的事实记录，配合 MQ 的重试机制，<strong>保证最终一定会删缓存</strong>（不会因为业务进程崩溃而漏删）；</li>
+<li><strong>顺序性</strong>——binlog 天然有序，按表/主键分区后能保证同一条记录的更新顺序；</li>
+<li><strong>能感知所有变更</strong>——包括直接在数据库上执行的 SQL（运维改数据、定时脚本），业务代码里删缓存是覆盖不到这些的。</li>
+</ol>
+<p><strong>缺点</strong>：</p>
+<ol>
+<li><strong>架构复杂</strong>——多了 Canal + MQ + 消费服务三个组件，都要做高可用；</li>
+<li><strong>有延迟</strong>——从 binlog 产生到缓存被删通常 <strong>几十毫秒到几百毫秒</strong>；</li>
+<li><strong>运维成本</strong>——Canal 要处理 binlog 位点管理、主从切换、表结构变更。</li>
+</ol>
+<p><strong>适用</strong>：<strong>数据一致性要求较高、且已有 binlog 订阅基础设施</strong>（很多公司为了数据同步到数仓/ES 已经有了）的场景。</p>
+<p><strong>实践中的常见组合</strong>：</p>
+<pre tabindex="0"><code>业务代码删缓存（快速路径，覆盖 99% 的情况）
+      +
+binlog 订阅删缓存（兜底路径，修正遗漏和异常）
+</code></pre><p>这样既有低延迟，又有可靠兜底。</p>
+<h2 id="54-兜底手段">5.4 兜底手段</h2>
+<p>无论用哪种方案，都应该有这些兜底：</p>
+<p><strong>（1）给所有缓存设置合理的 TTL（最重要）</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="nx">rdb</span><span class="p">.</span><span class="nf">Set</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">key</span><span class="p">,</span> <span class="nx">val</span><span class="p">,</span> <span class="nf">randomTTL</span><span class="p">(</span><span class="nx">time</span><span class="p">.</span><span class="nx">Hour</span><span class="p">))</span>
+</span></span></code></pre></div><p><strong>这是所有一致性方案的最后一道保险</strong>。即使所有删除机制都失效了，<strong>TTL 保证不一致最多持续一个 TTL 周期</strong>，数据最终会收敛。</p>
+<p><strong>永远不要设置&quot;永不过期&quot;的业务缓存</strong>（除了明确需要逻辑过期方案的超级热点）。</p>
+<p><strong>（2）删除缓存失败的重试</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">Update</span><span class="p">(</span><span class="nx">ctx</span> <span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span> <span class="nx">u</span> <span class="o">*</span><span class="nx">User</span><span class="p">)</span> <span class="kt">error</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">db</span><span class="p">.</span><span class="nf">Update</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">u</span><span class="p">);</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="nx">err</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">rdb</span><span class="p">.</span><span class="nf">Del</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nf">key</span><span class="p">(</span><span class="nx">u</span><span class="p">.</span><span class="nx">ID</span><span class="p">)).</span><span class="nf">Err</span><span class="p">();</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="c1">// 删除失败 → 丢进消息队列异步重试
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="nx">mq</span><span class="p">.</span><span class="nf">Publish</span><span class="p">(</span><span class="s">&#34;cache-invalidate&#34;</span><span class="p">,</span> <span class="nf">key</span><span class="p">(</span><span class="nx">u</span><span class="p">.</span><span class="nx">ID</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">log</span><span class="p">.</span><span class="nf">Errorf</span><span class="p">(</span><span class="s">&#34;删除缓存失败，已投递重试: %v&#34;</span><span class="p">,</span> <span class="nx">err</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="kc">nil</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><strong>（3）定期对账</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// 低峰期跑，抽样比对缓存和数据库
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kd">func</span> <span class="nf">Reconcile</span><span class="p">(</span><span class="nx">ctx</span> <span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">for</span> <span class="nx">_</span><span class="p">,</span> <span class="nx">id</span> <span class="o">:=</span> <span class="k">range</span> <span class="nf">sampleIDs</span><span class="p">(</span><span class="mi">1000</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">cached</span><span class="p">,</span> <span class="nx">_</span> <span class="o">:=</span> <span class="nx">rdb</span><span class="p">.</span><span class="nf">Get</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nf">key</span><span class="p">(</span><span class="nx">id</span><span class="p">)).</span><span class="nf">Result</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">actual</span><span class="p">,</span> <span class="nx">_</span> <span class="o">:=</span> <span class="nx">db</span><span class="p">.</span><span class="nf">Get</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">id</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="nx">cached</span> <span class="o">!=</span> <span class="s">&#34;&#34;</span> <span class="o">&amp;&amp;</span> <span class="p">!</span><span class="nf">equal</span><span class="p">(</span><span class="nx">cached</span><span class="p">,</span> <span class="nx">actual</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">metrics</span><span class="p">.</span><span class="nx">InconsistentCounter</span><span class="p">.</span><span class="nf">Inc</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">rdb</span><span class="p">.</span><span class="nf">Del</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nf">key</span><span class="p">(</span><span class="nx">id</span><span class="p">))</span>               <span class="c1">// 修复
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>            <span class="nx">log</span><span class="p">.</span><span class="nf">Warnf</span><span class="p">(</span><span class="s">&#34;发现不一致: id=%d&#34;</span><span class="p">,</span> <span class="nx">id</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>对账不只是修复数据，更重要的是<strong>发现&quot;某个代码路径忘了删缓存&quot;这类系统性问题</strong>。</p>
+<h2 id="55-读写分离带来的额外问题">5.5 读写分离带来的额外问题</h2>
+<p>如果数据库用了主从读写分离，会引入新的不一致来源：</p>
+<pre tabindex="0"><code>时刻 T1：写请求更新【主库】
+时刻 T2：删除缓存
+时刻 T3：读请求缓存未命中 → 读【从库】
+        → 【主从复制还没到达，读到旧值】
+时刻 T4：把旧值写入缓存 【不一致】
+</code></pre><p><strong>解法</strong>：</p>
+<ol>
+<li><strong>缓存重建时强制读主库</strong>（最简单可靠）：</li>
+</ol>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">rebuildCache</span><span class="p">(</span><span class="nx">ctx</span> <span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span> <span class="nx">id</span> <span class="kt">int64</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">data</span><span class="p">,</span> <span class="nx">_</span> <span class="o">:=</span> <span class="nx">db</span><span class="p">.</span><span class="nf">Master</span><span class="p">().</span><span class="nf">Get</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">id</span><span class="p">)</span>     <span class="c1">// 【强制读主库】
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">rdb</span><span class="p">.</span><span class="nf">Set</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nf">key</span><span class="p">(</span><span class="nx">id</span><span class="p">),</span> <span class="nf">marshal</span><span class="p">(</span><span class="nx">data</span><span class="p">),</span> <span class="nf">randomTTL</span><span class="p">(</span><span class="nx">time</span><span class="p">.</span><span class="nx">Hour</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><ol start="2">
+<li><strong>延迟双删</strong>（延迟时间要大于主从延迟）；</li>
+<li><strong>写后一段时间内该 key 的读走主库</strong>（会话粘性，见第 10 篇）。</li>
+</ol>
+<h2 id="56-一致性方案总结">5.6 一致性方案总结</h2>
+<table>
+<thead>
+<tr>
+<th>方案</th>
+<th>一致性</th>
+<th>复杂度</th>
+<th>推荐度</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>先更 DB，再<strong>更新</strong>缓存</td>
+<td><strong>差</strong>（并发写永久脏）</td>
+<td>低</td>
+<td>❌</td>
+</tr>
+<tr>
+<td>先<strong>删</strong>缓存，再更 DB</td>
+<td><strong>差</strong>（并发读写概率高）</td>
+<td>低</td>
+<td>❌</td>
+</tr>
+<tr>
+<td><strong>先更 DB，再删缓存</strong>（Cache Aside）</td>
+<td><strong>好</strong>（不一致概率极低）</td>
+<td><strong>低</strong></td>
+<td>✅ <strong>首选</strong></td>
+</tr>
+<tr>
+<td>延迟双删</td>
+<td>较好</td>
+<td>中</td>
+<td>⚠️ 主从延迟明显时用</td>
+</tr>
+<tr>
+<td><strong>binlog 订阅</strong></td>
+<td><strong>最好</strong></td>
+<td><strong>高</strong></td>
+<td>✅ 高要求场景 / 已有基础设施</td>
+</tr>
+<tr>
+<td><strong>+ TTL 兜底</strong></td>
+<td>—</td>
+<td>—</td>
+<td>✅ <strong>必备</strong>（所有方案都要有）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>标准答案</strong>：<strong>Cache Aside（先更新数据库，再删除缓存）+ 合理的 TTL + 删除失败重试</strong>，一致性要求高时再叠加 <strong>binlog 订阅</strong>兜底。</p>
+<hr>
+<h1 id="6-大-key-与热-key-治理">6. 大 key 与热 key 治理</h1>
+<h2 id="61-大-key">6.1 大 key</h2>
+<p><strong>定义</strong>（业界通用标准）：</p>
+<table>
+<thead>
+<tr>
+<th>类型</th>
+<th>大 key 标准</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>string</td>
+<td>value &gt; <strong>10KB</strong>（超过 100KB 算严重）</td>
+</tr>
+<tr>
+<td>hash / list / set / zset</td>
+<td>元素数 &gt; <strong>5000</strong>，或总内存 &gt; <strong>1MB</strong></td>
+</tr>
+<tr>
+<td>单个元素</td>
+<td>&gt; 10KB</td>
+</tr>
+</tbody>
+</table>
+<p><strong>六大危害</strong>：</p>
+<ol>
+<li><strong>网络阻塞</strong>：一个 1MB 的 value，1000 QPS 就是 1GB/s 的流量，直接打满网卡；</li>
+<li><strong>操作阻塞主线程</strong>：<code>HGETALL</code>/<code>SMEMBERS</code> 一个大集合是 O(N)，可能阻塞几百毫秒；</li>
+<li><strong>删除阻塞</strong>：<code>DEL</code> 大 key 要同步释放大量内存（要用 <code>UNLINK</code> + <code>lazyfree-*</code>）；</li>
+<li><strong>集群迁移阻塞</strong>：<code>MIGRATE</code> 是同步的，迁一个 1GB 的 key 可能阻塞几十秒（第 12 篇）；</li>
+<li><strong>内存分布不均</strong>：Cluster 中某个节点内存暴涨，无法通过扩容解决（一个 key 不能拆分到两个节点）；</li>
+<li><strong>持久化影响</strong>：AOF 重写和 RDB 生成时处理大 key 耗时长，加剧 fork 和 COW 压力。</li>
+</ol>
+<p><strong>排查</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 1. 采样扫描（走 SCAN，线上可用）</span>
+</span></span><span class="line"><span class="cl">redis-cli --bigkeys                    <span class="c1"># 每种类型的 Top 1</span>
+</span></span><span class="line"><span class="cl">redis-cli --memkeys                    <span class="c1"># 按实际内存排序（更准但更慢）</span>
+</span></span><span class="line"><span class="cl">redis-cli --memkeys --memkeys-samples <span class="m">0</span>   <span class="c1"># 0 = 扫全部（谨慎）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 2. 单个 key 精确查看</span>
+</span></span><span class="line"><span class="cl">MEMORY USAGE mykey
+</span></span><span class="line"><span class="cl">DEBUG OBJECT mykey                     <span class="c1"># serializedlength 是序列化后的长度</span>
+</span></span><span class="line"><span class="cl">STRLEN / HLEN / LLEN / SCARD / ZCARD mykey
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 3. 离线分析 RDB（最全面，不影响线上）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># rdb_bigkeys / redis-rdb-tools</span>
+</span></span><span class="line"><span class="cl">rdb --command memory dump.rdb --bytes <span class="m">10240</span> -f memory.csv
+</span></span></code></pre></div><p><strong>治理</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ---------- 方案一：拆分（最根本）----------</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 一个 100 万字段的 hash → 按 hash(field) % 100 拆成 100 个 hash</span>
+</span></span><span class="line"><span class="cl">HSET user:bucket:0 f1 v1
+</span></span><span class="line"><span class="cl">HSET user:bucket:1 f2 v2
+</span></span><span class="line"><span class="cl"><span class="c1"># 好处：每个小 hash 保持 listpack 编码，内存还能省 5~10 倍（第 4 篇）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 一个 100 万元素的 list → 按业务维度拆</span>
+</span></span><span class="line"><span class="cl">LPUSH msg:user:1001 ...        <span class="c1"># 而不是 LPUSH msg:all ...</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ---------- 方案二：只取需要的部分 ----------</span>
+</span></span><span class="line"><span class="cl">HMGET bigHash f1 f2 f3         <span class="c1"># 而不是 HGETALL</span>
+</span></span><span class="line"><span class="cl">HSCAN bigHash <span class="m">0</span> COUNT <span class="m">100</span>      <span class="c1"># 分批遍历</span>
+</span></span><span class="line"><span class="cl">LRANGE bigList <span class="m">0</span> <span class="m">99</span>            <span class="c1"># 分页而不是 0 -1</span>
+</span></span><span class="line"><span class="cl">ZRANGE bigZset <span class="m">0</span> <span class="m">9</span>             <span class="c1"># Top N 而不是全量</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ---------- 方案三：压缩 value ----------</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 应用层用 gzip/snappy/zstd 压缩后再存（对 JSON 通常能压到 20%~30%）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 代价：CPU 开销 + 无法在服务端做部分操作</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ---------- 方案四：不该放 Redis 的别放 ----------</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 大文件、图片、大文档 → 对象存储（OSS/S3）+ Redis 只存 URL</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ---------- 删除大 key ----------</span>
+</span></span><span class="line"><span class="cl">UNLINK bigkey                  <span class="c1"># 异步删除（4.0+）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 或者分批删（更安全）</span>
+</span></span><span class="line"><span class="cl">HSCAN + HDEL 批量
+</span></span><span class="line"><span class="cl">LTRIM 逐步截断
+</span></span><span class="line"><span class="cl">SPOP 批量弹出
+</span></span><span class="line"><span class="cl">ZREMRANGEBYRANK 批量删
+</span></span></code></pre></div><h2 id="62-热-key">6.2 热 key</h2>
+<p><strong>定义</strong>：QPS 远高于其他 key（比如单 key 达到 1 万 QPS 以上，或占实例总 QPS 的显著比例）。</p>
+<p><strong>危害</strong>：</p>
+<ol>
+<li><strong>单节点被打满</strong>：Cluster 中这个 key 只在一个节点上，那个节点的 CPU 和网卡成为瓶颈，<strong>无法通过扩容解决</strong>；</li>
+<li><strong>拖累同节点的其他 key</strong>：单线程模型下，热 key 的请求排队会影响同节点所有请求；</li>
+<li><strong>热 key 失效引发击穿</strong>（第 3 节）。</li>
+</ol>
+<p><strong>排查</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 1. Redis 自带（需要 maxmemory-policy 为 lfu 系列）</span>
+</span></span><span class="line"><span class="cl">redis-cli --hotkeys
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 2. MONITOR 抓样本（线上慎用，有明显性能开销）</span>
+</span></span><span class="line"><span class="cl">redis-cli monitor <span class="p">|</span> head -10000 <span class="p">|</span> awk <span class="s1">&#39;{print $4}&#39;</span> <span class="p">|</span> sort <span class="p">|</span> uniq -c <span class="p">|</span> sort -rn <span class="p">|</span> head
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 3. 从命令统计推断</span>
+</span></span><span class="line"><span class="cl">INFO commandstats                <span class="c1"># 看哪类命令调用最多</span>
+</span></span><span class="line"><span class="cl">OBJECT FREQ mykey                <span class="c1"># LFU 模式下的访问频率</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 4. 【推荐】客户端埋点统计</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    在应用层统计每个 key 的访问次数，上报到监控系统</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    这是最准确且无侵入的方式</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 5. 云厂商的热 key 分析</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    阿里云 Tair、腾讯云 Redis 都提供内置的热 key 探测（基于抽样）</span>
+</span></span></code></pre></div><p><strong>治理</strong>：</p>
+<pre tabindex="0"><code>方案一：【本地缓存】（最有效）
+├─ 把热 key 缓存在应用进程内（TTL 几秒到几十秒）
+├─ 请求根本不到 Redis → 彻底解决单节点瓶颈
+└─ 代价：一致性变弱（要配短 TTL + pub/sub 失效通知兜底）
+
+方案二：【拆分成多个副本 key】
+├─ 把 hotkey 复制成 hotkey:0 ~ hotkey:N（N 个副本，分散到不同 slot）
+├─ 读时随机选一个：GET hotkey:{random(0,N)}
+├─ 写时要更新所有 N 个副本
+└─ 代价：写放大 N 倍、一致性更难保证
+
+方案三：【读写分离】
+├─ 热 key 的读请求分散到多个从节点
+└─ 代价：主从延迟（第 10 篇）
+
+方案四：【Redis 6.0 客户端缓存】
+└─ CLIENT TRACKING ON，服务端主动推送失效通知，比自己做本地缓存更精准
+
+方案五：【业务层削峰】
+├─ 合并请求（singleflight）
+├─ 限流
+└─ 如果是计数类的热 key，先在本地累加再定期批量提交
+</code></pre><p><strong>推荐组合</strong>：<strong>本地缓存（主要手段）+ 短 TTL + pub/sub 失效通知 + 监控告警</strong>。</p>
+<hr>
+<h1 id="7-秒杀场景实战">7. 秒杀场景实战</h1>
+<p>把前面所有知识串起来的综合案例。</p>
+<h2 id="71-核心挑战">7.1 核心挑战</h2>
+<ol>
+<li><strong>瞬时高并发</strong>：几万到几十万 QPS 集中在几秒内；</li>
+<li><strong>绝对不能超卖</strong>：库存是硬约束；</li>
+<li><strong>热点集中</strong>：所有请求都打到同一个商品的库存 key；</li>
+<li><strong>数据库承受不了</strong>：不能让每个请求都查库/写库。</li>
+</ol>
+<h2 id="72-完整分层设计">7.2 完整分层设计</h2>
+<pre tabindex="0"><code>【第 1 层：前端】
+├─ 按钮点击后立即置灰（防重复提交）
+├─ 静态资源 CDN 化
+└─ 答题/验证码/滑块（削峰 + 拦机器人）
+
+【第 2 层：网关/接入层】
+├─ 限流（令牌桶，把 10 万 QPS 削到 1 万）
+├─ 黑名单（IP/用户维度，拦异常流量）
+└─ 请求合并/排队
+
+【第 3 层：应用层】
+├─ 本地缓存&#34;活动信息&#34;&#34;已售完标记&#34;
+│   → 售完后直接本地返回，请求根本不到 Redis
+├─ 用户资格预校验（是否已购买过，先查本地/Redis）
+└─ singleflight 合并同 key 请求
+
+【第 4 层：Redis（核心）】
+└─ 【Lua 脚本原子完成：库存校验 + 扣减 + 一人一单】
+
+【第 5 层：消息队列】
+└─ Redis 扣减成功后发消息，【异步】创建订单（削峰填谷）
+
+【第 6 层：数据库】
+└─ 最终扣减，用【乐观锁/CHECK 约束】做最终兜底
+    UPDATE stock SET count=count-1 WHERE id=? AND count&gt;=1
+</code></pre><h2 id="73-关键代码">7.3 关键代码</h2>
+<p><strong>（1）活动开始前预热库存</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">WarmUpSeckill</span><span class="p">(</span><span class="nx">ctx</span> <span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span> <span class="nx">activityID</span><span class="p">,</span> <span class="nx">skuID</span> <span class="kt">int64</span><span class="p">,</span> <span class="nx">stock</span> <span class="kt">int</span><span class="p">)</span> <span class="kt">error</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// 预热库存
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">if</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">rdb</span><span class="p">.</span><span class="nf">Set</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">fmt</span><span class="p">.</span><span class="nf">Sprintf</span><span class="p">(</span><span class="s">&#34;seckill:stock:%d&#34;</span><span class="p">,</span> <span class="nx">skuID</span><span class="p">),</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">stock</span><span class="p">,</span> <span class="mi">24</span><span class="o">*</span><span class="nx">time</span><span class="p">.</span><span class="nx">Hour</span><span class="p">).</span><span class="nf">Err</span><span class="p">();</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="nx">err</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// 清理上次活动的用户集合
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">rdb</span><span class="p">.</span><span class="nf">Del</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">fmt</span><span class="p">.</span><span class="nf">Sprintf</span><span class="p">(</span><span class="s">&#34;seckill:users:%d&#34;</span><span class="p">,</span> <span class="nx">skuID</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="kc">nil</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><strong>（2）核心的 Lua 脚本</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-lua" data-lang="lua"><span class="line"><span class="cl"><span class="c1">-- KEYS[1] = 库存 key      KEYS[2] = 已购用户集合 key</span>
+</span></span><span class="line"><span class="cl"><span class="c1">-- ARGV[1] = 用户 ID       ARGV[2] = 购买数量</span>
+</span></span><span class="line"><span class="cl"><span class="c1">-- 返回：1 成功  -1 已购买过  -2 库存不足</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">-- 【所有校验在前】（Lua 不能回滚，见第 8 篇）</span>
+</span></span><span class="line"><span class="cl"><span class="kr">if</span> <span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;SISMEMBER&#39;</span><span class="p">,</span> <span class="n">KEYS</span><span class="p">[</span><span class="mi">2</span><span class="p">],</span> <span class="n">ARGV</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span> <span class="o">==</span> <span class="mi">1</span> <span class="kr">then</span>
+</span></span><span class="line"><span class="cl">    <span class="kr">return</span> <span class="o">-</span><span class="mi">1</span>
+</span></span><span class="line"><span class="cl"><span class="kr">end</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">local</span> <span class="n">stock</span> <span class="o">=</span> <span class="n">tonumber</span><span class="p">(</span><span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;GET&#39;</span><span class="p">,</span> <span class="n">KEYS</span><span class="p">[</span><span class="mi">1</span><span class="p">]))</span>
+</span></span><span class="line"><span class="cl"><span class="kr">if</span> <span class="n">stock</span> <span class="o">==</span> <span class="kc">nil</span> <span class="ow">or</span> <span class="n">stock</span> <span class="o">&lt;</span> <span class="n">tonumber</span><span class="p">(</span><span class="n">ARGV</span><span class="p">[</span><span class="mi">2</span><span class="p">])</span> <span class="kr">then</span>
+</span></span><span class="line"><span class="cl">    <span class="kr">return</span> <span class="o">-</span><span class="mi">2</span>
+</span></span><span class="line"><span class="cl"><span class="kr">end</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">-- 【所有写入在后】</span>
+</span></span><span class="line"><span class="cl"><span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;DECRBY&#39;</span><span class="p">,</span> <span class="n">KEYS</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="n">ARGV</span><span class="p">[</span><span class="mi">2</span><span class="p">])</span>
+</span></span><span class="line"><span class="cl"><span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;SADD&#39;</span><span class="p">,</span> <span class="n">KEYS</span><span class="p">[</span><span class="mi">2</span><span class="p">],</span> <span class="n">ARGV</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+</span></span><span class="line"><span class="cl"><span class="kr">return</span> <span class="mi">1</span>
+</span></span></code></pre></div><p><strong>注意 KEYS[1] 和 KEYS[2] 必须在同一个 slot</strong>（Cluster 模式），所以要用 hash tag：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="nx">stockKey</span> <span class="o">:=</span> <span class="nx">fmt</span><span class="p">.</span><span class="nf">Sprintf</span><span class="p">(</span><span class="s">&#34;seckill:{%d}:stock&#34;</span><span class="p">,</span> <span class="nx">skuID</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="nx">usersKey</span> <span class="o">:=</span> <span class="nx">fmt</span><span class="p">.</span><span class="nf">Sprintf</span><span class="p">(</span><span class="s">&#34;seckill:{%d}:users&#34;</span><span class="p">,</span> <span class="nx">skuID</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="c1">// 都用 skuID 做 hash tag，保证同 slot；且粒度足够细，不会倾斜（第 12 篇）
+</span></span></span></code></pre></div><p><strong>（3）业务代码</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">var</span> <span class="nx">seckillScript</span> <span class="p">=</span> <span class="nx">redis</span><span class="p">.</span><span class="nf">NewScript</span><span class="p">(</span><span class="s">`...上面的 Lua...`</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// 进程内的&#34;已售完&#34;标记，避免售完后还去打 Redis
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kd">var</span> <span class="nx">soldOut</span> <span class="nx">sync</span><span class="p">.</span><span class="nx">Map</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">Seckill</span><span class="p">(</span><span class="nx">ctx</span> <span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span> <span class="nx">skuID</span><span class="p">,</span> <span class="nx">userID</span> <span class="kt">int64</span><span class="p">)</span> <span class="kt">error</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// 1. 【本地缓存快速失败】：已售完直接返回
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">if</span> <span class="nx">v</span><span class="p">,</span> <span class="nx">ok</span> <span class="o">:=</span> <span class="nx">soldOut</span><span class="p">.</span><span class="nf">Load</span><span class="p">(</span><span class="nx">skuID</span><span class="p">);</span> <span class="nx">ok</span> <span class="o">&amp;&amp;</span> <span class="nx">v</span><span class="p">.(</span><span class="kt">bool</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="nx">ErrSoldOut</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="nx">stockKey</span> <span class="o">:=</span> <span class="nx">fmt</span><span class="p">.</span><span class="nf">Sprintf</span><span class="p">(</span><span class="s">&#34;seckill:{%d}:stock&#34;</span><span class="p">,</span> <span class="nx">skuID</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">usersKey</span> <span class="o">:=</span> <span class="nx">fmt</span><span class="p">.</span><span class="nf">Sprintf</span><span class="p">(</span><span class="s">&#34;seckill:{%d}:users&#34;</span><span class="p">,</span> <span class="nx">skuID</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// 2. Redis 原子扣减
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">result</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">seckillScript</span><span class="p">.</span><span class="nf">Run</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">rdb</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">        <span class="p">[]</span><span class="kt">string</span><span class="p">{</span><span class="nx">stockKey</span><span class="p">,</span> <span class="nx">usersKey</span><span class="p">},</span> <span class="nx">userID</span><span class="p">,</span> <span class="mi">1</span><span class="p">).</span><span class="nf">Int</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="nx">fmt</span><span class="p">.</span><span class="nf">Errorf</span><span class="p">(</span><span class="s">&#34;秒杀失败: %w&#34;</span><span class="p">,</span> <span class="nx">err</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="k">switch</span> <span class="nx">result</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">case</span> <span class="o">-</span><span class="mi">1</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="nx">ErrAlreadyBought</span>
+</span></span><span class="line"><span class="cl">    <span class="k">case</span> <span class="o">-</span><span class="mi">2</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">soldOut</span><span class="p">.</span><span class="nf">Store</span><span class="p">(</span><span class="nx">skuID</span><span class="p">,</span> <span class="kc">true</span><span class="p">)</span>      <span class="c1">// 【标记售完，后续请求本地拦截】
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="k">return</span> <span class="nx">ErrSoldOut</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// 3. 扣减成功 → 【异步】创建订单
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">msg</span> <span class="o">:=</span> <span class="nx">OrderMessage</span><span class="p">{</span><span class="nx">SkuID</span><span class="p">:</span> <span class="nx">skuID</span><span class="p">,</span> <span class="nx">UserID</span><span class="p">:</span> <span class="nx">userID</span><span class="p">,</span> <span class="nx">Qty</span><span class="p">:</span> <span class="mi">1</span><span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">mq</span><span class="p">.</span><span class="nf">Publish</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="s">&#34;seckill-order&#34;</span><span class="p">,</span> <span class="nx">msg</span><span class="p">);</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="c1">// 【关键】发消息失败必须【回滚 Redis 扣减】，否则库存白扣了
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="nx">rollbackScript</span><span class="p">.</span><span class="nf">Run</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">rdb</span><span class="p">,</span> <span class="p">[]</span><span class="kt">string</span><span class="p">{</span><span class="nx">stockKey</span><span class="p">,</span> <span class="nx">usersKey</span><span class="p">},</span> <span class="nx">userID</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="nx">fmt</span><span class="p">.</span><span class="nf">Errorf</span><span class="p">(</span><span class="s">&#34;下单失败: %w&#34;</span><span class="p">,</span> <span class="nx">err</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="kc">nil</span>   <span class="c1">// 立即返回&#34;抢购成功，订单处理中&#34;
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span></code></pre></div><p><strong>（4）回滚脚本</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-lua" data-lang="lua"><span class="line"><span class="cl"><span class="c1">-- 消息投递失败时回滚 Redis 的扣减</span>
+</span></span><span class="line"><span class="cl"><span class="kr">if</span> <span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;SISMEMBER&#39;</span><span class="p">,</span> <span class="n">KEYS</span><span class="p">[</span><span class="mi">2</span><span class="p">],</span> <span class="n">ARGV</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span> <span class="o">==</span> <span class="mi">1</span> <span class="kr">then</span>
+</span></span><span class="line"><span class="cl">    <span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;SREM&#39;</span><span class="p">,</span> <span class="n">KEYS</span><span class="p">[</span><span class="mi">2</span><span class="p">],</span> <span class="n">ARGV</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+</span></span><span class="line"><span class="cl">    <span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;INCRBY&#39;</span><span class="p">,</span> <span class="n">KEYS</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="n">ARGV</span><span class="p">[</span><span class="mi">2</span><span class="p">])</span>
+</span></span><span class="line"><span class="cl">    <span class="kr">return</span> <span class="mi">1</span>
+</span></span><span class="line"><span class="cl"><span class="kr">end</span>
+</span></span><span class="line"><span class="cl"><span class="kr">return</span> <span class="mi">0</span>
+</span></span></code></pre></div><p><strong>（5）消费者创建订单（幂等 + 最终兜底）</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">ConsumeOrder</span><span class="p">(</span><span class="nx">ctx</span> <span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span> <span class="nx">msg</span> <span class="nx">OrderMessage</span><span class="p">)</span> <span class="kt">error</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// 【幂等】：用消息 ID 或 (skuID, userID) 唯一索引防重复
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">return</span> <span class="nx">db</span><span class="p">.</span><span class="nf">Transaction</span><span class="p">(</span><span class="kd">func</span><span class="p">(</span><span class="nx">tx</span> <span class="o">*</span><span class="nx">gorm</span><span class="p">.</span><span class="nx">DB</span><span class="p">)</span> <span class="kt">error</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="c1">// 【最终兜底】：数据库层面的库存扣减，即使 Redis 出错也不会超卖
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="nx">result</span> <span class="o">:=</span> <span class="nx">tx</span><span class="p">.</span><span class="nf">Exec</span><span class="p">(</span>
+</span></span><span class="line"><span class="cl">            <span class="s">&#34;UPDATE stock SET count = count - ? WHERE sku_id = ? AND count &gt;= ?&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">msg</span><span class="p">.</span><span class="nx">Qty</span><span class="p">,</span> <span class="nx">msg</span><span class="p">.</span><span class="nx">SkuID</span><span class="p">,</span> <span class="nx">msg</span><span class="p">.</span><span class="nx">Qty</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="nx">result</span><span class="p">.</span><span class="nx">Error</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="k">return</span> <span class="nx">result</span><span class="p">.</span><span class="nx">Error</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="nx">result</span><span class="p">.</span><span class="nx">RowsAffected</span> <span class="o">==</span> <span class="mi">0</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="c1">// 数据库库存不足（说明 Redis 和 DB 不一致，要告警）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>            <span class="nx">log</span><span class="p">.</span><span class="nf">Errorf</span><span class="p">(</span><span class="s">&#34;DB 库存不足但 Redis 扣减成功: sku=%d&#34;</span><span class="p">,</span> <span class="nx">msg</span><span class="p">.</span><span class="nx">SkuID</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">            <span class="k">return</span> <span class="nx">ErrOutOfStock</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">        <span class="c1">// 创建订单（唯一索引 (sku_id, user_id) 保证一人一单）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="nx">order</span> <span class="o">:=</span> <span class="o">&amp;</span><span class="nx">Order</span><span class="p">{</span><span class="nx">SkuID</span><span class="p">:</span> <span class="nx">msg</span><span class="p">.</span><span class="nx">SkuID</span><span class="p">,</span> <span class="nx">UserID</span><span class="p">:</span> <span class="nx">msg</span><span class="p">.</span><span class="nx">UserID</span><span class="p">,</span> <span class="nx">Qty</span><span class="p">:</span> <span class="nx">msg</span><span class="p">.</span><span class="nx">Qty</span><span class="p">}</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">tx</span><span class="p">.</span><span class="nf">Create</span><span class="p">(</span><span class="nx">order</span><span class="p">).</span><span class="nx">Error</span><span class="p">;</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="k">if</span> <span class="nf">isDuplicateKey</span><span class="p">(</span><span class="nx">err</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">                <span class="k">return</span> <span class="kc">nil</span>       <span class="c1">// 【重复消息，幂等返回成功】
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>            <span class="p">}</span>
+</span></span><span class="line"><span class="cl">            <span class="k">return</span> <span class="nx">err</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="kc">nil</span>
+</span></span><span class="line"><span class="cl">    <span class="p">})</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><h2 id="74-关键设计点复盘">7.4 关键设计点复盘</h2>
+<table>
+<thead>
+<tr>
+<th>设计</th>
+<th>解决的问题</th>
+<th>对应的知识点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Lua 脚本扣减</strong></td>
+<td>原子性（防超卖）+ 性能（比分布式锁快一个数量级）</td>
+<td>第 8 篇、第 13 篇</td>
+</tr>
+<tr>
+<td><strong>hash tag</strong></td>
+<td>让两个 key 同 slot，Lua 才能操作</td>
+<td>第 12 篇</td>
+</tr>
+<tr>
+<td><strong>本地&quot;售完&quot;标记</strong></td>
+<td>售完后请求不到 Redis，保护热点节点</td>
+<td>第 6 节热 key</td>
+</tr>
+<tr>
+<td><strong>异步下单（MQ）</strong></td>
+<td>削峰填谷，把瞬时 10 万 QPS 平滑成数据库能承受的速率</td>
+<td>—</td>
+</tr>
+<tr>
+<td><strong>发消息失败要回滚 Redis</strong></td>
+<td>避免&quot;库存扣了但订单没创建&quot;</td>
+<td>—</td>
+</tr>
+<tr>
+<td><strong>消费者幂等</strong></td>
+<td>MQ 至少一次投递会有重复消息</td>
+<td>第 9 篇</td>
+</tr>
+<tr>
+<td><strong>数据库唯一索引 + 乐观锁</strong></td>
+<td><strong>最终正确性兜底</strong>（Redis 失效也不超卖）</td>
+<td>第 13 篇的&quot;双层设计&quot;</td>
+</tr>
+<tr>
+<td><strong>预热库存</strong></td>
+<td>避免缓存未命中导致的击穿</td>
+<td>第 3 节</td>
+</tr>
+<tr>
+<td><strong>限流 + 验证码</strong></td>
+<td>削峰，把无效流量挡在外面</td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
+<p><strong>核心思想</strong>：<strong>Redis 负责性能（挡住 99.9% 的流量），数据库负责正确性（最终兜底）。</strong> 这与第 13 篇分布式锁的结论完全一致。</p>
+<hr>
+<h1 id="8-高频面试题">8. 高频面试题</h1>
+<p><strong>Q1：什么是缓存穿透？怎么解决？</strong></p>
+<p><strong>缓存穿透</strong>：查询一个<strong>数据库里也不存在</strong>的数据。因为数据库返回空，代码通常不写缓存，导致<strong>每次请求都穿过缓存打到数据库</strong>。被恶意攻击（随机 ID 疯狂请求）时会打爆数据库。</p>
+<p><strong>三种解法（生产要结合使用）</strong>：</p>
+<p><strong>（1）缓存空值</strong>（首选，最简单）：查不到也写一个特殊标记（如 <code>&quot;NULL&quot;</code>）到缓存，<strong>TTL 要短</strong>（30~300 秒，因为数据将来可能真的被创建）。注意：数据创建时要<strong>主动删除空值缓存</strong>；缺点是恶意攻击会产生海量空值占内存。</p>
+<p><strong>（2）布隆过滤器</strong>：能判断&quot;<strong>一定不存在</strong>&quot;（无假阴性，有假阳性）。1 亿 ID、1% 误判率约需 <strong>114MB</strong>。用 RedisBloom 的 <code>BF.RESERVE</code>/<code>BF.ADD</code>/<code>BF.EXISTS</code>。难点是<strong>要预热全量数据</strong>、<strong>不支持删除</strong>（只能定期重建）、<strong>容量要预估准</strong>（超出后误判率急剧上升）。</p>
+<p><strong>（3）参数校验 + 限流</strong>：挡住明显非法的 ID；对&quot;缓存未命中率异常高&quot;的 IP/用户限流或拉黑。</p>
+<p><strong>Q2：什么是缓存击穿？和穿透有什么区别？怎么解决？</strong></p>
+<p><strong>缓存击穿</strong>：<strong>一个热点 key 突然过期</strong>，大量并发请求同时发现未命中，全部涌向数据库查<strong>同一条数据</strong>。</p>
+<p><strong>与穿透的区别</strong>：</p>
+<ul>
+<li><strong>穿透</strong>：数据在<strong>数据库里也不存在</strong>，问题是&quot;无效查询反复打到 DB&quot;；</li>
+<li><strong>击穿</strong>：数据<strong>存在</strong>，只是缓存刚好失效，问题是&quot;瞬间并发全部打到 DB&quot;。</li>
+</ul>
+<p><strong>三种解法</strong>：</p>
+<p><strong>（1）互斥锁</strong>（最常用）：只让一个请求去查库重建，其他请求等待重试或降级。<strong>关键是拿到锁后要 Double Check 再查一次缓存</strong>（可能等锁期间别人已填好）。生产标准做法是<strong>两层合并</strong>：进程内用 <code>singleflight</code>（把每台机器的 N 个并发合并成 1 个）+ 跨进程用分布式锁（把 M 台机器合并成 1 个）→ <strong>1 万并发最终只有 1 个请求到数据库</strong>。</p>
+<p><strong>（2）逻辑过期</strong>：缓存不设物理 TTL，value 里存逻辑过期时间。读到已逻辑过期的数据时，<strong>立即返回旧值</strong>，同时异步（加锁）重建。优点是<strong>永不阻塞</strong>、DB 压力最小；缺点是<strong>会返回旧数据</strong>且 key 永久占内存。</p>
+<p><strong>（3）预热 + 主动刷新</strong>：对已知的、数量有限的热点（秒杀商品、首页推荐位），提前预热并用后台任务定时刷新，不让它过期。</p>
+<p><strong>Q3：什么是缓存雪崩？怎么解决？</strong></p>
+<p><strong>缓存雪崩</strong>：<strong>大量 key 同时失效</strong>或<strong>Redis 整体不可用</strong>，导致所有请求打到数据库，DB 被压垮，整个系统崩溃。</p>
+<p><strong>两种成因 + 对应解法</strong>：</p>
+<p><strong>成因一：大量 key 同时过期</strong>（如批量导入的数据用了相同 TTL）</p>
+<p>→ <strong>TTL 加随机抖动</strong>：<code>TTL = base + rand(base * 10%~30%)</code>。双重好处：避免雪崩 + <strong>均摊 Redis 自身的过期删除压力</strong>（第 6 篇）。</p>
+<p><strong>成因二：Redis 实例宕机</strong>（原本 95% 的请求由缓存承担，突然全打到 DB = 20 倍流量）</p>
+<p>→ <strong>多级缓存</strong>：进程内本地缓存（L1，TTL 10~60 秒）+ Redis（L2）+ DB（L3）。Redis 挂了还有本地缓存兜底；
+→ <strong>熔断降级 + 限流</strong>：限制到数据库的并发量（信号量），错误率高时熔断返回兜底数据。<strong>宁可部分请求失败也不能让 DB 崩溃</strong>；
+→ <strong>Redis 高可用</strong>：主从+哨兵 / Cluster（配 <code>cluster-require-full-coverage no</code> 让一个分片挂了只影响 1/N）；
+→ <strong>缓存预热</strong>：服务启动时分批预热核心数据（<strong>或者干脆开启持久化</strong>，重启自动恢复数据，这是&quot;即使纯缓存也该开持久化&quot;的重要理由）。</p>
+<p><strong>Q4：缓存穿透、击穿、雪崩的区别？（对比题）</strong></p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th><strong>穿透</strong></th>
+<th><strong>击穿</strong></th>
+<th><strong>雪崩</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>数据在 DB 里存在吗</strong></td>
+<td><strong>不存在</strong></td>
+<td>存在</td>
+<td>存在</td>
+</tr>
+<tr>
+<td><strong>涉及的 key 数量</strong></td>
+<td>不涉及（本来没有）</td>
+<td><strong>一个热点 key</strong></td>
+<td><strong>大量 key</strong> 或整个 Redis</td>
+</tr>
+<tr>
+<td><strong>成因</strong></td>
+<td>查不存在的数据（常被恶意利用）</td>
+<td>热点 key 突然过期</td>
+<td>批量 key 同时过期 / Redis 宕机</td>
+</tr>
+<tr>
+<td><strong>核心解法</strong></td>
+<td><strong>空值缓存 + 布隆过滤器</strong></td>
+<td><strong>互斥锁 / 逻辑过期</strong></td>
+<td><strong>TTL 抖动 + 多级缓存 + 熔断限流 + 高可用</strong></td>
+</tr>
+</tbody>
+</table>
+<p><strong>口诀</strong>：<strong>穿透</strong>查不存在的 → 空值/布隆挡住；<strong>击穿</strong>一个热点过期 → 用锁只放一个进去；<strong>雪崩</strong>大量同时失效 → 打散 TTL + 多级缓存 + 限流熔断。</p>
+<p><strong>Q5：更新数据时，应该更新缓存还是删除缓存？</strong></p>
+<p><strong>应该删除缓存</strong>，三个理由：</p>
+<p><strong>（1）更新缓存有并发写的脏数据问题（最致命）</strong></p>
+<pre tabindex="0"><code>T1: 线程 A 更新 DB 为 v1
+T2: 线程 B 更新 DB 为 v2
+T3: 线程 B 更新缓存为 v2
+T4: 线程 A 更新缓存为 v1     ← A 的缓存写入晚到
+结果：DB = v2，缓存 = v1，【永久不一致】（直到 TTL 过期）
+</code></pre><p>删除缓存不存在这个问题（删两次和删一次效果一样，是<strong>幂等</strong>的）。</p>
+<p><strong>（2）写多读少时更新缓存是浪费</strong>：缓存可能根本没被读过就又被更新了，做了大量无用功。删除是<strong>懒加载</strong>，只在真正被读时才重建。</p>
+<p><strong>（3）复杂计算值的正确性</strong>：如果缓存值是多表 join + 计算的结果，&ldquo;更新缓存&quot;要复制一遍计算逻辑（容易出错、难维护）；&ldquo;删除 + 重建&quot;走的是统一的读路径，天然正确。</p>
+<p><strong>Q6：应该先更新数据库还是先删除缓存？</strong></p>
+<p><strong>先更新数据库，再删除缓存</strong>（Cache Aside），这是业界标准方案（Facebook 的 Memcache 论文也是这个思路）。</p>
+<p><strong>先删缓存再更新 DB 的问题（概率很高）</strong>：</p>
+<pre tabindex="0"><code>T1: 线程 A（写）删除缓存
+T2: 线程 B（读）未命中 → 读 DB，拿到【旧值】
+T3: 线程 A（写）更新 DB 为新值
+T4: 线程 B（读）把【旧值】写入缓存
+结果：不一致，且持续到 TTL 过期
+</code></pre><p>这个概率高，因为&quot;读 DB + 写缓存&rdquo;（T2→T4）通常比&quot;更新 DB&rdquo;（T3）快。</p>
+<p><strong>先更 DB 再删缓存也有理论上的不一致，但概率极低</strong>：</p>
+<pre tabindex="0"><code>T1: 缓存刚好【失效】
+T2: 线程 B（读）未命中 → 读 DB 拿到旧值 v0
+T3: 线程 A（写）更新 DB 为 v1
+T4: 线程 A（写）删除缓存（此时缓存本来就空，删了没用）
+T5: 线程 B（读）把 v0 写入缓存 → 不一致
+</code></pre><p><strong>需要同时满足三个条件</strong>：① 缓存刚好在这一刻失效；② 有并发读写；③ <strong>读操作的&quot;查库+写缓存&quot;耗时长于写操作的&quot;更新库+删缓存&quot;</strong>。而实际上<strong>读（一次 SELECT + 一次 SET）几乎总是比写（UPDATE，涉及锁、日志、索引维护）快</strong>，所以第三条很难满足。</p>
+<p><strong>Q7：什么是延迟双删？真的有必要吗？</strong></p>
+<p><strong>延迟双删</strong>：先删缓存 → 更新数据库 → <strong>延迟一段时间（如 500ms）再删一次缓存</strong>。</p>
+<p><strong>目的</strong>：第二次删除清掉那个&quot;在第一次删除和更新数据库之间被并发读写入的旧值&quot;。</p>
+<p><strong>问题</strong>：</p>
+<ol>
+<li><strong>延迟时间无法确定</strong>：要覆盖&quot;并发读的查库 + 写缓存&quot;耗时，如果读的是 MySQL 从库还要覆盖<strong>主从延迟</strong>。设短了没用，设长了不一致窗口反而更大；</li>
+<li><strong>实现别扭</strong>：<code>time.AfterFunc</code> 在进程崩溃时丢失；用 MQ 做延迟又增加复杂度；</li>
+<li><strong>仍不能保证 100% 一致</strong>（延迟期间又有并发读写就白做了）。</li>
+</ol>
+<p><strong>结论：延迟双删不是标准方案</strong>，它是&quot;先更 DB 再删缓存&quot;之外的额外保险，<strong>主要用在读写分离且主从延迟明显</strong>的场景。大多数情况直接用 Cache Aside + TTL 兜底就够了。</p>
+<p><strong>Q8：怎么保证缓存和数据库的强一致性？</strong></p>
+<p><strong>前提认知：只要缓存和数据库是两个独立系统，就不可能有完美的强一致</strong>（&ldquo;更新 DB&quot;和&quot;删缓存&quot;无法原子化，除非引入分布式事务，代价高到不可接受且 Redis 不支持 XA）。</p>
+<p>所以问题应该是&rdquo;<strong>怎么让不一致的窗口尽可能小、概率尽可能低、且能自动收敛</strong>&quot;。</p>
+<p><strong>方案（按可靠性递增）</strong>：</p>
+<ol>
+<li><strong>Cache Aside（先更 DB 再删缓存）</strong> —— 基础，覆盖 99% 场景；</li>
+<li><strong>+ 合理的 TTL（必备）</strong> —— <strong>这是所有方案的最后一道保险</strong>，保证不一致最多持续一个 TTL 周期。永远不要给业务缓存设&quot;永不过期&quot;；</li>
+<li><strong>+ 删除失败重试</strong>（投递到 MQ 异步重试）；</li>
+<li><strong>+ binlog 订阅（Canal/Debezium）</strong> —— 最可靠：业务只管写 DB，独立服务订阅 binlog 删缓存。优点是<strong>业务解耦</strong>（不会有&quot;某处代码忘了删缓存&quot;）、<strong>可靠</strong>（配合 MQ 重试保证最终一定删）、<strong>能感知直接在 DB 上执行的 SQL</strong>（运维改数据、定时脚本）。缺点是架构复杂 + 有几十到几百毫秒延迟；</li>
+<li><strong>+ 定期对账</strong>：抽样比对并修复，更重要的是<strong>发现系统性问题</strong>。</li>
+</ol>
+<p><strong>真正需要强一致的场景（如金额）</strong>：<strong>不要依赖缓存</strong>，直接读数据库，或者用数据库的乐观锁/唯一约束保证正确性。</p>
+<p><strong>Q9：什么是大 key？有什么危害？怎么治理？</strong></p>
+<p><strong>标准</strong>：string &gt; <strong>10KB</strong>；集合类元素数 &gt; <strong>5000</strong> 或总内存 &gt; <strong>1MB</strong>。</p>
+<p><strong>六大危害</strong>：</p>
+<ol>
+<li><strong>网络阻塞</strong>：1MB 的 value × 1000 QPS = 1GB/s，直接打满网卡；</li>
+<li><strong>操作阻塞主线程</strong>：<code>HGETALL</code>/<code>SMEMBERS</code> 是 O(N)，可能阻塞几百毫秒（单线程模型下拖累所有请求）；</li>
+<li><strong>删除阻塞</strong>：<code>DEL</code> 要同步释放大量内存（要用 <code>UNLINK</code> + <code>lazyfree-*</code>）；</li>
+<li><strong>集群迁移阻塞</strong>：<code>MIGRATE</code> 是<strong>同步</strong>的，迁 1GB 的 key 可能阻塞几十秒，还可能误触发故障转移（第 12 篇）；</li>
+<li><strong>内存分布不均</strong>：Cluster 中某节点暴涨，<strong>无法通过扩容解决</strong>（一个 key 不能拆分到两个节点）；</li>
+<li><strong>加剧持久化压力</strong>：AOF 重写/RDB 生成时处理大 key 耗时长。</li>
+</ol>
+<p><strong>排查</strong>：<code>redis-cli --bigkeys</code>（采样，走 SCAN 安全）、<code>--memkeys</code>（按内存排序）、<code>MEMORY USAGE key</code>、离线分析 RDB（<code>redis-rdb-tools</code>）。</p>
+<p><strong>治理</strong>：</p>
+<ol>
+<li><strong>拆分</strong>（最根本）：大 hash 按 <code>hash(field) % N</code> 分桶——<strong>顺带还能保持 listpack 编码省 5~10 倍内存</strong>（第 4 篇）；</li>
+<li><strong>只取需要的部分</strong>：<code>HMGET</code>/<code>HSCAN</code> 代替 <code>HGETALL</code>，分页 <code>LRANGE</code>；</li>
+<li><strong>压缩 value</strong>（应用层 gzip/zstd）；</li>
+<li><strong>不该放 Redis 的别放</strong>（大文件放对象存储，Redis 只存 URL）；</li>
+<li><strong>删除用 <code>UNLINK</code></strong> 或分批删（<code>HSCAN</code>+<code>HDEL</code>、<code>LTRIM</code>、<code>ZREMRANGEBYRANK</code>）。</li>
+</ol>
+<p><strong>Q10：什么是热 key？怎么发现和治理？</strong></p>
+<p><strong>热 key</strong>：QPS 远高于其他 key（如单 key &gt; 1 万 QPS）。</p>
+<p><strong>危害</strong>：① Cluster 中这个 key 只在一个节点上，<strong>该节点 CPU/网卡成为瓶颈且无法通过扩容解决</strong>；② 单线程模型下拖累同节点所有 key；③ 它失效时会引发缓存击穿。</p>
+<p><strong>发现</strong>：</p>
+<ol>
+<li><code>redis-cli --hotkeys</code>（需要 <code>maxmemory-policy</code> 为 LFU，基于 <code>OBJECT FREQ</code>）；</li>
+<li><code>MONITOR</code> 抓样本统计（<strong>线上慎用</strong>，有明显性能开销）；</li>
+<li><strong>客户端埋点统计</strong>（最准确且无侵入，推荐）；</li>
+<li>云厂商内置的热 key 探测（阿里云 Tair、腾讯云 Redis）。</li>
+</ol>
+<p><strong>治理（按效果排序）</strong>：</p>
+<ol>
+<li><strong>本地缓存</strong>（最有效）：把热 key 缓存在进程内（TTL 几秒到几十秒），请求根本不到 Redis。代价是一致性变弱，要配<strong>短 TTL + pub/sub 失效通知</strong>兜底；</li>
+<li><strong>Redis 6.0 客户端缓存</strong>（<code>CLIENT TRACKING ON</code>）：服务端主动推送 invalidate，比自己做本地缓存更精准；</li>
+<li><strong>拆成多个副本 key</strong>：<code>hotkey:0</code> ~ <code>hotkey:N</code> 分散到不同 slot，读时随机选一个。代价是<strong>写放大 N 倍</strong>；</li>
+<li><strong>读写分离</strong>：热 key 的读分散到从节点（有主从延迟）；</li>
+<li><strong>业务层削峰</strong>：<code>singleflight</code> 合并、限流、计数类先本地累加再批量提交。</li>
+</ol>
+<p><strong>Q11：秒杀系统怎么设计？</strong></p>
+<p><strong>核心思想：Redis 负责性能（挡住 99.9% 流量），数据库负责正确性（最终兜底）。</strong></p>
+<p><strong>六层设计</strong>：</p>
+<ol>
+<li><strong>前端</strong>：按钮置灰防重复提交、CDN 静态化、答题/验证码削峰；</li>
+<li><strong>网关</strong>：限流（令牌桶把 10 万 QPS 削到 1 万）、黑名单；</li>
+<li><strong>应用层</strong>：<strong>本地缓存&quot;已售完&quot;标记</strong>（售完后请求根本不到 Redis）、<code>singleflight</code> 合并；</li>
+<li><strong>Redis（核心）</strong>：<strong>Lua 脚本原子完成&quot;库存校验 + 扣减 + 一人一单&quot;</strong>。注意两个 key 要用 <strong>hash tag</strong> 保证同 slot（<code>seckill:{skuID}:stock</code> / <code>seckill:{skuID}:users</code>）；</li>
+<li><strong>消息队列</strong>：Redis 扣减成功后发消息，<strong>异步创建订单</strong>（削峰填谷）。<strong>发消息失败必须回滚 Redis 扣减</strong>；</li>
+<li><strong>数据库</strong>：<code>UPDATE stock SET count=count-1 WHERE id=? AND count&gt;=1</code>（乐观锁）+ <code>(sku_id, user_id)</code> <strong>唯一索引</strong>（一人一单），作为<strong>最终正确性兜底</strong>——即使 Redis 出问题也不会超卖。</li>
+</ol>
+<p><strong>为什么用 Lua 而不是分布式锁</strong>：Lua 一次网络往返、服务端原子执行，<strong>性能比分布式锁高一个数量级</strong>（分布式锁要加锁+业务+解锁至少 3 次往返，且热点场景下所有请求串行等一把锁）。</p>
+<p><strong>Lua 脚本的写法要点</strong>：<strong>所有校验在前，所有写入在后</strong>（因为 Lua 不能回滚，第 8 篇）。</p>
+<p><strong>Q12：Redis 挂了怎么办？</strong></p>
+<p><strong>分三个层面回答</strong>：</p>
+<p><strong>（1）预防（架构层面）</strong></p>
+<ul>
+<li><strong>主从 + 哨兵</strong>：自动故障转移，10~35 秒恢复（第 11 篇）；</li>
+<li><strong>Cluster</strong>：一个分片挂了只影响 1/N（配 <code>cluster-require-full-coverage no</code>，第 12 篇）；</li>
+<li><strong>跨机房/可用区部署</strong>；</li>
+<li><strong>开启持久化</strong>：重启能快速恢复数据，<strong>避免&quot;空缓存重启&quot;引发雪崩</strong>。</li>
+</ul>
+<p><strong>（2）降级（应用层面）</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="nx">val</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">rdb</span><span class="p">.</span><span class="nf">Get</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">key</span><span class="p">).</span><span class="nf">Result</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl"><span class="k">if</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="o">&amp;&amp;</span> <span class="nx">err</span> <span class="o">!=</span> <span class="nx">redis</span><span class="p">.</span><span class="nx">Nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// Redis 故障 → 降级
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="c1">// 选项 A：直接查数据库（但要限流保护 DB！）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="c1">// 选项 B：返回本地缓存的旧数据
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="c1">// 选项 C：返回默认值/兜底数据
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="c1">// 选项 D：直接返回错误（非核心功能）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span></code></pre></div><p><strong>关键：降级到数据库时必须限流</strong>，否则原本 95% 由缓存承担的流量全打到 DB，会引发第二次雪崩（这就是缓存雪崩的成因二）。</p>
+<p><strong>（3)兜底（多级缓存）</strong></p>
+<p>进程内本地缓存作为 L1，Redis 挂了还能扛住热点数据的请求。配合熔断器（错误率高时直接走本地缓存/默认值，不再尝试连 Redis）。</p>
+<p><strong>Q13：布隆过滤器的原理是什么？有什么局限？</strong></p>
+<p><strong>原理</strong>：一个长度 m 的位数组 + k 个哈希函数。</p>
+<ul>
+<li><strong>添加</strong>：用 k 个哈希函数算出 k 个位置，都置 1；</li>
+<li><strong>查询</strong>：算出 k 个位置，<strong>任意一位是 0 → 一定不存在</strong>（100% 确定）；<strong>全是 1 → 可能存在</strong>（有误判，因为这些位可能是别的元素置的）。</li>
+</ul>
+<p><strong>核心特性</strong>：<strong>无假阴性</strong>（说不存在就一定不存在），<strong>有假阳性</strong>（说存在可能实际不存在）。这正好匹配缓存穿透的需求——我们只需要可靠地判断&quot;不存在&quot;。</p>
+<p><strong>误判率</strong>：<code>p ≈ (1 - e^(-kn/m))^k</code>，最优 <code>k = (m/n)·ln2</code>。实用估算：<strong>1 亿元素、1% 误判率约 114MB</strong>，降到 0.1% 需要 171MB（误判率每降 10 倍，内存约增 1.44 倍）。</p>
+<p><strong>四个局限</strong>：</p>
+<ol>
+<li><strong>不支持删除</strong>（删一个元素会把别的元素共用的位清掉）。计数布隆过滤器可以删但内存翻几倍。<strong>实践中只能定期重建</strong>；</li>
+<li><strong>有误判</strong>（虽然只是多查一次 DB，可接受）；</li>
+<li><strong>需要预热</strong>：上线时要把全量已有 ID 灌进去（几亿条数据要用 <code>BF.MADD</code> + pipeline 批量跑很久）；</li>
+<li><strong>容量要预估准</strong>：实际元素超过预设容量后<strong>误判率急剧上升</strong>。要留 2~3 倍余量或用 <code>EXPANSION</code> 自动扩容（但扩容后误判率也会上升）。</li>
+</ol>
+<p>生产用 <strong>RedisBloom 模块</strong>（<code>BF.RESERVE</code>/<code>BF.ADD</code>/<code>BF.EXISTS</code>），不要自己用 Bitmap 实现（哈希质量、扩容、误判率控制都很难做好）。</p>
+<hr>
+<h1 id="小结">小结</h1>
+<ul>
+<li><strong>三种缓存模式</strong>：<strong>Cache Aside</strong>（旁路，应用管缓存，<strong>绝大多数场景</strong>）、Read/Write Through（缓存服务代管）、Write Behind（异步回写，性能最好但会丢数据，适合计数器）。</li>
+<li><strong>缓存穿透</strong>（查 DB 里也不存在的数据）：<strong>空值缓存</strong>（TTL 要短 + 创建数据时删空值）+ <strong>布隆过滤器</strong>（1 亿 ID 约 114MB，无假阴性、有假阳性、不能删、要预热）+ <strong>参数校验/限流</strong>。</li>
+<li><strong>缓存击穿</strong>（一个热点 key 突然过期）：<strong>互斥锁 + Double Check</strong>（生产标准是 <strong><code>singleflight</code>（进程内合并）+ 分布式锁（跨进程合并）</strong> 两层，1 万并发最终只有 1 个到 DB）、<strong>逻辑过期</strong>（返回旧值 + 异步重建，永不阻塞但数据不实时）、<strong>预热 + 主动刷新</strong>。</li>
+<li><strong>缓存雪崩</strong>（大量 key 同时失效或 Redis 宕机）：<strong>TTL 加随机抖动</strong>（10%~30%，还能均摊 Redis 的过期删除压力）、<strong>多级缓存</strong>（本地 L1 + Redis L2）、<strong>熔断降级 + 限流</strong>（宁可部分失败也要保 DB）、<strong>Redis 高可用</strong>、<strong>预热/持久化</strong>（避免&quot;空缓存重启即雪崩&quot;）。</li>
+<li><strong>写策略要&quot;删除缓存&quot;而不是&quot;更新缓存&quot;</strong>：更新缓存有<strong>并发写永久脏数据</strong>问题、写多读少时浪费、复杂计算值容易算错；删除是幂等的、懒加载的。</li>
+<li><strong>顺序要&quot;先更新数据库，再删除缓存&quot;</strong>（Cache Aside）：先删缓存的方案里&quot;并发读写入旧值&quot;概率很高；先更 DB 的方案理论上也有不一致，但需要&quot;缓存刚好失效 + 并发读写 + 读比写慢&quot;三条同时满足，而<strong>读几乎总比写快</strong>，所以概率极低。</li>
+<li><strong>强一致做不到</strong>（两个独立系统无法原子操作）。可靠性递增：<strong>Cache Aside → + 合理 TTL（必备的最后保险）→ + 删除失败重试 → + binlog 订阅（业务解耦、可靠、能感知直接改库的 SQL）→ + 定期对账</strong>。<strong>延迟双删不是标准方案</strong>，主要用于主从延迟明显的场景。</li>
+<li><strong>读写分离</strong>会引入新的不一致（读从库拿到旧值回填缓存），解法是<strong>缓存重建时强制读主库</strong>。</li>
+<li><strong>大 key</strong>（string &gt; 10KB、集合 &gt; 5000 元素或 1MB）六大危害：网络阻塞、O(N) 阻塞主线程、删除阻塞、<strong>集群迁移阻塞（MIGRATE 同步）</strong>、内存分布不均且无法扩容解决、加剧持久化压力。治理靠<strong>拆分/分桶</strong>（顺带省 5~10 倍内存）、部分读取、压缩、<code>UNLINK</code>。</li>
+<li><strong>热 key</strong>（单 key 万级 QPS）无法通过扩容解决（key 只在一个节点上）。治理首选<strong>本地缓存 + 短 TTL + pub/sub 失效通知</strong>，或 Redis 6.0 的 <strong><code>CLIENT TRACKING</code></strong>；其次是多副本 key（写放大）、读写分离、<code>singleflight</code> 合并。发现靠<strong>客户端埋点</strong>（最准）或 <code>--hotkeys</code>。</li>
+<li><strong>秒杀的核心是分层削峰 + &ldquo;Redis 保性能、数据库保正确&rdquo;</strong>：前端防重 → 网关限流 → <strong>应用层本地&quot;售完&quot;标记</strong> → <strong>Redis Lua 原子扣减（hash tag 保证同 slot、校验在前写入在后）</strong> → <strong>MQ 异步下单（发送失败要回滚 Redis）</strong> → <strong>数据库乐观锁 + 唯一索引最终兜底</strong>。热点场景<strong>用 Lua 而不是分布式锁</strong>（快一个数量级）。</li>
+</ul>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2025-11-01</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/redis/">redis</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/redis/redis_15_%E6%80%A7%E8%83%BD%E4%BC%98%E5%8C%96%E4%B8%8E%E7%BA%BF%E4%B8%8A%E9%97%AE%E9%A2%98%E6%8E%92%E6%9F%A5/" class="prev" rel="prev" title="Redis-15 性能优化与线上问题排查"><i class="fas fa-angle-left fa-fw"></i>Redis-15 性能优化与线上问题排查</a>
+            <a href="/posts/redis/redis_13_%E5%88%86%E5%B8%83%E5%BC%8F%E9%94%81/" class="next" rel="next" title="Redis-13 分布式锁">Redis-13 分布式锁<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2025-11-01T10:00:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Redis-14 缓存设计与经典问题"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

@@ -1,0 +1,1478 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>Redis-09 发布订阅与消息队列 - xingliuhua博客</title><meta name="Description" content="pub/sub 原理与局限、键空间通知、list/zset 做队列的方案演进、Stream 消费组完整实践、延迟队列与死信处理、与 Kafka 的选型对比"><meta property="og:title" content="Redis-09 发布订阅与消息队列" />
+<meta property="og:description" content="pub/sub 原理与局限、键空间通知、list/zset 做队列的方案演进、Stream 消费组完整实践、延迟队列与死信处理、与 Kafka 的选型对比" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/redis/redis_09_%E5%8F%91%E5%B8%83%E8%AE%A2%E9%98%85%E4%B8%8E%E6%B6%88%E6%81%AF%E9%98%9F%E5%88%97/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2025-11-01T12:30:00+08:00" />
+<meta property="article:modified_time" content="2025-11-01T12:30:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="Redis-09 发布订阅与消息队列"/>
+<meta name="twitter:description" content="pub/sub 原理与局限、键空间通知、list/zset 做队列的方案演进、Stream 消费组完整实践、延迟队列与死信处理、与 Kafka 的选型对比"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/redis/redis_09_%E5%8F%91%E5%B8%83%E8%AE%A2%E9%98%85%E4%B8%8E%E6%B6%88%E6%81%AF%E9%98%9F%E5%88%97/" /><link rel="prev" href="https://xingliuhua.github.io/posts/redis/redis_10_%E4%B8%BB%E4%BB%8E%E5%A4%8D%E5%88%B6%E5%8E%9F%E7%90%86/" /><link rel="next" href="https://xingliuhua.github.io/posts/redis/redis_08_%E4%BA%8B%E5%8A%A1_Lua%E8%84%9A%E6%9C%AC%E4%B8%8EPipeline/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Redis-09 发布订阅与消息队列",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/redis\/redis_09_%E5%8F%91%E5%B8%83%E8%AE%A2%E9%98%85%E4%B8%8E%E6%B6%88%E6%81%AF%E9%98%9F%E5%88%97\/"
+        },"genre": "posts","keywords": "redis","wordcount":  15796 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/redis\/redis_09_%E5%8F%91%E5%B8%83%E8%AE%A2%E9%98%85%E4%B8%8E%E6%B6%88%E6%81%AF%E9%98%9F%E5%88%97\/","datePublished": "2025-11-01T12:30:00+08:00","dateModified": "2025-11-01T12:30:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "pub/sub 原理与局限、键空间通知、list/zset 做队列的方案演进、Stream 消费组完整实践、延迟队列与死信处理、与 Kafka 的选型对比"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">Redis-09 发布订阅与消息队列</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2025-11-01">2025-11-01</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 15796 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 32 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-发布订阅pubsub">1. 发布订阅（Pub/Sub）</a>
+      <ol>
+        <li><a href="#11-基本命令">1.1 基本命令</a></li>
+        <li><a href="#12-使用示例">1.2 使用示例</a></li>
+        <li><a href="#13-实现原理">1.3 实现原理</a></li>
+        <li><a href="#14-订阅模式下的限制">1.4 订阅模式下的限制</a></li>
+        <li><a href="#15-pubsub-的致命局限">1.5 Pub/Sub 的致命局限</a></li>
+        <li><a href="#16-pubsub-的正确使用场景">1.6 Pub/Sub 的正确使用场景</a></li>
+        <li><a href="#17-一个典型用法缓存失效广播">1.7 一个典型用法：缓存失效广播</a></li>
+      </ol>
+    </li>
+    <li><a href="#2-键空间通知keyspace-notification">2. 键空间通知（Keyspace Notification）</a>
+      <ol>
+        <li><a href="#21-是什么">2.1 是什么</a></li>
+        <li><a href="#22-配置字符的含义">2.2 配置字符的含义</a></li>
+        <li><a href="#23-k-和-e-的区别">2.3 K 和 E 的区别</a></li>
+        <li><a href="#24-最常见用途监听-key-过期">2.4 最常见用途：监听 key 过期</a></li>
+        <li><a href="#25-性能开销">2.5 性能开销</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-用-list-做消息队列">3. 用 List 做消息队列</a>
+      <ol>
+        <li><a href="#31-方案一lpush--rpop轮询">3.1 方案一：LPUSH + RPOP（轮询）</a></li>
+        <li><a href="#32-方案二brpop阻塞">3.2 方案二：BRPOP（阻塞）</a></li>
+        <li><a href="#33-方案三brpoplpush--blmove可靠队列">3.3 方案三：BRPOPLPUSH / BLMOVE（可靠队列）</a></li>
+        <li><a href="#34-list-队列的其他固有缺陷">3.4 list 队列的其他固有缺陷</a></li>
+        <li><a href="#35-结论">3.5 结论</a></li>
+      </ol>
+    </li>
+    <li><a href="#4-用-zset-做延迟队列">4. 用 ZSet 做延迟队列</a>
+      <ol>
+        <li><a href="#41-基本思路">4.1 基本思路</a></li>
+        <li><a href="#42-必须用-lua-保证原子性">4.2 必须用 Lua 保证原子性</a></li>
+        <li><a href="#43-完整实现go">4.3 完整实现（Go）</a></li>
+        <li><a href="#44-zset-延迟队列的问题与改进">4.4 zset 延迟队列的问题与改进</a></li>
+        <li><a href="#45-延迟队列的其他实现方式">4.5 延迟队列的其他实现方式</a></li>
+      </ol>
+    </li>
+    <li><a href="#5-stream-消息队列完整实践">5. Stream 消息队列完整实践</a>
+      <ol>
+        <li><a href="#51-核心概念回顾">5.1 核心概念回顾</a></li>
+        <li><a href="#52-生产者最佳实践">5.2 生产者最佳实践</a></li>
+        <li><a href="#53-消费者完整实现">5.3 消费者完整实现</a></li>
+        <li><a href="#54-关键设计点解析">5.4 关键设计点解析</a></li>
+        <li><a href="#55-监控指标">5.5 监控指标</a></li>
+        <li><a href="#56-stream-的运维注意点">5.6 Stream 的运维注意点</a></li>
+      </ol>
+    </li>
+    <li><a href="#6-三种方案的完整对比">6. 三种方案的完整对比</a>
+      <ol>
+        <li><a href="#61-redis-内部三种方案">6.1 Redis 内部三种方案</a></li>
+        <li><a href="#62-redis-stream-vs-kafka--rocketmq">6.2 Redis Stream vs Kafka / RocketMQ</a></li>
+        <li><a href="#63-选型决策">6.3 选型决策</a></li>
+      </ol>
+    </li>
+    <li><a href="#7-高频面试题">7. 高频面试题</a></li>
+    <li><a href="#小结">小结</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><h1 id="1-发布订阅pubsub">1. 发布订阅（Pub/Sub）</h1>
+<h2 id="11-基本命令">1.1 基本命令</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 订阅端</span>
+</span></span><span class="line"><span class="cl">SUBSCRIBE channel <span class="o">[</span>channel ...<span class="o">]</span>           <span class="c1"># 订阅一个或多个频道</span>
+</span></span><span class="line"><span class="cl">PSUBSCRIBE pattern <span class="o">[</span>pattern ...<span class="o">]</span>          <span class="c1"># 按模式订阅（glob 风格）</span>
+</span></span><span class="line"><span class="cl">UNSUBSCRIBE <span class="o">[</span>channel ...<span class="o">]</span>                 <span class="c1"># 取消订阅（不带参数取消全部）</span>
+</span></span><span class="line"><span class="cl">PUNSUBSCRIBE <span class="o">[</span>pattern ...<span class="o">]</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 发布端</span>
+</span></span><span class="line"><span class="cl">PUBLISH channel message                   <span class="c1"># 返回收到消息的订阅者数量</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 查询</span>
+</span></span><span class="line"><span class="cl">PUBSUB CHANNELS <span class="o">[</span>pattern<span class="o">]</span>                 <span class="c1"># 列出当前有订阅者的频道</span>
+</span></span><span class="line"><span class="cl">PUBSUB NUMSUB <span class="o">[</span>channel ...<span class="o">]</span>               <span class="c1"># 每个频道的订阅者数量</span>
+</span></span><span class="line"><span class="cl">PUBSUB NUMPAT                             <span class="c1"># 模式订阅的数量</span>
+</span></span><span class="line"><span class="cl">PUBSUB SHARDCHANNELS <span class="o">[</span>pattern<span class="o">]</span>            <span class="c1"># 7.0+ 分片频道</span>
+</span></span><span class="line"><span class="cl">PUBSUB SHARDNUMSUB <span class="o">[</span>channel ...<span class="o">]</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 7.0+ 集群分片 pub/sub</span>
+</span></span><span class="line"><span class="cl">SSUBSCRIBE shardchannel
+</span></span><span class="line"><span class="cl">SPUBLISH shardchannel message
+</span></span><span class="line"><span class="cl">SUNSUBSCRIBE <span class="o">[</span>shardchannel ...<span class="o">]</span>
+</span></span></code></pre></div><h2 id="12-使用示例">1.2 使用示例</h2>
+<p>开两个 <code>redis-cli</code> 窗口：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 窗口 1：订阅</span>
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; SUBSCRIBE news:tech news:sport
+</span></span><span class="line"><span class="cl">Reading messages... <span class="o">(</span>press Ctrl-C to quit<span class="o">)</span>
+</span></span><span class="line"><span class="cl">1<span class="o">)</span> <span class="s2">&#34;subscribe&#34;</span>
+</span></span><span class="line"><span class="cl">2<span class="o">)</span> <span class="s2">&#34;news:tech&#34;</span>
+</span></span><span class="line"><span class="cl">3<span class="o">)</span> <span class="o">(</span>integer<span class="o">)</span> <span class="m">1</span>        <span class="c1"># 当前订阅数</span>
+</span></span><span class="line"><span class="cl">1<span class="o">)</span> <span class="s2">&#34;subscribe&#34;</span>
+</span></span><span class="line"><span class="cl">2<span class="o">)</span> <span class="s2">&#34;news:sport&#34;</span>
+</span></span><span class="line"><span class="cl">3<span class="o">)</span> <span class="o">(</span>integer<span class="o">)</span> <span class="m">2</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 窗口 2：发布</span>
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; PUBLISH news:tech <span class="s2">&#34;Redis 8.0 released&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="o">(</span>integer<span class="o">)</span> <span class="m">1</span>           <span class="c1"># 有 1 个订阅者收到</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 窗口 1 立即收到</span>
+</span></span><span class="line"><span class="cl">1<span class="o">)</span> <span class="s2">&#34;message&#34;</span>
+</span></span><span class="line"><span class="cl">2<span class="o">)</span> <span class="s2">&#34;news:tech&#34;</span>
+</span></span><span class="line"><span class="cl">3<span class="o">)</span> <span class="s2">&#34;Redis 8.0 released&#34;</span>
+</span></span></code></pre></div><p>模式订阅：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 窗口 1</span>
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; PSUBSCRIBE news:*
+</span></span><span class="line"><span class="cl">1<span class="o">)</span> <span class="s2">&#34;psubscribe&#34;</span>
+</span></span><span class="line"><span class="cl">2<span class="o">)</span> <span class="s2">&#34;news:*&#34;</span>
+</span></span><span class="line"><span class="cl">3<span class="o">)</span> <span class="o">(</span>integer<span class="o">)</span> <span class="m">1</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 窗口 2</span>
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; PUBLISH news:tech <span class="s2">&#34;hello&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="o">(</span>integer<span class="o">)</span> <span class="m">1</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 窗口 1 收到（注意消息类型是 pmessage，多了一个 pattern 字段）</span>
+</span></span><span class="line"><span class="cl">1<span class="o">)</span> <span class="s2">&#34;pmessage&#34;</span>
+</span></span><span class="line"><span class="cl">2<span class="o">)</span> <span class="s2">&#34;news:*&#34;</span>           <span class="c1"># 匹配的模式</span>
+</span></span><span class="line"><span class="cl">3<span class="o">)</span> <span class="s2">&#34;news:tech&#34;</span>        <span class="c1"># 实际的频道</span>
+</span></span><span class="line"><span class="cl">4<span class="o">)</span> <span class="s2">&#34;hello&#34;</span>
+</span></span></code></pre></div><p><strong>注意</strong>：如果一个客户端同时用 <code>SUBSCRIBE news:tech</code> 和 <code>PSUBSCRIBE news:*</code> 订阅，它会<strong>收到同一条消息两次</strong>（一次 message，一次 pmessage）。</p>
+<h2 id="13-实现原理">1.3 实现原理</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="k">struct</span> <span class="n">redisServer</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="n">dict</span> <span class="o">*</span><span class="n">pubsub_channels</span><span class="p">;</span>    <span class="c1">// 频道 → 订阅它的客户端链表
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">dict</span> <span class="o">*</span><span class="n">pubsub_patterns</span><span class="p">;</span>    <span class="c1">// 模式 → 订阅它的客户端链表（7.0 前是 list）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">dict</span> <span class="o">*</span><span class="n">pubsub_shardchannels</span><span class="p">;</span> <span class="c1">// 7.0+ 分片频道
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">};</span>
+</span></span></code></pre></div><p><strong><code>SUBSCRIBE channel</code></strong>：</p>
+<pre tabindex="0"><code>把 client 加入 server.pubsub_channels[channel] 这个链表
+同时在 client-&gt;pubsub_channels 里也记一份（方便断开时清理）
+</code></pre><p><strong><code>PUBLISH channel msg</code></strong>：</p>
+<pre tabindex="0"><code>1. 在 pubsub_channels 里查 channel，遍历订阅者链表，逐个 addReply 推送消息
+2. 遍历 pubsub_patterns 里的所有模式，用 stringmatchlen() 逐个做 glob 匹配，
+   匹配上的订阅者也推送
+   ↑ 注意这是【遍历所有模式】，模式很多时 PUBLISH 会变慢（O(N*M)）
+3. 返回收到消息的订阅者总数
+</code></pre><p><strong>关键认识：<code>PUBLISH</code> 是一次&quot;即时的、无状态的转发&quot;</strong>。Redis 收到消息后立即推给当前在线的订阅者，然后<strong>就把消息丢掉了</strong>——不存储、不记录、不确认。</p>
+<h2 id="14-订阅模式下的限制">1.4 订阅模式下的限制</h2>
+<p><strong>RESP2 协议下，进入订阅状态的连接不能再执行普通命令</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">127.0.0.1:6379&gt; SUBSCRIBE ch
+</span></span><span class="line"><span class="cl">Reading messages...
+</span></span><span class="line"><span class="cl"><span class="c1"># 此时只能执行：SUBSCRIBE / UNSUBSCRIBE / PSUBSCRIBE / PUNSUBSCRIBE / PING / QUIT / RESET</span>
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; GET k
+</span></span><span class="line"><span class="cl"><span class="o">(</span>error<span class="o">)</span> ERR Can<span class="s1">&#39;t execute &#39;</span>get<span class="err">&#39;</span>: only <span class="o">(</span>P<span class="p">|</span>S<span class="o">)</span>SUBSCRIBE / <span class="o">(</span>P<span class="p">|</span>S<span class="o">)</span>UNSUBSCRIBE / PING / QUIT / RESET are allowed in this context
+</span></span></code></pre></div><p><strong>为什么有这个限制</strong>：RESP2 里，服务端主动推送的消息和&quot;命令的回复&quot;用的是同一种编码（都是数组），客户端<strong>无法区分</strong>收到的数组是&quot;我上一个命令的返回值&quot;还是&quot;服务端推来的消息&quot;。</p>
+<p><strong>RESP3 解除了这个限制</strong>：它用 <code>&gt;</code> 前缀明确标识 Push 类型消息，客户端能区分开，所以订阅连接可以同时执行普通命令：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">127.0.0.1:6379&gt; HELLO <span class="m">3</span>
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; SUBSCRIBE ch
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; GET k        <span class="c1"># RESP3 下这是允许的</span>
+</span></span></code></pre></div><p><strong>实践影响</strong>：RESP2 下客户端必须为订阅<strong>单独开一个连接</strong>，不能复用连接池里的连接。</p>
+<h2 id="15-pubsub-的致命局限">1.5 Pub/Sub 的致命局限</h2>
+<p>这是<strong>面试必答</strong>的内容。</p>
+<p><strong>（1）消息不持久化，发出即忘（fire and forget）</strong></p>
+<p><code>PUBLISH</code> 时不在线的订阅者，<strong>永久丢失这条消息</strong>。没有任何补偿机制。</p>
+<pre tabindex="0"><code>时刻 T1：订阅者在线
+时刻 T2：订阅者网络断开重连（可能只有 1 秒）
+时刻 T3：PUBLISH 消息 M      ← 这条消息该订阅者永久收不到
+时刻 T4：订阅者重连成功
+</code></pre><p><strong>（2）没有消息确认（ACK）机制</strong></p>
+<p>Redis 把消息 <code>write</code> 到订阅者的 socket 就认为完成了。订阅者收到后处理失败、或者收到后立刻崩溃，Redis 完全不知道，也不会重发。</p>
+<p><strong>（3）没有消费组，无法负载均衡</strong></p>
+<p>Pub/Sub 是<strong>广播</strong>语义：一条消息会推给<strong>所有</strong>订阅该频道的客户端。</p>
+<p>如果你想&quot;3 个 worker 分摊处理任务&quot;，用 Pub/Sub 会变成&quot;3 个 worker 各自都处理了同一个任务&quot;（重复消费）。想做负载均衡只能业务侧自己想办法（比如按消息内容哈希后各 worker 只处理自己那份，非常笨拙）。</p>
+<p><strong>（4）消息堆积会导致订阅者被断开</strong></p>
+<p>如果发布速度大于订阅者的消费速度，消息会堆积在<strong>该订阅者在服务端的输出缓冲区</strong>里。一旦超过限制：</p>
+<pre tabindex="0"><code class="language-conf" data-lang="conf">client-output-buffer-limit pubsub 32mb 8mb 60
+# hard limit 32MB：立即断开
+# soft limit 8MB 持续 60 秒：断开
+</code></pre><p>订阅者被断开 → 重连 → <strong>期间的消息全部丢失</strong>。这是 Pub/Sub 在高流量场景下最常见的故障模式。</p>
+<p><strong>（5）<code>PUBLISH</code> 的消息也会占用主线程</strong></p>
+<p><code>PUBLISH</code> 要遍历所有订阅者逐个推送，订阅者很多时（比如 1 万个）单次 <code>PUBLISH</code> 就是 1 万次 <code>addReply</code>。模式订阅更糟——要<strong>遍历所有模式做 glob 匹配</strong>。</p>
+<p><strong>（6）集群模式下的广播放大（7.0 前）</strong></p>
+<p>Redis Cluster 中，为了保证&quot;订阅者连在任意节点都能收到消息&quot;，7.0 之前的 <code>PUBLISH</code> 会<strong>广播到集群里所有节点</strong>。这在大集群里造成严重的内部网络开销（一条消息在 10 节点集群里产生 10 倍流量）。</p>
+<p><strong>7.0 引入了分片 pub/sub（<code>SPUBLISH</code>/<code>SSUBSCRIBE</code>）</strong>：分片频道名按 CRC16 算 slot，消息只在<strong>负责该 slot 的节点及其从节点</strong>之间传播，不再全集群广播。代价是订阅者必须连到正确的节点（客户端要处理 MOVED 重定向）。</p>
+<h2 id="16-pubsub-的正确使用场景">1.6 Pub/Sub 的正确使用场景</h2>
+<p>明确了局限，就知道它<strong>只适合&quot;允许丢消息&quot;的场景</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>配置热更新通知</strong></td>
+<td>通知所有应用实例&quot;配置变了，去重新拉一次&quot;。丢了也不致命（下次心跳会拉）</td>
+</tr>
+<tr>
+<td><strong>缓存失效广播</strong></td>
+<td>通知所有节点清本地缓存。可以配合定期全量刷新兜底</td>
+</tr>
+<tr>
+<td><strong>实时监控/日志推送</strong></td>
+<td>丢几条无所谓</td>
+</tr>
+<tr>
+<td><strong>在线状态、聊天室</strong></td>
+<td>IM 的&quot;正在输入&quot;提示这类瞬时状态</td>
+</tr>
+<tr>
+<td><strong>分布式锁的释放通知</strong></td>
+<td>Redisson 用 pub/sub 通知等锁的客户端&quot;锁释放了，快来抢&quot;，即使丢了也有超时重试兜底</td>
+</tr>
+<tr>
+<td><strong>哨兵内部通信</strong></td>
+<td>Redis Sentinel 自己就用 pub/sub 在哨兵之间交换信息（<code>__sentinel__:hello</code>）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>绝对不能用 Pub/Sub 的场景</strong>：订单处理、支付通知、任务分发、任何&quot;消息不能丢&quot;的业务。</p>
+<h2 id="17-一个典型用法缓存失效广播">1.7 一个典型用法：缓存失效广播</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// 发布端：数据更新后通知所有节点
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kd">func</span> <span class="nf">UpdateUser</span><span class="p">(</span><span class="nx">ctx</span> <span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span> <span class="nx">rdb</span> <span class="o">*</span><span class="nx">redis</span><span class="p">.</span><span class="nx">Client</span><span class="p">,</span> <span class="nx">id</span> <span class="kt">int64</span><span class="p">,</span> <span class="nx">u</span> <span class="o">*</span><span class="nx">User</span><span class="p">)</span> <span class="kt">error</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">db</span><span class="p">.</span><span class="nf">Update</span><span class="p">(</span><span class="nx">u</span><span class="p">);</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="nx">err</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">rdb</span><span class="p">.</span><span class="nf">Del</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">fmt</span><span class="p">.</span><span class="nf">Sprintf</span><span class="p">(</span><span class="s">&#34;user:%d&#34;</span><span class="p">,</span> <span class="nx">id</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// 通知所有应用实例清理本地缓存
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">rdb</span><span class="p">.</span><span class="nf">Publish</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="s">&#34;cache:invalidate&#34;</span><span class="p">,</span> <span class="nx">fmt</span><span class="p">.</span><span class="nf">Sprintf</span><span class="p">(</span><span class="s">&#34;user:%d&#34;</span><span class="p">,</span> <span class="nx">id</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="kc">nil</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// 订阅端：每个应用实例启动时开一个 goroutine
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kd">func</span> <span class="nf">WatchInvalidation</span><span class="p">(</span><span class="nx">ctx</span> <span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span> <span class="nx">rdb</span> <span class="o">*</span><span class="nx">redis</span><span class="p">.</span><span class="nx">Client</span><span class="p">,</span> <span class="nx">localCache</span> <span class="o">*</span><span class="nx">sync</span><span class="p">.</span><span class="nx">Map</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// 注意：用独立连接，不占用连接池
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">pubsub</span> <span class="o">:=</span> <span class="nx">rdb</span><span class="p">.</span><span class="nf">Subscribe</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="s">&#34;cache:invalidate&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">defer</span> <span class="nx">pubsub</span><span class="p">.</span><span class="nf">Close</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="nx">ch</span> <span class="o">:=</span> <span class="nx">pubsub</span><span class="p">.</span><span class="nf">Channel</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">    <span class="k">for</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">select</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">case</span> <span class="nx">msg</span><span class="p">,</span> <span class="nx">ok</span> <span class="o">:=</span> <span class="o">&lt;-</span><span class="nx">ch</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">            <span class="k">if</span> <span class="p">!</span><span class="nx">ok</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">                <span class="k">return</span>
+</span></span><span class="line"><span class="cl">            <span class="p">}</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">localCache</span><span class="p">.</span><span class="nf">Delete</span><span class="p">(</span><span class="nx">msg</span><span class="p">.</span><span class="nx">Payload</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="k">case</span> <span class="o">&lt;-</span><span class="nx">ctx</span><span class="p">.</span><span class="nf">Done</span><span class="p">():</span>
+</span></span><span class="line"><span class="cl">            <span class="k">return</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><strong>注意</strong>：因为 pub/sub 会丢消息，本地缓存必须<strong>同时设置较短的 TTL</strong> 作为兜底，不能完全依赖失效通知。</p>
+<blockquote>
+<p>顺便一提：Redis 6.0 的**客户端缓存（Client-side Caching / <code>CLIENT TRACKING</code>）**就是这个模式的官方实现，而且更可靠——服务端会记录每个客户端缓存了哪些 key，精准推送 invalidate 消息。</p>
+</blockquote>
+<hr>
+<h1 id="2-键空间通知keyspace-notification">2. 键空间通知（Keyspace Notification）</h1>
+<h2 id="21-是什么">2.1 是什么</h2>
+<p>Redis 可以在<strong>数据发生变化时</strong>自动 <code>PUBLISH</code> 一条消息，让你能&quot;监听某个 key 的变化&quot;。</p>
+<pre tabindex="0"><code class="language-conf" data-lang="conf"># 默认关闭（空字符串）
+notify-keyspace-events &#34;&#34;
+
+# 开启示例
+notify-keyspace-events &#34;KEA&#34;      # 全部事件（最全，但开销大）
+notify-keyspace-events &#34;Ex&#34;       # 只要 key 过期事件（最常用）
+notify-keyspace-events &#34;KEg$lshzxet&#34;
+</code></pre><h2 id="22-配置字符的含义">2.2 配置字符的含义</h2>
+<table>
+<thead>
+<tr>
+<th>字符</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>K</code></td>
+<td><strong>Keyspace</strong> 事件，频道格式 <code>__keyspace@&lt;db&gt;__:&lt;key&gt;</code>，消息内容是<strong>事件名</strong></td>
+</tr>
+<tr>
+<td><code>E</code></td>
+<td><strong>Keyevent</strong> 事件，频道格式 <code>__keyevent@&lt;db&gt;__:&lt;event&gt;</code>，消息内容是<strong>key 名</strong></td>
+</tr>
+<tr>
+<td><code>g</code></td>
+<td>通用命令（<code>DEL</code>、<code>EXPIRE</code>、<code>RENAME</code> 等）</td>
+</tr>
+<tr>
+<td><code>$</code></td>
+<td>string 命令</td>
+</tr>
+<tr>
+<td><code>l</code></td>
+<td>list 命令</td>
+</tr>
+<tr>
+<td><code>s</code></td>
+<td>set 命令</td>
+</tr>
+<tr>
+<td><code>h</code></td>
+<td>hash 命令</td>
+</tr>
+<tr>
+<td><code>z</code></td>
+<td>zset 命令</td>
+</tr>
+<tr>
+<td><code>x</code></td>
+<td><strong>过期事件</strong>（key 过期时触发）</td>
+</tr>
+<tr>
+<td><code>e</code></td>
+<td><strong>淘汰事件</strong>（key 被 maxmemory 策略淘汰时触发）</td>
+</tr>
+<tr>
+<td><code>t</code></td>
+<td>stream 命令</td>
+</tr>
+<tr>
+<td><code>d</code></td>
+<td>module key type 事件</td>
+</tr>
+<tr>
+<td><code>m</code></td>
+<td><strong>key miss 事件</strong>（6.0+，访问不存在的 key）</td>
+</tr>
+<tr>
+<td><code>n</code></td>
+<td><strong>新 key 事件</strong>（7.0+）</td>
+</tr>
+<tr>
+<td><code>A</code></td>
+<td><code>g$lshzxetd</code> 的别名（<strong>不含 <code>m</code> 和 <code>n</code></strong>）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>必须包含 <code>K</code> 或 <code>E</code> 中至少一个</strong>，否则不会发出任何通知。</p>
+<h2 id="23-k-和-e-的区别">2.3 K 和 E 的区别</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 开启</span>
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; CONFIG SET notify-keyspace-events <span class="s2">&#34;KEA&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 订阅端</span>
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; PSUBSCRIBE <span class="s1">&#39;__key*@0__:*&#39;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 另一个窗口执行</span>
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; SET foo bar
+</span></span></code></pre></div><p>订阅端收到<strong>两条</strong>消息：</p>
+<pre tabindex="0"><code># Keyspace 通知（K）：频道里带 key，内容是事件名
+1) &#34;pmessage&#34;
+2) &#34;__key*@0__:*&#34;
+3) &#34;__keyspace@0__:foo&#34;       ← 频道包含 key 名
+4) &#34;set&#34;                      ← 内容是事件名
+
+# Keyevent 通知（E）：频道里带事件名，内容是 key
+1) &#34;pmessage&#34;
+2) &#34;__key*@0__:*&#34;
+3) &#34;__keyevent@0__:set&#34;       ← 频道包含事件名
+4) &#34;foo&#34;                      ← 内容是 key 名
+</code></pre><p><strong>怎么选</strong>：</p>
+<ul>
+<li>关心<strong>某个特定 key</strong> 的所有变化 → 用 <strong>K</strong>：<code>SUBSCRIBE __keyspace@0__:mykey</code>；</li>
+<li>关心<strong>某类事件</strong>发生在哪些 key 上 → 用 <strong>E</strong>：<code>SUBSCRIBE __keyevent@0__:expired</code>（这是最常见的用法）。</li>
+</ul>
+<h2 id="24-最常见用途监听-key-过期">2.4 最常见用途：监听 key 过期</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">127.0.0.1:6379&gt; CONFIG SET notify-keyspace-events Ex
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; SUBSCRIBE __keyevent@0__:expired
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 另一个窗口</span>
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; SET session:1001 data EX <span class="m">5</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 5 秒后订阅端收到：</span>
+</span></span><span class="line"><span class="cl">1<span class="o">)</span> <span class="s2">&#34;message&#34;</span>
+</span></span><span class="line"><span class="cl">2<span class="o">)</span> <span class="s2">&#34;__keyevent@0__:expired&#34;</span>
+</span></span><span class="line"><span class="cl">3<span class="o">)</span> <span class="s2">&#34;session:1001&#34;</span>
+</span></span></code></pre></div><p>看起来可以用来做<strong>延迟任务</strong>（设一个 TTL，到期后收到通知就执行任务）。<strong>但这个方案有严重缺陷，生产环境不能用</strong>：</p>
+<p><strong>缺陷一：过期事件的触发时机不准</strong></p>
+<p>第 6 篇讲过，Redis 的过期删除是<strong>惰性删除 + 定期删除</strong>。<code>expired</code> 事件是在<strong>key 真正被删除时</strong>才发出的，不是&quot;TTL 到达的瞬间&quot;。</p>
+<p>所以如果一个 key 过期后：</p>
+<ul>
+<li>没人访问它（不触发惰性删除）；</li>
+<li>定期删除的随机采样一直没抽到它；</li>
+</ul>
+<p>那么 <code>expired</code> 事件可能<strong>延迟几秒、几分钟甚至更久</strong>才发出。做定时任务显然不可接受。</p>
+<p><strong>缺陷二：消息会丢（这是致命的）</strong></p>
+<p><code>expired</code> 事件是通过 <strong>pub/sub</strong> 发送的，所以完全继承了 pub/sub 的所有缺陷：</p>
+<ul>
+<li>订阅者不在线（重启、部署、网络抖动）→ <strong>消息永久丢失</strong> → 任务永远不会执行；</li>
+<li>没有 ACK，处理失败不会重试；</li>
+<li>输出缓冲区满会断开连接。</li>
+</ul>
+<p><strong>缺陷三：广播导致重复消费</strong></p>
+<p>如果为了高可用部署了多个消费者实例，它们<strong>都会收到同一个过期事件</strong>，导致任务被重复执行。想去重又要额外加分布式锁。</p>
+<p><strong>缺陷四：主从环境下从节点收不到自己产生的事件</strong></p>
+<p>从节点不主动删除过期 key（等主节点发 DEL），所以：</p>
+<ul>
+<li>事件是在<strong>主节点</strong>上产生并发布的；</li>
+<li>连在<strong>从节点</strong>上的订阅者收不到 <code>expired</code> 事件（6.0 之前）。</li>
+</ul>
+<p>Redis 6.0 做了改进：从节点在收到主节点的 DEL 后也会发出 <code>expired</code> 事件。但仍需注意版本差异。</p>
+<p><strong>结论：键空间通知只适合做&quot;辅助性的、可丢失的&quot;监听</strong>（比如统计、审计、缓存联动），<strong>绝不能作为业务逻辑的唯一触发源</strong>。延迟任务应该用 zset 轮询或专业的延迟队列（第 3 节）。</p>
+<h2 id="25-性能开销">2.5 性能开销</h2>
+<p>开启 <code>notify-keyspace-events &quot;KEA&quot;</code> 会让<strong>每个写命令都额外产生 1~2 次 <code>PUBLISH</code></strong>。即使没有任何订阅者，Redis 也要走一遍 <code>pubsubPublishMessage</code> 的逻辑（查字典、遍历模式）。</p>
+<p>实测在高 QPS 下，开启全量通知可能带来 <strong>10%~30% 的吞吐下降</strong>。</p>
+<p><strong>建议</strong>：只开真正需要的事件类型（如 <code>Ex</code> 只要过期事件），绝不要在生产开 <code>KEA</code>。</p>
+<hr>
+<h1 id="3-用-list-做消息队列">3. 用 List 做消息队列</h1>
+<p>在 Stream 出现之前（5.0 前），list 是 Redis 做队列的主流方案。理解它的演进过程很有价值。</p>
+<h2 id="31-方案一lpush--rpop轮询">3.1 方案一：LPUSH + RPOP（轮询）</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 生产者</span>
+</span></span><span class="line"><span class="cl">LPUSH queue:task <span class="s1">&#39;{&#34;id&#34;:1,&#34;type&#34;:&#34;email&#34;}&#39;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 消费者：轮询</span>
+</span></span><span class="line"><span class="cl"><span class="k">while</span> true:
+</span></span><span class="line"><span class="cl">    <span class="nv">task</span> <span class="o">=</span> RPOP queue:task
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> task: process<span class="o">(</span>task<span class="o">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">else</span>: sleep<span class="o">(</span>1<span class="o">)</span>      <span class="c1"># 队列空，睡一会再试</span>
+</span></span></code></pre></div><p><strong>问题</strong>：</p>
+<ul>
+<li><strong>睡眠时间难权衡</strong>：睡得久 → 消息处理延迟高；睡得短 → 大量无效的 <code>RPOP</code> 请求浪费 CPU 和网络（假设 100 个消费者每 100ms 轮询一次，就是 1000 QPS 的空请求）。</li>
+</ul>
+<h2 id="32-方案二brpop阻塞">3.2 方案二：BRPOP（阻塞）</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 消费者：阻塞等待，有消息立即返回</span>
+</span></span><span class="line"><span class="cl">BRPOP queue:task <span class="m">0</span>      <span class="c1"># 0 表示永久阻塞</span>
+</span></span></code></pre></div><p><strong>解决了轮询问题</strong>（第 5 篇讲了阻塞不占主线程、按 FIFO 唤醒）。</p>
+<p><strong>但仍有严重问题：消息可能丢失</strong></p>
+<pre tabindex="0"><code>1. 消费者 BRPOP 拿到消息 M（此时 M 已从 list 中删除）
+2. 消费者正在处理 M 时【崩溃】
+3. 消息 M 永久丢失——Redis 里没有它，也没人知道它没被处理完
+</code></pre><h2 id="33-方案三brpoplpush--blmove可靠队列">3.3 方案三：BRPOPLPUSH / BLMOVE（可靠队列）</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 消费者：从任务队列取出的同时，原子地放进&#34;处理中&#34;队列</span>
+</span></span><span class="line"><span class="cl">BRPOPLPUSH queue:task queue:processing <span class="m">0</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 6.2+ 推荐用更灵活的 BLMOVE</span>
+</span></span><span class="line"><span class="cl">BLMOVE queue:task queue:processing RIGHT LEFT <span class="m">0</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 处理成功后从 processing 中删除</span>
+</span></span><span class="line"><span class="cl">LREM queue:processing <span class="m">1</span> <span class="s1">&#39;&lt;消息内容&gt;&#39;</span>
+</span></span></code></pre></div><p>这是 Redis 官方文档里叫做 <strong>&ldquo;Reliable queue&rdquo;（可靠队列）</strong> 的模式。</p>
+<p><strong>配套需要一个&quot;看门狗&quot;进程</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 定期检查 processing 队列里滞留太久的消息，重新投递</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 问题：list 里没有时间信息，无法知道消息在 processing 里待了多久！</span>
+</span></span></code></pre></div><p><strong>这就暴露了这个方案的根本缺陷</strong>：</p>
+<ol>
+<li><strong>无法知道消息何时进入 processing</strong>（list 元素没有时间戳），只能：
+<ul>
+<li>在消息体里自己塞时间戳（消费者取出后要修改消息内容再放进 processing，破坏了原子性）；</li>
+<li>或者用一个额外的 zset 记录 <code>消息 → 进入时间</code>（复杂度上升，且两个操作的原子性又需要 Lua）；</li>
+</ul>
+</li>
+<li><strong><code>LREM</code> 是 O(N)</strong>：processing 队列长时要遍历查找，性能差；</li>
+<li><strong>无法区分是哪个消费者在处理</strong>（排查困难）；</li>
+<li><strong>仍然没有消费组</strong>：多个业务系统想各自完整消费一遍做不到；</li>
+<li><strong>无法回溯</strong>：消息处理完就删了，想重放不可能。</li>
+</ol>
+<h2 id="34-list-队列的其他固有缺陷">3.4 list 队列的其他固有缺陷</h2>
+<p><strong>（1）无法广播 / 无消费组</strong></p>
+<p>一条消息只能被一个消费者拿到。如果订单创建后既要发短信、又要加积分、又要写数仓，三个系统各自需要一份消息，list 做不到（只能生产者写三个 list，耦合严重）。</p>
+<p><strong>（2）无法回溯与重放</strong></p>
+<p>消息弹出即删除。生产事故后想&quot;重放最近一小时的消息&quot;不可能。</p>
+<p><strong>（3)无法查看队列状态</strong></p>
+<p>不知道每个消费者处理了多少、有没有卡住、消费延迟多大。只能 <code>LLEN</code> 看积压总量。</p>
+<p><strong>（4）阻塞消费者独占连接</strong></p>
+<p><code>BRPOP</code> 期间该连接不能复用，N 个消费者要 N 个连接。</p>
+<p><strong>（5）优先级和延迟做不到</strong></p>
+<p>要延迟就得用 zset，要优先级得开多个 list（<code>BRPOP high mid low 0</code> 勉强能做，但只有粗粒度的三档）。</p>
+<h2 id="35-结论">3.5 结论</h2>
+<p><strong>如果你的 Redis 版本 &gt;= 5.0，做消息队列请直接用 Stream，不要再用 list。</strong></p>
+<p>list 只在这两种情况下还合适：</p>
+<ol>
+<li><strong>极简的、允许丢失的任务队列</strong>（比如异步发送非关键通知）；</li>
+<li><strong>只需要&quot;最新 N 条&quot;的场景</strong>（<code>LPUSH</code> + <code>LTRIM</code>，这不算队列）。</li>
+</ol>
+<hr>
+<h1 id="4-用-zset-做延迟队列">4. 用 ZSet 做延迟队列</h1>
+<p>延迟队列是 list 完全做不到、而 Stream 也不直接支持的场景，zset 是最常见的方案。</p>
+<h2 id="41-基本思路">4.1 基本思路</h2>
+<p><strong>用 score 存&quot;应该执行的时间戳&quot;</strong>，消费者轮询取出所有 score &lt;= 当前时间的成员。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 生产：30 秒后执行</span>
+</span></span><span class="line"><span class="cl">ZADD delay:queue &lt;当前时间戳+30000&gt; <span class="s1">&#39;{&#34;id&#34;:1,&#34;task&#34;:&#34;cancel_order&#34;,&#34;orderId&#34;:1001}&#39;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 消费：取已到期的任务</span>
+</span></span><span class="line"><span class="cl">ZRANGEBYSCORE delay:queue <span class="m">0</span> &lt;当前时间戳&gt; LIMIT <span class="m">0</span> <span class="m">10</span>
+</span></span></code></pre></div><h2 id="42-必须用-lua-保证原子性">4.2 必须用 Lua 保证原子性</h2>
+<p><strong>如果分成&quot;查询&quot;和&quot;删除&quot;两步，多个消费者会重复消费同一个任务</strong>：</p>
+<pre tabindex="0"><code>消费者 A: ZRANGEBYSCORE → 拿到 task1
+消费者 B: ZRANGEBYSCORE → 也拿到 task1   ← 重复！
+消费者 A: ZREM task1
+消费者 B: ZREM task1（返回 0，但已经处理了两次）
+</code></pre><p>正确做法：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-lua" data-lang="lua"><span class="line"><span class="cl"><span class="c1">-- KEYS[1]=延迟队列key  ARGV[1]=当前时间戳  ARGV[2]=一次取多少</span>
+</span></span><span class="line"><span class="cl"><span class="kd">local</span> <span class="n">tasks</span> <span class="o">=</span> <span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;ZRANGEBYSCORE&#39;</span><span class="p">,</span> <span class="n">KEYS</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="mi">0</span><span class="p">,</span> <span class="n">ARGV</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="s1">&#39;LIMIT&#39;</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">ARGV</span><span class="p">[</span><span class="mi">2</span><span class="p">])</span>
+</span></span><span class="line"><span class="cl"><span class="kr">if</span> <span class="o">#</span><span class="n">tasks</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="kr">then</span>
+</span></span><span class="line"><span class="cl">    <span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;ZREM&#39;</span><span class="p">,</span> <span class="n">KEYS</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="n">unpack</span><span class="p">(</span><span class="n">tasks</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl"><span class="kr">end</span>
+</span></span><span class="line"><span class="cl"><span class="kr">return</span> <span class="n">tasks</span>
+</span></span></code></pre></div><p>注意 <code>unpack</code> 有栈限制（约 8000 个参数），所以 <code>ARGV[2]</code> 要控制在几百以内。</p>
+<h2 id="43-完整实现go">4.3 完整实现（Go）</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">type</span> <span class="nx">DelayQueue</span> <span class="kd">struct</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">rdb</span>  <span class="o">*</span><span class="nx">redis</span><span class="p">.</span><span class="nx">Client</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">key</span>  <span class="kt">string</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">var</span> <span class="nx">fetchScript</span> <span class="p">=</span> <span class="nx">redis</span><span class="p">.</span><span class="nf">NewScript</span><span class="p">(</span><span class="s">`
+</span></span></span><span class="line"><span class="cl"><span class="s">    local tasks = redis.call(&#39;ZRANGEBYSCORE&#39;, KEYS[1], 0, ARGV[1], &#39;LIMIT&#39;, 0, ARGV[2])
+</span></span></span><span class="line"><span class="cl"><span class="s">    if #tasks &gt; 0 then
+</span></span></span><span class="line"><span class="cl"><span class="s">        redis.call(&#39;ZREM&#39;, KEYS[1], unpack(tasks))
+</span></span></span><span class="line"><span class="cl"><span class="s">    end
+</span></span></span><span class="line"><span class="cl"><span class="s">    return tasks
+</span></span></span><span class="line"><span class="cl"><span class="s">`</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// 投递延迟任务
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kd">func</span> <span class="p">(</span><span class="nx">q</span> <span class="o">*</span><span class="nx">DelayQueue</span><span class="p">)</span> <span class="nf">Push</span><span class="p">(</span><span class="nx">ctx</span> <span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span> <span class="nx">payload</span> <span class="kt">string</span><span class="p">,</span> <span class="nx">delay</span> <span class="nx">time</span><span class="p">.</span><span class="nx">Duration</span><span class="p">)</span> <span class="kt">error</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">executeAt</span> <span class="o">:=</span> <span class="nx">time</span><span class="p">.</span><span class="nf">Now</span><span class="p">().</span><span class="nf">Add</span><span class="p">(</span><span class="nx">delay</span><span class="p">).</span><span class="nf">UnixMilli</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="nx">q</span><span class="p">.</span><span class="nx">rdb</span><span class="p">.</span><span class="nf">ZAdd</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">q</span><span class="p">.</span><span class="nx">key</span><span class="p">,</span> <span class="nx">redis</span><span class="p">.</span><span class="nx">Z</span><span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">Score</span><span class="p">:</span>  <span class="nb">float64</span><span class="p">(</span><span class="nx">executeAt</span><span class="p">),</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">Member</span><span class="p">:</span> <span class="nx">payload</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}).</span><span class="nf">Err</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// 消费循环
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kd">func</span> <span class="p">(</span><span class="nx">q</span> <span class="o">*</span><span class="nx">DelayQueue</span><span class="p">)</span> <span class="nf">Consume</span><span class="p">(</span><span class="nx">ctx</span> <span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span> <span class="nx">handler</span> <span class="kd">func</span><span class="p">(</span><span class="kt">string</span><span class="p">)</span> <span class="kt">error</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">ticker</span> <span class="o">:=</span> <span class="nx">time</span><span class="p">.</span><span class="nf">NewTicker</span><span class="p">(</span><span class="mi">200</span> <span class="o">*</span> <span class="nx">time</span><span class="p">.</span><span class="nx">Millisecond</span><span class="p">)</span>   <span class="c1">// 轮询间隔
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">defer</span> <span class="nx">ticker</span><span class="p">.</span><span class="nf">Stop</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="k">for</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">select</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">case</span> <span class="o">&lt;-</span><span class="nx">ctx</span><span class="p">.</span><span class="nf">Done</span><span class="p">():</span>
+</span></span><span class="line"><span class="cl">            <span class="k">return</span>
+</span></span><span class="line"><span class="cl">        <span class="k">case</span> <span class="o">&lt;-</span><span class="nx">ticker</span><span class="p">.</span><span class="nx">C</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">now</span> <span class="o">:=</span> <span class="nx">time</span><span class="p">.</span><span class="nf">Now</span><span class="p">().</span><span class="nf">UnixMilli</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">res</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">fetchScript</span><span class="p">.</span><span class="nf">Run</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">q</span><span class="p">.</span><span class="nx">rdb</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">                <span class="p">[]</span><span class="kt">string</span><span class="p">{</span><span class="nx">q</span><span class="p">.</span><span class="nx">key</span><span class="p">},</span> <span class="nx">now</span><span class="p">,</span> <span class="mi">100</span><span class="p">).</span><span class="nf">StringSlice</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">            <span class="k">if</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">                <span class="nx">log</span><span class="p">.</span><span class="nf">Printf</span><span class="p">(</span><span class="s">&#34;fetch error: %v&#34;</span><span class="p">,</span> <span class="nx">err</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">                <span class="k">continue</span>
+</span></span><span class="line"><span class="cl">            <span class="p">}</span>
+</span></span><span class="line"><span class="cl">            <span class="k">for</span> <span class="nx">_</span><span class="p">,</span> <span class="nx">payload</span> <span class="o">:=</span> <span class="k">range</span> <span class="nx">res</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">                <span class="k">if</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nf">handler</span><span class="p">(</span><span class="nx">payload</span><span class="p">);</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">                    <span class="c1">// 处理失败：重新投递（可以加退避）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>                    <span class="nx">q</span><span class="p">.</span><span class="nf">Push</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">payload</span><span class="p">,</span> <span class="mi">10</span><span class="o">*</span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">                <span class="p">}</span>
+</span></span><span class="line"><span class="cl">            <span class="p">}</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><h2 id="44-zset-延迟队列的问题与改进">4.4 zset 延迟队列的问题与改进</h2>
+<p><strong>问题一：轮询有延迟，且空轮询浪费资源</strong></p>
+<ul>
+<li>轮询间隔 200ms 意味着任务最多延迟 200ms 执行；</li>
+<li>大部分轮询是空的（没有到期任务），浪费请求。</li>
+</ul>
+<p><strong>改进</strong>：动态调整轮询间隔——用 <code>ZRANGE key 0 0 WITHSCORES</code> 看最近的任务什么时候到期，如果还有 5 秒，就睡 5 秒（但要能被新任务打断，可以用 channel + 定时器）。</p>
+<p><strong>问题二：任务丢失（取出后消费者崩溃）</strong></p>
+<p>Lua 脚本&quot;取出即删除&quot;，取出后崩溃任务就丢了。</p>
+<p><strong>改进：两阶段确认</strong>——取出时不删除，而是把 score 改成&quot;当前时间 + 处理超时&quot;（相当于租约）：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-lua" data-lang="lua"><span class="line"><span class="cl"><span class="c1">-- 取出并&#34;续期&#34;（把 score 改到未来，其他消费者暂时看不到它）</span>
+</span></span><span class="line"><span class="cl"><span class="kd">local</span> <span class="n">tasks</span> <span class="o">=</span> <span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;ZRANGEBYSCORE&#39;</span><span class="p">,</span> <span class="n">KEYS</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="mi">0</span><span class="p">,</span> <span class="n">ARGV</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="s1">&#39;LIMIT&#39;</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">ARGV</span><span class="p">[</span><span class="mi">2</span><span class="p">])</span>
+</span></span><span class="line"><span class="cl"><span class="kr">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">task</span> <span class="kr">in</span> <span class="n">ipairs</span><span class="p">(</span><span class="n">tasks</span><span class="p">)</span> <span class="kr">do</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">-- 租约 60 秒：如果 60 秒内没 ACK（ZREM），任务会重新变成&#34;到期&#34;被别人取走</span>
+</span></span><span class="line"><span class="cl">    <span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;ZADD&#39;</span><span class="p">,</span> <span class="n">KEYS</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="n">tonumber</span><span class="p">(</span><span class="n">ARGV</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span> <span class="o">+</span> <span class="mi">60000</span><span class="p">,</span> <span class="n">task</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="kr">end</span>
+</span></span><span class="line"><span class="cl"><span class="kr">return</span> <span class="n">tasks</span>
+</span></span></code></pre></div><p>处理成功后再 <code>ZREM</code> 确认删除。这就实现了简易的&quot;至少一次&quot;投递。</p>
+<p><strong>问题三：无法重复投递相同内容的任务</strong></p>
+<p>zset 的 member 唯一。如果两次投递完全相同的 payload，第二次只会<strong>更新 score</strong>而不是新增一条。</p>
+<p><strong>改进</strong>：给 payload 加唯一 ID（<code>{&quot;uuid&quot;:&quot;xxx&quot;, &quot;data&quot;:...}</code>），或者用 <code>taskId</code> 作为 member、任务详情存在另一个 hash 里。</p>
+<p><strong>问题四：大 key</strong></p>
+<p>所有延迟任务都在一个 zset 里，任务多时形成大 key（<code>ZADD</code>/<code>ZRANGEBYSCORE</code> 变慢、迁移困难）。</p>
+<p><strong>改进</strong>：<strong>按时间分片</strong>——比如按小时分 key（<code>delay:queue:2026072913</code>），消费者同时轮询当前小时和上一小时的 key。或者按业务类型分 key。</p>
+<h2 id="45-延迟队列的其他实现方式">4.5 延迟队列的其他实现方式</h2>
+<table>
+<thead>
+<tr>
+<th>方案</th>
+<th>优点</th>
+<th>缺点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>zset 轮询</strong>（上面的）</td>
+<td>简单、精度高（毫秒级）</td>
+<td>需要自己实现可靠性、轮询开销</td>
+</tr>
+<tr>
+<td><strong>多级时间轮 + list</strong></td>
+<td>内存效率高</td>
+<td>实现复杂</td>
+</tr>
+<tr>
+<td><strong>键空间过期通知</strong></td>
+<td>不需要轮询</td>
+<td><strong>不可靠（会丢消息）+ 时机不准</strong>，不要用</td>
+</tr>
+<tr>
+<td><strong>RocketMQ / RabbitMQ 延迟消息</strong></td>
+<td>生产级可靠</td>
+<td>需要额外中间件</td>
+</tr>
+<tr>
+<td><strong>数据库轮询 + 索引</strong></td>
+<td>可靠、可查询</td>
+<td>性能差、给 DB 压力</td>
+</tr>
+</tbody>
+</table>
+<p><strong>结论</strong>：Redis 做延迟队列首选 <strong>zset + Lua + 租约机制 + 时间分片</strong>。如果业务对可靠性要求极高（比如订单超时关闭），建议<strong>双保险</strong>：Redis 延迟队列做主路径（快），数据库定时任务扫描做兜底（慢但可靠）。</p>
+<hr>
+<h1 id="5-stream-消息队列完整实践">5. Stream 消息队列完整实践</h1>
+<p>第 3 篇介绍了 Stream 的命令，这里讲<strong>工程实践</strong>。</p>
+<h2 id="51-核心概念回顾">5.1 核心概念回顾</h2>
+<pre tabindex="0"><code>Stream（append-only 日志）
+├── 消息：ID（毫秒时间戳-序号）+ field-value 对
+├── 消费组 A
+│   ├── last-delivered-id：这个组投递到哪了
+│   ├── PEL（Pending Entries List）：已投递未确认的消息
+│   ├── 消费者 c1（有自己的 PEL 子集）
+│   └── 消费者 c2
+└── 消费组 B（独立的消费进度，互不影响）
+</code></pre><p>关键点：</p>
+<ul>
+<li><strong>消息持久化在 stream 里</strong>，不会因为被消费而删除（除非 <code>XDEL</code>/<code>XTRIM</code>）；</li>
+<li><strong>每个消费组独立维护进度</strong>（<code>last-delivered-id</code>），实现&quot;多个业务系统各自完整消费一遍&quot;；</li>
+<li><strong>组内多个消费者分摊消息</strong>（一条消息只投给组内一个消费者），实现负载均衡；</li>
+<li><strong>PEL 记录未确认消息</strong>，支持崩溃恢复和重投。</li>
+</ul>
+<h2 id="52-生产者最佳实践">5.2 生产者最佳实践</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">Produce</span><span class="p">(</span><span class="nx">ctx</span> <span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span> <span class="nx">rdb</span> <span class="o">*</span><span class="nx">redis</span><span class="p">.</span><span class="nx">Client</span><span class="p">,</span> <span class="nx">order</span> <span class="o">*</span><span class="nx">Order</span><span class="p">)</span> <span class="kt">error</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">id</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">rdb</span><span class="p">.</span><span class="nf">XAdd</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="o">&amp;</span><span class="nx">redis</span><span class="p">.</span><span class="nx">XAddArgs</span><span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">Stream</span><span class="p">:</span> <span class="s">&#34;stream:orders&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">        <span class="c1">// 关键：一定要设置裁剪策略，否则内存无限增长
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="nx">MaxLen</span><span class="p">:</span> <span class="mi">100000</span><span class="p">,</span>          <span class="c1">// 保留最近 10 万条
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="nx">Approx</span><span class="p">:</span> <span class="kc">true</span><span class="p">,</span>            <span class="c1">// 用 ~ 近似裁剪，性能好得多
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="nx">ID</span><span class="p">:</span>     <span class="s">&#34;*&#34;</span><span class="p">,</span>             <span class="c1">// 让 Redis 生成 ID
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="nx">Values</span><span class="p">:</span> <span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kd">interface</span><span class="p">{}{</span>
+</span></span><span class="line"><span class="cl">            <span class="s">&#34;orderId&#34;</span><span class="p">:</span> <span class="nx">order</span><span class="p">.</span><span class="nx">ID</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">            <span class="s">&#34;userId&#34;</span><span class="p">:</span>  <span class="nx">order</span><span class="p">.</span><span class="nx">UserID</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">            <span class="s">&#34;amount&#34;</span><span class="p">:</span>  <span class="nx">order</span><span class="p">.</span><span class="nx">Amount</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">            <span class="s">&#34;ts&#34;</span><span class="p">:</span>      <span class="nx">time</span><span class="p">.</span><span class="nf">Now</span><span class="p">().</span><span class="nf">UnixMilli</span><span class="p">(),</span>
+</span></span><span class="line"><span class="cl">        <span class="p">},</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}).</span><span class="nf">Result</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="nx">err</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">log</span><span class="p">.</span><span class="nf">Printf</span><span class="p">(</span><span class="s">&#34;produced message %s&#34;</span><span class="p">,</span> <span class="nx">id</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="kc">nil</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><strong>要点</strong>：</p>
+<ol>
+<li><strong>必须设置 <code>MaxLen</code> 或 <code>MinID</code> 裁剪</strong>，否则内存会无限增长；</li>
+<li><strong>用 <code>Approx: true</code>（对应 <code>~</code>）而不是精确裁剪</strong>：近似裁剪只在能整个删掉一个 listpack 节点时才删（O(1) 摊还），精确裁剪要逐条删（可能 O(N) 阻塞）；</li>
+<li><strong>裁剪阈值要留足余量</strong>：如果消费组有滞后（lag），<code>MaxLen</code> 太小会<strong>直接丢掉未消费的消息</strong>。要监控 <code>XINFO GROUPS</code> 的 <code>lag</code>；</li>
+<li><strong>字段名要短且固定</strong>：Stream 的 listpack 对同一节点内重复的字段名做了去重优化（master entry 机制），字段名固定能省大量内存。</li>
+</ol>
+<h2 id="53-消费者完整实现">5.3 消费者完整实现</h2>
+<p>一个生产级的消费者要处理三件事：<strong>正常消费、崩溃恢复、超时消息认领</strong>。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">type</span> <span class="nx">StreamConsumer</span> <span class="kd">struct</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">rdb</span>      <span class="o">*</span><span class="nx">redis</span><span class="p">.</span><span class="nx">Client</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">stream</span>   <span class="kt">string</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">group</span>    <span class="kt">string</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">consumer</span> <span class="kt">string</span>   <span class="c1">// 每个实例一个唯一名字，如 &#34;worker-hostname-pid&#34;
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">handler</span>  <span class="kd">func</span><span class="p">(</span><span class="nx">msg</span> <span class="nx">redis</span><span class="p">.</span><span class="nx">XMessage</span><span class="p">)</span> <span class="kt">error</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="p">(</span><span class="nx">c</span> <span class="o">*</span><span class="nx">StreamConsumer</span><span class="p">)</span> <span class="nf">Start</span><span class="p">(</span><span class="nx">ctx</span> <span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">)</span> <span class="kt">error</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// ---------- 步骤 1：确保消费组存在 ----------
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="c1">// MKSTREAM：stream 不存在时自动创建
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="c1">// &#34;0&#34; 表示从头消费；&#34;$&#34; 表示只消费此后的新消息
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">err</span> <span class="o">:=</span> <span class="nx">c</span><span class="p">.</span><span class="nx">rdb</span><span class="p">.</span><span class="nf">XGroupCreateMkStream</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">c</span><span class="p">.</span><span class="nx">stream</span><span class="p">,</span> <span class="nx">c</span><span class="p">.</span><span class="nx">group</span><span class="p">,</span> <span class="s">&#34;0&#34;</span><span class="p">).</span><span class="nf">Err</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="o">&amp;&amp;</span> <span class="p">!</span><span class="nx">strings</span><span class="p">.</span><span class="nf">Contains</span><span class="p">(</span><span class="nx">err</span><span class="p">.</span><span class="nf">Error</span><span class="p">(),</span> <span class="s">&#34;BUSYGROUP&#34;</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="nx">err</span>   <span class="c1">// BUSYGROUP 表示组已存在，可忽略
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// ---------- 步骤 2：崩溃恢复：先处理自己之前未 ACK 的消息 ----------
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="c1">// 用 &#34;0&#34; 而不是 &#34;&gt;&#34;，表示&#34;给我这个消费者已投递但未确认的消息&#34;
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">if</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">c</span><span class="p">.</span><span class="nf">recoverPending</span><span class="p">(</span><span class="nx">ctx</span><span class="p">);</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">log</span><span class="p">.</span><span class="nf">Printf</span><span class="p">(</span><span class="s">&#34;recover error: %v&#34;</span><span class="p">,</span> <span class="nx">err</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// ---------- 步骤 3：启动超时消息认领的巡检协程 ----------
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">go</span> <span class="nx">c</span><span class="p">.</span><span class="nf">claimLoop</span><span class="p">(</span><span class="nx">ctx</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// ---------- 步骤 4：正常消费循环 ----------
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">return</span> <span class="nx">c</span><span class="p">.</span><span class="nf">consumeLoop</span><span class="p">(</span><span class="nx">ctx</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// 处理自己的 PEL（重启后调用）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kd">func</span> <span class="p">(</span><span class="nx">c</span> <span class="o">*</span><span class="nx">StreamConsumer</span><span class="p">)</span> <span class="nf">recoverPending</span><span class="p">(</span><span class="nx">ctx</span> <span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">)</span> <span class="kt">error</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">start</span> <span class="o">:=</span> <span class="s">&#34;0&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="k">for</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">res</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">c</span><span class="p">.</span><span class="nx">rdb</span><span class="p">.</span><span class="nf">XReadGroup</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="o">&amp;</span><span class="nx">redis</span><span class="p">.</span><span class="nx">XReadGroupArgs</span><span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">Group</span><span class="p">:</span>    <span class="nx">c</span><span class="p">.</span><span class="nx">group</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">Consumer</span><span class="p">:</span> <span class="nx">c</span><span class="p">.</span><span class="nx">consumer</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">Streams</span><span class="p">:</span>  <span class="p">[]</span><span class="kt">string</span><span class="p">{</span><span class="nx">c</span><span class="p">.</span><span class="nx">stream</span><span class="p">,</span> <span class="nx">start</span><span class="p">},</span>   <span class="c1">// 注意这里是 &#34;0&#34; 不是 &#34;&gt;&#34;
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>            <span class="nx">Count</span><span class="p">:</span>    <span class="mi">100</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}).</span><span class="nf">Result</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="k">if</span> <span class="nx">err</span> <span class="o">==</span> <span class="nx">redis</span><span class="p">.</span><span class="nx">Nil</span> <span class="p">{</span> <span class="k">return</span> <span class="kc">nil</span> <span class="p">}</span>
+</span></span><span class="line"><span class="cl">            <span class="k">return</span> <span class="nx">err</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="nx">res</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span> <span class="o">||</span> <span class="nb">len</span><span class="p">(</span><span class="nx">res</span><span class="p">[</span><span class="mi">0</span><span class="p">].</span><span class="nx">Messages</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="k">return</span> <span class="kc">nil</span>   <span class="c1">// PEL 已清空
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">        <span class="k">for</span> <span class="nx">_</span><span class="p">,</span> <span class="nx">msg</span> <span class="o">:=</span> <span class="k">range</span> <span class="nx">res</span><span class="p">[</span><span class="mi">0</span><span class="p">].</span><span class="nx">Messages</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">c</span><span class="p">.</span><span class="nf">process</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">msg</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">start</span> <span class="p">=</span> <span class="nx">msg</span><span class="p">.</span><span class="nx">ID</span>   <span class="c1">// 继续从这条之后读
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// 正常消费
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kd">func</span> <span class="p">(</span><span class="nx">c</span> <span class="o">*</span><span class="nx">StreamConsumer</span><span class="p">)</span> <span class="nf">consumeLoop</span><span class="p">(</span><span class="nx">ctx</span> <span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">)</span> <span class="kt">error</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">for</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">select</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">case</span> <span class="o">&lt;-</span><span class="nx">ctx</span><span class="p">.</span><span class="nf">Done</span><span class="p">():</span>
+</span></span><span class="line"><span class="cl">            <span class="k">return</span> <span class="nx">ctx</span><span class="p">.</span><span class="nf">Err</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">        <span class="k">default</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">        <span class="nx">res</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">c</span><span class="p">.</span><span class="nx">rdb</span><span class="p">.</span><span class="nf">XReadGroup</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="o">&amp;</span><span class="nx">redis</span><span class="p">.</span><span class="nx">XReadGroupArgs</span><span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">Group</span><span class="p">:</span>    <span class="nx">c</span><span class="p">.</span><span class="nx">group</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">Consumer</span><span class="p">:</span> <span class="nx">c</span><span class="p">.</span><span class="nx">consumer</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">Streams</span><span class="p">:</span>  <span class="p">[]</span><span class="kt">string</span><span class="p">{</span><span class="nx">c</span><span class="p">.</span><span class="nx">stream</span><span class="p">,</span> <span class="s">&#34;&gt;&#34;</span><span class="p">},</span>    <span class="c1">// &#34;&gt;&#34; = 从未投递过的新消息
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>            <span class="nx">Count</span><span class="p">:</span>    <span class="mi">10</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">Block</span><span class="p">:</span>    <span class="mi">5</span> <span class="o">*</span> <span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">,</span>            <span class="c1">// 阻塞等待，避免空轮询
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="p">}).</span><span class="nf">Result</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="k">if</span> <span class="nx">err</span> <span class="o">==</span> <span class="nx">redis</span><span class="p">.</span><span class="nx">Nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">                <span class="k">continue</span>     <span class="c1">// Block 超时，没有新消息，正常
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>            <span class="p">}</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">log</span><span class="p">.</span><span class="nf">Printf</span><span class="p">(</span><span class="s">&#34;XReadGroup error: %v&#34;</span><span class="p">,</span> <span class="nx">err</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">time</span><span class="p">.</span><span class="nf">Sleep</span><span class="p">(</span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">            <span class="k">continue</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">        <span class="k">for</span> <span class="nx">_</span><span class="p">,</span> <span class="nx">stream</span> <span class="o">:=</span> <span class="k">range</span> <span class="nx">res</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="k">for</span> <span class="nx">_</span><span class="p">,</span> <span class="nx">msg</span> <span class="o">:=</span> <span class="k">range</span> <span class="nx">stream</span><span class="p">.</span><span class="nx">Messages</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">                <span class="nx">c</span><span class="p">.</span><span class="nf">process</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">msg</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">            <span class="p">}</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// 处理单条消息 + ACK
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kd">func</span> <span class="p">(</span><span class="nx">c</span> <span class="o">*</span><span class="nx">StreamConsumer</span><span class="p">)</span> <span class="nf">process</span><span class="p">(</span><span class="nx">ctx</span> <span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span> <span class="nx">msg</span> <span class="nx">redis</span><span class="p">.</span><span class="nx">XMessage</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">c</span><span class="p">.</span><span class="nf">handler</span><span class="p">(</span><span class="nx">msg</span><span class="p">);</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">log</span><span class="p">.</span><span class="nf">Printf</span><span class="p">(</span><span class="s">&#34;handle message %s failed: %v&#34;</span><span class="p">,</span> <span class="nx">msg</span><span class="p">.</span><span class="nx">ID</span><span class="p">,</span> <span class="nx">err</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="c1">// 【不 ACK】，消息留在 PEL 里等重试
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="k">return</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// 处理成功才 ACK
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">if</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">c</span><span class="p">.</span><span class="nx">rdb</span><span class="p">.</span><span class="nf">XAck</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">c</span><span class="p">.</span><span class="nx">stream</span><span class="p">,</span> <span class="nx">c</span><span class="p">.</span><span class="nx">group</span><span class="p">,</span> <span class="nx">msg</span><span class="p">.</span><span class="nx">ID</span><span class="p">).</span><span class="nf">Err</span><span class="p">();</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">log</span><span class="p">.</span><span class="nf">Printf</span><span class="p">(</span><span class="s">&#34;ack %s failed: %v&#34;</span><span class="p">,</span> <span class="nx">msg</span><span class="p">.</span><span class="nx">ID</span><span class="p">,</span> <span class="nx">err</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// 认领其他消费者卡住的消息
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kd">func</span> <span class="p">(</span><span class="nx">c</span> <span class="o">*</span><span class="nx">StreamConsumer</span><span class="p">)</span> <span class="nf">claimLoop</span><span class="p">(</span><span class="nx">ctx</span> <span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">ticker</span> <span class="o">:=</span> <span class="nx">time</span><span class="p">.</span><span class="nf">NewTicker</span><span class="p">(</span><span class="mi">30</span> <span class="o">*</span> <span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">defer</span> <span class="nx">ticker</span><span class="p">.</span><span class="nf">Stop</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="k">for</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">select</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">case</span> <span class="o">&lt;-</span><span class="nx">ctx</span><span class="p">.</span><span class="nf">Done</span><span class="p">():</span>
+</span></span><span class="line"><span class="cl">            <span class="k">return</span>
+</span></span><span class="line"><span class="cl">        <span class="k">case</span> <span class="o">&lt;-</span><span class="nx">ticker</span><span class="p">.</span><span class="nx">C</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">start</span> <span class="o">:=</span> <span class="s">&#34;0-0&#34;</span>
+</span></span><span class="line"><span class="cl">            <span class="k">for</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">                <span class="c1">// XAUTOCLAIM：认领空闲超过 60 秒的消息
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>                <span class="nx">msgs</span><span class="p">,</span> <span class="nx">next</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">c</span><span class="p">.</span><span class="nx">rdb</span><span class="p">.</span><span class="nf">XAutoClaim</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="o">&amp;</span><span class="nx">redis</span><span class="p">.</span><span class="nx">XAutoClaimArgs</span><span class="p">{</span>
+</span></span><span class="line"><span class="cl">                    <span class="nx">Stream</span><span class="p">:</span>   <span class="nx">c</span><span class="p">.</span><span class="nx">stream</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">                    <span class="nx">Group</span><span class="p">:</span>    <span class="nx">c</span><span class="p">.</span><span class="nx">group</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">                    <span class="nx">Consumer</span><span class="p">:</span> <span class="nx">c</span><span class="p">.</span><span class="nx">consumer</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">                    <span class="nx">MinIdle</span><span class="p">:</span>  <span class="mi">60</span> <span class="o">*</span> <span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">                    <span class="nx">Start</span><span class="p">:</span>    <span class="nx">start</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">                    <span class="nx">Count</span><span class="p">:</span>    <span class="mi">10</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">                <span class="p">}).</span><span class="nf">Result</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">                <span class="k">if</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">                    <span class="nx">log</span><span class="p">.</span><span class="nf">Printf</span><span class="p">(</span><span class="s">&#34;autoclaim error: %v&#34;</span><span class="p">,</span> <span class="nx">err</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">                    <span class="k">break</span>
+</span></span><span class="line"><span class="cl">                <span class="p">}</span>
+</span></span><span class="line"><span class="cl">                <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="nx">msgs</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">                    <span class="k">break</span>
+</span></span><span class="line"><span class="cl">                <span class="p">}</span>
+</span></span><span class="line"><span class="cl">                <span class="k">for</span> <span class="nx">_</span><span class="p">,</span> <span class="nx">msg</span> <span class="o">:=</span> <span class="k">range</span> <span class="nx">msgs</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">                    <span class="nx">c</span><span class="p">.</span><span class="nf">processWithDeadLetter</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">msg</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">                <span class="p">}</span>
+</span></span><span class="line"><span class="cl">                <span class="k">if</span> <span class="nx">next</span> <span class="o">==</span> <span class="s">&#34;0-0&#34;</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">                    <span class="k">break</span>     <span class="c1">// 遍历完一轮
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>                <span class="p">}</span>
+</span></span><span class="line"><span class="cl">                <span class="nx">start</span> <span class="p">=</span> <span class="nx">next</span>
+</span></span><span class="line"><span class="cl">            <span class="p">}</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// 带死信处理的消费（用于重投的消息）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kd">func</span> <span class="p">(</span><span class="nx">c</span> <span class="o">*</span><span class="nx">StreamConsumer</span><span class="p">)</span> <span class="nf">processWithDeadLetter</span><span class="p">(</span><span class="nx">ctx</span> <span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span> <span class="nx">msg</span> <span class="nx">redis</span><span class="p">.</span><span class="nx">XMessage</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// 查这条消息被投递了几次
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">pending</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">c</span><span class="p">.</span><span class="nx">rdb</span><span class="p">.</span><span class="nf">XPendingExt</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="o">&amp;</span><span class="nx">redis</span><span class="p">.</span><span class="nx">XPendingExtArgs</span><span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">Stream</span><span class="p">:</span> <span class="nx">c</span><span class="p">.</span><span class="nx">stream</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">Group</span><span class="p">:</span>  <span class="nx">c</span><span class="p">.</span><span class="nx">group</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">Start</span><span class="p">:</span>  <span class="nx">msg</span><span class="p">.</span><span class="nx">ID</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">End</span><span class="p">:</span>    <span class="nx">msg</span><span class="p">.</span><span class="nx">ID</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">Count</span><span class="p">:</span>  <span class="mi">1</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}).</span><span class="nf">Result</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">err</span> <span class="o">==</span> <span class="kc">nil</span> <span class="o">&amp;&amp;</span> <span class="nb">len</span><span class="p">(</span><span class="nx">pending</span><span class="p">)</span> <span class="p">&gt;</span> <span class="mi">0</span> <span class="o">&amp;&amp;</span> <span class="nx">pending</span><span class="p">[</span><span class="mi">0</span><span class="p">].</span><span class="nx">RetryCount</span> <span class="p">&gt;</span> <span class="mi">5</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="c1">// 【死信处理】：重试超过 5 次，说明是毒消息
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="nx">log</span><span class="p">.</span><span class="nf">Printf</span><span class="p">(</span><span class="s">&#34;message %s exceeded max retries, moving to dead letter&#34;</span><span class="p">,</span> <span class="nx">msg</span><span class="p">.</span><span class="nx">ID</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">c</span><span class="p">.</span><span class="nx">rdb</span><span class="p">.</span><span class="nf">XAdd</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="o">&amp;</span><span class="nx">redis</span><span class="p">.</span><span class="nx">XAddArgs</span><span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">Stream</span><span class="p">:</span> <span class="nx">c</span><span class="p">.</span><span class="nx">stream</span> <span class="o">+</span> <span class="s">&#34;:dead&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">Values</span><span class="p">:</span> <span class="nx">msg</span><span class="p">.</span><span class="nx">Values</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">        <span class="p">})</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">c</span><span class="p">.</span><span class="nx">rdb</span><span class="p">.</span><span class="nf">XAck</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">c</span><span class="p">.</span><span class="nx">stream</span><span class="p">,</span> <span class="nx">c</span><span class="p">.</span><span class="nx">group</span><span class="p">,</span> <span class="nx">msg</span><span class="p">.</span><span class="nx">ID</span><span class="p">)</span>   <span class="c1">// ACK 掉，不再重投
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="k">return</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="nx">c</span><span class="p">.</span><span class="nf">process</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">msg</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><h2 id="54-关键设计点解析">5.4 关键设计点解析</h2>
+<p><strong>（1）为什么启动时要先用 <code>STREAMS key 0</code> 读一遍</strong></p>
+<p>因为消费者重启后，它之前&quot;已投递但未 ACK&quot;的消息还在 PEL 里，用 <code>&gt;</code> 是读不到的（<code>&gt;</code> 只给&quot;从未投递过&quot;的新消息）。必须用 <code>0</code>（或具体 ID）把自己的 PEL 读出来重新处理。</p>
+<p>如果不做这一步，那些消息会一直卡在 PEL 里，只能靠 <code>XAUTOCLAIM</code> 的巡检兜底（延迟至少 <code>MinIdle</code> 时间）。</p>
+<p><strong>（2）消费者名字必须稳定且唯一</strong></p>
+<ul>
+<li><strong>唯一</strong>：两个实例用同一个消费者名，PEL 会混在一起，<code>XAUTOCLAIM</code> 逻辑会错乱；</li>
+<li><strong>稳定</strong>：如果每次重启都用随机名（如 UUID），旧名字的 PEL 就成了&quot;孤儿&quot;——那个消费者永远不会回来读自己的 PEL，只能等 <code>XAUTOCLAIM</code>。而且 <code>XINFO CONSUMERS</code> 里会堆积大量僵尸消费者。</li>
+</ul>
+<p><strong>推荐</strong>：用 <code>hostname + 固定序号</code>（如 K8s StatefulSet 的 pod 名 <code>worker-0</code>、<code>worker-1</code>），保证重启后名字不变。用 <code>XGROUP DELCONSUMER</code> 清理确定不再回来的消费者。</p>
+<p><strong>（3)<code>XAUTOCLAIM</code> 的 <code>MinIdle</code> 怎么设</strong></p>
+<p>必须 <strong>&gt; 单条消息的最大处理时间</strong>。如果消息处理要 30 秒而 <code>MinIdle</code> 设 10 秒，那么消息处理中就被别人认领了，<strong>导致重复消费</strong>。</p>
+<p>建议：<code>MinIdle = 最大处理时间 × 2~3</code>。</p>
+<p><strong>（4）死信处理是必须的</strong></p>
+<p>如果一条消息因为数据问题（比如 JSON 格式错误、关联数据被删）永远处理失败，不做死信处理它会被<strong>无限重投</strong>，浪费资源并可能阻塞后面的消息。</p>
+<p>标准做法：<code>RetryCount</code> 超过阈值 → 转存到死信 stream → <code>XACK</code> 原消息。</p>
+<h2 id="55-监控指标">5.5 监控指标</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># stream 整体状况</span>
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; XINFO STREAM stream:orders
+</span></span><span class="line"><span class="cl"> 1<span class="o">)</span> <span class="s2">&#34;length&#34;</span>                        <span class="c1"># 消息总数</span>
+</span></span><span class="line"><span class="cl"> 2<span class="o">)</span> <span class="o">(</span>integer<span class="o">)</span> <span class="m">100000</span>
+</span></span><span class="line"><span class="cl"> 3<span class="o">)</span> <span class="s2">&#34;radix-tree-keys&#34;</span>               <span class="c1"># radix tree 节点数</span>
+</span></span><span class="line"><span class="cl"> 4<span class="o">)</span> <span class="o">(</span>integer<span class="o">)</span> <span class="m">200</span>
+</span></span><span class="line"><span class="cl"> 5<span class="o">)</span> <span class="s2">&#34;radix-tree-nodes&#34;</span>
+</span></span><span class="line"><span class="cl"> 6<span class="o">)</span> <span class="o">(</span>integer<span class="o">)</span> <span class="m">450</span>
+</span></span><span class="line"><span class="cl"> 7<span class="o">)</span> <span class="s2">&#34;last-generated-id&#34;</span>             <span class="c1"># 最新消息 ID</span>
+</span></span><span class="line"><span class="cl"> 8<span class="o">)</span> <span class="s2">&#34;1785657600123-0&#34;</span>
+</span></span><span class="line"><span class="cl"> 9<span class="o">)</span> <span class="s2">&#34;max-deleted-entry-id&#34;</span>          <span class="c1"># 7.0+ 被删除的最大 ID</span>
+</span></span><span class="line"><span class="cl">10<span class="o">)</span> <span class="s2">&#34;0-0&#34;</span>
+</span></span><span class="line"><span class="cl">11<span class="o">)</span> <span class="s2">&#34;entries-added&#34;</span>                 <span class="c1"># 7.0+ 累计添加的消息数</span>
+</span></span><span class="line"><span class="cl">12<span class="o">)</span> <span class="o">(</span>integer<span class="o">)</span> <span class="m">523400</span>
+</span></span><span class="line"><span class="cl">13<span class="o">)</span> <span class="s2">&#34;groups&#34;</span>                        <span class="c1"># 消费组数量</span>
+</span></span><span class="line"><span class="cl">14<span class="o">)</span> <span class="o">(</span>integer<span class="o">)</span> <span class="m">2</span>
+</span></span><span class="line"><span class="cl">15<span class="o">)</span> <span class="s2">&#34;first-entry&#34;</span> ...
+</span></span><span class="line"><span class="cl">16<span class="o">)</span> <span class="s2">&#34;last-entry&#34;</span> ...
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 消费组状况（最重要）</span>
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; XINFO GROUPS stream:orders
+</span></span><span class="line"><span class="cl">1<span class="o">)</span>  1<span class="o">)</span> <span class="s2">&#34;name&#34;</span>
+</span></span><span class="line"><span class="cl">    2<span class="o">)</span> <span class="s2">&#34;group:sms&#34;</span>
+</span></span><span class="line"><span class="cl">    3<span class="o">)</span> <span class="s2">&#34;consumers&#34;</span>
+</span></span><span class="line"><span class="cl">    4<span class="o">)</span> <span class="o">(</span>integer<span class="o">)</span> <span class="m">3</span>           <span class="c1"># 消费者数量</span>
+</span></span><span class="line"><span class="cl">    5<span class="o">)</span> <span class="s2">&#34;pending&#34;</span>
+</span></span><span class="line"><span class="cl">    6<span class="o">)</span> <span class="o">(</span>integer<span class="o">)</span> <span class="m">12</span>          <span class="c1"># 【PEL 大小】未确认消息数</span>
+</span></span><span class="line"><span class="cl">    7<span class="o">)</span> <span class="s2">&#34;last-delivered-id&#34;</span>
+</span></span><span class="line"><span class="cl">    8<span class="o">)</span> <span class="s2">&#34;1785657600100-0&#34;</span>
+</span></span><span class="line"><span class="cl">    9<span class="o">)</span> <span class="s2">&#34;entries-read&#34;</span>        <span class="c1"># 7.0+ 该组已读取的消息数</span>
+</span></span><span class="line"><span class="cl">   10<span class="o">)</span> <span class="o">(</span>integer<span class="o">)</span> <span class="m">523388</span>
+</span></span><span class="line"><span class="cl">   11<span class="o">)</span> <span class="s2">&#34;lag&#34;</span>                 <span class="c1"># 【最重要】还有多少消息没消费</span>
+</span></span><span class="line"><span class="cl">   12<span class="o">)</span> <span class="o">(</span>integer<span class="o">)</span> <span class="m">12</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 消费者状况</span>
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; XINFO CONSUMERS stream:orders group:sms
+</span></span><span class="line"><span class="cl">1<span class="o">)</span> 1<span class="o">)</span> <span class="s2">&#34;name&#34;</span>
+</span></span><span class="line"><span class="cl">   2<span class="o">)</span> <span class="s2">&#34;worker-0&#34;</span>
+</span></span><span class="line"><span class="cl">   3<span class="o">)</span> <span class="s2">&#34;pending&#34;</span>
+</span></span><span class="line"><span class="cl">   4<span class="o">)</span> <span class="o">(</span>integer<span class="o">)</span> <span class="m">4</span>
+</span></span><span class="line"><span class="cl">   5<span class="o">)</span> <span class="s2">&#34;idle&#34;</span>                 <span class="c1"># 距上次交互多久（毫秒）</span>
+</span></span><span class="line"><span class="cl">   6<span class="o">)</span> <span class="o">(</span>integer<span class="o">)</span> <span class="m">1523</span>
+</span></span><span class="line"><span class="cl">   7<span class="o">)</span> <span class="s2">&#34;inactive&#34;</span>             <span class="c1"># 7.2+ 距上次成功读取消息多久</span>
+</span></span><span class="line"><span class="cl">   8<span class="o">)</span> <span class="o">(</span>integer<span class="o">)</span> <span class="m">1523</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># PEL 明细</span>
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; XPENDING stream:orders group:sms - + <span class="m">10</span>
+</span></span><span class="line"><span class="cl">1<span class="o">)</span> 1<span class="o">)</span> <span class="s2">&#34;1785657600123-0&#34;</span>      <span class="c1"># 消息 ID</span>
+</span></span><span class="line"><span class="cl">   2<span class="o">)</span> <span class="s2">&#34;worker-0&#34;</span>             <span class="c1"># 归属消费者</span>
+</span></span><span class="line"><span class="cl">   3<span class="o">)</span> <span class="o">(</span>integer<span class="o">)</span> <span class="m">300000</span>       <span class="c1"># 空闲毫秒数</span>
+</span></span><span class="line"><span class="cl">   4<span class="o">)</span> <span class="o">(</span>integer<span class="o">)</span> <span class="m">3</span>            <span class="c1"># 【投递次数】超过阈值要做死信处理</span>
+</span></span></code></pre></div><p><strong>必须告警的指标</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>指标</th>
+<th>阈值</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong><code>lag</code></strong></td>
+<td>持续增长</td>
+<td><strong>消费能力不足</strong>，需要加消费者或优化处理逻辑</td>
+</tr>
+<tr>
+<td><strong><code>pending</code></strong></td>
+<td>持续增长</td>
+<td>大量消息未 ACK：处理失败、或者忘了 ACK、或者消费者崩溃</td>
+</tr>
+<tr>
+<td><strong><code>XPENDING</code> 的投递次数</strong></td>
+<td>&gt; 5</td>
+<td>有毒消息在无限重试</td>
+</tr>
+<tr>
+<td><strong>消费者 <code>idle</code></strong></td>
+<td>异常大</td>
+<td>消费者卡死或已崩溃</td>
+</tr>
+<tr>
+<td><strong><code>length</code></strong></td>
+<td>接近 MaxLen</td>
+<td>裁剪在生效，检查是否会丢未消费的消息</td>
+</tr>
+</tbody>
+</table>
+<h2 id="56-stream-的运维注意点">5.6 Stream 的运维注意点</h2>
+<p><strong>（1）<code>XDEL</code> 不释放内存</strong></p>
+<p><code>XDEL</code> 只是给 listpack 里的条目打删除标记，<code>XLEN</code> 会减少但<strong>内存不一定降</strong>。真正回收要靠 <code>XTRIM</code>（整个 listpack 节点被裁掉时才释放）。</p>
+<p><strong>（2）消费组的 PEL 会阻止裁剪的安全性</strong></p>
+<p><code>XTRIM MAXLEN 1000</code> 会<strong>无条件删掉</strong>超出的消息，<strong>即使它们还在某个消费组的 PEL 里或者还没被消费</strong>。所以：</p>
+<ul>
+<li>裁剪阈值要远大于最大可能的 lag；</li>
+<li>监控 <code>lag</code>，发现消费严重滞后要先解决消费问题再裁剪。</li>
+</ul>
+<p><strong>（3）消费组会随 stream 一起被 <code>DEL</code> 删除</strong></p>
+<p><code>DEL stream:orders</code> 会连消费组和 PEL 一起删掉，所有进度丢失。要小心。</p>
+<p><strong>（4）集群模式下一个 stream 在一个节点上</strong></p>
+<p>Stream 是单个 key，所以整个 stream 的数据在一个 slot/节点上，<strong>无法像 Kafka 那样分区并行</strong>。要提高吞吐只能自己做分片（<code>stream:orders:0</code>、<code>stream:orders:1</code>，生产者按 hash 选一个），但这样就丢失了全局顺序。</p>
+<p><strong>这是 Stream 相比 Kafka 最本质的扩展性限制。</strong></p>
+<hr>
+<h1 id="6-三种方案的完整对比">6. 三种方案的完整对比</h1>
+<h2 id="61-redis-内部三种方案">6.1 Redis 内部三种方案</h2>
+<table>
+<thead>
+<tr>
+<th>能力</th>
+<th>Pub/Sub</th>
+<th>List</th>
+<th>Stream</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>消息持久化</td>
+<td>❌</td>
+<td>✅</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>消费者离线不丢</td>
+<td>❌</td>
+<td>✅</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>消息确认（ACK）</td>
+<td>❌</td>
+<td>❌</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>消息重投</td>
+<td>❌</td>
+<td>需自己实现（很难）</td>
+<td>✅ <code>XCLAIM</code>/<code>XAUTOCLAIM</code></td>
+</tr>
+<tr>
+<td>消费组（多组独立消费）</td>
+<td>❌（广播但不持久）</td>
+<td>❌</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>组内负载均衡</td>
+<td>❌</td>
+<td>伪（抢）</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>消息回溯/重放</td>
+<td>❌</td>
+<td>❌</td>
+<td>✅ <code>XRANGE</code></td>
+</tr>
+<tr>
+<td>阻塞消费</td>
+<td>✅</td>
+<td>✅ <code>BRPOP</code></td>
+<td>✅ <code>BLOCK</code></td>
+</tr>
+<tr>
+<td>消息 ID / 时间定位</td>
+<td>❌</td>
+<td>❌</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>多字段消息</td>
+<td>❌（要自己序列化）</td>
+<td>❌</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>延迟消息</td>
+<td>❌</td>
+<td>❌</td>
+<td>❌（要用 zset）</td>
+</tr>
+<tr>
+<td>消费进度可观测</td>
+<td>❌</td>
+<td>只有 <code>LLEN</code></td>
+<td>✅ <code>XINFO</code>（含 <code>lag</code>）</td>
+</tr>
+<tr>
+<td>死信队列</td>
+<td>❌</td>
+<td>需自己实现</td>
+<td>✅ 靠 <code>RetryCount</code> + 死信 stream</td>
+</tr>
+<tr>
+<td>实现复杂度</td>
+<td>最简单</td>
+<td>简单</td>
+<td>中等</td>
+</tr>
+</tbody>
+</table>
+<p><strong>结论</strong>：</p>
+<ul>
+<li><strong>Pub/Sub</strong>：只用于&quot;允许丢失的实时通知&quot;（配置更新、缓存失效、在线状态）；</li>
+<li><strong>List</strong>：极简的、允许丢失的任务队列，或&quot;最新 N 条&quot;场景；</li>
+<li><strong>Stream</strong>：<strong>做消息队列的唯一正确选择</strong>（5.0+）。</li>
+</ul>
+<h2 id="62-redis-stream-vs-kafka--rocketmq">6.2 Redis Stream vs Kafka / RocketMQ</h2>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>Redis Stream</th>
+<th>Kafka</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>存储介质</strong></td>
+<td><strong>内存</strong>（堆积就是内存成本）</td>
+<td><strong>磁盘顺序写</strong>（堆积几乎无成本）</td>
+</tr>
+<tr>
+<td><strong>存储上限</strong></td>
+<td>受内存限制（GB 级）</td>
+<td><strong>TB ~ PB 级</strong></td>
+</tr>
+<tr>
+<td><strong>消息保留</strong></td>
+<td>几小时~几天（内存扛不住更久）</td>
+<td><strong>几周~几个月甚至永久</strong></td>
+</tr>
+<tr>
+<td><strong>吞吐量</strong></td>
+<td>10 万级/秒（单节点）</td>
+<td><strong>百万级/秒</strong>（多分区并行）</td>
+</tr>
+<tr>
+<td><strong>延迟</strong></td>
+<td><strong>微秒~毫秒级（更低）</strong></td>
+<td>毫秒~十毫秒级</td>
+</tr>
+<tr>
+<td><strong>水平扩展</strong></td>
+<td>❌ 单 stream 在单节点，要自己分片</td>
+<td>✅ <strong>原生分区（partition）模型</strong></td>
+</tr>
+<tr>
+<td><strong>消息顺序</strong></td>
+<td>全局有序（单 stream）</td>
+<td>分区内有序</td>
+</tr>
+<tr>
+<td><strong>持久化保证</strong></td>
+<td>AOF everysec 可能丢 1 秒；异步复制会丢</td>
+<td><strong>ISR + acks=all 可保证不丢</strong></td>
+</tr>
+<tr>
+<td><strong>Exactly-Once</strong></td>
+<td>❌ 只有 At-Least-Once</td>
+<td>✅ 事务 + 幂等生产者</td>
+</tr>
+<tr>
+<td><strong>消费者组 rebalance</strong></td>
+<td>手动（<code>XAUTOCLAIM</code>）</td>
+<td>✅ 自动 rebalance</td>
+</tr>
+<tr>
+<td><strong>生态</strong></td>
+<td>简单</td>
+<td>Kafka Connect、Streams、Flink 集成、Schema Registry</td>
+</tr>
+<tr>
+<td><strong>运维成本</strong></td>
+<td><strong>低</strong>（已有 Redis 就不用加组件）</td>
+<td>高（ZK/KRaft + broker 集群）</td>
+</tr>
+<tr>
+<td><strong>适合场景</strong></td>
+<td>轻量任务队列、实时通知、缓冲削峰</td>
+<td>数据管道、日志收集、流处理、事件溯源</td>
+</tr>
+</tbody>
+</table>
+<h2 id="63-选型决策">6.3 选型决策</h2>
+<p><strong>选 Redis Stream</strong>：</p>
+<ul>
+<li>消息量中等（每天千万级以内），堆积可控（几百 MB 到几 GB）；</li>
+<li>消息生命周期短（几小时到几天）；</li>
+<li>已经在用 Redis，<strong>不想为了一个队列引入 Kafka 的运维成本</strong>；</li>
+<li>需要极低延迟（微秒级）；</li>
+<li>典型场景：异步任务（发短信/邮件）、订单状态流转、实时通知、削峰缓冲。</li>
+</ul>
+<p><strong>必须选 Kafka / RocketMQ</strong>：</p>
+<ul>
+<li>数据量 TB 级，需要长期保存和任意重放；</li>
+<li>需要百万级 TPS 和水平扩展（多分区并行消费）；</li>
+<li>需要<strong>严格的不丢消息保证</strong>（Redis 的 AOF + 异步复制做不到）；</li>
+<li>需要 Exactly-Once 语义、事务消息；</li>
+<li>需要流处理生态（Flink/Kafka Streams）；</li>
+<li>典型场景：用户行为日志、数据同步管道、大数据 ETL、金融交易流水。</li>
+</ul>
+<p><strong>一句话</strong>：<strong>Stream 是&quot;够用的轻量 MQ&quot;，不是 Kafka 的替代品。</strong> 用它的前提是接受&quot;数据在内存里&quot;这个根本约束。</p>
+<hr>
+<h1 id="7-高频面试题">7. 高频面试题</h1>
+<p><strong>Q1：Redis 的 Pub/Sub 有什么局限？为什么不能用它做消息队列？</strong></p>
+<p>六个致命局限：</p>
+<ol>
+<li><strong>消息不持久化，发出即忘</strong>：<code>PUBLISH</code> 时不在线的订阅者永久丢失消息，没有任何补偿机制。订阅者哪怕只断开 1 秒，这期间的消息全丢；</li>
+<li><strong>没有 ACK 机制</strong>：Redis 把消息 write 到 socket 就认为完成，订阅者处理失败或立刻崩溃，Redis 完全不知道，也不会重发；</li>
+<li><strong>没有消费组，无法负载均衡</strong>：Pub/Sub 是<strong>广播</strong>语义，一条消息推给所有订阅者。想让 3 个 worker 分摊任务会变成 3 个 worker 各处理一遍；</li>
+<li><strong>堆积会导致订阅者被断开</strong>：消费慢时消息堆在服务端该订阅者的输出缓冲区，超过 <code>client-output-buffer-limit pubsub 32mb 8mb 60</code> 就被强制断开，期间消息全丢；</li>
+<li><strong><code>PUBLISH</code> 占用主线程</strong>：要遍历所有订阅者逐个推送；模式订阅更糟——要遍历所有模式做 glob 匹配（O(N*M)）；</li>
+<li><strong>集群下广播放大</strong>（7.0 前）：为保证订阅者连任意节点都能收到，<code>PUBLISH</code> 会广播到所有节点，10 节点集群产生 10 倍流量。7.0 的分片 pub/sub（<code>SPUBLISH</code>/<code>SSUBSCRIBE</code>）解决了这点。</li>
+</ol>
+<p><strong>只适合&quot;允许丢消息&quot;的场景</strong>：配置热更新、缓存失效广播、实时监控推送、在线状态、分布式锁的释放通知（有超时兜底）。Redis Sentinel 内部通信也用它。</p>
+<p><strong>Q2：为什么订阅状态下不能执行其他命令？</strong></p>
+<p><strong>RESP2 协议</strong>下，服务端主动推送的消息和&quot;命令的回复&quot;用<strong>同一种编码</strong>（都是数组），客户端<strong>无法区分</strong>收到的数组是&quot;我上个命令的返回值&quot;还是&quot;服务端推来的消息&quot;。所以 Redis 强制订阅连接只能执行 <code>SUBSCRIBE</code>/<code>UNSUBSCRIBE</code>/<code>PSUBSCRIBE</code>/<code>PUNSUBSCRIBE</code>/<code>PING</code>/<code>QUIT</code>/<code>RESET</code>。</p>
+<p><strong>RESP3（6.0+）解除了这个限制</strong>：它引入了 <code>&gt;</code> 前缀的 <strong>Push 类型</strong>明确标识主动推送，客户端能区分，所以订阅连接可以同时执行普通命令（发 <code>HELLO 3</code> 协商）。</p>
+<p><strong>实践影响</strong>：RESP2 下客户端必须为订阅<strong>单独开连接</strong>，不能用连接池里的连接（否则那个连接就被占死了）。</p>
+<p><strong>Q3：能用 key 过期通知做延迟任务吗？</strong></p>
+<p><strong>能实现但生产环境绝对不能用</strong>，四个致命问题：</p>
+<ol>
+<li><strong>触发时机严重不准</strong>：Redis 的过期删除是<strong>惰性 + 定期</strong>的，<code>expired</code> 事件在 <strong>key 真正被删除时</strong>才发出，不是 TTL 到达的瞬间。如果这个 key 没人访问、定期删除的随机采样也没抽到它，事件可能延迟几秒、几分钟甚至更久；</li>
+<li><strong>消息会丢（致命）</strong>：<code>expired</code> 事件是通过 <strong>pub/sub</strong> 发送的，完全继承其缺陷——消费者不在线（重启/部署/网络抖动）→ 事件永久丢失 → <strong>任务永远不会执行</strong>；</li>
+<li><strong>广播导致重复消费</strong>：部署多个消费者实例做高可用时，它们都会收到同一个事件，任务被重复执行，还得额外加分布式锁去重；</li>
+<li><strong>主从环境的差异</strong>：事件在主节点产生，6.0 之前连在从节点的订阅者收不到。</li>
+</ol>
+<p><strong>正确做法</strong>：延迟任务用 <strong>zset + Lua + 租约机制</strong>（score 存执行时间戳）。对可靠性要求极高的（如订单超时关闭）应该<strong>双保险</strong>：Redis 延迟队列走快路径 + 数据库定时任务扫描兜底。</p>
+<p>另外：开启 <code>notify-keyspace-events &quot;KEA&quot;</code> 会让每个写命令额外产生 1~2 次 <code>PUBLISH</code>，高 QPS 下可能带来 <strong>10%~30% 的吞吐下降</strong>。生产只开真正需要的类型（如 <code>Ex</code>）。</p>
+<p><strong>Q4：用 list 做消息队列有什么问题？</strong></p>
+<p><strong>方案演进与问题</strong>：</p>
+<ol>
+<li><strong><code>LPUSH</code> + <code>RPOP</code> 轮询</strong>：睡眠间隔难权衡——睡久了延迟高，睡短了大量空请求浪费资源；</li>
+<li><strong><code>BRPOP</code> 阻塞</strong>：解决了轮询问题，但<strong>消息会丢</strong>——<code>BRPOP</code> 拿到消息时它已从 list 删除，消费者处理中崩溃则消息永久丢失；</li>
+<li><strong><code>BRPOPLPUSH</code>/<code>BLMOVE</code> 可靠队列</strong>：取出的同时放进&quot;处理中&quot;队列，处理完 <code>LREM</code> 删除。但根本缺陷是：
+<ul>
+<li><strong>list 元素没有时间信息</strong>，无法知道消息在 processing 里待了多久，看门狗进程没法判断超时；</li>
+<li><code>LREM</code> 是 <strong>O(N)</strong>，processing 长时性能差；</li>
+<li>不知道是哪个消费者在处理，排查困难。</li>
+</ul>
+</li>
+</ol>
+<p><strong>list 的固有缺陷（无法通过技巧绕过）</strong>：</p>
+<ul>
+<li><strong>无消费组</strong>：一条消息只能被一个消费者拿到，多个业务系统各自完整消费一遍做不到；</li>
+<li><strong>无法回溯重放</strong>：弹出即删除，事故后想重放不可能；</li>
+<li><strong>无消费进度可观测</strong>：只能 <code>LLEN</code> 看总积压，不知道每个消费者的状态；</li>
+<li><strong>阻塞消费者独占连接</strong>；</li>
+<li><strong>无延迟、无优先级</strong>（<code>BRPOP q1 q2 q3</code> 只能做粗粒度的三档优先级）。</li>
+</ul>
+<p><strong>结论：Redis &gt;= 5.0 做消息队列请直接用 Stream。</strong></p>
+<p><strong>Q5：Stream 的 PEL 是什么？消息不 ACK 会怎样？</strong></p>
+<p><strong>PEL（Pending Entries List）</strong> 是<strong>每个消费组</strong>维护的&quot;已投递但未确认&quot;消息列表，记录每条消息的：ID、当前归属的消费者、最后投递时间、<strong>投递次数（RetryCount）</strong>。</p>
+<p>消息不 <code>XACK</code> 的后果：</p>
+<ol>
+<li><strong>永远留在 PEL 里</strong>，<code>XPENDING</code> 数量持续增长；</li>
+<li><strong>不会自动重投</strong>——必须有人主动 <code>XCLAIM</code>/<code>XAUTOCLAIM</code>（按 <code>min-idle-time</code> 筛超时的），或者该消费者用 <code>XREADGROUP ... STREAMS key 0</code> 重新拉自己的 PEL；</li>
+<li><strong>消息本体也不能被安全裁剪</strong>（虽然 <code>XTRIM</code> 会无条件删，但那就丢消息了）。</li>
+</ol>
+<p><strong>所以生产上必须有两个机制</strong>：</p>
+<ol>
+<li><strong>巡检任务周期性执行 <code>XAUTOCLAIM</code></strong>，认领崩溃消费者卡住的消息；</li>
+<li><strong>死信处理</strong>：<code>RetryCount</code> 超过阈值（如 5）的消息，说明是毒消息（数据格式错误、关联数据被删），要<strong>转存到死信 stream 并 <code>XACK</code> 掉</strong>，否则会被无限重投，浪费资源。</li>
+</ol>
+<p><strong>Q6：Stream 消费者重启后，之前未处理完的消息怎么办？</strong></p>
+<p>必须<strong>主动去读自己的 PEL</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># &#34;&gt;&#34; 只给&#34;从未投递过&#34;的新消息，读不到 PEL 里的</span>
+</span></span><span class="line"><span class="cl">XREADGROUP GROUP g1 consumer1 STREAMS orders &gt;
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 用 &#34;0&#34;（或具体 ID）才能读到&#34;已投递给我但未 ACK&#34;的消息</span>
+</span></span><span class="line"><span class="cl">XREADGROUP GROUP g1 consumer1 STREAMS orders <span class="m">0</span>
+</span></span></code></pre></div><p><strong>标准的消费者启动流程</strong>：</p>
+<pre tabindex="0"><code>1. XGROUP CREATE ... MKSTREAM（忽略 BUSYGROUP 错误）
+2. 【崩溃恢复】用 STREAMS key 0 循环读自己的 PEL，处理并 ACK，直到返回空
+3. 启动 XAUTOCLAIM 巡检协程（认领其他消费者卡住的消息）
+4. 进入正常消费循环：STREAMS key &gt; + BLOCK
+</code></pre><p><strong>这也是&quot;消费者名字必须稳定&quot;的原因</strong>：如果每次重启用随机名（UUID），旧名字的 PEL 就成了孤儿——那个消费者永远不会回来读它，只能等 <code>XAUTOCLAIM</code> 兜底（延迟至少 <code>MinIdle</code>），而且 <code>XINFO CONSUMERS</code> 会堆积僵尸消费者。推荐用 K8s StatefulSet 的 pod 名（<code>worker-0</code>、<code>worker-1</code>）这种稳定标识。</p>
+<p><strong>Q7：<code>XAUTOCLAIM</code> 的 <code>min-idle-time</code> 怎么设？设错了会怎样？</strong></p>
+<p><strong>必须大于&quot;单条消息的最大处理时间&quot;</strong>。</p>
+<p>如果消息处理需要 30 秒，而 <code>min-idle-time</code> 设成 10 秒：消费者 A 正在处理消息（已经 15 秒），巡检发现它&quot;空闲超过 10 秒&quot;就把消息认领给了消费者 B → <strong>同一条消息被两个消费者同时处理</strong> → 重复消费（如果业务不幂等就出问题）。</p>
+<p><strong>建议：<code>min-idle-time = 最大处理时间 × 2~3</code></strong>。</p>
+<p>同时业务处理逻辑应该<strong>做幂等</strong>（用消息 ID 做去重键），因为 Stream 只提供 <strong>At-Least-Once</strong> 语义，重复投递在异常情况下总是可能发生的。</p>
+<p><strong>Q8：Stream 会无限增长吗？怎么控制？</strong></p>
+<p>会。Stream 是 append-only 的，不裁剪会一直涨到打爆内存。</p>
+<p><strong>控制手段</strong>：</p>
+<ol>
+<li><strong><code>XADD</code> 时带裁剪（推荐）</strong>：<code>XADD s MAXLEN ~ 100000 * f v</code> 或 <code>MINID ~ &lt;时间戳&gt;</code>；</li>
+<li><strong>用 <code>~</code>（近似裁剪）而不是 <code>=</code>（精确裁剪）</strong>：近似裁剪只在能<strong>整个删掉一个 listpack 节点</strong>时才删（O(1) 摊还），精确裁剪要逐条删可能 O(N) 阻塞主线程；</li>
+<li><strong>定期 <code>XTRIM</code></strong>：<code>XTRIM s MINID ~ &lt;7天前时间戳&gt;</code>。</li>
+</ol>
+<p><strong>两个危险点</strong>：</p>
+<ol>
+<li><strong><code>XDEL</code> 不释放内存</strong>：只是给 listpack 条目打删除标记，<code>XLEN</code> 减少但内存不降，真正回收靠 <code>XTRIM</code>；</li>
+<li><strong>裁剪会无条件删掉未消费的消息</strong>！<code>XTRIM MAXLEN 1000</code> 不管这些消息是否还在某个消费组的 PEL 里或者尚未投递。所以<strong>阈值必须远大于最大可能的 lag</strong>，并且要监控 <code>XINFO GROUPS</code> 的 <code>lag</code>。</li>
+</ol>
+<p><strong>Q9：Redis Stream 和 Kafka 的本质区别是什么？什么时候必须用 Kafka？</strong></p>
+<p><strong>最本质的区别：存储介质。Stream 数据在内存，Kafka 在磁盘（顺序写）。</strong></p>
+<p>这一点决定了几乎所有其他差异：</p>
+<ul>
+<li><strong>堆积成本</strong>：Stream 堆积 100GB 就要 100GB 内存（不可行）；Kafka 堆积 100GB 只是磁盘（很便宜）；</li>
+<li><strong>保留时长</strong>：Stream 只能几小时到几天；Kafka 可以几周到几个月；</li>
+<li><strong>扩展性</strong>：<strong>Stream 是单个 key，整个 stream 在一个节点上，无法像 Kafka 那样用 partition 并行</strong>。要提高吞吐只能自己分片（<code>stream:orders:0/1/2</code>），但会丢失全局顺序，且 rebalance 要自己实现。</li>
+</ul>
+<p><strong>其他关键差异</strong>：</p>
+<ul>
+<li><strong>持久化保证</strong>：Kafka 的 <code>acks=all</code> + ISR 能保证不丢；Redis 的 AOF everysec 可能丢 1 秒，且<strong>异步主从复制在主节点宕机时会丢</strong>；</li>
+<li><strong>语义</strong>：Stream 只有 At-Least-Once；Kafka 有事务 + 幂等生产者支持 Exactly-Once；</li>
+<li><strong>Rebalance</strong>：Kafka 自动；Stream 要靠 <code>XAUTOCLAIM</code> 手动实现；</li>
+<li><strong>生态</strong>：Kafka 有 Connect、Streams、Flink 集成、Schema Registry。</li>
+</ul>
+<p><strong>必须用 Kafka 的场景</strong>：TB 级数据量、需要长期保存和任意重放、百万级 TPS、严格不丢消息、Exactly-Once、流处理生态。</p>
+<p><strong>Stream 的优势</strong>：延迟更低（微秒级）、<strong>运维成本低</strong>（已有 Redis 不用加组件）、实现简单。</p>
+<p><strong>Q10：用 zset 实现延迟队列有哪些坑？</strong></p>
+<p><strong>坑一：必须用 Lua 保证&quot;查询 + 删除&quot;原子</strong>，否则多个消费者会重复消费：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-lua" data-lang="lua"><span class="line"><span class="cl"><span class="kd">local</span> <span class="n">tasks</span> <span class="o">=</span> <span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;ZRANGEBYSCORE&#39;</span><span class="p">,</span> <span class="n">KEYS</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="mi">0</span><span class="p">,</span> <span class="n">ARGV</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="s1">&#39;LIMIT&#39;</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">ARGV</span><span class="p">[</span><span class="mi">2</span><span class="p">])</span>
+</span></span><span class="line"><span class="cl"><span class="kr">if</span> <span class="o">#</span><span class="n">tasks</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="kr">then</span> <span class="n">redis.call</span><span class="p">(</span><span class="s1">&#39;ZREM&#39;</span><span class="p">,</span> <span class="n">KEYS</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="n">unpack</span><span class="p">(</span><span class="n">tasks</span><span class="p">))</span> <span class="kr">end</span>
+</span></span><span class="line"><span class="cl"><span class="kr">return</span> <span class="n">tasks</span>
+</span></span></code></pre></div><p>（注意 <code>unpack</code> 有约 8000 个参数的栈限制，<code>LIMIT</code> 要控制在几百内。）</p>
+<p><strong>坑二：取出即删除，消费者崩溃则任务丢失</strong>。改进：<strong>租约机制</strong>——取出时不删除，而是把 score 改成&quot;当前时间 + 处理超时&quot;，处理成功后再 <code>ZREM</code> 确认。这样超时未确认的任务会自动重新变成&quot;到期&quot;被别人取走。</p>
+<p><strong>坑三：member 唯一导致无法重复投递相同内容的任务</strong>——第二次 <code>ZADD</code> 相同 payload 只会更新 score。解决：给 payload 加唯一 ID。</p>
+<p><strong>坑四：轮询延迟 + 空轮询浪费</strong>。改进：用 <code>ZRANGE key 0 0 WITHSCORES</code> 看最近任务的到期时间，动态调整睡眠时长（但要能被新任务打断）。</p>
+<p><strong>坑五：所有任务在一个 zset 里形成大 key</strong>。改进：<strong>按时间分片</strong>（<code>delay:queue:2026072913</code> 按小时分，消费者同时轮询当前和上一小时）或按业务类型分 key。</p>
+<p><strong>Q11：<code>notify-keyspace-events</code> 的 K 和 E 有什么区别？</strong></p>
+<p>两种通知的<strong>频道和内容正好互换</strong>：</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>频道格式</th>
+<th>消息内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>K</strong>（Keyspace）</td>
+<td><code>__keyspace@&lt;db&gt;__:&lt;key&gt;</code></td>
+<td><strong>事件名</strong>（如 <code>set</code>、<code>expired</code>）</td>
+</tr>
+<tr>
+<td><strong>E</strong>（Keyevent）</td>
+<td><code>__keyevent@&lt;db&gt;__:&lt;event&gt;</code></td>
+<td><strong>key 名</strong></td>
+</tr>
+</tbody>
+</table>
+<p>执行 <code>SET foo bar</code> 且开启 <code>KEA</code> 时，会收到两条通知：</p>
+<pre tabindex="0"><code>频道 __keyspace@0__:foo    内容 &#34;set&#34;
+频道 __keyevent@0__:set    内容 &#34;foo&#34;
+</code></pre><p><strong>怎么选</strong>：</p>
+<ul>
+<li>关心<strong>某个特定 key</strong> 的所有变化 → 用 <strong>K</strong>：<code>SUBSCRIBE __keyspace@0__:mykey</code>；</li>
+<li>关心<strong>某类事件</strong>发生在哪些 key 上 → 用 <strong>E</strong>：<code>SUBSCRIBE __keyevent@0__:expired</code>（最常见）。</li>
+</ul>
+<p>必须至少包含 <code>K</code> 或 <code>E</code> 之一，否则不发任何通知。<code>A</code> 是 <code>g$lshzxetd</code> 的别名（<strong>不含 <code>m</code> key-miss 和 <code>n</code> new-key</strong>）。</p>
+<p><strong>Q12：7.0 的分片 pub/sub 解决了什么问题？</strong></p>
+<p><strong>问题</strong>：Redis Cluster 中，为了保证&quot;订阅者连在任意节点都能收到消息&quot;，7.0 之前的 <code>PUBLISH</code> 会<strong>广播到集群里所有节点</strong>（通过集群总线）。</p>
+<p>后果：一条消息在 10 节点集群里产生 <strong>10 倍的内部网络流量</strong>。高频 pub/sub 场景下集群总线可能被打满，影响正常的 gossip 通信和数据请求。</p>
+<p><strong>7.0 的分片 pub/sub（<code>SSUBSCRIBE</code>/<code>SPUBLISH</code>/<code>SUNSUBSCRIBE</code>）</strong>：</p>
+<ul>
+<li>分片频道名按 <strong>CRC16 算 slot</strong>（和普通 key 一样，也支持 hash tag）；</li>
+<li>消息只在<strong>负责该 slot 的主节点及其从节点</strong>之间传播，<strong>不再全集群广播</strong>；</li>
+<li>代价：<strong>订阅者必须连到正确的节点</strong>，客户端要处理 <code>MOVED</code> 重定向（客户端库需要支持）。</li>
+</ul>
+<p>配套的查询命令：<code>PUBSUB SHARDCHANNELS</code>、<code>PUBSUB SHARDNUMSUB</code>。</p>
+<hr>
+<h1 id="小结">小结</h1>
+<ul>
+<li><strong>Pub/Sub 是&quot;即时无状态转发&quot;</strong>：<code>PUBLISH</code> 推给当前在线的订阅者后就丢弃消息。<strong>不持久化、无 ACK、无消费组、堆积会断连、<code>PUBLISH</code> 占主线程、集群下 7.0 前全量广播</strong>。</li>
+<li>Pub/Sub 只能用于<strong>允许丢消息</strong>的场景：配置热更新、缓存失效广播、监控推送、在线状态、锁释放通知（有超时兜底）。<strong>7.0 的 <code>SPUBLISH</code>/<code>SSUBSCRIBE</code> 分片 pub/sub</strong> 解决了集群广播放大问题。</li>
+<li><strong>RESP2 下订阅连接不能执行普通命令</strong>（客户端无法区分推送和回复），必须单独开连接；<strong>RESP3 的 <code>&gt;</code> Push 类型解除了这个限制</strong>。</li>
+<li><strong>键空间通知</strong>：<code>K</code>（频道带 key，内容是事件名）和 <code>E</code>（频道带事件名，内容是 key）；<code>notify-keyspace-events &quot;Ex&quot;</code> 最常用。<strong>但不能用过期通知做延迟任务</strong>——触发时机不准（惰性+定期删除）、消息会丢（走 pub/sub）、广播导致重复消费。开 <code>KEA</code> 有 10%~30% 吞吐损失。</li>
+<li><strong>list 做队列的演进</strong>：<code>RPOP</code> 轮询（延迟/浪费）→ <code>BRPOP</code>（会丢消息）→ <code>BRPOPLPUSH</code> 可靠队列（<strong>但 list 元素没时间信息，看门狗无法判断超时；<code>LREM</code> 是 O(N)</strong>）。固有缺陷：<strong>无消费组、无回溯、无进度观测、独占连接、无延迟无优先级</strong>。</li>
+<li><strong>Stream 是做 MQ 的唯一正确选择</strong>（5.0+）。生产者必须带 <strong><code>MAXLEN ~</code></strong> 裁剪（用近似裁剪，且阈值远大于 lag）；消费者三件事：<strong>启动时用 <code>STREAMS key 0</code> 恢复自己的 PEL</strong>、正常消费用 <code>&gt;</code> + <code>BLOCK</code>、<strong>巡检 <code>XAUTOCLAIM</code></strong> 认领超时消息 + <strong>死信处理</strong>（RetryCount &gt; 阈值则转死信并 ACK）。</li>
+<li><strong>消费者名字必须稳定唯一</strong>（用 pod 名而非 UUID），否则 PEL 变孤儿、僵尸消费者堆积。<strong><code>XAUTOCLAIM</code> 的 <code>min-idle-time</code> 必须 &gt; 最大处理时间 × 2~3</strong>，否则造成重复消费。</li>
+<li><strong>监控 <code>XINFO GROUPS</code> 的 <code>lag</code>（消费滞后）和 <code>pending</code>（未确认数）</strong>、<code>XPENDING</code> 的投递次数、消费者 <code>idle</code>。</li>
+<li><strong><code>XDEL</code> 不释放内存</strong>（只打标记），<strong><code>XTRIM</code> 会无条件删除未消费的消息</strong>。</li>
+<li><strong>Stream vs Kafka 的本质区别是存储介质（内存 vs 磁盘）</strong>，由此决定了堆积成本、保留时长、扩展性（<strong>Stream 是单 key 在单节点，无 partition 并行</strong>）。Stream 是&quot;够用的轻量 MQ&quot;，TB 级数据量/长期重放/百万 TPS/Exactly-Once/严格不丢 必须上 Kafka。</li>
+<li><strong>延迟队列用 zset + Lua + 租约 + 时间分片</strong>；高可靠场景要用&quot;Redis 快路径 + 数据库定时任务兜底&quot;的双保险。</li>
+</ul>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2025-11-01</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/redis/">redis</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/redis/redis_10_%E4%B8%BB%E4%BB%8E%E5%A4%8D%E5%88%B6%E5%8E%9F%E7%90%86/" class="prev" rel="prev" title="Redis-10 主从复制原理"><i class="fas fa-angle-left fa-fw"></i>Redis-10 主从复制原理</a>
+            <a href="/posts/redis/redis_08_%E4%BA%8B%E5%8A%A1_Lua%E8%84%9A%E6%9C%AC%E4%B8%8EPipeline/" class="next" rel="next" title="Redis-08 事务、Lua 脚本与 Pipeline">Redis-08 事务、Lua 脚本与 Pipeline<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2025-11-01T12:30:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Redis-09 发布订阅与消息队列"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

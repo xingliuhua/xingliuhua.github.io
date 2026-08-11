@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>Nginx-03 进程模型与事件驱动原理 - xingliuhua博客</title><meta name="Description" content="master-worker 多进程模型、epoll 事件驱动、惊群问题与 accept_mutex/SO_REUSEPORT、内存池、连接池，以及 reload/热升级的底层机制"><meta property="og:title" content="Nginx-03 进程模型与事件驱动原理" />
+<meta property="og:description" content="master-worker 多进程模型、epoll 事件驱动、惊群问题与 accept_mutex/SO_REUSEPORT、内存池、连接池，以及 reload/热升级的底层机制" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/nginx/nginx_03_%E8%BF%9B%E7%A8%8B%E6%A8%A1%E5%9E%8B%E4%B8%8E%E4%BA%8B%E4%BB%B6%E9%A9%B1%E5%8A%A8%E5%8E%9F%E7%90%86/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2026-08-03T22:00:00+08:00" />
+<meta property="article:modified_time" content="2026-08-03T22:00:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="Nginx-03 进程模型与事件驱动原理"/>
+<meta name="twitter:description" content="master-worker 多进程模型、epoll 事件驱动、惊群问题与 accept_mutex/SO_REUSEPORT、内存池、连接池，以及 reload/热升级的底层机制"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/nginx/nginx_03_%E8%BF%9B%E7%A8%8B%E6%A8%A1%E5%9E%8B%E4%B8%8E%E4%BA%8B%E4%BB%B6%E9%A9%B1%E5%8A%A8%E5%8E%9F%E7%90%86/" /><link rel="prev" href="https://xingliuhua.github.io/posts/nginx/nginx_04_%E8%AF%B7%E6%B1%82%E5%A4%84%E7%90%86%E6%B5%81%E7%A8%8B%E4%B8%8E11%E4%B8%AA%E9%98%B6%E6%AE%B5/" /><link rel="next" href="https://xingliuhua.github.io/posts/nginx/nginx_02_%E9%85%8D%E7%BD%AE%E6%96%87%E4%BB%B6%E7%BB%93%E6%9E%84%E4%B8%8E%E6%A0%B8%E5%BF%83%E6%8C%87%E4%BB%A4/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Nginx-03 进程模型与事件驱动原理",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/nginx\/nginx_03_%E8%BF%9B%E7%A8%8B%E6%A8%A1%E5%9E%8B%E4%B8%8E%E4%BA%8B%E4%BB%B6%E9%A9%B1%E5%8A%A8%E5%8E%9F%E7%90%86\/"
+        },"genre": "posts","keywords": "nginx","wordcount":  6429 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/nginx\/nginx_03_%E8%BF%9B%E7%A8%8B%E6%A8%A1%E5%9E%8B%E4%B8%8E%E4%BA%8B%E4%BB%B6%E9%A9%B1%E5%8A%A8%E5%8E%9F%E7%90%86\/","datePublished": "2026-08-03T22:00:00+08:00","dateModified": "2026-08-03T22:00:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "master-worker 多进程模型、epoll 事件驱动、惊群问题与 accept_mutex/SO_REUSEPORT、内存池、连接池，以及 reload/热升级的底层机制"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">Nginx-03 进程模型与事件驱动原理</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2026-08-03">2026-08-03</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 6429 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 13 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-master-worker-多进程模型">1. master-worker 多进程模型</a>
+      <ol>
+        <li><a href="#11-各进程的分工">1.1 各进程的分工</a></li>
+        <li><a href="#12-为什么用多进程而不是多线程">1.2 为什么用多进程而不是多线程</a></li>
+        <li><a href="#13-端口是怎么共享的">1.3 端口是怎么共享的</a></li>
+      </ol>
+    </li>
+    <li><a href="#2-事件驱动与-epoll">2. 事件驱动与 epoll</a>
+      <ol>
+        <li><a href="#21-从阻塞模型说起">2.1 从阻塞模型说起</a></li>
+        <li><a href="#22-nginx-的做法">2.2 Nginx 的做法</a></li>
+        <li><a href="#23-select--poll--epoll-对比">2.3 select / poll / epoll 对比</a></li>
+        <li><a href="#24-lt-与-et">2.4 LT 与 ET</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-惊群问题">3. 惊群问题</a>
+      <ol>
+        <li><a href="#31-问题描述">3.1 问题描述</a></li>
+        <li><a href="#32-方案一accept_mutex老方案">3.2 方案一：accept_mutex（老方案）</a></li>
+        <li><a href="#33-方案二epollexclusivelinux-45">3.3 方案二：EPOLLEXCLUSIVE（Linux 4.5+）</a></li>
+        <li><a href="#34-方案三so_reuseport推荐">3.4 方案三：SO_REUSEPORT（推荐）</a></li>
+      </ol>
+    </li>
+    <li><a href="#4-惊群相关的完整配置对照">4. 惊群相关的完整配置对照</a></li>
+    <li><a href="#5-内存池">5. 内存池</a>
+      <ol>
+        <li><a href="#51-设计思路">5.1 设计思路</a></li>
+        <li><a href="#52-三种生命周期的池">5.2 三种生命周期的池</a></li>
+        <li><a href="#53-池还支持清理回调">5.3 池还支持清理回调</a></li>
+      </ol>
+    </li>
+    <li><a href="#6-连接池与-ngx_connection_t">6. 连接池与 ngx_connection_t</a></li>
+    <li><a href="#7-reload-的完整流程">7. reload 的完整流程</a></li>
+    <li><a href="#8-平滑升级的完整流程">8. 平滑升级的完整流程</a></li>
+    <li><a href="#9-阻塞操作nginx-的软肋与线程池">9. 阻塞操作：Nginx 的软肋与线程池</a>
+      <ol>
+        <li><a href="#91-线程池">9.1 线程池</a></li>
+        <li><a href="#92-dns-解析阻塞">9.2 DNS 解析阻塞</a></li>
+      </ol>
+    </li>
+    <li><a href="#10-性能数字感">10. 性能数字感</a></li>
+    <li><a href="#11-面试题">11. 面试题</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><blockquote>
+<p>前置阅读：<a href="../nginx_02_%e9%85%8d%e7%bd%ae%e6%96%87%e4%bb%b6%e7%bb%93%e6%9e%84%e4%b8%8e%e6%a0%b8%e5%bf%83%e6%8c%87%e4%bb%a4/" rel="">Nginx-02 配置文件结构与核心指令</a>、<a href="../../network/network_20_Socket%e7%bc%96%e7%a8%8b%e4%b8%8eIO%e6%a8%a1%e5%9e%8b/" rel="">网络-20 Socket 编程与 IO 模型</a></p>
+</blockquote>
+<p>这一篇是整个系列的原理核心，也是面试被问得最深的部分。搞懂了「Nginx 为什么快」，很多配置项存在的意义自然就明白了。</p>
+<h1 id="1-master-worker-多进程模型">1. master-worker 多进程模型</h1>
+<p><img
+        class="lazyload"
+        src="/svg/loading.min.svg"
+        data-src="./nginx%e5%a4%9a%e8%bf%9b%e7%a8%8b%e6%a8%a1%e5%9e%8b.png"
+        data-srcset="./nginx%e5%a4%9a%e8%bf%9b%e7%a8%8b%e6%a8%a1%e5%9e%8b.png, ./nginx%e5%a4%9a%e8%bf%9b%e7%a8%8b%e6%a8%a1%e5%9e%8b.png 1.5x, ./nginx%e5%a4%9a%e8%bf%9b%e7%a8%8b%e6%a8%a1%e5%9e%8b.png 2x"
+        data-sizes="auto"
+        alt="./nginx多进程模型.png"
+        title="nginx 多进程模型" /></p>
+<p>启动后的进程长这样：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">$ ps -ef <span class="p">|</span> grep nginx
+</span></span><span class="line"><span class="cl">root      <span class="m">1234</span>     <span class="m">1</span>  <span class="m">0</span> 10:00 ?  00:00:00 nginx: master process /usr/sbin/nginx
+</span></span><span class="line"><span class="cl">nginx     <span class="m">1235</span>  <span class="m">1234</span>  <span class="m">0</span> 10:00 ?  00:00:03 nginx: worker process
+</span></span><span class="line"><span class="cl">nginx     <span class="m">1236</span>  <span class="m">1234</span>  <span class="m">0</span> 10:00 ?  00:00:03 nginx: worker process
+</span></span><span class="line"><span class="cl">nginx     <span class="m">1237</span>  <span class="m">1234</span>  <span class="m">0</span> 10:00 ?  00:00:00 nginx: cache manager process
+</span></span><span class="line"><span class="cl">nginx     <span class="m">1238</span>  <span class="m">1234</span>  <span class="m">0</span> 10:00 ?  00:00:00 nginx: cache loader process
+</span></span></code></pre></div><h2 id="11-各进程的分工">1.1 各进程的分工</h2>
+<p><strong>master 进程</strong>（root 权限，不处理任何请求）：</p>
+<ul>
+<li>读取和校验配置文件</li>
+<li>创建、绑定、监听 socket（<code>socket</code> → <code>bind</code> → <code>listen</code>）</li>
+<li>fork worker 进程，并把 listen fd 继承给它们</li>
+<li>监控 worker 状态，异常退出时自动重新拉起</li>
+<li>接收信号（<code>HUP</code>/<code>USR2</code>/<code>QUIT</code>…）并转发给 worker</li>
+<li>平滑升级时管理新旧二进制的交接</li>
+</ul>
+<p><strong>worker 进程</strong>（低权限，实际干活）：</p>
+<ul>
+<li>从 listen fd 上 <code>accept</code> 连接</li>
+<li>用 epoll 事件循环处理所有连接的读写</li>
+<li>执行 HTTP 请求处理的完整流程（第 04 篇讲）</li>
+<li><strong>互相独立、不共享数据</strong>（除了共享内存 zone），一个崩了不影响其他</li>
+</ul>
+<p><strong>cache manager</strong>：定期检查缓存目录，按 <code>max_size</code> 和 <code>inactive</code> 淘汰过期缓存文件。</p>
+<p><strong>cache loader</strong>：Nginx 启动后运行一次，把磁盘上已有的缓存文件元信息载入共享内存，加载完就退出。</p>
+<h2 id="12-为什么用多进程而不是多线程">1.2 为什么用多进程而不是多线程</h2>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>多进程</th>
+<th>多线程</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>隔离性</td>
+<td>一个 worker 崩溃不影响其他，master 会重启它</td>
+<td>一个线程崩溃整个进程挂掉</td>
+</tr>
+<tr>
+<td>数据竞争</td>
+<td>天然隔离，无需加锁</td>
+<td>共享地址空间，处处要考虑锁</td>
+</tr>
+<tr>
+<td>编程复杂度</td>
+<td>简单</td>
+<td>高</td>
+</tr>
+<tr>
+<td>上下文切换</td>
+<td>略贵一点</td>
+<td>便宜</td>
+</tr>
+<tr>
+<td>内存占用</td>
+<td>略高（但有 COW）</td>
+<td>低</td>
+</tr>
+</tbody>
+</table>
+<p>Nginx 选多进程是<strong>用一点内存换来了极高的稳定性和实现简洁性</strong>。而且 worker 数量固定（= CPU 核数），进程切换本来就极少发生，那点开销无所谓。</p>
+<p>关键在于：<strong>worker 内部是单线程的事件循环，完全没有锁</strong>。这一点是性能的基石——高并发下锁竞争往往比 I/O 本身更致命。</p>
+<h2 id="13-端口是怎么共享的">1.3 端口是怎么共享的</h2>
+<p>面试常问：「多个 worker 怎么监听同一个 80 端口？」</p>
+<p>答案是：<strong>只 listen 了一次，是 master 干的</strong>。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">master:
+</span></span><span class="line"><span class="cl">    fd = socket()
+</span></span><span class="line"><span class="cl">    bind(fd, 0.0.0.0:80)
+</span></span><span class="line"><span class="cl">    listen(fd)
+</span></span><span class="line"><span class="cl">    ↓ fork()
+</span></span><span class="line"><span class="cl">worker1 继承 fd    worker2 继承 fd    worker3 继承 fd
+</span></span></code></pre></div><p><code>fork</code> 时子进程会复制父进程的文件描述符表，所以所有 worker 拿到的是<strong>指向同一个内核 socket 对象的 fd</strong>。它们各自在这个 fd 上调 <code>accept</code>，由内核决定把新连接给谁。这也直接引出了惊群问题。</p>
+<h1 id="2-事件驱动与-epoll">2. 事件驱动与 epoll</h1>
+<h2 id="21-从阻塞模型说起">2.1 从阻塞模型说起</h2>
+<p>传统的「一连接一线程」模型：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="k">while</span> <span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="n">conn</span> <span class="o">=</span> <span class="n">accept</span><span class="p">(</span><span class="n">listen_fd</span><span class="p">);</span>        <span class="c1">// 阻塞
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">pthread_create</span><span class="p">(</span><span class="n">handle</span><span class="p">,</span> <span class="n">conn</span><span class="p">);</span>    <span class="c1">// 每个连接一个线程
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="c1">// handle 里：read() 阻塞 → 处理 → write() 阻塞
+</span></span></span></code></pre></div><p>一万个连接就是一万个线程。每个线程默认 8MB 栈（即使实际用不了那么多，虚拟内存也要占），加上内核调度器要在一万个线程间切换——这就是 C10K 问题。</p>
+<h2 id="22-nginx-的做法">2.2 Nginx 的做法</h2>
+<p>一个 worker，一个线程，一个 epoll 实例，管所有连接：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="c1">// 简化后的 worker 主循环（ngx_worker_process_cycle → ngx_process_events_and_timers）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">for</span> <span class="p">(;;)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="n">timer</span> <span class="o">=</span> <span class="n">ngx_event_find_timer</span><span class="p">();</span>          <span class="c1">// 算出最近的定时器超时时间
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">events</span> <span class="o">=</span> <span class="n">epoll_wait</span><span class="p">(</span><span class="n">epfd</span><span class="p">,</span> <span class="n">evlist</span><span class="p">,</span> <span class="n">n</span><span class="p">,</span> <span class="n">timer</span><span class="p">);</span>   <span class="c1">// 唯一会「阻塞」的地方
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl">    <span class="k">for</span> <span class="p">(</span><span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">events</span><span class="p">;</span> <span class="n">i</span><span class="o">++</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="n">ev</span> <span class="o">=</span> <span class="n">evlist</span><span class="p">[</span><span class="n">i</span><span class="p">].</span><span class="n">data</span><span class="p">.</span><span class="n">ptr</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="p">(</span><span class="n">evlist</span><span class="p">[</span><span class="n">i</span><span class="p">].</span><span class="n">events</span> <span class="o">&amp;</span> <span class="n">EPOLLIN</span><span class="p">)</span>  <span class="n">ev</span><span class="o">-&gt;</span><span class="n">read_handler</span><span class="p">(</span><span class="n">ev</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="p">(</span><span class="n">evlist</span><span class="p">[</span><span class="n">i</span><span class="p">].</span><span class="n">events</span> <span class="o">&amp;</span> <span class="n">EPOLLOUT</span><span class="p">)</span> <span class="n">ev</span><span class="o">-&gt;</span><span class="n">write_handler</span><span class="p">(</span><span class="n">ev</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="n">ngx_event_expire_timers</span><span class="p">();</span>               <span class="c1">// 处理超时的连接
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">ngx_event_process_posted</span><span class="p">();</span>              <span class="c1">// 处理延后队列
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span></code></pre></div><p>核心思想：<strong>永远不阻塞在单个连接上</strong>。所有 socket 设成非阻塞，<code>read</code> 返回 <code>EAGAIN</code> 就立刻返回事件循环去处理别的连接，等 epoll 通知这个 socket 可读了再回来接着读。</p>
+<p>一个 HTTP 请求在 Nginx 里被拆成了一串状态机：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">连接可读 → 读请求行 → (EAGAIN，让出) → 读请求头 → 匹配 location
+</span></span><span class="line"><span class="cl">  → 连上游 → (等待，让出) → 上游可读 → 读上游响应 → 写给客户端
+</span></span><span class="line"><span class="cl">  → (写缓冲满，EAGAIN，让出) → 客户端可写 → 继续写 → 完成
+</span></span></code></pre></div><p>每一个「让出」的时刻，这个 worker 都在处理别的连接。所以一个 worker 能同时「进行中」几万个请求，但任意瞬间只在做一件事。</p>
+<h2 id="23-select--poll--epoll-对比">2.3 select / poll / epoll 对比</h2>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>select</th>
+<th>poll</th>
+<th>epoll</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>fd 数量上限</td>
+<td>1024（<code>FD_SETSIZE</code>）</td>
+<td>无硬上限</td>
+<td>无硬上限</td>
+</tr>
+<tr>
+<td>数据结构</td>
+<td>位图</td>
+<td>数组</td>
+<td>内核红黑树 + 就绪链表</td>
+</tr>
+<tr>
+<td>每次调用是否传全量 fd</td>
+<td>是</td>
+<td>是</td>
+<td>否，<code>epoll_ctl</code> 增量注册</td>
+</tr>
+<tr>
+<td>内核查找就绪 fd</td>
+<td>O(n) 遍历</td>
+<td>O(n) 遍历</td>
+<td>O(1)，回调直接挂就绪链表</td>
+</tr>
+<tr>
+<td>返回后用户态查找</td>
+<td>O(n) 遍历所有 fd</td>
+<td>O(n)</td>
+<td>O(m)，m = 就绪数</td>
+</tr>
+<tr>
+<td>用户/内核态拷贝</td>
+<td>每次全量拷贝</td>
+<td>每次全量拷贝</td>
+<td>只拷贝就绪的</td>
+</tr>
+</tbody>
+</table>
+<p><strong>epoll 快的本质</strong>：fd 集合常驻内核（红黑树），注册时给每个 fd 挂一个回调函数；当网卡数据到达、协议栈处理完后，回调把这个 fd 直接塞进就绪链表。<code>epoll_wait</code> 只需要看就绪链表空不空，<strong>完全不需要遍历所有 fd</strong>。所以它的开销只和「活跃连接数」有关，和「总连接数」无关。</p>
+<p>这正好契合互联网场景：十万个长连接里，同一时刻真正在传数据的可能只有几百个。</p>
+<h2 id="24-lt-与-et">2.4 LT 与 ET</h2>
+<ul>
+<li><strong>水平触发 LT（Level Triggered）</strong>：只要 fd 上还有数据没读完，每次 <code>epoll_wait</code> 都会返回它。编程简单，一次没读完下次还会通知。</li>
+<li><strong>边缘触发 ET（Edge Triggered）</strong>：只在状态<strong>发生变化</strong>时通知一次。必须循环 <code>read</code> 直到返回 <code>EAGAIN</code>，否则剩下的数据就再也收不到通知了。</li>
+</ul>
+<p><strong>Nginx 默认用 ET</strong>。因为它本来就是循环读到 <code>EAGAIN</code> 的写法，ET 能省掉大量重复的事件通知，<code>epoll_wait</code> 返回的事件数更少。</p>
+<h1 id="3-惊群问题">3. 惊群问题</h1>
+<h2 id="31-问题描述">3.1 问题描述</h2>
+<p>多个 worker 同时 <code>epoll_wait</code> 在同一个 listen fd 上。一个新连接到来时，<strong>内核把所有阻塞在这个 fd 上的进程全部唤醒</strong>，但只有一个能 <code>accept</code> 成功，其余的拿到 <code>EAGAIN</code> 后白白被唤醒又睡回去。</p>
+<p>这就是惊群（thundering herd）。worker 越多，浪费的 CPU 越多。</p>
+<blockquote>
+<p>注意区分两种惊群：</p>
+<ul>
+<li><strong>accept 惊群</strong>：Linux 2.6 起，内核在 <code>accept</code> 层面已经解决了（只唤醒一个）。</li>
+<li><strong>epoll 惊群</strong>：如果 fd 是通过 <code>epoll_wait</code> 等待的，内核仍会唤醒所有在这个 fd 上等待的进程。Nginx 面对的是这一种。</li>
+</ul>
+</blockquote>
+<h2 id="32-方案一accept_mutex老方案">3.2 方案一：accept_mutex（老方案）</h2>
+<p>Nginx 早期用一把跨进程的互斥锁：worker 想 accept 新连接，必须先抢到 <code>accept_mutex</code>，抢到的才把 listen fd 加进自己的 epoll，没抢到的就不管 listen fd。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-nginx" data-lang="nginx"><span class="line"><span class="cl"><span class="k">events</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">accept_mutex</span> <span class="no">on</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">accept_mutex_delay</span> <span class="s">500ms</span><span class="p">;</span>   <span class="c1"># 抢锁失败后等多久再试
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span></code></pre></div><p>Nginx 还在这上面加了<strong>负载均衡</strong>：worker 当前连接数超过 <code>worker_connections × 7/8</code> 时，它会主动放弃抢锁，把机会让给空闲的 worker。</p>
+<p>缺点也明显：</p>
+<ul>
+<li>抢锁本身有开销，锁是串行化的瓶颈。</li>
+<li><code>accept_mutex_delay</code> 默认 500ms，低并发时新连接可能要等半秒才被处理，<strong>延迟毛刺很明显</strong>。</li>
+</ul>
+<h2 id="33-方案二epollexclusivelinux-45">3.3 方案二：EPOLLEXCLUSIVE（Linux 4.5+）</h2>
+<p>内核提供了 <code>EPOLLEXCLUSIVE</code> 标志，加了这个标志后，一个事件只唤醒<strong>一个</strong>等待进程。Nginx 1.11.3+ 会自动使用，<code>accept_mutex</code> 的默认值也从此改成了 <code>off</code>。</p>
+<h2 id="34-方案三so_reuseport推荐">3.4 方案三：SO_REUSEPORT（推荐）</h2>
+<p>这是最彻底的方案。Linux 3.9+ 支持多个 socket 绑定到<strong>同一个 IP:Port</strong>，内核按四元组哈希把新连接分发到不同的 socket 队列。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-nginx" data-lang="nginx"><span class="line"><span class="cl"><span class="k">server</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">listen</span> <span class="mi">80</span> <span class="s">reuseport</span><span class="p">;</span>   <span class="c1"># 只在一个 server 块里写就行
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span></code></pre></div><p>开启后每个 worker 都有<strong>自己独立的 listen fd 和 accept 队列</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">不用 reuseport：            用 reuseport：
+</span></span><span class="line"><span class="cl">   一个 listen fd              worker1 → listen fd 1 → 队列1
+</span></span><span class="line"><span class="cl">   ↓ 抢                        worker2 → listen fd 2 → 队列2
+</span></span><span class="line"><span class="cl">w1 w2 w3 都被唤醒              worker3 → listen fd 3 → 队列3
+</span></span><span class="line"><span class="cl">                              内核按 hash 直接投递，零竞争
+</span></span></code></pre></div><p>好处：</p>
+<ul>
+<li>彻底消灭惊群，无锁。</li>
+<li>连接在内核层就分好了，负载更均匀。</li>
+<li>官方压测显示延迟分布明显改善（长尾延迟下降）。</li>
+</ul>
+<p>代价：</p>
+<ul>
+<li><strong><code>reload</code> 时连接分发会有短暂抖动</strong>（新老 worker 各有自己的队列，老 worker 队列里的连接需要处理完）。</li>
+<li>极端情况下如果某个 worker 卡住，投递到它队列的连接会一直等，而不会被别的 worker 接走。</li>
+</ul>
+<p><strong>生产建议</strong>：Linux 3.9+ 直接开 <code>reuseport</code>，把 <code>accept_mutex</code> 保持 <code>off</code>。</p>
+<h1 id="4-惊群相关的完整配置对照">4. 惊群相关的完整配置对照</h1>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-nginx" data-lang="nginx"><span class="line"><span class="cl"><span class="c1"># 现代内核（Linux 4.5+）的推荐配置
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">events</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">worker_connections</span> <span class="mi">10240</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">use</span> <span class="s">epoll</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">multi_accept</span> <span class="no">on</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">accept_mutex</span> <span class="no">off</span><span class="p">;</span>         <span class="c1"># 1.11.3+ 默认就是 off
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">http</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">server</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="kn">listen</span> <span class="mi">80</span> <span class="s">reuseport</span><span class="p">;</span>  <span class="c1"># 关键
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><code>multi_accept on</code> 的作用：worker 被唤醒后，循环 <code>accept</code> 直到队列空，而不是只 accept 一个就回去 <code>epoll_wait</code>。短连接高并发场景（比如秒杀）能减少系统调用次数。长连接场景意义不大，甚至可能造成 worker 间负载不均。</p>
+<h1 id="5-内存池">5. 内存池</h1>
+<p>Nginx 大量使用 <code>ngx_pool_t</code> 内存池，这是它性能好又不容易内存泄漏的重要原因。</p>
+<h2 id="51-设计思路">5.1 设计思路</h2>
+<p>传统写法：每需要一块内存就 <code>malloc</code>，用完 <code>free</code>。问题是：</p>
+<ul>
+<li><code>malloc</code>/<code>free</code> 系统调用和加锁有开销</li>
+<li>容易忘记 free，或者异常路径漏 free</li>
+<li>大量小块分配造成内存碎片</li>
+</ul>
+<p>内存池的做法：<strong>按生命周期批量分配、一次性释放</strong>。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="c1">// 简化的结构
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">typedef</span> <span class="k">struct</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="n">u_char</span>  <span class="o">*</span><span class="n">last</span><span class="p">;</span>       <span class="c1">// 当前可分配位置
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">u_char</span>  <span class="o">*</span><span class="n">end</span><span class="p">;</span>        <span class="c1">// 池末尾
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">ngx_pool_t</span> <span class="o">*</span><span class="n">next</span><span class="p">;</span>    <span class="c1">// 下一块
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">ngx_uint_t</span> <span class="n">failed</span><span class="p">;</span>   <span class="c1">// 分配失败次数
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span> <span class="n">ngx_pool_data_t</span><span class="p">;</span>
+</span></span></code></pre></div><p>分配小块内存时，只需要 <code>last += size</code> 移动一下指针（还会做内存对齐），<strong>几乎零开销</strong>。大块内存（超过池大小）单独 <code>malloc</code> 并挂到 <code>large</code> 链表上。</p>
+<h2 id="52-三种生命周期的池">5.2 三种生命周期的池</h2>
+<table>
+<thead>
+<tr>
+<th>池</th>
+<th>创建时机</th>
+<th>销毁时机</th>
+<th>大小指令</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>connection pool</strong></td>
+<td>连接建立</td>
+<td>连接关闭</td>
+<td><code>connection_pool_size</code>（默认 256/512 字节）</td>
+</tr>
+<tr>
+<td><strong>request pool</strong></td>
+<td>请求开始</td>
+<td>请求结束</td>
+<td><code>request_pool_size</code>（默认 4k）</td>
+</tr>
+<tr>
+<td><strong>cycle pool</strong></td>
+<td>启动/reload</td>
+<td>下次 reload</td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
+<p>关键效果：<strong>一个 HTTP 请求处理完，直接销毁 request pool，这个请求期间分配的所有内存一次性全部回收</strong>。业务代码里根本不用管 free，也就不存在漏 free 的问题。</p>
+<p>这也解释了为什么 Nginx 处理长连接上的大量请求时内存不会一直涨——每个请求的内存都随请求结束而回收。</p>
+<h2 id="53-池还支持清理回调">5.3 池还支持清理回调</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="n">ngx_pool_cleanup_t</span> <span class="o">*</span><span class="n">cln</span> <span class="o">=</span> <span class="n">ngx_pool_cleanup_add</span><span class="p">(</span><span class="n">pool</span><span class="p">,</span> <span class="mi">0</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="n">cln</span><span class="o">-&gt;</span><span class="n">handler</span> <span class="o">=</span> <span class="n">ngx_pool_cleanup_file</span><span class="p">;</span>   <span class="c1">// 池销毁时自动关文件
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">cln</span><span class="o">-&gt;</span><span class="n">data</span> <span class="o">=</span> <span class="n">file</span><span class="p">;</span>
+</span></span></code></pre></div><p>打开的文件、共享内存等非内存资源也能挂到池上，池销毁时自动清理。</p>
+<h1 id="6-连接池与-ngx_connection_t">6. 连接池与 ngx_connection_t</h1>
+<p>worker 启动时会一次性预分配 <code>worker_connections</code> 个 <code>ngx_connection_t</code> 结构，用一个空闲链表串起来：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="n">c</span> <span class="o">=</span> <span class="n">ngx_cycle</span><span class="o">-&gt;</span><span class="n">free_connections</span><span class="p">;</span>    <span class="c1">// 从空闲链表头取
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">ngx_cycle</span><span class="o">-&gt;</span><span class="n">free_connections</span> <span class="o">=</span> <span class="n">c</span><span class="o">-&gt;</span><span class="n">data</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="n">ngx_cycle</span><span class="o">-&gt;</span><span class="n">free_connection_n</span><span class="o">--</span><span class="p">;</span>
+</span></span></code></pre></div><p>取连接是 O(1)，不需要动态分配。这就是为什么 <code>worker_connections</code> 会实打实地占内存——设成 100 万，启动时就直接分配 100 万个结构体。</p>
+<p>每个 <code>ngx_connection_t</code> 大约 200～300 字节，加上关联的读写事件结构（<code>ngx_event_t</code>，各约 100 字节），一个连接的固定开销在 500 字节左右。10240 个连接约 5MB，这就是 Nginx 内存占用低的原因。</p>
+<blockquote>
+<p>排查 <code>worker_connections are not enough</code> 报错时要记住：<strong>反向代理场景一个请求占 2 个连接</strong>（客户端侧 + 上游侧）。</p>
+</blockquote>
+<h1 id="7-reload-的完整流程">7. reload 的完整流程</h1>
+<p>理解了进程模型，<code>reload</code> 就很清晰了：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">1. 你执行 nginx -s reload
+</span></span><span class="line"><span class="cl">   → 实际是新起一个 nginx 进程，读 pid 文件，给 master 发 SIGHUP，然后退出
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">2. master 收到 SIGHUP
+</span></span><span class="line"><span class="cl">   → 重新解析配置文件
+</span></span><span class="line"><span class="cl">   → 失败：打日志、保留旧配置继续跑，reload 静默失效  ⚠️
+</span></span><span class="line"><span class="cl">   → 成功：继续
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">3. master 创建新的 listen socket（如果 listen 配置变了）
+</span></span><span class="line"><span class="cl">   → 老的 listen fd 如果配置没变则复用
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">4. master fork 出新的 worker 进程（用新配置）
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">5. master 给所有老 worker 发 SIGQUIT
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">6. 老 worker 收到 SIGQUIT：
+</span></span><span class="line"><span class="cl">   → 从 epoll 中移除 listen fd（不再 accept 新连接）
+</span></span><span class="line"><span class="cl">   → 继续处理手上已建立的连接
+</span></span><span class="line"><span class="cl">   → 所有连接处理完 → 销毁池 → 退出
+</span></span><span class="line"><span class="cl">   → 超过 worker_shutdown_timeout 仍未完 → 强制关闭连接后退出
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">7. master 收到老 worker 的 SIGCHLD，回收僵尸进程，reload 完成
+</span></span></code></pre></div><p><strong>所以 reload 不丢请求</strong>：新连接由新 worker 处理，老连接由老 worker 处理完。</p>
+<p>需要注意的坑：</p>
+<ul>
+<li><strong>长连接会拖住老 worker</strong>。WebSocket、SSE、大文件下载都会。用 <code>worker_shutdown_timeout 30s;</code> 兜底。</li>
+<li><strong>频繁 reload 会累积老 worker</strong>。如果每次 reload 都有一批老 worker 退不掉，进程数会越堆越多，内存吃紧。<code>ps -ef | grep &quot;nginx: worker process is shutting down&quot;</code> 能看到它们。</li>
+<li><strong>共享内存 zone 在 reload 时会重建</strong>。限流计数器、缓存 key 索引会清零，所以别把 reload 当成常规操作反复执行。</li>
+</ul>
+<h1 id="8-平滑升级的完整流程">8. 平滑升级的完整流程</h1>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">1. 替换二进制文件
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">2. kill -USR2 &lt;old_master_pid&gt;
+</span></span><span class="line"><span class="cl">   → 老 master 把 nginx.pid 重命名为 nginx.pid.oldbin
+</span></span><span class="line"><span class="cl">   → 老 master fork + execve 新二进制，产生新 master
+</span></span><span class="line"><span class="cl">   → 新 master 通过环境变量 NGINX 拿到继承的 listen fd 列表
+</span></span><span class="line"><span class="cl">     （老 master 在 exec 前把 fd 号写进了环境变量）
+</span></span><span class="line"><span class="cl">   → 新 master fork 新 worker
+</span></span><span class="line"><span class="cl">   → 此时新老 worker 都在同一批 listen fd 上 accept，共同服务
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">3. kill -WINCH &lt;old_master_pid&gt;
+</span></span><span class="line"><span class="cl">   → 老 master 让老 worker 优雅退出
+</span></span><span class="line"><span class="cl">   → 只剩老 master 空转着（作为回滚的后路）
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">4. 验证新版本无问题 → kill -QUIT &lt;old_master_pid&gt;
+</span></span><span class="line"><span class="cl">   验证发现问题 → kill -HUP &lt;old_master_pid&gt; 重新拉起老 worker
+</span></span><span class="line"><span class="cl">                → kill -QUIT &lt;new_master_pid&gt; 干掉新的
+</span></span></code></pre></div><p>关键机制是<strong>通过环境变量传递 listen fd</strong>。<code>execve</code> 不会关闭没设 <code>FD_CLOEXEC</code> 的 fd，所以新进程能直接继承监听套接字，端口一刻都没有释放过，连接不会被拒绝。</p>
+<h1 id="9-阻塞操作nginx-的软肋与线程池">9. 阻塞操作：Nginx 的软肋与线程池</h1>
+<p>事件驱动模型有个致命前提：<strong>回调函数绝不能阻塞</strong>。一旦某个回调卡住，整个 worker 上的几万个连接全部停摆。</p>
+<p>哪些操作会阻塞 worker？</p>
+<table>
+<thead>
+<tr>
+<th>操作</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>磁盘 I/O</td>
+<td><code>read()</code> 一个不在 page cache 里的文件，会阻塞等待磁盘</td>
+</tr>
+<tr>
+<td><code>sendfile</code> 冷文件</td>
+<td>同上，数据不在页缓存时会阻塞</td>
+</tr>
+<tr>
+<td>DNS 同步解析</td>
+<td><code>proxy_pass</code> 用域名时，如果没配 <code>resolver</code> 会走 glibc 的同步解析</td>
+</tr>
+<tr>
+<td>第三方模块的同步调用</td>
+<td>自己写的模块里调了阻塞函数</td>
+</tr>
+<tr>
+<td>Lua 里的阻塞操作</td>
+<td>OpenResty 里用 <code>os.execute</code>、阻塞的 socket 库</td>
+</tr>
+</tbody>
+</table>
+<h2 id="91-线程池">9.1 线程池</h2>
+<p>Nginx 1.7.11 引入了线程池，把阻塞的磁盘读操作卸载到独立线程：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-nginx" data-lang="nginx"><span class="line"><span class="cl"><span class="c1"># main 块
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">thread_pool</span> <span class="s">default</span> <span class="s">threads=32</span> <span class="s">max_queue=65536</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">http</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">aio</span> <span class="s">threads</span><span class="p">;</span>             <span class="c1"># 或 aio threads=default
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="kn">aio_write</span> <span class="no">on</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">sendfile</span> <span class="no">on</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">directio</span> <span class="mi">8m</span><span class="p">;</span>             <span class="c1"># 大于 8M 的文件绕过 page cache 直读
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="kn">output_buffers</span> <span class="mi">2</span> <span class="mi">512k</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>工作方式：worker 遇到可能阻塞的读操作，把任务丢进线程池队列，自己立刻回到事件循环；线程池的线程完成读取后，通过 eventfd 通知 worker 继续处理。</p>
+<p>官方测试数据：在大文件（数据集远大于内存）随机读的场景下，吞吐提升了 9 倍。<strong>但如果文件都在 page cache 里，开线程池反而会因为额外的调度开销让性能变差</strong>。所以这是「大量冷数据读取」场景的专用优化，不是万能加速开关。</p>
+<h2 id="92-dns-解析阻塞">9.2 DNS 解析阻塞</h2>
+<p>这个坑非常常见：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-nginx" data-lang="nginx"><span class="line"><span class="cl"><span class="c1"># ❌ 启动时解析一次域名，之后永远用这个 IP
+</span></span></span><span class="line"><span class="cl"><span class="c1"># 上游 IP 变了（K8s Pod 重建、云厂商 SLB 换 IP）就全挂
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">location</span> <span class="s">/</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">proxy_pass</span> <span class="s">http://api.example.com</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 用 resolver + 变量强制运行时解析
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">location</span> <span class="s">/</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">resolver</span> <span class="mi">8</span><span class="s">.8.8.8</span> <span class="s">valid=30s</span> <span class="s">ipv6=off</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">set</span> <span class="nv">$backend</span> <span class="s">&#34;api.example.com&#34;</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">proxy_pass</span> <span class="s">http://</span><span class="nv">$backend</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>关键点：<strong>只有 <code>proxy_pass</code> 的地址里含变量时，Nginx 才会在运行时用自己的异步 resolver 解析</strong>。写死域名的话，只在启动/reload 时解析一次并缓存到进程生命周期结束。</p>
+<p>用变量的副作用：URI 不会自动传递，需要显式写。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-nginx" data-lang="nginx"><span class="line"><span class="cl"><span class="k">set</span> <span class="nv">$backend</span> <span class="s">&#34;api.example.com&#34;</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="k">proxy_pass</span> <span class="s">http://</span><span class="nv">$backend$request_uri</span><span class="p">;</span>
+</span></span></code></pre></div><h1 id="10-性能数字感">10. 性能数字感</h1>
+<p>一台普通的 8 核 16G 云主机上，Nginx 的大致能力（供估算参考，实际取决于业务）：</p>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th>量级</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>静态小文件 QPS</td>
+<td>10 万+</td>
+</tr>
+<tr>
+<td>反向代理 QPS</td>
+<td>3～5 万（受后端和 TLS 影响大）</td>
+</tr>
+<tr>
+<td>并发长连接数</td>
+<td>10 万+（内存约 100MB～1G）</td>
+</tr>
+<tr>
+<td>HTTPS 新建握手（RSA 2048）</td>
+<td>每核 1000～2000 次/秒</td>
+</tr>
+<tr>
+<td>HTTPS 新建握手（ECDSA P-256）</td>
+<td>每核 5000+ 次/秒</td>
+</tr>
+</tbody>
+</table>
+<p><strong>TLS 握手是最贵的操作</strong>，这也是为什么会话复用（Session Ticket / Session Cache）和 ECDSA 证书那么重要——第 10 篇会详细讲。</p>
+<h1 id="11-面试题">11. 面试题</h1>
+<p><strong>Q：Nginx 的进程模型是什么样的？master 和 worker 各干什么？</strong></p>
+<p>一个 master 加多个 worker。master 以 root 运行，负责读配置、创建监听 socket、fork 和监控 worker、接收信号，<strong>不处理任何请求</strong>。worker 以低权限运行，从继承的 listen fd 上 accept 连接，在 epoll 事件循环里处理所有请求。worker 之间相互独立、无共享（除共享内存），单线程无锁。另有 cache manager / cache loader 两个辅助进程。</p>
+<p><strong>Q：多个 worker 怎么同时监听 80 端口？</strong></p>
+<p>master 在 fork 之前完成 <code>socket</code>/<code>bind</code>/<code>listen</code>，fork 时 worker 继承这个 fd，所以它们共享同一个内核 socket。或者开启 <code>SO_REUSEPORT</code>，让每个 worker 各自 bind 同一个端口，由内核分发。</p>
+<p><strong>Q：什么是惊群？Nginx 怎么解决的？</strong></p>
+<p>多个进程在同一个 listen fd 上等待，新连接到来时内核唤醒所有进程，但只有一个能 accept 成功，其余空转。Nginx 有三代方案：早期用 <code>accept_mutex</code> 互斥锁串行化 accept（有 500ms 延迟毛刺）；Linux 4.5+ 用 <code>EPOLLEXCLUSIVE</code> 让内核只唤醒一个（1.11.3+ 自动启用，<code>accept_mutex</code> 默认改为 off）；最优解是 <code>listen ... reuseport</code>，每个 worker 有独立的 listen fd 和 accept 队列，内核按四元组 hash 分发，彻底无竞争。</p>
+<p><strong>Q：epoll 为什么比 select 快？</strong></p>
+<p>三点：(1) fd 集合常驻内核红黑树，不用每次调用都从用户态全量拷贝；(2) 内核用回调把就绪 fd 直接挂到就绪链表，<code>epoll_wait</code> 不需要 O(n) 遍历所有 fd；(3) 返回时只拷贝就绪的 fd。所以开销只与活跃连接数相关，与总连接数无关。此外 select 有 1024 的 fd 上限。</p>
+<p><strong>Q：Nginx 是单线程的吗？</strong></p>
+<p>每个 worker 进程默认是单线程的事件循环。但整体是多进程并行，另外可以开启 <code>aio threads</code> 线程池把阻塞的磁盘 I/O 卸载到辅助线程。所以准确说法是「多进程 + 每进程单线程事件循环 + 可选的 I/O 线程池」。</p>
+<p><strong>Q：什么操作会阻塞 worker？后果是什么？</strong></p>
+<p>磁盘冷读、未配 <code>resolver</code> 时的同步 DNS 解析、第三方模块里的同步调用、Lua 里的阻塞函数。后果是这个 worker 上的所有连接（可能上万个）全部停止处理，表现为部分请求突然变慢或超时。解决办法分别是 <code>aio threads</code>、配置 <code>resolver</code> + 变量式 <code>proxy_pass</code>、改用异步 API。</p>
+<p><strong>Q：<code>reload</code> 的过程中发生了什么？共享内存里的数据会丢吗？</strong></p>
+<p>master 收 SIGHUP → 重新解析配置（失败则静默保留旧配置）→ fork 新 worker → 给老 worker 发 SIGQUIT → 老 worker 停止 accept、处理完存量连接后退出。<strong>共享内存 zone 会重建</strong>，所以限流计数器、<code>upstream</code> 的 <code>zone</code> 状态、缓存索引都会重置。这是不宜频繁 reload 的原因之一。</p>
+<p><strong>Q：Nginx 的内存池解决了什么问题？</strong></p>
+<p>按生命周期（connection / request / cycle）批量分配内存，小块分配只是移动指针，几乎零成本；请求结束时一次性销毁整个 request pool，所有该请求分配的内存自动回收。既避免了频繁 <code>malloc/free</code> 的开销和碎片，也从机制上杜绝了忘记 free 导致的泄漏。</p>
+<hr>
+<p>上一篇：<a href="../nginx_02_%e9%85%8d%e7%bd%ae%e6%96%87%e4%bb%b6%e7%bb%93%e6%9e%84%e4%b8%8e%e6%a0%b8%e5%bf%83%e6%8c%87%e4%bb%a4/" rel="">Nginx-02 配置文件结构与核心指令</a> ｜ 下一篇：<a href="../nginx_04_%e8%af%b7%e6%b1%82%e5%a4%84%e7%90%86%e6%b5%81%e7%a8%8b%e4%b8%8e11%e4%b8%aa%e9%98%b6%e6%ae%b5/" rel="">Nginx-04 请求处理流程与 11 个阶段</a></p>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2026-08-03</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/nginx/">nginx</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/nginx/nginx_04_%E8%AF%B7%E6%B1%82%E5%A4%84%E7%90%86%E6%B5%81%E7%A8%8B%E4%B8%8E11%E4%B8%AA%E9%98%B6%E6%AE%B5/" class="prev" rel="prev" title="Nginx-04 请求处理流程与 11 个阶段"><i class="fas fa-angle-left fa-fw"></i>Nginx-04 请求处理流程与 11 个阶段</a>
+            <a href="/posts/nginx/nginx_02_%E9%85%8D%E7%BD%AE%E6%96%87%E4%BB%B6%E7%BB%93%E6%9E%84%E4%B8%8E%E6%A0%B8%E5%BF%83%E6%8C%87%E4%BB%A4/" class="next" rel="next" title="Nginx-02 配置文件结构与核心指令">Nginx-02 配置文件结构与核心指令<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2026-08-03T22:00:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Nginx-03 进程模型与事件驱动原理"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

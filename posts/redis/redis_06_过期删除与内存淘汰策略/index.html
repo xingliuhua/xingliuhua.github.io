@@ -1,0 +1,1213 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>Redis-06 过期删除与内存淘汰策略 - xingliuhua博客</title><meta name="Description" content="过期字典与三种删除策略、惰性删除与定期删除源码流程、8 种淘汰策略选型、近似 LRU 与 LFU 的实现原理、主从环境下的过期语义"><meta property="og:title" content="Redis-06 过期删除与内存淘汰策略" />
+<meta property="og:description" content="过期字典与三种删除策略、惰性删除与定期删除源码流程、8 种淘汰策略选型、近似 LRU 与 LFU 的实现原理、主从环境下的过期语义" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/redis/redis_06_%E8%BF%87%E6%9C%9F%E5%88%A0%E9%99%A4%E4%B8%8E%E5%86%85%E5%AD%98%E6%B7%98%E6%B1%B0%E7%AD%96%E7%95%A5/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2025-11-01T14:00:00+08:00" />
+<meta property="article:modified_time" content="2025-11-01T14:00:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="Redis-06 过期删除与内存淘汰策略"/>
+<meta name="twitter:description" content="过期字典与三种删除策略、惰性删除与定期删除源码流程、8 种淘汰策略选型、近似 LRU 与 LFU 的实现原理、主从环境下的过期语义"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/redis/redis_06_%E8%BF%87%E6%9C%9F%E5%88%A0%E9%99%A4%E4%B8%8E%E5%86%85%E5%AD%98%E6%B7%98%E6%B1%B0%E7%AD%96%E7%95%A5/" /><link rel="prev" href="https://xingliuhua.github.io/posts/redis/redis_07_%E6%8C%81%E4%B9%85%E5%8C%96RDB%E4%B8%8EAOF/" /><link rel="next" href="https://xingliuhua.github.io/posts/redis/redis_05_%E5%8D%95%E7%BA%BF%E7%A8%8B%E6%A8%A1%E5%9E%8B%E4%B8%8E%E7%BD%91%E7%BB%9CIO/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Redis-06 过期删除与内存淘汰策略",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/redis\/redis_06_%E8%BF%87%E6%9C%9F%E5%88%A0%E9%99%A4%E4%B8%8E%E5%86%85%E5%AD%98%E6%B7%98%E6%B1%B0%E7%AD%96%E7%95%A5\/"
+        },"genre": "posts","keywords": "redis","wordcount":  16051 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/redis\/redis_06_%E8%BF%87%E6%9C%9F%E5%88%A0%E9%99%A4%E4%B8%8E%E5%86%85%E5%AD%98%E6%B7%98%E6%B1%B0%E7%AD%96%E7%95%A5\/","datePublished": "2025-11-01T14:00:00+08:00","dateModified": "2025-11-01T14:00:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "过期字典与三种删除策略、惰性删除与定期删除源码流程、8 种淘汰策略选型、近似 LRU 与 LFU 的实现原理、主从环境下的过期语义"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">Redis-06 过期删除与内存淘汰策略</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2025-11-01">2025-11-01</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 16051 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 33 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-过期时间是怎么存的">1. 过期时间是怎么存的</a>
+      <ol>
+        <li><a href="#11-过期字典-expires">1.1 过期字典 expires</a></li>
+        <li><a href="#12-设置与查看">1.2 设置与查看</a></li>
+        <li><a href="#13-哪些操作会影响-ttl">1.3 哪些操作会影响 TTL</a></li>
+        <li><a href="#14-74-的-hash-字段级过期">1.4 7.4+ 的 hash 字段级过期</a></li>
+      </ol>
+    </li>
+    <li><a href="#2-三种过期删除策略">2. 三种过期删除策略</a>
+      <ol>
+        <li><a href="#21-定时删除timer-deletion">2.1 定时删除（timer deletion）</a></li>
+        <li><a href="#22-惰性删除lazy-expiration">2.2 惰性删除（lazy expiration）</a></li>
+        <li><a href="#23-定期删除active-expiration">2.3 定期删除（active expiration）</a></li>
+        <li><a href="#24-redis-的组合方案">2.4 Redis 的组合方案</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-定期删除的实现细节">3. 定期删除的实现细节</a>
+      <ol>
+        <li><a href="#31-两种执行模式">3.1 两种执行模式</a></li>
+        <li><a href="#32-算法流程">3.2 算法流程</a></li>
+        <li><a href="#33-70-的优化过期字典的桶级采样">3.3 7.0 的优化：过期字典的桶级采样</a></li>
+        <li><a href="#34-定期删除的局限">3.4 定期删除的局限</a></li>
+        <li><a href="#35-观察过期删除">3.5 观察过期删除</a></li>
+      </ol>
+    </li>
+    <li><a href="#4-内存淘汰策略">4. 内存淘汰策略</a>
+      <ol>
+        <li><a href="#41-触发时机">4.1 触发时机</a></li>
+        <li><a href="#42-八种策略">4.2 八种策略</a></li>
+        <li><a href="#43-选型建议">4.3 选型建议</a></li>
+        <li><a href="#44-oom-的表现">4.4 OOM 的表现</a></li>
+        <li><a href="#45-监控淘汰">4.5 监控淘汰</a></li>
+      </ol>
+    </li>
+    <li><a href="#5-近似-lru-的实现">5. 近似 LRU 的实现</a>
+      <ol>
+        <li><a href="#51-标准-lru-为什么不能用">5.1 标准 LRU 为什么不能用</a></li>
+        <li><a href="#52-redis-的做法随机采样--淘汰池">5.2 Redis 的做法：随机采样 + 淘汰池</a></li>
+        <li><a href="#53-查看空闲时间">5.3 查看空闲时间</a></li>
+      </ol>
+    </li>
+    <li><a href="#6-lfu-的实现">6. LFU 的实现</a>
+      <ol>
+        <li><a href="#61-lru-的缺陷">6.1 LRU 的缺陷</a></li>
+        <li><a href="#62-lfu-的思路">6.2 LFU 的思路</a></li>
+        <li><a href="#63-实现8-bit-计数器--16-bit-时间">6.3 实现：8 bit 计数器 + 16 bit 时间</a>
+          <ol>
+            <li><a href="#关键设计一对数递增logarithmic-counter">关键设计一：对数递增（logarithmic counter）</a></li>
+            <li><a href="#关键设计二时间衰减decay">关键设计二：时间衰减（decay）</a></li>
+            <li><a href="#新-key-的初始值">新 key 的初始值</a></li>
+          </ol>
+        </li>
+        <li><a href="#64-查看访问频率">6.4 查看访问频率</a></li>
+        <li><a href="#65-lfu-配置总结">6.5 LFU 配置总结</a></li>
+        <li><a href="#66-lru-vs-lfu-对比">6.6 LRU vs LFU 对比</a></li>
+      </ol>
+    </li>
+    <li><a href="#7-主从环境下的过期语义">7. 主从环境下的过期语义</a>
+      <ol>
+        <li><a href="#71-从节点不主动删除过期-key">7.1 从节点不主动删除过期 key</a></li>
+        <li><a href="#72-从节点读到过期-key-会返回什么">7.2 从节点读到过期 key 会返回什么</a></li>
+        <li><a href="#73-32-之前的-bug">7.3 3.2 之前的 BUG</a></li>
+        <li><a href="#74-从节点如何维护自己的-expires">7.4 从节点如何维护自己的 expires</a></li>
+        <li><a href="#75-相关的两个坑">7.5 相关的两个坑</a></li>
+        <li><a href="#76-lua-脚本里的过期">7.6 Lua 脚本里的过期</a></li>
+      </ol>
+    </li>
+    <li><a href="#8-生产实践与排查">8. 生产实践与排查</a>
+      <ol>
+        <li><a href="#81-完整的内存治理配置">8.1 完整的内存治理配置</a></li>
+        <li><a href="#82-排查内存不降">8.2 排查&quot;内存不降&quot;</a></li>
+        <li><a href="#83-内存碎片整理">8.3 内存碎片整理</a></li>
+        <li><a href="#84-避免大批-key-同时过期">8.4 避免大批 key 同时过期</a></li>
+      </ol>
+    </li>
+    <li><a href="#9-高频面试题">9. 高频面试题</a></li>
+    <li><a href="#小结">小结</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><h1 id="1-过期时间是怎么存的">1. 过期时间是怎么存的</h1>
+<h2 id="11-过期字典-expires">1.1 过期字典 expires</h2>
+<p>Redis 的每个数据库（<code>redisDb</code>）里有两个核心字典：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="k">typedef</span> <span class="k">struct</span> <span class="n">redisDb</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="n">dict</span> <span class="o">*</span><span class="n">dict</span><span class="p">;</span>       <span class="c1">// 键空间：所有的 key → value
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">dict</span> <span class="o">*</span><span class="n">expires</span><span class="p">;</span>    <span class="c1">// 过期字典：设置了 TTL 的 key → 过期时间戳（long long，毫秒）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">dict</span> <span class="o">*</span><span class="n">blocking_keys</span><span class="p">;</span>      <span class="c1">// 被 BLPOP 等阻塞的 key
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">dict</span> <span class="o">*</span><span class="n">ready_keys</span><span class="p">;</span>         <span class="c1">// 已就绪可唤醒阻塞客户端的 key
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">dict</span> <span class="o">*</span><span class="n">watched_keys</span><span class="p">;</span>       <span class="c1">// 被 WATCH 监视的 key
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="kt">int</span> <span class="n">id</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kt">long</span> <span class="kt">long</span> <span class="n">avg_ttl</span><span class="p">;</span>        <span class="c1">// 平均 TTL 估算值（供 INFO 展示）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="p">...</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span> <span class="n">redisDb</span><span class="p">;</span>
+</span></span></code></pre></div><p>关键点：</p>
+<ol>
+<li><strong>过期时间单独存在 <code>expires</code> 字典里</strong>，不是存在 robj 里。这样没有 TTL 的 key 不占额外空间；</li>
+<li><strong><code>expires</code> 的 key 与 <code>dict</code> 的 key 是同一个 SDS 对象</strong>（指针共享，不是拷贝两份），所以只多了一个 dictEntry 的开销（约 32 字节）；</li>
+<li><strong>value 存的是绝对的 Unix 毫秒时间戳</strong>（不是剩余秒数）。这意味着：
+<ul>
+<li><code>TTL</code> 命令是用「过期时间戳 - 当前时间」实时算出来的；</li>
+<li><strong>服务器时钟被向前调整会导致大批 key 提前过期</strong>（线上真实事故来源，NTP 校时要小心）；</li>
+<li>RDB/AOF 里保存的也是绝对时间戳，所以<strong>从备份恢复时已过期的 key 会直接被丢弃</strong>。</li>
+</ul>
+</li>
+</ol>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">127.0.0.1:6379&gt; SET k v EX <span class="m">100</span>
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; TTL k
+</span></span><span class="line"><span class="cl"><span class="o">(</span>integer<span class="o">)</span> <span class="m">100</span>
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; PEXPIRETIME k       <span class="c1"># 7.0+ 直接看绝对时间戳</span>
+</span></span><span class="line"><span class="cl"><span class="o">(</span>integer<span class="o">)</span> <span class="m">1785657600123</span>
+</span></span></code></pre></div><h2 id="12-设置与查看">1.2 设置与查看</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">EXPIRE key <span class="m">60</span> <span class="o">[</span>NX<span class="p">|</span>XX<span class="p">|</span>GT<span class="p">|</span>LT<span class="o">]</span>     <span class="c1"># 秒（6.2+ 支持条件参数）</span>
+</span></span><span class="line"><span class="cl">PEXPIRE key <span class="m">60000</span>               <span class="c1"># 毫秒</span>
+</span></span><span class="line"><span class="cl">EXPIREAT key &lt;秒时间戳&gt;
+</span></span><span class="line"><span class="cl">PEXPIREAT key &lt;毫秒时间戳&gt;
+</span></span><span class="line"><span class="cl">SET key val EX <span class="m">60</span>               <span class="c1"># 写入时一并设置（推荐，一条命令原子完成）</span>
+</span></span><span class="line"><span class="cl">GETEX key EX <span class="m">60</span>                 <span class="c1"># 6.2+ 读取的同时刷新过期时间</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">TTL key         <span class="c1"># 剩余秒；-1 = 无过期时间；-2 = key 不存在</span>
+</span></span><span class="line"><span class="cl">PTTL key        <span class="c1"># 剩余毫秒</span>
+</span></span><span class="line"><span class="cl">PERSIST key     <span class="c1"># 移除过期时间</span>
+</span></span><span class="line"><span class="cl">EXPIRETIME key  <span class="c1"># 7.0+ 绝对过期时间戳（秒）</span>
+</span></span></code></pre></div><p><strong>内部统一</strong>：不管你用 <code>EXPIRE</code> 还是 <code>EXPIREAT</code>，Redis 内部都会转换成 <code>PEXPIREAT</code>（绝对毫秒时间戳）再存入，并且<strong>传播给从节点和 AOF 的也是 <code>PEXPIREAT</code></strong>。</p>
+<p>这个转换非常重要：如果主节点把 <code>EXPIRE key 60</code> 原样传给从节点，因为命令到达从节点有网络延迟，从节点算出的过期时刻会比主节点晚一点，导致主从数据不一致。转成绝对时间戳就没有这个问题。</p>
+<h2 id="13-哪些操作会影响-ttl">1.3 哪些操作会影响 TTL</h2>
+<p>第 2 篇提过，这里系统化总结：</p>
+<table>
+<thead>
+<tr>
+<th>操作</th>
+<th>TTL 是否保留</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>INCR</code>/<code>DECR</code>/<code>APPEND</code>/<code>SETRANGE</code></td>
+<td><strong>保留</strong></td>
+</tr>
+<tr>
+<td><code>LPUSH</code>/<code>RPUSH</code>/<code>LPOP</code>/<code>LREM</code> 等 list 操作</td>
+<td><strong>保留</strong></td>
+</tr>
+<tr>
+<td><code>HSET</code>/<code>HDEL</code>/<code>HINCRBY</code> 等 hash 操作</td>
+<td><strong>保留</strong></td>
+</tr>
+<tr>
+<td><code>SADD</code>/<code>SREM</code>/<code>ZADD</code>/<code>ZINCRBY</code></td>
+<td><strong>保留</strong></td>
+</tr>
+<tr>
+<td><strong><code>SET</code></strong></td>
+<td><strong>清除</strong>（除非加 <code>KEEPTTL</code>）</td>
+</tr>
+<tr>
+<td><strong><code>GETSET</code></strong></td>
+<td><strong>清除</strong></td>
+</tr>
+<tr>
+<td><code>SETEX</code>/<code>SET ... EX</code></td>
+<td>设置为新值</td>
+</tr>
+<tr>
+<td><code>PERSIST</code></td>
+<td>移除</td>
+</tr>
+<tr>
+<td><strong><code>RENAME oldkey newkey</code></strong></td>
+<td>newkey 继承 <strong>oldkey 的 TTL</strong>（原 newkey 的 TTL 被覆盖）</td>
+</tr>
+<tr>
+<td><code>DEL</code> 后重新创建</td>
+<td>无 TTL（新 key）</td>
+</tr>
+<tr>
+<td><code>COPY src dst</code></td>
+<td>不复制 TTL（除非用 <code>COPY ... REPLACE</code>，仍不带 TTL）</td>
+</tr>
+<tr>
+<td><code>RESTORE key ttl data</code></td>
+<td>按参数指定</td>
+</tr>
+<tr>
+<td>对整个 key 的写入（如 <code>SET</code>、<code>GETSET</code>）</td>
+<td>清除</td>
+</tr>
+<tr>
+<td>对 key 内部元素的写入</td>
+<td>保留</td>
+</tr>
+</tbody>
+</table>
+<p><strong>规律</strong>：「替换整个 value」清除 TTL，「修改 value 内部」保留 TTL。</p>
+<h2 id="14-74-的-hash-字段级过期">1.4 7.4+ 的 hash 字段级过期</h2>
+<p>7.4 之前，TTL 只能加在整个 key 上。7.4 引入了字段级过期（第 2 篇提过）：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">HSET session:1001 token abc device ios
+</span></span><span class="line"><span class="cl">HEXPIRE session:1001 <span class="m">3600</span> FIELDS <span class="m">1</span> token     <span class="c1"># 只让 token 字段 1 小时后过期</span>
+</span></span><span class="line"><span class="cl">HTTL session:1001 FIELDS <span class="m">2</span> token device      <span class="c1"># 1) 3600  2) -1（device 无 TTL）</span>
+</span></span><span class="line"><span class="cl">HPERSIST session:1001 FIELDS <span class="m">1</span> token
+</span></span></code></pre></div><p>实现上，Redis 为带字段过期的 hash 引入了新的编码 <code>listpackex</code>（listpack 加 TTL 信息）和在 hashtable 编码下的额外 TTL 元数据，并用一个全局的<strong>基数树（radix tree）索引</strong>按到期时间排序，让主动过期能高效地找到最近要过期的字段。</p>
+<hr>
+<h1 id="2-三种过期删除策略">2. 三种过期删除策略</h1>
+<p>理论上有三种做法，Redis 采用了<strong>其中两种的组合</strong>。</p>
+<h2 id="21-定时删除timer-deletion">2.1 定时删除（timer deletion）</h2>
+<p><strong>做法</strong>：给每个带 TTL 的 key 创建一个定时器，到点立刻删除。</p>
+<ul>
+<li><strong>优点</strong>：内存最友好，key 一过期立即释放；</li>
+<li><strong>缺点</strong>：<strong>CPU 开销极大</strong>。有 100 万个带 TTL 的 key 就要维护 100 万个定时器；而且删除动作发生在主线程，如果同一时刻有大量 key 到期，会造成明显的延迟毛刺。更麻烦的是 Redis 的时间事件用无序链表实现（查找最近事件是 O(N)），根本承受不了海量定时器。</li>
+</ul>
+<p><strong>Redis 没有采用。</strong></p>
+<h2 id="22-惰性删除lazy-expiration">2.2 惰性删除（lazy expiration）</h2>
+<p><strong>做法</strong>：不主动检查，只在<strong>访问某个 key 时</strong>才判断它是否过期，过期就删掉并返回 nil。</p>
+<ul>
+<li><strong>优点</strong>：CPU 最友好，完全不做无用的检查；</li>
+<li><strong>缺点</strong>：<strong>内存不友好</strong>。一个过期的 key 如果再也没人访问，就会永远占着内存（内存泄漏）。</li>
+</ul>
+<p><strong>Redis 采用了这一种。</strong> 实现在 <code>expireIfNeeded()</code>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="c1">// 简化逻辑，每次通过 lookupKeyRead/lookupKeyWrite 访问 key 时都会调用
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kt">int</span> <span class="nf">expireIfNeeded</span><span class="p">(</span><span class="n">redisDb</span> <span class="o">*</span><span class="n">db</span><span class="p">,</span> <span class="n">robj</span> <span class="o">*</span><span class="n">key</span><span class="p">,</span> <span class="kt">int</span> <span class="n">flags</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">keyIsExpired</span><span class="p">(</span><span class="n">db</span><span class="p">,</span> <span class="n">key</span><span class="p">))</span> <span class="k">return</span> <span class="mi">0</span><span class="p">;</span>      <span class="c1">// 没过期，正常返回
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// 【关键】如果自己是从节点，不删除，只返回&#34;逻辑上已过期&#34;
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">if</span> <span class="p">(</span><span class="n">server</span><span class="p">.</span><span class="n">masterhost</span> <span class="o">!=</span> <span class="nb">NULL</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="mi">1</span><span class="p">;</span>   <span class="c1">// 等主节点发 DEL 过来才真删
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// 主节点：真正删除
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">deleteExpiredKeyAndPropagate</span><span class="p">(</span><span class="n">db</span><span class="p">,</span> <span class="n">key</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">//  ├─ 根据 lazyfree-lazy-expire 决定 dbAsyncDelete 还是 dbSyncDelete
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="c1">//  ├─ 向所有从节点和 AOF 传播一个显式的 DEL / UNLINK 命令
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="c1">//  ├─ 发送 keyspace notification（&#34;expired&#34; 事件）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="c1">//  └─ server.stat_expiredkeys++
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">return</span> <span class="mi">1</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><h2 id="23-定期删除active-expiration">2.3 定期删除（active expiration）</h2>
+<p><strong>做法</strong>：周期性地随机抽查一部分 key，删掉其中过期的。</p>
+<ul>
+<li><strong>优点</strong>：CPU 和内存的<strong>折中</strong>——通过控制每次检查的时长和频率，把 CPU 开销限制在可接受范围，同时能逐步回收那些&quot;没人访问的过期 key&quot;；</li>
+<li><strong>缺点</strong>：是概率性的，不保证过期 key 被立刻删除。参数不好调（太频繁伤 CPU，太稀疏内存回收慢）。</li>
+</ul>
+<p><strong>Redis 也采用了这一种。</strong></p>
+<h2 id="24-redis-的组合方案">2.4 Redis 的组合方案</h2>
+<blockquote>
+<p><strong>Redis = 惰性删除 + 定期删除</strong></p>
+</blockquote>
+<p>两者互补：</p>
+<ul>
+<li><strong>惰性删除</strong>保证「你读到的数据一定不是过期的」（正确性）；</li>
+<li><strong>定期删除</strong>保证「过期 key 最终会被回收」（内存不会无限泄漏）；</li>
+<li>如果两者都没及时清理导致内存打满，<strong>还有第三道防线：内存淘汰策略</strong>（第 4 节）。</li>
+</ul>
+<hr>
+<h1 id="3-定期删除的实现细节">3. 定期删除的实现细节</h1>
+<p><code>activeExpireCycle()</code> 是过期删除的核心函数，非常值得细看——它是&quot;如何在单线程里做后台工作而不影响前台&quot;的经典范例。</p>
+<h2 id="31-两种执行模式">3.1 两种执行模式</h2>
+<table>
+<thead>
+<tr>
+<th>模式</th>
+<th>触发点</th>
+<th>时间上限</th>
+<th>目的</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>SLOW</strong></td>
+<td><code>serverCron</code>（每 <code>1000/hz</code> ms，默认 100ms）</td>
+<td>CPU 时间占比 25%（默认 25ms）</td>
+<td>主力回收</td>
+</tr>
+<tr>
+<td><strong>FAST</strong></td>
+<td>每次事件循环的 <code>beforeSleep</code></td>
+<td><strong>1ms</strong>，且两次之间至少间隔 2ms</td>
+<td>快速补充，降低过期延迟</td>
+</tr>
+</tbody>
+</table>
+<pre tabindex="0"><code class="language-conf" data-lang="conf">hz 10                    # serverCron 每秒执行 10 次（每 100ms 一次）
+dynamic-hz yes           # 4.0+ 根据客户端数量动态调整 hz（客户端多时提高频率）
+activeexpire yes         # 是否开启主动过期（DEBUG SET-ACTIVE-EXPIRE 0 可关，仅调试用）
+</code></pre><p>SLOW 模式的时间预算计算：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="c1">// ACTIVE_EXPIRE_CYCLE_SLOW_TIME_PERC = 25
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">timelimit</span> <span class="o">=</span> <span class="mi">1000000</span> <span class="o">*</span> <span class="n">ACTIVE_EXPIRE_CYCLE_SLOW_TIME_PERC</span> <span class="o">/</span> <span class="n">server</span><span class="p">.</span><span class="n">hz</span> <span class="o">/</span> <span class="mi">100</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="c1">// hz=10 时：1000000 * 25 / 10 / 100 = 25000 微秒 = 25ms
+</span></span></span></code></pre></div><p>即<strong>最多用掉 25% 的 CPU 时间</strong>做过期删除。这是一个硬性上限，保证过期删除永远不会把实例拖死。</p>
+<h2 id="32-算法流程">3.2 算法流程</h2>
+<pre tabindex="0"><code>for 每个数据库 db in 16 个 db:
+    do:
+        1. 如果 db-&gt;expires 为空，跳到下一个 db
+
+        2. 从 db-&gt;expires 中随机抽取 ACTIVE_EXPIRE_CYCLE_KEYS_PER_LOOP（20）个 key
+           （用 dictGetSomeKeys，从随机桶开始连续采样，不是严格均匀随机）
+
+        3. 逐个检查，过期的就删除，统计 expired 个数
+
+        4. 每检查 16 次就看一下已用时间是否超过 timelimit，超了立即退出
+
+        5. 如果本轮过期比例 expired/20 &gt; 25%，说明过期 key 还很多，
+           【继续循环再抽一批】；否则跳到下一个 db
+    while (expired &gt; 20/4)
+</code></pre><p>三个关键设计：</p>
+<p><strong>（1）为什么是&quot;过期比例 &gt; 25% 就继续&quot;</strong></p>
+<p>这是一个<strong>自适应</strong>机制：</p>
+<ul>
+<li>如果随机抽 20 个只有 1~4 个过期（&lt;=25%），说明过期 key 占比不高，剩下的交给惰性删除就行，没必要继续耗 CPU；</li>
+<li>如果抽 20 个有 15 个过期（75%），说明积压了大量过期 key，值得多做几轮。</li>
+</ul>
+<p>这样在&quot;过期 key 很少&quot;时几乎不消耗 CPU，在&quot;过期 key 爆发&quot;时能快速追上。</p>
+<p><strong>（2）为什么每 16 次检查一次时间</strong></p>
+<p>调用 <code>getMonotonicUs()</code> 获取时间本身有开销（虽然很小）。每 16 次检查一次是&quot;及时性&quot;和&quot;开销&quot;的折中——最坏情况下超时 16 个 key 的检查时间，可忽略。</p>
+<p><strong>（3）随机采样而非遍历</strong></p>
+<p><code>dictGetSomeKeys</code> 从哈希表的随机位置开始，连续扫几个桶收集 key。这样是 O(1) 的（不依赖字典总大小），但<strong>采样不是严格均匀的</strong>——同一个桶里的 key 会被一起采到。这对过期删除来说无所谓（我们只要&quot;大致均匀&quot;）。</p>
+<h2 id="33-70-的优化过期字典的桶级采样">3.3 7.0 的优化：过期字典的桶级采样</h2>
+<p>7.0 改进了采样算法（<code>activeExpireCycleTryExpire</code> 相关）：不再是纯随机抽 key，而是<strong>逐个遍历哈希桶</strong>，把桶里所有 key 都检查一遍。因为一个桶通常只有 1~2 个 key，这样开销相近但<strong>覆盖更均匀</strong>，避免了老算法中&quot;某些 key 长期没被采样到&quot;的问题。</p>
+<p>同时引入了「记录上次扫描到哪个桶」的游标，保证轮询公平。</p>
+<h2 id="34-定期删除的局限">3.4 定期删除的局限</h2>
+<p>即使有定期删除，仍然可能出现「大量过期 key 占用内存」的情况：</p>
+<ol>
+<li><strong>过期 key 集中在某个庞大的 expires 字典里，采样命中率低</strong>：假设有 1000 万个 key 带 TTL，其中只有 5 万过期（0.5%），随机抽 20 个大概率一个都碰不到，<code>expired/20 &lt;= 25%</code> 直接退出。这 5 万个过期 key 就要等下次侥幸被采样到，或者被访问时惰性删除；</li>
+<li><strong>时间预算被打满</strong>：如果一次有几百万 key 同时过期（比如大批缓存用了同一个 TTL），25ms 的预算根本删不完，会持续多个周期，期间内存居高不下；</li>
+<li><strong>从节点不主动删除</strong>（见第 5 节）。</li>
+</ol>
+<p><strong>实践建议</strong>：给批量写入的缓存 key <strong>加上随机 TTL 抖动</strong>（如 <code>3600 + rand(300)</code>），既能避免缓存雪崩，也能让过期删除的压力均摊。</p>
+<h2 id="35-观察过期删除">3.5 观察过期删除</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">127.0.0.1:6379&gt; INFO stats
+</span></span><span class="line"><span class="cl">expired_keys:12345           <span class="c1"># 累计过期删除的 key 数</span>
+</span></span><span class="line"><span class="cl">expired_stale_perc:0.12      <span class="c1"># 估算的&#34;仍存在的过期 key&#34;占比</span>
+</span></span><span class="line"><span class="cl">expired_time_cap_reached_count:3   <span class="c1"># 因时间预算耗尽而中断的次数（大于 0 说明过期压力大）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; INFO keyspace
+</span></span><span class="line"><span class="cl">db0:keys<span class="o">=</span>1000000,expires<span class="o">=</span>800000,avg_ttl<span class="o">=</span><span class="m">3600000</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#             ↑ 总 key 数    ↑ 带 TTL 的 key 数   ↑ 平均剩余 TTL（毫秒，估算值）</span>
+</span></span></code></pre></div><p><code>expired_time_cap_reached_count</code> 持续增长是个警告信号：说明每个周期的 25ms 都用满了还没删完，需要检查是否有大批 key 同时过期。</p>
+<hr>
+<h1 id="4-内存淘汰策略">4. 内存淘汰策略</h1>
+<p>过期删除处理的是&quot;有 TTL 且已过期&quot;的 key。但如果内存已经打满，而<strong>没有过期 key 可删</strong>（比如所有 key 都是永久的，或者 TTL 都还没到），怎么办？这就要靠<strong>内存淘汰（eviction）</strong>。</p>
+<h2 id="41-触发时机">4.1 触发时机</h2>
+<p>淘汰检查发生在<strong>每条命令执行之前</strong>（<code>processCommand</code> → <code>performEvictions</code>）：</p>
+<pre tabindex="0"><code>1. 计算当前已用内存 mem_used
+   = used_memory - 从节点输出缓冲区 - AOF 缓冲区
+   （这两部分不算，因为它们不是&#34;数据&#34;，而且可能瞬间很大）
+
+2. 如果 mem_used &lt;= maxmemory，直接放行
+
+3. 超了 → 按 maxmemory-policy 淘汰 key，直到内存降到 maxmemory 以下
+   ├─ noeviction：不淘汰，直接给写命令返回 OOM 错误
+   └─ 其他策略：循环选 key 删除，每删一个就检查是否已降下来
+
+4. 如果淘汰后仍然降不下来（比如只有一个巨大的 key），写命令返回 OOM 错误
+</code></pre><p><strong>关键点</strong>：淘汰是<strong>同步在主线程做的</strong>，发生在命令执行前。所以如果内存长期贴着 <code>maxmemory</code>，每条写命令都要先做淘汰计算，会明显拉高延迟。开启 <code>lazyfree-lazy-eviction yes</code> 能让内存释放异步化，缓解这个问题。</p>
+<h2 id="42-八种策略">4.2 八种策略</h2>
+<pre tabindex="0"><code class="language-conf" data-lang="conf">maxmemory 4gb
+maxmemory-policy allkeys-lru
+</code></pre><table>
+<thead>
+<tr>
+<th>策略</th>
+<th>候选范围</th>
+<th>淘汰依据</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>noeviction</strong></td>
+<td>-</td>
+<td>不淘汰</td>
+<td><strong>默认值</strong>。写命令返回 <code>OOM command not allowed...</code>，读命令仍可用</td>
+</tr>
+<tr>
+<td><strong>allkeys-lru</strong></td>
+<td>所有 key</td>
+<td>最近最少使用</td>
+<td><strong>最常用</strong>的纯缓存策略</td>
+</tr>
+<tr>
+<td><strong>allkeys-lfu</strong></td>
+<td>所有 key</td>
+<td>使用频率最低</td>
+<td>4.0+，<strong>热点数据明显时优于 LRU</strong></td>
+</tr>
+<tr>
+<td><strong>allkeys-random</strong></td>
+<td>所有 key</td>
+<td>随机</td>
+<td>访问模式完全均匀时可用，实际很少</td>
+</tr>
+<tr>
+<td><strong>volatile-lru</strong></td>
+<td><strong>仅带 TTL 的 key</strong></td>
+<td>最近最少使用</td>
+<td>缓存与持久数据混存时用</td>
+</tr>
+<tr>
+<td><strong>volatile-lfu</strong></td>
+<td>仅带 TTL 的 key</td>
+<td>使用频率最低</td>
+<td>4.0+</td>
+</tr>
+<tr>
+<td><strong>volatile-random</strong></td>
+<td>仅带 TTL 的 key</td>
+<td>随机</td>
+<td></td>
+</tr>
+<tr>
+<td><strong>volatile-ttl</strong></td>
+<td>仅带 TTL 的 key</td>
+<td><strong>剩余 TTL 最短的优先</strong></td>
+<td>相当于&quot;提前过期&quot;</td>
+</tr>
+</tbody>
+</table>
+<p><em><em>volatile-</em> 系列的重大陷阱</em>*：如果<strong>没有任何 key 设置了 TTL</strong>，volatile 策略就<strong>找不到可淘汰的 key</strong>，行为退化成 <code>noeviction</code>——写命令直接报 OOM。这是线上事故的常见原因：运维设了 <code>volatile-lru</code> 觉得很安全，但业务代码写缓存时忘了加 <code>EX</code>，结果内存满了直接不可写。</p>
+<h2 id="43-选型建议">4.3 选型建议</h2>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th>推荐策略</th>
+<th>理由</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>纯缓存</strong>（数据丢了能从 DB 重建）</td>
+<td><code>allkeys-lru</code> 或 <code>allkeys-lfu</code></td>
+<td>保证服务永远可写，自动淘汰冷数据</td>
+</tr>
+<tr>
+<td><strong>有明显热点</strong>（少数 key 访问极频繁）</td>
+<td><strong><code>allkeys-lfu</code></strong></td>
+<td>LRU 会被&quot;偶尔的全表扫描&quot;污染，LFU 不会</td>
+</tr>
+<tr>
+<td><strong>缓存 + 持久数据混存</strong></td>
+<td><code>volatile-lru</code></td>
+<td>只淘汰缓存（带 TTL 的），保护持久数据</td>
+</tr>
+<tr>
+<td><strong>纯数据库用途</strong>（数据不可丢）</td>
+<td><code>noeviction</code></td>
+<td>宁可写失败也不能丢数据，配合监控告警</td>
+</tr>
+<tr>
+<td><strong>有明确的时效性排序</strong></td>
+<td><code>volatile-ttl</code></td>
+<td>比如都是有时效的验证码/会话</td>
+</tr>
+<tr>
+<td><strong>访问完全均匀</strong>（罕见）</td>
+<td><code>allkeys-random</code></td>
+<td>开销最小</td>
+</tr>
+</tbody>
+</table>
+<p><strong>最重要的实践</strong>：如果用 <code>volatile-*</code> 系列，<strong>必须确保所有缓存 key 都设了 TTL</strong>，并且监控 <code>INFO keyspace</code> 的 <code>expires</code> 数量。混存场景更稳妥的做法是<strong>物理隔离</strong>——缓存和持久数据用不同的实例。</p>
+<h2 id="44-oom-的表现">4.4 OOM 的表现</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">127.0.0.1:6379&gt; CONFIG SET maxmemory 1mb
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; CONFIG SET maxmemory-policy noeviction
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; SET k &lt;一个很大的值&gt;
+</span></span><span class="line"><span class="cl"><span class="o">(</span>error<span class="o">)</span> OOM <span class="nb">command</span> not allowed when used memory &gt; <span class="s1">&#39;maxmemory&#39;</span>.
+</span></span></code></pre></div><p>注意：</p>
+<ul>
+<li><strong>只有&quot;可能增加内存&quot;的命令被拒绝</strong>（<code>SET</code>、<code>LPUSH</code>、<code>ZADD</code>、<code>INCR</code> 等，标记了 <code>use-memory</code> 的命令）；</li>
+<li><strong>读命令仍然正常</strong>（<code>GET</code>、<code>LRANGE</code>）；</li>
+<li><strong><code>DEL</code>、<code>UNLINK</code>、<code>EXPIRE</code> 也允许</strong>（它们减少内存）；</li>
+<li><strong>Lua 脚本</strong>：如果脚本被声明为可能写入，整个脚本会被拒绝。</li>
+</ul>
+<h2 id="45-监控淘汰">4.5 监控淘汰</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">127.0.0.1:6379&gt; INFO stats
+</span></span><span class="line"><span class="cl">evicted_keys:98765          <span class="c1"># 累计被淘汰的 key 数 ← 最关键指标</span>
+</span></span><span class="line"><span class="cl">evicted_clients:0           <span class="c1"># 7.0+ 因内存压力被断开的客户端数</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; INFO memory
+</span></span><span class="line"><span class="cl">used_memory_human:3.85G
+</span></span><span class="line"><span class="cl">maxmemory_human:4.00G
+</span></span><span class="line"><span class="cl">maxmemory_policy:allkeys-lru
+</span></span><span class="line"><span class="cl">mem_fragmentation_ratio:1.12
+</span></span></code></pre></div><p><strong><code>evicted_keys</code> 持续快速增长</strong>说明内存严重不足，正在大量淘汰数据。后果是<strong>缓存命中率下降</strong>（<code>keyspace_hits/(hits+misses)</code>），进而 DB 压力上升。这时候要么扩容内存，要么排查是否有大 key / 内存泄漏 / 该过期的没过期。</p>
+<hr>
+<h1 id="5-近似-lru-的实现">5. 近似 LRU 的实现</h1>
+<h2 id="51-标准-lru-为什么不能用">5.1 标准 LRU 为什么不能用</h2>
+<p>教科书里的 LRU 用 <strong>哈希表 + 双向链表</strong>实现：</p>
+<pre tabindex="0"><code>访问一个元素 → 把它移到链表头部
+淘汰 → 删除链表尾部的元素
+</code></pre><p>Redis 不用它，两个原因：</p>
+<p><strong>（1）内存开销大</strong></p>
+<p>每个 key 都要额外存 <code>prev</code> 和 <code>next</code> 两个指针 = <strong>16 字节</strong>。对于一个有 1 亿 key 的实例，就是 <strong>1.6GB</strong> 纯粹的元数据开销。对内存数据库来说完全不可接受。</p>
+<p><strong>（2）维护链表本身有成本</strong></p>
+<p>每次<strong>读操作</strong>都要修改链表（移动节点），这让读操作产生了写内存的副作用——破坏了 CPU 缓存局部性，还会在 fork 期间触发额外的 COW（读操作导致内存页被复制，这非常糟糕）。</p>
+<h2 id="52-redis-的做法随机采样--淘汰池">5.2 Redis 的做法：随机采样 + 淘汰池</h2>
+<p>Redis 的<strong>近似 LRU（approximated LRU）</strong>：</p>
+<p><strong>（1）每个 robj 用 24 bit 记录访问时间</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="k">typedef</span> <span class="k">struct</span> <span class="n">redisObject</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="kt">unsigned</span> <span class="nl">type</span><span class="p">:</span><span class="mi">4</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kt">unsigned</span> <span class="nl">encoding</span><span class="p">:</span><span class="mi">4</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kt">unsigned</span> <span class="nl">lru</span><span class="p">:</span><span class="mi">24</span><span class="p">;</span>      <span class="c1">// ← LRU 模式下：最后一次访问的时间戳（秒级精度）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="kt">int</span> <span class="n">refcount</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kt">void</span> <span class="o">*</span><span class="n">ptr</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span> <span class="n">robj</span><span class="p">;</span>
+</span></span></code></pre></div><ul>
+<li><strong>只占 24 bit，而且是 robj 里原本就有的空隙</strong>（结构体对齐产生的空间），<strong>零额外内存开销</strong>；</li>
+<li>精度是<strong>秒</strong>，24 bit 能表示 <code>2^24 = 16777216</code> 秒 ≈ <strong>194 天</strong>，超过就回绕（Redis 有专门的处理逻辑处理回绕情况）；</li>
+<li>每次访问 key 时（<code>lookupKey</code>）更新这个字段。</li>
+</ul>
+<p><strong>为什么不直接调 <code>time()</code></strong>：那是个系统调用，每次访问 key 都调太慢。Redis 维护了一个<strong>全局 LRU 时钟 <code>server.lruclock</code></strong>，由 <code>serverCron</code> 每 100ms 更新一次，读取时直接用这个缓存值（<code>LRU_CLOCK()</code> 宏）。</p>
+<p><strong>（2）淘汰时随机采样</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="c1">// maxmemory-samples 默认 5
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">for</span> <span class="p">(</span><span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">maxmemory_samples</span><span class="p">;</span> <span class="n">i</span><span class="o">++</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="n">key</span> <span class="o">=</span> <span class="err">从候选字典里随机取一个</span> <span class="n">key</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="n">idle</span> <span class="o">=</span> <span class="err">估算它的空闲时间</span> <span class="p">(</span><span class="err">当前</span> <span class="n">lruclock</span> <span class="o">-</span> <span class="n">key</span> <span class="err">的</span> <span class="n">lru</span> <span class="err">字段</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">    <span class="err">把</span> <span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">idle</span><span class="p">)</span> <span class="err">放入淘汰池</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="err">淘汰池里</span> <span class="n">idle</span> <span class="err">最大的那个</span> <span class="n">key</span> <span class="err">被删除</span><span class="p">;</span>
+</span></span></code></pre></div><p><strong>（3）3.0 引入的淘汰池（eviction pool）</strong></p>
+<p>2.8 及之前的算法很朴素：每次随机采 5 个，淘汰其中最旧的。这样的问题是<strong>每次采样的信息都被丢弃了</strong>——采到一个&quot;次旧&quot;的 key 也不记住，下次重新采。</p>
+<p>3.0 引入了一个大小为 <strong>16</strong> 的淘汰池（<code>EVPOOL_SIZE</code>），是个按 idle 时间排序的数组：</p>
+<pre tabindex="0"><code>1. 每次淘汰时，随机采样 maxmemory-samples 个 key
+2. 把它们插入淘汰池（保持按 idle 升序排列）
+3. 如果池满了，只有 idle 比池中最小值更大的 key 才能挤进来
+4. 从池尾（idle 最大）取一个 key 淘汰，并从池中移除
+5. 池在多次淘汰之间【保留】，所以历次采样的&#34;好候选&#34;会积累下来
+</code></pre><p>这个改进让近似 LRU 的效果<strong>显著接近真实 LRU</strong>。Redis 官方文档里有一张著名的对比图：</p>
+<pre tabindex="0"><code>浅灰点 = 被淘汰的 key    深灰点 = 未被淘汰    黑点 = 最近访问过的 key
+
+理论 LRU        Redis 3.0 (samples=10)   Redis 3.0 (samples=5)   Redis 2.8 (samples=5)
+完美分层         非常接近                  比较接近                 明显误差
+</code></pre><p>结论：<strong>3.0 的 samples=10 已经和真实 LRU 几乎没有区别</strong>，samples=5 也足够好用。</p>
+<p><strong>（4）maxmemory-samples 调优</strong></p>
+<pre tabindex="0"><code class="language-conf" data-lang="conf">maxmemory-samples 5      # 默认
+</code></pre><table>
+<thead>
+<tr>
+<th>值</th>
+<th>精度</th>
+<th>CPU</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>3</td>
+<td>明显误差</td>
+<td>最省</td>
+</tr>
+<tr>
+<td><strong>5</strong></td>
+<td><strong>够用（默认）</strong></td>
+<td><strong>低</strong></td>
+</tr>
+<tr>
+<td>10</td>
+<td>几乎等于真实 LRU</td>
+<td>约高 1.5 倍</td>
+</tr>
+<tr>
+<td>20+</td>
+<td>提升微乎其微</td>
+<td>明显更高</td>
+</tr>
+</tbody>
+</table>
+<p>官方建议：<strong>默认 5 适合绝大多数场景</strong>；对淘汰精度特别敏感（比如缓存命中率至关重要）时可以调到 10。</p>
+<h2 id="53-查看空闲时间">5.3 查看空闲时间</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">127.0.0.1:6379&gt; OBJECT IDLETIME mykey
+</span></span><span class="line"><span class="cl"><span class="o">(</span>integer<span class="o">)</span> <span class="m">320</span>       <span class="c1"># 空闲 320 秒</span>
+</span></span></code></pre></div><p>注意：<strong><code>OBJECT IDLETIME</code> 本身不会更新 lru 字段</strong>（否则就没法查了）。但 <code>GET</code>、<code>TYPE</code> 等命令都会更新。</p>
+<hr>
+<h1 id="6-lfu-的实现">6. LFU 的实现</h1>
+<h2 id="61-lru-的缺陷">6.1 LRU 的缺陷</h2>
+<p>LRU 只看&quot;最后一次访问时间&quot;，会被<strong>偶发的批量访问污染</strong>。</p>
+<p>经典场景：</p>
+<pre tabindex="0"><code>一个缓存里有 10 个热点 key，每秒被访问几千次。
+凌晨 3 点跑了一个数据分析任务，全表扫描读了 100 万个冷 key。
+
+LRU 的结果：这 100 万个冷 key 的&#34;最后访问时间&#34;都是刚刚，
+           而 10 个热点 key 因为那一瞬间没被访问，反而显得&#34;更旧&#34;，
+           → 热点 key 被淘汰，冷 key 占满内存
+           → 之后业务请求全部缓存未命中，DB 被打爆
+</code></pre><p>这叫 <strong>缓存污染（cache pollution）</strong> 或 <strong>sequential flooding</strong>。</p>
+<h2 id="62-lfu-的思路">6.2 LFU 的思路</h2>
+<p><strong>LFU（Least Frequently Used）</strong>：淘汰<strong>访问频率最低</strong>的 key。上面场景里，冷 key 各自只被访问了 1 次，频率极低，会被优先淘汰，热点 key 安然无恙。</p>
+<p>Redis 4.0 引入 <code>allkeys-lfu</code> / <code>volatile-lfu</code>。</p>
+<h2 id="63-实现8-bit-计数器--16-bit-时间">6.3 实现：8 bit 计数器 + 16 bit 时间</h2>
+<p>LFU 模式下，robj 的 24 bit <code>lru</code> 字段被拆成两部分：</p>
+<pre tabindex="0"><code>+------------------------------------+----------------+
+|  16 bit: ldt (Last Decrement Time) | 8 bit: counter |
++------------------------------------+----------------+
+   上次递减的时间（分钟级精度）        对数访问计数器
+</code></pre><ul>
+<li><strong><code>ldt</code>（16 bit）</strong>：上次衰减的时间，单位是<strong>分钟</strong>，<code>2^16 = 65536</code> 分钟 ≈ 45.5 天后回绕；</li>
+<li><strong><code>counter</code>（8 bit）</strong>：访问频率计数器，范围 <strong>0~255</strong>。</li>
+</ul>
+<h3 id="关键设计一对数递增logarithmic-counter">关键设计一：对数递增（logarithmic counter）</h3>
+<p>8 bit 最大只能到 255，如果每次访问 +1，一个热点 key 几秒钟就打满 255，之后所有热点 key 都是 255 就<strong>没有区分度</strong>了。</p>
+<p>Redis 用<strong>概率性的对数递增</strong>（<code>LFULogIncr</code>）：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="kt">uint8_t</span> <span class="nf">LFULogIncr</span><span class="p">(</span><span class="kt">uint8_t</span> <span class="n">counter</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="p">(</span><span class="n">counter</span> <span class="o">==</span> <span class="mi">255</span><span class="p">)</span> <span class="k">return</span> <span class="mi">255</span><span class="p">;</span>              <span class="c1">// 已满
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="kt">double</span> <span class="n">r</span> <span class="o">=</span> <span class="p">(</span><span class="kt">double</span><span class="p">)</span><span class="n">rand</span><span class="p">()</span> <span class="o">/</span> <span class="n">RAND_MAX</span><span class="p">;</span>        <span class="c1">// [0,1) 随机数
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="kt">double</span> <span class="n">baseval</span> <span class="o">=</span> <span class="n">counter</span> <span class="o">-</span> <span class="n">LFU_INIT_VAL</span><span class="p">;</span>     <span class="c1">// LFU_INIT_VAL = 5
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">if</span> <span class="p">(</span><span class="n">baseval</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">)</span> <span class="n">baseval</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// counter 越大，p 越小 → 越难继续增长
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="kt">double</span> <span class="n">p</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="p">(</span><span class="n">baseval</span> <span class="o">*</span> <span class="n">server</span><span class="p">.</span><span class="n">lfu_log_factor</span> <span class="o">+</span> <span class="mi">1</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="p">(</span><span class="n">r</span> <span class="o">&lt;</span> <span class="n">p</span><span class="p">)</span> <span class="n">counter</span><span class="o">++</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="n">counter</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>即：<strong>counter 越大，再 +1 的概率越小</strong>。<code>lfu-log-factor</code> 控制曲线的陡峭程度。</p>
+<p>官方给出的对照表（不同 <code>lfu-log-factor</code> 下，counter 达到某值所需的访问次数）：</p>
+<table>
+<thead>
+<tr>
+<th>factor</th>
+<th>counter=100</th>
+<th>counter=200</th>
+<th>counter=255</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td>104</td>
+<td>255</td>
+<td>255</td>
+</tr>
+<tr>
+<td>1</td>
+<td>18 K</td>
+<td>49 K</td>
+<td>255 K</td>
+</tr>
+<tr>
+<td><strong>10（默认）</strong></td>
+<td><strong>10 K</strong></td>
+<td><strong>271 K</strong></td>
+<td><strong>1 M</strong></td>
+</tr>
+<tr>
+<td>100</td>
+<td>134 K</td>
+<td>2.7 M</td>
+<td>10 M</td>
+</tr>
+</tbody>
+</table>
+<p>用默认 factor=10：访问 1 万次 counter 到 100，访问 100 万次才到 255。这样<strong>在 0~255 的空间里能区分出跨 6 个数量级的访问频率</strong>。</p>
+<h3 id="关键设计二时间衰减decay">关键设计二：时间衰减（decay）</h3>
+<p>只有递增的话，一个&quot;曾经很热、现在已冷&quot;的 key 会永远保持高 counter，永远不被淘汰。所以必须让 counter 随时间<strong>衰减</strong>。</p>
+<pre tabindex="0"><code class="language-conf" data-lang="conf">lfu-decay-time 1      # 每经过 N 分钟，counter 减 1（默认 1）
+</code></pre><p>衰减是<strong>惰性</strong>的（<code>LFUDecrAndReturn</code>）：不用定时任务遍历，而是在<strong>读取 counter 时</strong>根据 <code>ldt</code> 计算应该衰减多少：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="kt">unsigned</span> <span class="kt">long</span> <span class="nf">LFUDecrAndReturn</span><span class="p">(</span><span class="n">robj</span> <span class="o">*</span><span class="n">o</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="kt">unsigned</span> <span class="kt">long</span> <span class="n">ldt</span> <span class="o">=</span> <span class="n">o</span><span class="o">-&gt;</span><span class="n">lru</span> <span class="o">&gt;&gt;</span> <span class="mi">8</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kt">unsigned</span> <span class="kt">long</span> <span class="n">counter</span> <span class="o">=</span> <span class="n">o</span><span class="o">-&gt;</span><span class="n">lru</span> <span class="o">&amp;</span> <span class="mi">255</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// 距上次衰减过了多少个 lfu_decay_time 周期
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="kt">unsigned</span> <span class="kt">long</span> <span class="n">num_periods</span> <span class="o">=</span> <span class="n">server</span><span class="p">.</span><span class="n">lfu_decay_time</span> <span class="o">?</span>
+</span></span><span class="line"><span class="cl">                                <span class="n">LFUTimeElapsed</span><span class="p">(</span><span class="n">ldt</span><span class="p">)</span> <span class="o">/</span> <span class="n">server</span><span class="p">.</span><span class="nl">lfu_decay_time</span> <span class="p">:</span> <span class="mi">0</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="p">(</span><span class="n">num_periods</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="n">counter</span> <span class="o">=</span> <span class="p">(</span><span class="n">num_periods</span> <span class="o">&gt;</span> <span class="n">counter</span><span class="p">)</span> <span class="o">?</span> <span class="mi">0</span> <span class="o">:</span> <span class="n">counter</span> <span class="o">-</span> <span class="n">num_periods</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="n">counter</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><code>lfu-decay-time 0</code> 表示<strong>永不衰减</strong>（只用纯频率），一般不建议。</p>
+<h3 id="新-key-的初始值">新 key 的初始值</h3>
+<p>新创建的 key，counter 初始化为 <strong><code>LFU_INIT_VAL = 5</code></strong>（不是 0）。</p>
+<p>为什么？如果初始为 0，一个刚写入的新 key 立刻就成了&quot;最该淘汰的&quot;，可能在被第二次访问之前就被删掉了，导致<strong>新数据永远进不了缓存</strong>。给个 5 的&quot;新手保护&quot;，让它有机会积累访问。</p>
+<p>同时 5 也不能太大，否则大量新 key 会挤掉真正的热 key。</p>
+<h2 id="64-查看访问频率">6.4 查看访问频率</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">127.0.0.1:6379&gt; CONFIG SET maxmemory-policy allkeys-lfu
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; SET k v
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; OBJECT FREQ k
+</span></span><span class="line"><span class="cl"><span class="o">(</span>integer<span class="o">)</span> <span class="m">5</span>           <span class="c1"># 初始值 LFU_INIT_VAL</span>
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; GET k
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; GET k
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; OBJECT FREQ k
+</span></span><span class="line"><span class="cl"><span class="o">(</span>integer<span class="o">)</span> <span class="m">6</span>           <span class="c1"># 概率性递增，可能还是 5</span>
+</span></span></code></pre></div><p>注意 <code>OBJECT FREQ</code> <strong>只在 LFU 策略下可用</strong>，LRU 策略下会报错 <code>An LFU maxmemory policy is not selected</code>。反之 <code>OBJECT IDLETIME</code> 只在非 LFU 策略下可用。</p>
+<p><strong><code>redis-cli --hotkeys</code> 就是靠 <code>OBJECT FREQ</code> 实现的</strong>，所以它要求先把策略设为 LFU。</p>
+<h2 id="65-lfu-配置总结">6.5 LFU 配置总结</h2>
+<pre tabindex="0"><code class="language-conf" data-lang="conf">maxmemory-policy allkeys-lfu
+lfu-log-factor 10        # 对数递增因子，越大则 counter 增长越慢、能区分的频率范围越广
+lfu-decay-time 1         # 每 N 分钟衰减 1，0 表示不衰减
+</code></pre><p>调优思路：</p>
+<ul>
+<li><strong>访问频率差异巨大</strong>（有的 key 每秒几万次，有的每天几次）→ 调大 <code>lfu-log-factor</code>（如 100），扩大可区分范围；</li>
+<li><strong>访问频率都不高</strong>（最热的 key 也就每分钟几十次）→ 调小 <code>lfu-log-factor</code>（如 1~5），提高区分度；</li>
+<li><strong>热点变化快</strong>（热点每几分钟就换）→ 调小 <code>lfu-decay-time</code>（如 1），让旧热点快速降温；</li>
+<li><strong>热点稳定</strong>（长期就是那些 key 热）→ 调大 <code>lfu-decay-time</code>（如 10~60）。</li>
+</ul>
+<h2 id="66-lru-vs-lfu-对比">6.6 LRU vs LFU 对比</h2>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>LRU</th>
+<th>LFU</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>依据</td>
+<td>最后访问<strong>时间</strong></td>
+<td>访问<strong>频率</strong></td>
+</tr>
+<tr>
+<td>抗批量扫描污染</td>
+<td><strong>差</strong>（会被冲垮）</td>
+<td><strong>好</strong></td>
+</tr>
+<tr>
+<td>对&quot;突发新热点&quot;的响应</td>
+<td><strong>快</strong>（访问一次就变最新）</td>
+<td><strong>慢</strong>（需要积累 counter）</td>
+</tr>
+<tr>
+<td>元数据</td>
+<td>24 bit 时间戳</td>
+<td>16 bit 时间 + 8 bit 计数</td>
+</tr>
+<tr>
+<td>额外配置</td>
+<td><code>maxmemory-samples</code></td>
+<td><code>lfu-log-factor</code>、<code>lfu-decay-time</code></td>
+</tr>
+<tr>
+<td>适用</td>
+<td>访问模式随时间平移（时效性数据）</td>
+<td><strong>存在稳定热点</strong>（大多数缓存场景）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>一般结论</strong>：<strong>大多数缓存场景 LFU 优于 LRU</strong>，特别是有定时批处理任务的系统。但如果业务的访问模式是&quot;最近的数据最热&quot;（如新闻、朋友圈时间线），LRU 反而更贴合。</p>
+<blockquote>
+<p>注意：淘汰算法本身也用<strong>随机采样 + 淘汰池</strong>（和 LRU 一样），只是排序依据从 idle 时间换成了 counter。所以 LFU 也是&quot;近似&quot;的。</p>
+</blockquote>
+<hr>
+<h1 id="7-主从环境下的过期语义">7. 主从环境下的过期语义</h1>
+<p>这是<strong>面试高频陷阱题</strong>，也是实际踩坑的高发区。</p>
+<h2 id="71-从节点不主动删除过期-key">7.1 从节点不主动删除过期 key</h2>
+<p><strong>规则：只有主节点会真正删除过期 key。从节点等主节点发来的 <code>DEL</code>/<code>UNLINK</code> 命令。</strong></p>
+<pre tabindex="0"><code>主节点：
+  key 过期（惰性或定期发现）
+    → 删除自己的 key
+    → 【显式生成一条 DEL 命令】传播给所有从节点和 AOF
+从节点：
+  收到 DEL → 删除自己的 key
+</code></pre><p><strong>为什么这么设计？</strong></p>
+<p>因为如果从节点自己删除过期 key，就会出现<strong>主从数据不一致</strong>：</p>
+<ul>
+<li>从节点的时钟可能与主节点有偏差，删除时机不同；</li>
+<li>更严重的是<strong>违反了&quot;从节点只被动接受主节点数据变更&quot;的复制模型</strong>——一旦从节点能自己改数据，主从之间的数据就可能永久分叉（比如从节点删了，但主节点的定期删除还没扫到，此时主节点上这个 key 又被 <code>PERSIST</code> 了，从节点却已经没有它了）。</li>
+</ul>
+<p>统一由主节点决定并显式传播 <code>DEL</code>，让复制流成为唯一的数据变更来源，<strong>保证了主从的最终一致性</strong>。</p>
+<h2 id="72-从节点读到过期-key-会返回什么">7.2 从节点读到过期 key 会返回什么</h2>
+<p>关键点：<strong>从节点虽然不删除，但读取时会判断逻辑上是否过期，过期就返回 nil。</strong></p>
+<p>在 <code>expireIfNeeded</code> 里：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="k">if</span> <span class="p">(</span><span class="n">server</span><span class="p">.</span><span class="n">masterhost</span> <span class="o">!=</span> <span class="nb">NULL</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="mi">1</span><span class="p">;</span>   <span class="c1">// 返回&#34;已过期&#34;但不删除，调用方据此返回 nil
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span></code></pre></div><p>所以从客户端视角看，<strong>从节点上读一个已过期的 key 会正确地返回 nil</strong>，不会读到脏数据。</p>
+<p>只是这个 key <strong>仍然占着从节点的内存</strong>，直到主节点的 DEL 传过来。</p>
+<h2 id="73-32-之前的-bug">7.3 3.2 之前的 BUG</h2>
+<p>Redis <strong>3.2 之前</strong>这里有个真实的 bug：从节点在读取时<strong>不做过期判断</strong>，直接返回值。所以在主节点还没来得及发 DEL 的窗口期内，<strong>从节点会返回已过期的数据</strong>。</p>
+<p>如果你的业务用了读写分离（写主读从），在老版本上就可能读到过期的缓存。3.2 修复了这一点。这是&quot;为什么要升级 Redis 版本&quot;的一个具体理由。</p>
+<h2 id="74-从节点如何维护自己的-expires">7.4 从节点如何维护自己的 expires</h2>
+<p>从节点也维护 <code>expires</code> 字典（因为它要能判断逻辑过期），数据来自：</p>
+<ol>
+<li>全量同步时从 RDB 加载（RDB 里存了绝对时间戳，<strong>加载时已过期的 key 会被跳过</strong>——注意从节点加载时不跳过，主节点加载时跳过，因为从节点必须和主节点保持完全一致）；</li>
+<li>复制流里的 <code>PEXPIREAT</code> 命令。</li>
+</ol>
+<p><strong>主节点传播的永远是 <code>PEXPIREAT</code>（绝对时间戳）而不是 <code>EXPIRE</code>（相对秒数）</strong>，避免了网络延迟造成的过期时刻偏差。</p>
+<h2 id="75-相关的两个坑">7.5 相关的两个坑</h2>
+<p><strong>坑一：从节点的内存可能高于主节点</strong></p>
+<p>因为从节点上堆积着&quot;逻辑已过期但还没收到 DEL&quot;的 key。如果主节点的定期删除压力大（大量 key 同时过期，25ms 预算删不完），从节点的这部分内存会明显偏高。</p>
+<p><strong>坑二：主从切换后大量 key 集中过期</strong></p>
+<p>从节点被提升为主节点后，它开始承担主动过期的职责。如果之前积压了大量过期 key，切换瞬间会有一波集中删除，造成延迟毛刺和内存陡降。</p>
+<h2 id="76-lua-脚本里的过期">7.6 Lua 脚本里的过期</h2>
+<p>为了保证脚本在主从上的执行结果一致，Redis 有个特殊规则：</p>
+<p><strong>在 Lua 脚本执行期间，时间是&quot;冻结&quot;的</strong>——脚本开始执行时的时间被记录下来，脚本内所有的过期判断都用这个时间。这样即使脚本执行了几百毫秒，也不会出现&quot;脚本前半段 key 还在、后半段就过期了&quot;的情况，保证了脚本在主从节点上的确定性。</p>
+<p>同理，脚本里 <code>TIME</code> 命令在 5.0 之前是被禁止的（因为不确定），5.0 之后允许了但脚本会以&quot;effects replication&quot;（传播实际的写效果而不是脚本本身）的方式复制。</p>
+<hr>
+<h1 id="8-生产实践与排查">8. 生产实践与排查</h1>
+<h2 id="81-完整的内存治理配置">8.1 完整的内存治理配置</h2>
+<pre tabindex="0"><code class="language-conf" data-lang="conf"># 1. 必须设置 maxmemory（物理内存的 60%~70%）
+maxmemory 4gb
+
+# 2. 缓存场景用 allkeys-lfu（有明显热点）或 allkeys-lru
+maxmemory-policy allkeys-lfu
+maxmemory-samples 5
+lfu-log-factor 10
+lfu-decay-time 1
+
+# 3. 全部开启惰性释放，避免删除/淘汰大 key 阻塞主线程
+lazyfree-lazy-eviction yes      # 淘汰时异步释放
+lazyfree-lazy-expire yes        # 过期删除时异步释放
+lazyfree-lazy-server-del yes    # 隐式删除（rename 覆盖等）异步
+lazyfree-lazy-user-del yes      # 让 DEL 表现得像 UNLINK
+lazyfree-lazy-user-flush yes    # 7.0+ 让 FLUSHALL/FLUSHDB 默认异步
+replica-lazy-flush yes          # 从节点全量同步前清空数据时异步
+
+# 4. 过期删除的频率
+hz 10
+dynamic-hz yes
+</code></pre><h2 id="82-排查内存不降">8.2 排查&quot;内存不降&quot;</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 1. 确认是否有大量过期 key 未回收</span>
+</span></span><span class="line"><span class="cl">INFO keyspace          <span class="c1"># 比较 keys 和 expires</span>
+</span></span><span class="line"><span class="cl">INFO stats             <span class="c1"># expired_keys 是否在增长、expired_time_cap_reached_count</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 2. 确认是否有大 key</span>
+</span></span><span class="line"><span class="cl">redis-cli --bigkeys
+</span></span><span class="line"><span class="cl">redis-cli --memkeys
+</span></span><span class="line"><span class="cl">MEMORY USAGE &lt;key&gt;
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 3. 确认碎片率</span>
+</span></span><span class="line"><span class="cl">INFO memory
+</span></span><span class="line"><span class="cl"><span class="c1"># mem_fragmentation_ratio &gt; 1.5 → 碎片严重，考虑开启自动碎片整理</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># mem_fragmentation_ratio &lt; 1   → 用了 swap，非常危险！</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 4. 确认内存都花在哪</span>
+</span></span><span class="line"><span class="cl">MEMORY DOCTOR          <span class="c1"># Redis 自己的诊断建议</span>
+</span></span><span class="line"><span class="cl">MEMORY STATS           <span class="c1"># 详细分解：数据、复制缓冲、AOF 缓冲、客户端缓冲、lua 等</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 5. 确认是否有 key 忘了设 TTL（常见泄漏源）</span>
+</span></span><span class="line"><span class="cl">redis-cli --scan --pattern <span class="s1">&#39;cache:*&#39;</span> <span class="p">|</span> head -100 <span class="p">|</span> <span class="k">while</span> <span class="nb">read</span> k<span class="p">;</span> <span class="k">do</span>
+</span></span><span class="line"><span class="cl">  <span class="nb">echo</span> <span class="s2">&#34;</span><span class="nv">$k</span><span class="s2"> </span><span class="k">$(</span>redis-cli TTL <span class="s2">&#34;</span><span class="nv">$k</span><span class="s2">&#34;</span><span class="k">)</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="k">done</span> <span class="p">|</span> grep -- <span class="s1">&#39;-1&#39;</span>
+</span></span></code></pre></div><p><code>MEMORY STATS</code> 的关键字段：</p>
+<pre tabindex="0"><code>peak.allocated          历史峰值
+total.allocated         当前总分配
+startup.allocated       启动时的基础开销
+replication.backlog     复制积压缓冲区
+clients.slaves          从节点客户端缓冲区总和
+clients.normal          普通客户端缓冲区总和
+aof.buffer              AOF 缓冲区
+dbXXX.overhead.hashtable.main       主字典的元数据开销
+dbXXX.overhead.hashtable.expires    过期字典的元数据开销  ← 带 TTL 的 key 多时这里很大
+overhead.total          所有非数据开销总和
+keys.count              key 总数
+keys.bytes-per-key      平均每个 key 占多少字节
+dataset.bytes           纯数据占用
+dataset.percentage      数据占总内存的比例
+fragmentation           碎片率
+</code></pre><h2 id="83-内存碎片整理">8.3 内存碎片整理</h2>
+<pre tabindex="0"><code class="language-conf" data-lang="conf"># 4.0+ 自动碎片整理（需要 jemalloc）
+activedefrag yes
+
+# 碎片达到多少字节才开始整理
+active-defrag-ignore-bytes 100mb
+# 碎片率达到多少百分比才开始
+active-defrag-threshold-lower 10
+# 碎片率达到多少时用最大力度
+active-defrag-threshold-upper 100
+# CPU 占用下限/上限（整理是在主线程做的，要限制）
+active-defrag-cycle-min 5
+active-defrag-cycle-max 75
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 手动触发一次（4.0+）</span>
+</span></span><span class="line"><span class="cl">MEMORY PURGE      <span class="c1"># 让 jemalloc 把空闲页归还给操作系统</span>
+</span></span><span class="line"><span class="cl">CONFIG SET activedefrag yes    <span class="c1"># 动态开启</span>
+</span></span></code></pre></div><p><strong>注意</strong>：碎片整理是<strong>在主线程里做的</strong>（它要移动对象并更新所有指向它的指针，必须原子），所以会消耗 CPU 并可能造成延迟。<code>active-defrag-cycle-max 75</code> 表示最多用 75% 的 CPU 时间——这已经很激进了，只在碎片率极高时才会到这个力度。</p>
+<h2 id="84-避免大批-key-同时过期">8.4 避免大批 key 同时过期</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// 差：所有缓存都是精确 3600 秒
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">rdb</span><span class="p">.</span><span class="nf">Set</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">key</span><span class="p">,</span> <span class="nx">val</span><span class="p">,</span> <span class="nx">time</span><span class="p">.</span><span class="nx">Hour</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// 好：加随机抖动，把过期时间打散
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">ttl</span> <span class="o">:=</span> <span class="nx">time</span><span class="p">.</span><span class="nx">Hour</span> <span class="o">+</span> <span class="nx">time</span><span class="p">.</span><span class="nf">Duration</span><span class="p">(</span><span class="nx">rand</span><span class="p">.</span><span class="nf">Intn</span><span class="p">(</span><span class="mi">300</span><span class="p">))</span><span class="o">*</span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span>
+</span></span><span class="line"><span class="cl"><span class="nx">rdb</span><span class="p">.</span><span class="nf">Set</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">key</span><span class="p">,</span> <span class="nx">val</span><span class="p">,</span> <span class="nx">ttl</span><span class="p">)</span>
+</span></span></code></pre></div><p>好处有两个：</p>
+<ol>
+<li><strong>避免缓存雪崩</strong>（第 14 篇）——大量 key 同时失效导致请求全部打到 DB；</li>
+<li><strong>均摊过期删除压力</strong>——避免某个 100ms 周期内有几百万 key 要删，把 25ms 的预算撑爆。</li>
+</ol>
+<hr>
+<h1 id="9-高频面试题">9. 高频面试题</h1>
+<p><strong>Q1：Redis 的过期删除策略有哪些？Redis 用了哪些？</strong></p>
+<p>理论上三种：</p>
+<ol>
+<li><strong>定时删除</strong>：每个 key 一个定时器，到点立即删。内存最优但<strong>CPU 开销巨大</strong>（百万 key 就是百万定时器），且大量 key 同时到期会造成延迟毛刺。<strong>Redis 没采用</strong>；</li>
+<li><strong>惰性删除</strong>：只在访问 key 时才检查并删除。<strong>CPU 最优但内存不友好</strong>——没人访问的过期 key 永远占内存。<strong>Redis 采用</strong>；</li>
+<li><strong>定期删除</strong>：周期性随机抽查一批 key 删掉过期的。<strong>CPU 与内存的折中</strong>。<strong>Redis 采用</strong>。</li>
+</ol>
+<p><strong>Redis = 惰性删除 + 定期删除</strong>。惰性删除保证「读到的数据一定不过期」（正确性），定期删除保证「过期 key 最终被回收」（内存不泄漏）。如果两者都没跟上导致内存打满，还有第三道防线：<strong>内存淘汰策略</strong>。</p>
+<p><strong>Q2：定期删除的具体算法是什么？</strong></p>
+<p><code>activeExpireCycle()</code>，有两种模式：</p>
+<ul>
+<li><strong>SLOW 模式</strong>：由 <code>serverCron</code> 触发（<code>hz</code> 默认 10，即每 100ms 一次），时间上限是 <strong>CPU 时间的 25%</strong>（hz=10 时约 25ms）；</li>
+<li><strong>FAST 模式</strong>：在每次事件循环的 <code>beforeSleep</code> 触发，上限 <strong>1ms</strong>，两次之间至少间隔 2ms。</li>
+</ul>
+<p>算法（对每个 db 循环）：</p>
+<ol>
+<li>从 <code>expires</code> 字典<strong>随机采样 20 个</strong> key；</li>
+<li>检查并删除其中已过期的；</li>
+<li><strong>如果过期比例 &gt; 25%（即 20 个里超过 5 个过期），就继续再采一批</strong>；否则跳到下一个 db；</li>
+<li>每检查 16 个 key 就看一次是否超时，超了立即退出。</li>
+</ol>
+<p>这个 25% 的阈值是<strong>自适应</strong>机制：过期 key 少时几乎不耗 CPU，过期 key 爆发时能连续多轮快速追赶。</p>
+<p><strong>局限</strong>：如果带 TTL 的 key 有 1000 万而只有 5 万过期（0.5%），随机采 20 个大概率一个都碰不到，就直接退出了——这些 key 要等被访问（惰性删除）或者下次侥幸被采样。所以<strong>给批量缓存加随机 TTL 抖动</strong>很重要。</p>
+<p><strong>Q3：过期时间存在哪里？是相对时间还是绝对时间？</strong></p>
+<p>存在每个 <code>redisDb</code> 的 <strong><code>expires</code> 字典</strong>里（独立于存数据的 <code>dict</code>），key 是<strong>同一个 SDS 对象的指针</strong>（不复制），value 是 <strong>绝对的 Unix 毫秒时间戳</strong>。</p>
+<p>用绝对时间戳的重要影响：</p>
+<ol>
+<li><code>TTL</code> 是实时计算出来的（<code>过期时间戳 - 当前时间</code>）；</li>
+<li><strong>主节点传播给从节点和 AOF 的永远是 <code>PEXPIREAT</code>（绝对时间戳），而不是原始的 <code>EXPIRE</code>（相对秒数）</strong>——否则网络延迟会导致从节点的过期时刻晚于主节点，造成不一致；</li>
+<li><strong>修改系统时钟会导致大批 key 意外过期或不过期</strong>（NTP 大幅校时是真实的线上事故来源）；</li>
+<li>RDB/AOF 里存的也是绝对时间戳，<strong>主节点从 RDB 恢复时会跳过已过期的 key</strong>。</li>
+</ol>
+<p><strong>Q4：主从复制下，从节点会自己删除过期 key 吗？读从节点会读到过期数据吗？</strong></p>
+<p><strong>从节点不会自己删除过期 key</strong>。规则是：只有主节点判定 key 过期并删除，然后<strong>显式生成一条 <code>DEL</code>/<code>UNLINK</code> 命令传播</strong>给所有从节点，从节点执行这条命令才真正删除。</p>
+<p>这样设计是为了保证<strong>复制流是唯一的数据变更来源</strong>，避免主从因时钟偏差或删除时机不同而数据分叉。</p>
+<p><strong>但从节点读取时会做逻辑过期判断</strong>：<code>expireIfNeeded</code> 发现自己是从节点时，返回&quot;已过期&quot;但不执行删除，调用方据此<strong>返回 nil</strong>。所以从客户端视角看，<strong>从节点不会返回过期数据</strong>（正确性有保证），只是这个 key 还占着内存。</p>
+<p><strong>重要补充</strong>：<strong>Redis 3.2 之前存在 bug</strong>——从节点读取时不做过期判断，会直接返回已过期的值。所以在 3.2 之前用读写分离确实可能读到脏数据。这是升级版本的一个具体理由。</p>
+<p><strong>Q5：Redis 有哪 8 种内存淘汰策略？怎么选？</strong></p>
+<p>按候选范围分两组：</p>
+<p><strong>allkeys-*（所有 key 都可淘汰）</strong>：</p>
+<ul>
+<li><code>allkeys-lru</code>：最近最少使用；</li>
+<li><code>allkeys-lfu</code>：使用频率最低（4.0+）；</li>
+<li><code>allkeys-random</code>：随机。</li>
+</ul>
+<p><strong>volatile-*（只淘汰带 TTL 的 key）</strong>：</p>
+<ul>
+<li><code>volatile-lru</code>、<code>volatile-lfu</code>、<code>volatile-random</code>；</li>
+<li><code>volatile-ttl</code>：剩余 TTL 最短的优先。</li>
+</ul>
+<p><strong>noeviction</strong>（默认）：不淘汰，写命令返回 OOM 错误，读命令仍可用。</p>
+<p><strong>选型</strong>：</p>
+<ul>
+<li><strong>纯缓存</strong>（丢了能重建）→ <code>allkeys-lru</code> / <code>allkeys-lfu</code>，保证永远可写；</li>
+<li><strong>有明显热点</strong>（有批处理任务扫全表）→ <strong><code>allkeys-lfu</code></strong>，LRU 会被批量扫描污染；</li>
+<li><strong>缓存 + 持久数据混存</strong> → <code>volatile-lru</code>，只淘汰缓存；</li>
+<li><strong>纯数据库用途</strong>（不可丢数据）→ <code>noeviction</code> + 严格监控告警。</li>
+</ul>
+<p><strong>volatile-* 的重大陷阱</strong>：如果<strong>没有任何 key 设了 TTL</strong>，volatile 策略找不到候选，行为<strong>退化成 noeviction</strong>——内存满了直接不可写。这是常见事故：运维配了 <code>volatile-lru</code> 觉得很安全，但业务代码忘了加 <code>EX</code>。</p>
+<p><strong>Q6：Redis 的 LRU 是标准 LRU 吗？为什么不用哈希表+双向链表？</strong></p>
+<p><strong>不是，Redis 用的是「近似 LRU」（approximated LRU）。</strong></p>
+<p>不用标准 LRU 的两个原因：</p>
+<ol>
+<li><strong>内存开销</strong>：双向链表要给每个 key 加 <code>prev</code>/<code>next</code> 两个指针 = <strong>16 字节/key</strong>。1 亿 key 就是 <strong>1.6GB</strong> 纯元数据，对内存数据库不可接受；</li>
+<li><strong>读操作产生写副作用</strong>：每次读都要移动链表节点，破坏 CPU 缓存局部性，而且<strong>在 fork 期间会因为读操作触发 COW</strong>（读请求导致内存页被复制），这对 RDB/AOF 重写期间的内存占用是灾难。</li>
+</ol>
+<p><strong>Redis 的近似 LRU</strong>：</p>
+<ol>
+<li>在 <code>robj</code> 的 <strong>24 bit <code>lru</code> 字段</strong>（利用结构体对齐的空隙，<strong>零额外内存</strong>）里记录最后访问时间（秒级，来自 <code>serverCron</code> 每 100ms 更新的全局 <code>server.lruclock</code>，避免频繁系统调用）；</li>
+<li>淘汰时<strong>随机采样 <code>maxmemory-samples</code>（默认 5）个 key</strong>，选 idle 最大的淘汰；</li>
+<li><strong>3.0 引入了大小为 16 的「淘汰池」</strong>：采样结果插入按 idle 排序的池中，池在多次淘汰之间保留，历次采样的好候选会累积。这个改进让效果显著接近真实 LRU（官方对比图显示 samples=10 时几乎无差别）。</li>
+</ol>
+<p><strong>Q7：LFU 是怎么实现的？8 bit 计数器怎么表示海量访问？</strong></p>
+<p>LFU 模式下，<code>robj</code> 的 24 bit <code>lru</code> 字段被拆成：</p>
+<pre tabindex="0"><code>高 16 bit: ldt（上次衰减时间，分钟级）| 低 8 bit: counter（0~255）
+</code></pre><p><strong>两个核心设计</strong>：</p>
+<p><strong>（1）对数递增（概率性）</strong>：如果每次访问 +1，8 bit 几秒就打满 255，热点之间失去区分度。所以 Redis 用 <code>LFULogIncr</code>：</p>
+<pre tabindex="0"><code>p = 1 / ((counter - 5) * lfu_log_factor + 1)
+以概率 p 才 +1
+</code></pre><p><strong>counter 越大，增长越难</strong>。默认 <code>lfu-log-factor 10</code> 时：访问 1 万次 counter 到 100，访问 <strong>100 万次</strong>才到 255。这样 8 bit 就能区分跨 6 个数量级的访问频率。</p>
+<p><strong>（2）时间衰减（惰性）</strong>：只增不减的话，&ldquo;曾经很热现在已冷&quot;的 key 永远不被淘汰。<code>lfu-decay-time</code>（默认 1）表示每 N 分钟 counter 减 1。衰减是<strong>惰性计算</strong>的——读取 counter 时根据 <code>ldt</code> 算出该衰减多少（<code>LFUDecrAndReturn</code>），不需要定时任务遍历。</p>
+<p><strong>（3）新 key 初始值 <code>LFU_INIT_VAL = 5</code></strong>（不是 0）：给新 key 一个&quot;新手保护&rdquo;，否则刚写入的 key 立刻成为最该淘汰的目标，新数据永远进不了缓存。</p>
+<p>查看：<code>OBJECT FREQ key</code>（只在 LFU 策略下可用）。<code>redis-cli --hotkeys</code> 就是基于它实现的。</p>
+<p><strong>Q8：LFU 和 LRU 的区别？什么时候必须用 LFU？</strong></p>
+<p><strong>核心区别</strong>：LRU 看「最后访问<strong>时间</strong>」，LFU 看「访问<strong>频率</strong>」。</p>
+<p><strong>必须用 LFU 的场景——防止缓存污染（sequential flooding）</strong>：</p>
+<pre tabindex="0"><code>缓存里有 10 个热点 key，每秒被访问几千次。
+凌晨跑了个数据分析任务，全表扫描读了 100 万个冷 key。
+
+LRU：这 100 万个冷 key 的&#34;最后访问时间&#34;都是刚刚，10 个热点 key 反而显得更旧
+    → 热点 key 被淘汰、冷 key 占满内存 → 业务请求全部未命中 → DB 被打爆
+LFU：冷 key 各自只被访问 1 次，counter 极低，优先被淘汰 → 热点安然无恙
+</code></pre><p><strong>反过来 LRU 更好的场景</strong>：访问模式随时间平移的数据（新闻资讯、朋友圈时间线、直播弹幕）——最近的数据就是最热的，&ldquo;新热点&quot;用 LRU 能立刻被保护，而 LFU 要慢慢积累 counter 才能被认可（<strong>LFU 对突发新热点响应慢</strong>）。</p>
+<p>一般结论：<strong>大多数缓存场景 LFU 更优</strong>，尤其是有定时批处理任务的系统。</p>
+<p><strong>Q9：<code>maxmemory-samples</code> 调大有什么影响？</strong></p>
+<p>它控制淘汰时的随机采样数量（默认 5）。</p>
+<ul>
+<li><strong>调大（如 10）</strong>：淘汰决策更接近真实 LRU/LFU，<strong>缓存命中率更高</strong>，但每次淘汰要多做几次随机采样和 idle 计算，<strong>CPU 开销上升约 50%</strong>；</li>
+<li><strong>调小（如 3）</strong>：CPU 更省，但淘汰精度明显下降，可能误删热数据；</li>
+<li><strong>超过 10 收益微乎其微</strong>（官方对比图显示 10 已经几乎等于真实 LRU）。</li>
+</ul>
+<p>官方建议：<strong>默认 5 适合绝大多数场景</strong>；只在缓存命中率极其关键、且 CPU 有余量时调到 10。</p>
+<p><strong>Q10：内存淘汰是在什么时候发生的？会阻塞主线程吗？</strong></p>
+<p><strong>发生在每条命令执行之前</strong>（<code>processCommand</code> → <code>performEvictions</code>）：</p>
+<ol>
+<li>计算 <code>mem_used</code>（<strong>要减去从节点输出缓冲区和 AOF 缓冲区</strong>，因为它们不是数据且可能瞬间很大）；</li>
+<li>超过 <code>maxmemory</code> 就循环淘汰 key，直到降下来；</li>
+<li>如果淘汰完还降不下来（比如就剩一个巨大的 key），写命令返回 OOM 错误。</li>
+</ol>
+<p><strong>会阻塞主线程</strong>，因为淘汰是同步做的。风险点：</p>
+<ul>
+<li>内存长期贴着 <code>maxmemory</code> 时，<strong>每条写命令都要先做淘汰计算</strong>，延迟明显升高；</li>
+<li>如果淘汰到一个大 key（千万元素的集合），<strong>同步释放内存会阻塞数百毫秒到数秒</strong>。</li>
+</ul>
+<p><strong>缓解</strong>：开启 <code>lazyfree-lazy-eviction yes</code>，让内存释放交给 bio 后台线程；同时从根本上<strong>控制大 key</strong> 和<strong>留足内存余量</strong>（<code>maxmemory</code> 设为物理内存 60%~70%）。</p>
+<p>监控 <code>INFO stats</code> 的 <code>evicted_keys</code>——持续快速增长说明内存严重不足。</p>
+<p><strong>Q11：为什么 <code>mem_fragmentation_ratio</code> 小于 1 很危险？</strong></p>
+<p><code>mem_fragmentation_ratio = used_memory_rss / used_memory</code>。</p>
+<ul>
+<li><strong><code>&gt; 1</code>（正常 1.0~1.5）</strong>：操作系统看到的物理内存（RSS）大于 Redis 逻辑用量，差值就是<strong>内存碎片</strong>；</li>
+<li><strong><code>&gt; 1.5</code></strong>：碎片严重，考虑开 <code>activedefrag yes</code> 或重启释放；</li>
+<li><strong><code>&lt; 1</code></strong>：<strong>RSS 小于逻辑内存，说明 Redis 的一部分内存被换出到了 swap</strong>。</li>
+</ul>
+<p><code>&lt; 1</code> 危险的原因：<strong>内存访问变成了磁盘访问</strong>。Redis 的所有操作都假设内存访问是纳秒级的，一旦某个数据页在 swap 里，一次 <code>GET</code> 就要等磁盘 IO（毫秒级），延迟恶化 1000 倍以上，而且因为是单线程，这一次慢会让<strong>所有排队的请求都跟着慢</strong>。实例基本等于不可用。</p>
+<p><strong>处理</strong>：立刻确认 swap 用量（<code>free -m</code>、<code>cat /proc/&lt;pid&gt;/smaps | grep Swap</code>），减少数据量或扩容内存；生产环境建议<strong>关闭 swap</strong>，或至少 <code>vm.swappiness = 1</code>，并且一定要设 <code>maxmemory</code> 防止内存无限增长。</p>
+<p><strong>Q12：一个 key 已经过期了，但 <code>DBSIZE</code> 还算它吗？<code>SCAN</code> 会返回它吗？</strong></p>
+<p><strong><code>DBSIZE</code></strong>：直接返回 <code>dict</code> 的元素个数，<strong>包括还没被删除的过期 key</strong>。所以 <code>DBSIZE</code> 可能大于&quot;实际有效 key 数&rdquo;。</p>
+<p><strong><code>SCAN</code></strong>：会<strong>过滤掉已过期的 key</strong>（内部对每个候选 key 调用 <code>expireIfNeeded</code>）。所以 <code>SCAN</code> 遍历的总数可能小于 <code>DBSIZE</code>。</p>
+<p><strong><code>RANDOMKEY</code></strong>：会跳过过期 key（内部最多重试 100 次找一个未过期的，都失败就返回 nil）。</p>
+<p><strong><code>KEYS pattern</code></strong>：也会过滤过期 key。</p>
+<p>这个差异在排查&quot;key 数量对不上&quot;时很有用：<code>DBSIZE</code> 明显大于 <code>SCAN</code> 出来的数量，说明积压了很多过期未删的 key。</p>
+<p><strong>Q13：为什么大批 key 同时过期会导致问题？怎么避免？</strong></p>
+<p><strong>问题</strong>：</p>
+<ol>
+<li><strong>过期删除的时间预算被打满</strong>：SLOW 模式每 100ms 只有 25ms，如果几百万 key 同时到期，会连续多个周期都把预算跑满（<code>expired_time_cap_reached_count</code> 增长），期间 CPU 占用高、其他命令延迟上升；</li>
+<li><strong>删除本身的阻塞</strong>：如果过期的是大 key，同步释放内存会造成明显毛刺（要开 <code>lazyfree-lazy-expire</code>）；</li>
+<li><strong>缓存雪崩</strong>：大量缓存同时失效，请求全部穿透到数据库，可能把 DB 打挂（第 14 篇详讲）。</li>
+</ol>
+<p><strong>避免</strong>：给 TTL <strong>加随机抖动</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="nx">ttl</span> <span class="o">:=</span> <span class="nx">baseTTL</span> <span class="o">+</span> <span class="nx">time</span><span class="p">.</span><span class="nf">Duration</span><span class="p">(</span><span class="nx">rand</span><span class="p">.</span><span class="nf">Intn</span><span class="p">(</span><span class="mi">300</span><span class="p">))</span><span class="o">*</span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span>
+</span></span></code></pre></div><p>这样既避免了雪崩，也把过期删除的压力均摊到时间轴上。另外别忘了开 <code>lazyfree-lazy-expire yes</code>。</p>
+<p><strong>Q14：Redis 的过期机制会不会导致主从数据不一致？</strong></p>
+<p>正常情况下<strong>不会</strong>，因为：</p>
+<ol>
+<li><strong>只有主节点删除过期 key</strong>，并<strong>显式传播 <code>DEL</code></strong> 给从节点，复制流是唯一的变更来源；</li>
+<li><strong>传播的过期命令是 <code>PEXPIREAT</code>（绝对时间戳）</strong> 而不是 <code>EXPIRE</code>，消除了网络延迟造成的偏差；</li>
+<li><strong>从节点读取时做逻辑过期判断</strong>返回 nil（3.2+），所以不会返回过期数据；</li>
+<li><strong>Lua 脚本执行期间时间被&quot;冻结&quot;</strong>，保证脚本在主从上的执行结果一致。</li>
+</ol>
+<p>但有两个<strong>表象上的差异</strong>（不是数据不一致，是资源占用不一致）：</p>
+<ol>
+<li><strong>从节点内存可能高于主节点</strong>——堆积着&quot;逻辑已过期但还没收到 DEL&quot;的 key；</li>
+<li><strong>主从切换后会有一波集中删除</strong>——新主节点开始承担主动过期职责，之前积压的过期 key 集中被清理，造成延迟毛刺和内存陡降。</li>
+</ol>
+<p>真正会导致不一致的是<strong>异步复制本身</strong>（主节点写完就返回，还没传到从节点就宕机了），这跟过期机制无关，见第 10 篇。</p>
+<hr>
+<h1 id="小结">小结</h1>
+<ul>
+<li>过期时间存在每个 db 的 <strong><code>expires</code> 字典</strong>里（key 是共享的 SDS 指针，value 是<strong>绝对毫秒时间戳</strong>）；主节点传播给从节点/AOF 的统一转成 <strong><code>PEXPIREAT</code></strong>，避免网络延迟造成偏差。</li>
+<li>TTL 规律：<strong>替换整个 value 的命令（<code>SET</code>/<code>GETSET</code>）清除 TTL，修改 value 内部的命令保留 TTL</strong>；<code>SET ... KEEPTTL</code> 可显式保留；<code>RENAME</code> 会让新 key 继承旧 key 的 TTL。</li>
+<li><strong>Redis = 惰性删除（保证读不到过期数据）+ 定期删除（保证内存最终回收）+ 内存淘汰（最后防线）</strong>；没采用定时删除是因为 CPU 开销太大。</li>
+<li><strong>定期删除 <code>activeExpireCycle</code></strong>：SLOW 模式由 <code>serverCron</code> 每 100ms 触发、上限 <strong>25% CPU 时间</strong>；FAST 模式在 <code>beforeSleep</code> 触发、上限 1ms。算法是<strong>随机采样 20 个，过期比例 &gt; 25% 就继续采</strong>——这是自适应设计。局限是过期 key 占比低时采样命中率差。</li>
+<li><strong>8 种淘汰策略</strong>：<code>noeviction</code>（默认）+ <code>allkeys-{lru,lfu,random}</code> + <code>volatile-{lru,lfu,random,ttl}</code>。<strong><code>volatile-*</code> 在没有任何 key 带 TTL 时会退化成 noeviction</strong>（导致不可写），是常见事故。纯缓存用 <code>allkeys-lfu</code>/<code>allkeys-lru</code>。</li>
+<li><strong>近似 LRU</strong>：<code>robj</code> 的 <strong>24 bit <code>lru</code> 字段</strong>记秒级访问时间（零额外内存，来自每 100ms 更新的全局 <code>lruclock</code>）+ <strong>随机采样 <code>maxmemory-samples</code>（默认 5）</strong> + <strong>3.0 引入的 16 槽淘汰池</strong>（跨次保留好候选）。不用标准 LRU 是因为链表指针要 16 字节/key，且读操作改链表会破坏缓存局部性并加剧 fork 期间的 COW。</li>
+<li><strong>LFU</strong>：24 bit 拆成 <strong>16 bit ldt（分钟级衰减时间）+ 8 bit counter</strong>；<strong>对数概率递增</strong>（<code>lfu-log-factor 10</code> 时 100 万次访问才到 255，让 8 bit 覆盖 6 个数量级）+ <strong>惰性时间衰减</strong>（<code>lfu-decay-time</code>）+ <strong>新 key 初始值 5</strong>（新手保护）。</li>
+<li><strong>LFU 抗批量扫描污染，LRU 对突发新热点响应快</strong>；大多数缓存场景 LFU 更优，时效性数据（新闻、时间线）LRU 更贴合。</li>
+<li><strong>主从过期语义</strong>：只有主节点删除并<strong>显式传播 DEL</strong>；从节点不删但读取时做<strong>逻辑过期判断返回 nil</strong>（3.2 之前有 bug 会返回脏数据）；从节点内存可能因积压过期 key 而高于主节点。</li>
+<li>生产必配：<code>maxmemory</code>（物理内存 60~70%）+ 合适的 policy + <strong><code>lazyfree-*</code> 全开</strong>；给批量缓存<strong>加随机 TTL 抖动</strong>；监控 <code>evicted_keys</code>、<code>expired_time_cap_reached_count</code>、<code>mem_fragmentation_ratio</code>（<strong>&lt; 1 说明用了 swap，极度危险</strong>）。</li>
+</ul>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2025-11-01</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/redis/">redis</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/redis/redis_07_%E6%8C%81%E4%B9%85%E5%8C%96RDB%E4%B8%8EAOF/" class="prev" rel="prev" title="Redis-07 持久化：RDB 与 AOF"><i class="fas fa-angle-left fa-fw"></i>Redis-07 持久化：RDB 与 AOF</a>
+            <a href="/posts/redis/redis_05_%E5%8D%95%E7%BA%BF%E7%A8%8B%E6%A8%A1%E5%9E%8B%E4%B8%8E%E7%BD%91%E7%BB%9CIO/" class="next" rel="next" title="Redis-05 单线程模型与网络IO">Redis-05 单线程模型与网络IO<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2025-11-01T14:00:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Redis-06 过期删除与内存淘汰策略"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

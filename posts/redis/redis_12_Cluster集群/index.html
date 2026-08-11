@@ -1,0 +1,1591 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>Redis-12 Cluster 集群 - xingliuhua博客</title><meta name="Description" content="16384 槽的设计原因、Gossip 协议与集群总线、MOVED/ASK 重定向、在线扩缩容与槽迁移、hash tag、故障检测与自动转移、集群的限制与运维"><meta property="og:title" content="Redis-12 Cluster 集群" />
+<meta property="og:description" content="16384 槽的设计原因、Gossip 协议与集群总线、MOVED/ASK 重定向、在线扩缩容与槽迁移、hash tag、故障检测与自动转移、集群的限制与运维" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/redis/redis_12_Cluster%E9%9B%86%E7%BE%A4/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2025-11-01T11:00:00+08:00" />
+<meta property="article:modified_time" content="2025-11-01T11:00:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="Redis-12 Cluster 集群"/>
+<meta name="twitter:description" content="16384 槽的设计原因、Gossip 协议与集群总线、MOVED/ASK 重定向、在线扩缩容与槽迁移、hash tag、故障检测与自动转移、集群的限制与运维"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/redis/redis_12_Cluster%E9%9B%86%E7%BE%A4/" /><link rel="prev" href="https://xingliuhua.github.io/posts/redis/redis_13_%E5%88%86%E5%B8%83%E5%BC%8F%E9%94%81/" /><link rel="next" href="https://xingliuhua.github.io/posts/redis/redis_11_%E5%93%A8%E5%85%B5Sentinel%E9%AB%98%E5%8F%AF%E7%94%A8/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Redis-12 Cluster 集群",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/redis\/redis_12_Cluster%E9%9B%86%E7%BE%A4\/"
+        },"genre": "posts","keywords": "redis","wordcount":  18751 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/redis\/redis_12_Cluster%E9%9B%86%E7%BE%A4\/","datePublished": "2025-11-01T11:00:00+08:00","dateModified": "2025-11-01T11:00:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "16384 槽的设计原因、Gossip 协议与集群总线、MOVED/ASK 重定向、在线扩缩容与槽迁移、hash tag、故障检测与自动转移、集群的限制与运维"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">Redis-12 Cluster 集群</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2025-11-01">2025-11-01</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 18751 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 38 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-为什么需要-cluster">1. 为什么需要 Cluster</a>
+      <ol>
+        <li><a href="#11-三种分片方案的演进">1.1 三种分片方案的演进</a></li>
+      </ol>
+    </li>
+    <li><a href="#2-cluster-架构">2. Cluster 架构</a>
+      <ol>
+        <li><a href="#21-基本结构">2.1 基本结构</a></li>
+        <li><a href="#22-为什么是-16384-个槽">2.2 为什么是 16384 个槽</a></li>
+        <li><a href="#23-key-到槽的映射">2.3 key 到槽的映射</a></li>
+        <li><a href="#24-hash-tag">2.4 hash tag</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-搭建集群">3. 搭建集群</a>
+      <ol>
+        <li><a href="#31-配置文件">3.1 配置文件</a></li>
+        <li><a href="#32-一键创建集群">3.2 一键创建集群</a></li>
+        <li><a href="#33-验证集群">3.3 验证集群</a></li>
+        <li><a href="#34-手动创建集群理解原理">3.4 手动创建集群（理解原理）</a></li>
+        <li><a href="#35-容器云环境必配-announce">3.5 容器/云环境必配 announce</a></li>
+      </ol>
+    </li>
+    <li><a href="#4-重定向机制">4. 重定向机制</a>
+      <ol>
+        <li><a href="#41-moved-重定向">4.1 MOVED 重定向</a></li>
+        <li><a href="#42-ask-重定向">4.2 ASK 重定向</a></li>
+        <li><a href="#43-moved-vs-ask-对比">4.3 MOVED vs ASK 对比</a></li>
+      </ol>
+    </li>
+    <li><a href="#5-在线扩缩容">5. 在线扩缩容</a>
+      <ol>
+        <li><a href="#51-扩容添加节点">5.1 扩容（添加节点）</a></li>
+        <li><a href="#52-槽迁移的底层流程">5.2 槽迁移的底层流程</a></li>
+        <li><a href="#53-缩容删除节点">5.3 缩容（删除节点）</a></li>
+        <li><a href="#54-大-key-让扩容变成灾难">5.4 大 key 让扩容变成灾难</a></li>
+      </ol>
+    </li>
+    <li><a href="#6-gossip-协议与集群通信">6. Gossip 协议与集群通信</a>
+      <ol>
+        <li><a href="#61-集群总线">6.1 集群总线</a></li>
+        <li><a href="#62-五种消息类型">6.2 五种消息类型</a></li>
+        <li><a href="#63-gossip-的工作方式">6.3 Gossip 的工作方式</a></li>
+        <li><a href="#64-故障检测pfail-与-fail">6.4 故障检测：PFAIL 与 FAIL</a>
+          <ol>
+            <li><a href="#pfailpossible-failure疑似下线">PFAIL（Possible Failure，疑似下线）</a></li>
+            <li><a href="#fail客观下线">FAIL（客观下线）</a></li>
+          </ol>
+        </li>
+        <li><a href="#65-从节点自动故障转移">6.5 从节点自动故障转移</a></li>
+        <li><a href="#66-configepoch-冲突解决">6.6 configEpoch 冲突解决</a></li>
+        <li><a href="#67-cluster-require-full-coverage">6.7 cluster-require-full-coverage</a></li>
+      </ol>
+    </li>
+    <li><a href="#7-cluster-的限制">7. Cluster 的限制</a>
+      <ol>
+        <li><a href="#71-只能使用-db0">7.1 只能使用 db0</a></li>
+        <li><a href="#72-跨槽的多-key-操作受限">7.2 跨槽的多 key 操作受限</a></li>
+        <li><a href="#73-lua-脚本必须所有-key-同槽">7.3 Lua 脚本必须所有 key 同槽</a></li>
+        <li><a href="#74-事务受限">7.4 事务受限</a></li>
+        <li><a href="#75-pubsub-的问题">7.5 pub/sub 的问题</a></li>
+        <li><a href="#76-其他限制">7.6 其他限制</a></li>
+      </ol>
+    </li>
+    <li><a href="#8-运维实战">8. 运维实战</a>
+      <ol>
+        <li><a href="#81-常用运维命令">8.1 常用运维命令</a></li>
+        <li><a href="#82-从单机主从迁移到-cluster">8.2 从单机/主从迁移到 Cluster</a></li>
+        <li><a href="#83-监控指标">8.3 监控指标</a></li>
+        <li><a href="#84-常见故障排查">8.4 常见故障排查</a></li>
+      </ol>
+    </li>
+    <li><a href="#9-cluster-vs-哨兵-vs-proxy">9. Cluster vs 哨兵 vs Proxy</a></li>
+    <li><a href="#10-高频面试题">10. 高频面试题</a></li>
+    <li><a href="#小结">小结</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><h1 id="1-为什么需要-cluster">1. 为什么需要 Cluster</h1>
+<p>哨兵解决了高可用，但没解决<strong>扩展性</strong>：</p>
+<ol>
+<li><strong>存储受限于单机内存</strong>：所有数据都在一个主节点上，超过 10GB 就开始有 fork 慢、恢复慢、全量同步压力大的问题；</li>
+<li><strong>写入受限于单节点</strong>：所有写请求集中在一个主节点，达到几万 QPS 就是瓶颈；</li>
+<li><strong>单点的所有风险都被放大</strong>：一个大实例出问题影响全部业务。</li>
+</ol>
+<h2 id="11-三种分片方案的演进">1.1 三种分片方案的演进</h2>
+<p><strong>方案一：客户端分片（Client-side Sharding）</strong></p>
+<pre tabindex="0"><code>客户端自己算 hash(key) % N 决定用哪个 Redis 实例
+</code></pre><ul>
+<li><strong>优点</strong>：无中间层、性能最好、实现简单；</li>
+<li><strong>缺点</strong>：<strong>扩缩容极其痛苦</strong>（N 变了，几乎所有 key 的归属都变了，要全量迁移数据）；每个客户端都要实现一遍分片逻辑；无法自动故障转移。</li>
+<li>用<strong>一致性哈希</strong>能缓解扩缩容问题（只影响相邻节点的数据），但仍需要客户端库统一实现。</li>
+</ul>
+<p><strong>方案二：代理分片（Proxy）</strong></p>
+<pre tabindex="0"><code>客户端 → Proxy（Twemproxy / Codis / predixy / redis-cluster-proxy）→ Redis 实例
+</code></pre><ul>
+<li><strong>优点</strong>：客户端无感知（就像连单个 Redis）、分片逻辑集中在代理层、Codis 支持在线扩容；</li>
+<li><strong>缺点</strong>：<strong>多一跳网络延迟</strong>（通常增加 0.1~1ms）；代理本身要做高可用；代理是性能瓶颈和运维负担；Twemproxy 不支持在线扩容。</li>
+</ul>
+<p><strong>方案三：服务端分片（Redis Cluster，3.0+）</strong></p>
+<pre tabindex="0"><code>客户端 → 任意 Redis 节点（节点会告诉客户端正确的节点在哪）
+</code></pre><ul>
+<li><strong>优点</strong>：<strong>官方方案、无中间层、内置高可用和在线扩缩容</strong>；</li>
+<li><strong>缺点</strong>：客户端必须支持集群协议（处理重定向）；功能有限制（跨 slot 操作、多 db）。</li>
+</ul>
+<p><strong>Redis Cluster 是现在的标准答案</strong>，本篇讲的就是它。</p>
+<hr>
+<h1 id="2-cluster-架构">2. Cluster 架构</h1>
+<h2 id="21-基本结构">2.1 基本结构</h2>
+<pre tabindex="0"><code>         ┌───────── 集群总线（Cluster Bus）互相通信 ─────────┐
+         │                                                    │
+   ┌─────▼─────┐     ┌───────────┐     ┌───────────┐          │
+   │ Master A  │◀───▶│ Master B  │◀───▶│ Master C  │◀─────────┘
+   │slot 0-5460│     │5461-10922 │     │10923-16383│
+   └─────┬─────┘     └─────┬─────┘     └─────┬─────┘
+         │                 │                 │
+   ┌─────▼─────┐     ┌─────▼─────┐     ┌─────▼─────┐
+   │ Slave A1  │     │ Slave B1  │     │ Slave C1  │
+   └───────────┘     └───────────┘     └───────────┘
+</code></pre><p><strong>核心概念</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>概念</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>槽（slot / hash slot）</strong></td>
+<td>整个键空间被划分为 <strong>16384</strong> 个槽，每个 key 通过 CRC16 映射到一个槽</td>
+</tr>
+<tr>
+<td><strong>分片（shard）</strong></td>
+<td>一个主节点 + 它的若干从节点，负责一部分槽</td>
+</tr>
+<tr>
+<td><strong>集群总线（Cluster Bus）</strong></td>
+<td>节点之间通信的通道，端口是 <strong>数据端口 + 10000</strong>（如 6379 → 16379）</td>
+</tr>
+<tr>
+<td><strong>Gossip 协议</strong></td>
+<td>节点之间通过总线交换状态信息的协议</td>
+</tr>
+<tr>
+<td><strong>配置纪元（configEpoch）</strong></td>
+<td>每个节点的配置版本号，用于解决冲突</td>
+</tr>
+</tbody>
+</table>
+<p><strong>去中心化设计</strong>：Cluster <strong>没有中心节点/协调节点</strong>，所有节点地位平等，每个节点都知道整个集群的完整拓扑（哪个槽在哪个节点）。这跟哨兵架构（有独立的哨兵进程做协调）有本质区别——<strong>Cluster 把哨兵的功能内置到了每个节点里</strong>。</p>
+<h2 id="22-为什么是-16384-个槽">2.2 为什么是 16384 个槽</h2>
+<p>这是<strong>最经典的 Cluster 面试题</strong>。antirez 在 GitHub issue #2576 里亲自回答过，理由有三点：</p>
+<p><strong>（1）心跳包的大小</strong></p>
+<p>节点之间的 Gossip 心跳包（<code>clusterMsg</code>）里带有一个<strong>位图（bitmap）</strong>，用来表示&quot;发送方负责哪些槽&quot;。</p>
+<ul>
+<li>16384 个槽 → <code>16384 / 8 = 2048 字节 = 2KB</code>；</li>
+<li>如果是 65536 个槽 → <code>65536 / 8 = 8192 字节 = 8KB</code>。</li>
+</ul>
+<p>因为<strong>每个节点每秒都要向多个节点发送心跳</strong>，8KB 相比 2KB 会让集群总线的流量增加 4 倍。antirez 认为 <strong>2KB 是可以接受的开销，8KB 就太浪费了</strong>。</p>
+<p><strong>（2)集群的节点数上限设计为 1000</strong></p>
+<p>Redis 集群的设计目标是<strong>不超过 1000 个节点</strong>（超过这个规模 Gossip 的消息量会变得不可控）。</p>
+<p>16384 / 1000 ≈ 16 个槽每节点，这个粒度足够均衡地分配数据。如果槽太少（比如 1024），1000 个节点时每节点只有 1 个槽，分配就很难均衡了。</p>
+<p><strong>（3）位图的压缩率</strong></p>
+<p>心跳包里的槽位图会用<strong>游程编码（RLE）压缩</strong>。位图越稀疏（节点数越多、每节点的槽越少），压缩效果越差。</p>
+<p>如果用 65536 个槽而节点数不多（比如 3 个节点，每个节点约 21845 个槽），位图会非常稀疏（大量连续的 0 和 1），压缩后其实不大。但 antirez 的考虑是：<strong>在节点数少的常见情况下，16384 已经足够，没必要为了极端情况付出 4 倍的常态开销</strong>。</p>
+<p><strong>记忆要点</strong>：<strong>2KB 的位图大小 + 设计上不超过 1000 节点 + 压缩率考虑</strong>。</p>
+<h2 id="23-key-到槽的映射">2.3 key 到槽的映射</h2>
+<pre tabindex="0"><code>slot = CRC16(key) mod 16384
+</code></pre><ul>
+<li><strong>CRC16</strong>：一种 16 位循环冗余校验算法（Redis 用的是 XMODEM 变种），计算快且分布均匀；</li>
+<li><strong>mod 16384</strong>：实际实现是 <code>CRC16(key) &amp; 16383</code>（因为 16384 是 2 的幂，位运算比取模快）。</li>
+</ul>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 查看某个 key 属于哪个槽</span>
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; CLUSTER KEYSLOT user:1001
+</span></span><span class="line"><span class="cl"><span class="o">(</span>integer<span class="o">)</span> <span class="m">8722</span>
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; CLUSTER KEYSLOT foo
+</span></span><span class="line"><span class="cl"><span class="o">(</span>integer<span class="o">)</span> <span class="m">12182</span>
+</span></span></code></pre></div><h2 id="24-hash-tag">2.4 hash tag</h2>
+<p><strong>问题</strong>：<code>MGET k1 k2</code> 要求所有 key 在同一个槽，但 <code>k1</code> 和 <code>k2</code> 的 CRC16 通常不同，会落在不同槽 → 报错：</p>
+<pre tabindex="0"><code>(error) CROSSSLOT Keys in request don&#39;t hash to the same slot
+</code></pre><p><strong>解决：hash tag</strong>。如果 key 中包含 <code>{...}</code>，<strong>只用第一对 <code>{}</code> 里的内容计算 CRC16</strong>。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">127.0.0.1:6379&gt; CLUSTER KEYSLOT <span class="s1">&#39;{user1001}:name&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="o">(</span>integer<span class="o">)</span> <span class="m">5798</span>
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; CLUSTER KEYSLOT <span class="s1">&#39;{user1001}:age&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="o">(</span>integer<span class="o">)</span> <span class="m">5798</span>        <span class="c1"># 相同！都用 &#34;user1001&#34; 算哈希</span>
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; CLUSTER KEYSLOT <span class="s1">&#39;{user1001}:profile&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="o">(</span>integer<span class="o">)</span> <span class="m">5798</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 所以这些 key 一定在同一个节点，可以做多 key 操作</span>
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; MGET <span class="o">{</span>user1001<span class="o">}</span>:name <span class="o">{</span>user1001<span class="o">}</span>:age
+</span></span></code></pre></div><p><strong>hash tag 的精确规则</strong>（容易记错）：</p>
+<ol>
+<li>找到<strong>第一个 <code>{</code></strong>；</li>
+<li>从它之后找<strong>第一个 <code>}</code></strong>；</li>
+<li>如果两者之间<strong>有至少一个字符</strong>，就只用这部分算哈希；</li>
+<li>否则（没有 <code>{</code>、没有 <code>}</code>、或 <code>{}</code> 之间为空），用<strong>整个 key</strong> 算哈希。</li>
+</ol>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">CLUSTER KEYSLOT <span class="s1">&#39;foo{}{bar}&#39;</span>      <span class="c1"># {} 之间为空 → 用整个 &#34;foo{}{bar}&#34;</span>
+</span></span><span class="line"><span class="cl">CLUSTER KEYSLOT <span class="s1">&#39;{}{bar}&#39;</span>         <span class="c1"># 同上</span>
+</span></span><span class="line"><span class="cl">CLUSTER KEYSLOT <span class="s1">&#39;foo{{bar}}&#39;</span>      <span class="c1"># 取第一个 { 到第一个 } 之间 → &#34;{bar&#34;</span>
+</span></span><span class="line"><span class="cl">CLUSTER KEYSLOT <span class="s1">&#39;foo{bar}{baz}&#39;</span>   <span class="c1"># 只取第一对 → &#34;bar&#34;</span>
+</span></span><span class="line"><span class="cl">CLUSTER KEYSLOT <span class="s1">&#39;{bar}&#39;</span>           <span class="c1"># → &#34;bar&#34;</span>
+</span></span></code></pre></div><p><strong>hash tag 的最大风险：数据倾斜。</strong></p>
+<p>如果用了范围太大的 tag（比如 <code>{order}:1</code>、<code>{order}:2</code>&hellip; 全部用 <code>order</code> 做 tag），<strong>所有订单数据会挤在同一个槽、同一个节点上</strong>，完全失去了分片的意义，还会造成：</p>
+<ul>
+<li>那个节点内存爆满，其他节点空闲；</li>
+<li>那个节点成为热点，QPS 打满；</li>
+<li><strong>无法通过扩容解决</strong>（因为一个槽不能被拆分到两个节点）。</li>
+</ul>
+<p><strong>正确用法</strong>：tag 的粒度要<strong>足够细</strong>，通常是<strong>用户 ID、订单 ID 这种高基数的标识</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ✅ 好：粒度细，分布均匀</span>
+</span></span><span class="line"><span class="cl"><span class="o">{</span>user:1001<span class="o">}</span>:profile, <span class="o">{</span>user:1001<span class="o">}</span>:orders, <span class="o">{</span>user:1001<span class="o">}</span>:cart
+</span></span><span class="line"><span class="cl"><span class="o">{</span>order:88888<span class="o">}</span>:info, <span class="o">{</span>order:88888<span class="o">}</span>:items
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ❌ 坏：粒度太粗，所有数据挤在一个槽</span>
+</span></span><span class="line"><span class="cl"><span class="o">{</span>user<span class="o">}</span>:1001:profile, <span class="o">{</span>user<span class="o">}</span>:1002:profile
+</span></span><span class="line"><span class="cl"><span class="o">{</span>orders<span class="o">}</span>:1, <span class="o">{</span>orders<span class="o">}</span>:2
+</span></span></code></pre></div><hr>
+<h1 id="3-搭建集群">3. 搭建集群</h1>
+<h2 id="31-配置文件">3.1 配置文件</h2>
+<pre tabindex="0"><code class="language-conf" data-lang="conf"># 每个节点都要配（只改端口和目录）
+port 7000
+cluster-enabled yes                          # 【必须】开启集群模式
+cluster-config-file nodes-7000.conf          # 集群配置文件（节点自动维护，不要手改）
+cluster-node-timeout 15000                   # 节点超时（毫秒），故障判定的关键参数
+dir /data/redis/7000
+
+# 数据持久化
+appendonly yes
+appendfilename &#34;appendonly-7000.aof&#34;
+
+# 密码（集群里所有节点密码必须相同）
+requirepass mypassword
+masterauth mypassword                        # 【必须】节点之间复制要用
+
+# ---------- 重要的集群专属配置 ----------
+# 当有槽不可用时，整个集群是否停止服务
+cluster-require-full-coverage no             # 【生产建议 no】
+
+# 从节点是否允许在与主节点失联时提供读服务
+cluster-allow-replica-migration yes          # 从节点自动迁移（副本均衡）
+
+# 从节点故障转移的最大数据落后时间（乘以 node-timeout）
+cluster-replica-validity-factor 10
+
+# 一个主节点至少要保留几个从节点才允许它的从节点迁移走
+cluster-migration-barrier 1
+
+# 容器/NAT 环境必配（见 3.5）
+cluster-announce-ip 1.2.3.4
+cluster-announce-port 7000
+cluster-announce-bus-port 17000
+
+# 7.0+ 允许在集群模式下发布分片 pub/sub
+# 7.0+ 是否允许读取处于 importing/migrating 状态的槽
+cluster-allow-reads-when-down no
+cluster-allow-pubsubshard-when-down yes
+</code></pre><p><strong>注意 <code>cluster-enabled yes</code> 之后的限制</strong>：</p>
+<ul>
+<li><strong>只能用 db0</strong>（<code>SELECT 1</code> 会报错）；</li>
+<li>不支持跨槽的多 key 操作。</li>
+</ul>
+<h2 id="32-一键创建集群">3.2 一键创建集群</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 先启动 6 个节点（3 主 3 从）</span>
+</span></span><span class="line"><span class="cl"><span class="k">for</span> port in <span class="m">7000</span> <span class="m">7001</span> <span class="m">7002</span> <span class="m">7003</span> <span class="m">7004</span> 7005<span class="p">;</span> <span class="k">do</span>
+</span></span><span class="line"><span class="cl">  mkdir -p /data/redis/<span class="nv">$port</span>
+</span></span><span class="line"><span class="cl">  <span class="c1"># 生成配置文件...</span>
+</span></span><span class="line"><span class="cl">  redis-server /data/redis/<span class="nv">$port</span>/redis.conf
+</span></span><span class="line"><span class="cl"><span class="k">done</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 用 redis-cli --cluster create 创建集群</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># --cluster-replicas 1 表示每个主节点配 1 个从节点</span>
+</span></span><span class="line"><span class="cl">redis-cli -a mypassword --cluster create <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  127.0.0.1:7000 127.0.0.1:7001 127.0.0.1:7002 <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  127.0.0.1:7003 127.0.0.1:7004 127.0.0.1:7005 <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --cluster-replicas <span class="m">1</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 输出会显示分配方案，确认后输入 yes</span>
+</span></span><span class="line"><span class="cl">&gt;&gt;&gt; Performing <span class="nb">hash</span> slots allocation on <span class="m">6</span> nodes...
+</span></span><span class="line"><span class="cl">Master<span class="o">[</span>0<span class="o">]</span> -&gt; Slots <span class="m">0</span> - <span class="m">5460</span>
+</span></span><span class="line"><span class="cl">Master<span class="o">[</span>1<span class="o">]</span> -&gt; Slots <span class="m">5461</span> - <span class="m">10922</span>
+</span></span><span class="line"><span class="cl">Master<span class="o">[</span>2<span class="o">]</span> -&gt; Slots <span class="m">10923</span> - <span class="m">16383</span>
+</span></span><span class="line"><span class="cl">Adding replica 127.0.0.1:7004 to 127.0.0.1:7000
+</span></span><span class="line"><span class="cl">Adding replica 127.0.0.1:7005 to 127.0.0.1:7001
+</span></span><span class="line"><span class="cl">Adding replica 127.0.0.1:7003 to 127.0.0.1:7002
+</span></span><span class="line"><span class="cl">Can I <span class="nb">set</span> the above configuration? <span class="o">(</span><span class="nb">type</span> <span class="s1">&#39;yes&#39;</span> to accept<span class="o">)</span>: yes
+</span></span><span class="line"><span class="cl">...
+</span></span><span class="line"><span class="cl"><span class="o">[</span>OK<span class="o">]</span> All <span class="m">16384</span> slots covered.
+</span></span></code></pre></div><p><strong><code>redis-cli --cluster</code> 会自动做&quot;主从错开分配&quot;</strong>——尽量把主节点和它的从节点放在不同的机器上（通过 IP 判断）。如果所有节点都在同一台机器上（测试环境），它会警告但仍然创建。</p>
+<h2 id="33-验证集群">3.3 验证集群</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 【必须加 -c】开启集群模式，客户端才会跟随重定向</span>
+</span></span><span class="line"><span class="cl">redis-cli -c -p <span class="m">7000</span> -a mypassword
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 集群状态</span>
+</span></span><span class="line"><span class="cl">127.0.0.1:7000&gt; CLUSTER INFO
+</span></span><span class="line"><span class="cl">cluster_state:ok                    <span class="c1"># 【关键】ok 表示集群可用</span>
+</span></span><span class="line"><span class="cl">cluster_slots_assigned:16384        <span class="c1"># 已分配的槽数，必须是 16384</span>
+</span></span><span class="line"><span class="cl">cluster_slots_ok:16384
+</span></span><span class="line"><span class="cl">cluster_slots_pfail:0               <span class="c1"># 疑似下线的槽</span>
+</span></span><span class="line"><span class="cl">cluster_slots_fail:0                <span class="c1"># 已下线的槽</span>
+</span></span><span class="line"><span class="cl">cluster_known_nodes:6
+</span></span><span class="line"><span class="cl">cluster_size:3                      <span class="c1"># 有槽的主节点数量（分片数）</span>
+</span></span><span class="line"><span class="cl">cluster_current_epoch:6
+</span></span><span class="line"><span class="cl">cluster_my_epoch:1
+</span></span><span class="line"><span class="cl">cluster_stats_messages_sent:1234
+</span></span><span class="line"><span class="cl">cluster_stats_messages_received:1234
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 节点列表</span>
+</span></span><span class="line"><span class="cl">127.0.0.1:7000&gt; CLUSTER NODES
+</span></span><span class="line"><span class="cl">07c37df... 127.0.0.1:7000@17000 myself,master - <span class="m">0</span> <span class="m">0</span> <span class="m">1</span> connected 0-5460
+</span></span><span class="line"><span class="cl">67ed2db... 127.0.0.1:7001@17001 master - <span class="m">0</span> <span class="m">1785657600000</span> <span class="m">2</span> connected 5461-10922
+</span></span><span class="line"><span class="cl">292f8b3... 127.0.0.1:7002@17002 master - <span class="m">0</span> <span class="m">1785657600000</span> <span class="m">3</span> connected 10923-16383
+</span></span><span class="line"><span class="cl">6ec2392... 127.0.0.1:7003@17003 slave 292f8b3... <span class="m">0</span> <span class="m">1785657600000</span> <span class="m">3</span> connected
+</span></span><span class="line"><span class="cl">824fe11... 127.0.0.1:7004@17004 slave 07c37df... <span class="m">0</span> <span class="m">1785657600000</span> <span class="m">1</span> connected
+</span></span><span class="line"><span class="cl">5eb0e0d... 127.0.0.1:7005@17005 slave 67ed2db... <span class="m">0</span> <span class="m">1785657600000</span> <span class="m">2</span> connected
+</span></span></code></pre></div><p><code>CLUSTER NODES</code> 每行的字段：</p>
+<pre tabindex="0"><code>&lt;节点ID&gt; &lt;IP:端口@总线端口&gt; &lt;标志&gt; &lt;主节点ID或-&gt; &lt;上次PING时间&gt; &lt;上次PONG时间&gt; &lt;配置纪元&gt; &lt;连接状态&gt; &lt;负责的槽&gt;
+</code></pre><p>标志（flags）：<code>myself</code>（自己）、<code>master</code>、<code>slave</code>、<code>fail?</code>（疑似下线 PFAIL）、<code>fail</code>（已下线 FAIL）、<code>handshake</code>、<code>noaddr</code>、<code>nofailover</code>。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 更友好的槽分布查看</span>
+</span></span><span class="line"><span class="cl">127.0.0.1:7000&gt; CLUSTER SLOTS         <span class="c1"># 旧命令</span>
+</span></span><span class="line"><span class="cl">127.0.0.1:7000&gt; CLUSTER SHARDS        <span class="c1"># 7.0+ 推荐，按分片组织</span>
+</span></span><span class="line"><span class="cl">127.0.0.1:7000&gt; CLUSTER MYID          <span class="c1"># 自己的节点 ID</span>
+</span></span><span class="line"><span class="cl">127.0.0.1:7000&gt; CLUSTER COUNTKEYSINSLOT <span class="m">8722</span>    <span class="c1"># 某个槽有多少 key</span>
+</span></span><span class="line"><span class="cl">127.0.0.1:7000&gt; CLUSTER GETKEYSINSLOT <span class="m">8722</span> <span class="m">10</span>   <span class="c1"># 列出某槽的 key</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 集群健康检查（运维必用）</span>
+</span></span><span class="line"><span class="cl">redis-cli -a mypassword --cluster check 127.0.0.1:7000
+</span></span><span class="line"><span class="cl">redis-cli -a mypassword --cluster info 127.0.0.1:7000
+</span></span></code></pre></div><h2 id="34-手动创建集群理解原理">3.4 手动创建集群（理解原理）</h2>
+<p>一键创建屏蔽了细节，手动做一遍能理解集群是怎么形成的：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 1. 节点互相认识（握手）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 只需要让一个节点认识其他所有节点，Gossip 会自动扩散</span>
+</span></span><span class="line"><span class="cl">redis-cli -p <span class="m">7000</span> CLUSTER MEET 127.0.0.1 <span class="m">7001</span>
+</span></span><span class="line"><span class="cl">redis-cli -p <span class="m">7000</span> CLUSTER MEET 127.0.0.1 <span class="m">7002</span>
+</span></span><span class="line"><span class="cl">redis-cli -p <span class="m">7000</span> CLUSTER MEET 127.0.0.1 <span class="m">7003</span>
+</span></span><span class="line"><span class="cl">redis-cli -p <span class="m">7000</span> CLUSTER MEET 127.0.0.1 <span class="m">7004</span>
+</span></span><span class="line"><span class="cl">redis-cli -p <span class="m">7000</span> CLUSTER MEET 127.0.0.1 <span class="m">7005</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 稍等几秒，确认所有节点都互相认识</span>
+</span></span><span class="line"><span class="cl">redis-cli -p <span class="m">7000</span> CLUSTER NODES     <span class="c1"># 应该看到 6 个节点</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 2. 分配槽</span>
+</span></span><span class="line"><span class="cl">redis-cli -p <span class="m">7000</span> CLUSTER ADDSLOTS <span class="o">{</span>0..5460<span class="o">}</span>
+</span></span><span class="line"><span class="cl">redis-cli -p <span class="m">7001</span> CLUSTER ADDSLOTS <span class="o">{</span>5461..10922<span class="o">}</span>
+</span></span><span class="line"><span class="cl">redis-cli -p <span class="m">7002</span> CLUSTER ADDSLOTS <span class="o">{</span>10923..16383<span class="o">}</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 7.0+ 有更方便的范围版本</span>
+</span></span><span class="line"><span class="cl">redis-cli -p <span class="m">7000</span> CLUSTER ADDSLOTSRANGE <span class="m">0</span> <span class="m">5460</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 3. 设置主从关系（用节点 ID，不是 IP）</span>
+</span></span><span class="line"><span class="cl">redis-cli -p <span class="m">7003</span> CLUSTER REPLICATE &lt;7002的节点ID&gt;
+</span></span><span class="line"><span class="cl">redis-cli -p <span class="m">7004</span> CLUSTER REPLICATE &lt;7000的节点ID&gt;
+</span></span><span class="line"><span class="cl">redis-cli -p <span class="m">7005</span> CLUSTER REPLICATE &lt;7001的节点ID&gt;
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 4. 确认集群 state 变成 ok</span>
+</span></span><span class="line"><span class="cl">redis-cli -p <span class="m">7000</span> CLUSTER INFO <span class="p">|</span> grep cluster_state
+</span></span></code></pre></div><p><strong>注意：<code>cluster_state</code> 只有在 16384 个槽全部被分配后才会变成 <code>ok</code></strong>（除非 <code>cluster-require-full-coverage no</code>）。</p>
+<h2 id="35-容器云环境必配-announce">3.5 容器/云环境必配 announce</h2>
+<p>和哨兵一样，Cluster 在 NAT/容器环境下有地址问题，而且<strong>更严重</strong>：</p>
+<p>节点通过 Gossip 交换彼此的地址，如果一个节点广播的是自己的<strong>容器内网 IP</strong>，其他节点和客户端都连不上它。</p>
+<pre tabindex="0"><code class="language-conf" data-lang="conf">cluster-announce-ip &lt;宿主机IP或可路由的IP&gt;
+cluster-announce-port 7000                # 数据端口（映射后的）
+cluster-announce-bus-port 17000           # 【别忘了总线端口】
+</code></pre><p><strong>这是容器化 Redis Cluster 最常见的坑</strong>。如果没配，集群会出现节点互相 <code>fail?</code>、客户端收到无法连接的重定向地址等诡异问题。</p>
+<p>另外注意：<strong>集群总线端口（数据端口 + 10000）也必须在防火墙/安全组里放开</strong>，很多人只开了 6379 却忘了 16379。</p>
+<hr>
+<h1 id="4-重定向机制">4. 重定向机制</h1>
+<p>客户端连到任意节点执行命令，如果 key 不属于这个节点，会发生<strong>重定向</strong>。</p>
+<h2 id="41-moved-重定向">4.1 MOVED 重定向</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 用普通模式连接（不加 -c）</span>
+</span></span><span class="line"><span class="cl">$ redis-cli -p <span class="m">7000</span>
+</span></span><span class="line"><span class="cl">127.0.0.1:7000&gt; SET foo bar
+</span></span><span class="line"><span class="cl"><span class="o">(</span>error<span class="o">)</span> MOVED <span class="m">12182</span> 127.0.0.1:7002
+</span></span><span class="line"><span class="cl"><span class="c1">#              ↑槽号  ↑正确的节点</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 用集群模式连接（加 -c），客户端自动跟随重定向</span>
+</span></span><span class="line"><span class="cl">$ redis-cli -c -p <span class="m">7000</span>
+</span></span><span class="line"><span class="cl">127.0.0.1:7000&gt; SET foo bar
+</span></span><span class="line"><span class="cl">-&gt; Redirected to slot <span class="o">[</span>12182<span class="o">]</span> located at 127.0.0.1:7002
+</span></span><span class="line"><span class="cl">OK
+</span></span><span class="line"><span class="cl">127.0.0.1:7002&gt;      <span class="c1"># 注意提示符变了，客户端已经切到 7002</span>
+</span></span></code></pre></div><p><strong>MOVED 的含义</strong>：「这个槽<strong>永久</strong>属于另一个节点，请更新你的槽映射缓存，以后直接去那个节点」。</p>
+<p><strong>客户端的正确行为</strong>：</p>
+<pre tabindex="0"><code>1. 收到 MOVED → 更新本地的 slot → node 映射表
+2. 向新节点重发命令
+3. 之后同一个槽的请求直接发给正确的节点（不再需要重定向）
+</code></pre><p><strong>智能客户端（smart client）的工作方式</strong>：</p>
+<pre tabindex="0"><code>1. 启动时向任意节点执行 CLUSTER SLOTS（或 7.0+ 的 CLUSTER SHARDS）
+   → 获取完整的槽映射表，缓存在本地
+2. 每次请求前，本地计算 CRC16(key) &amp; 16383 得到槽号，
+   查缓存直接连到正确的节点 → 【零重定向开销】
+3. 只有在扩缩容/故障转移导致映射变化时才会收到 MOVED，
+   此时刷新映射表
+</code></pre><p><strong>所以在稳定状态下，Redis Cluster 的请求是&quot;一跳直达&quot;的</strong>，没有代理的额外延迟——这是它相比 Proxy 方案的核心优势。</p>
+<h2 id="42-ask-重定向">4.2 ASK 重定向</h2>
+<p><code>ASK</code> 只在<strong>槽迁移过程中</strong>出现，语义与 <code>MOVED</code> 完全不同。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">127.0.0.1:7000&gt; GET mykey
+</span></span><span class="line"><span class="cl"><span class="o">(</span>error<span class="o">)</span> ASK <span class="m">8722</span> 127.0.0.1:7002
+</span></span></code></pre></div><p><strong>ASK 的含义</strong>：「这个槽<strong>正在迁移中</strong>，你要的这个 key 已经被迁到目标节点了，请<strong>这一次</strong>去那个节点问一下。但槽的归属还没变，<strong>不要更新你的映射表</strong>」。</p>
+<p><strong>客户端处理 ASK 的正确流程</strong>（比 MOVED 复杂）：</p>
+<pre tabindex="0"><code>1. 收到 ASK &lt;slot&gt; &lt;target&gt;
+2. 【不更新槽映射表】
+3. 连接到 target 节点
+4. 【先发送 ASKING 命令】       ← 关键！
+5. 再重发原命令
+</code></pre><p><strong>为什么必须先发 <code>ASKING</code></strong>：</p>
+<p>目标节点的这个槽还处于 <code>IMPORTING</code> 状态，它<strong>默认会拒绝</strong>该槽的请求（返回 MOVED 指回源节点，否则就死循环了）。<code>ASKING</code> 是一个&quot;一次性通行证&quot;，告诉目标节点&quot;我是被源节点介绍来的，请破例处理这一次请求&quot;。</p>
+<p><code>ASKING</code> 只对<strong>紧接着的下一条命令</strong>有效。</p>
+<h2 id="43-moved-vs-ask-对比">4.3 MOVED vs ASK 对比</h2>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>MOVED</th>
+<th>ASK</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>含义</strong></td>
+<td>槽<strong>永久</strong>属于目标节点</td>
+<td>槽<strong>正在迁移</strong>，这个 key 暂时在目标节点</td>
+</tr>
+<tr>
+<td><strong>客户端是否更新槽映射</strong></td>
+<td><strong>是</strong></td>
+<td><strong>否</strong></td>
+</tr>
+<tr>
+<td><strong>是否需要先发 ASKING</strong></td>
+<td>否</td>
+<td><strong>是</strong></td>
+</tr>
+<tr>
+<td><strong>发生时机</strong></td>
+<td>客户端的映射表过期（扩缩容后、故障转移后、首次连错节点）</td>
+<td>仅在槽迁移过程中</td>
+</tr>
+<tr>
+<td><strong>持续性</strong></td>
+<td>永久（直到下次拓扑变化）</td>
+<td>一次性</td>
+</tr>
+</tbody>
+</table>
+<p><strong>记忆</strong>：<strong>MOVED 是&quot;搬家了，记住新地址&quot;，ASK 是&quot;这次先去那边找找，但户口还没迁&quot;</strong>。</p>
+<hr>
+<h1 id="5-在线扩缩容">5. 在线扩缩容</h1>
+<p>这是 Cluster 相比客户端分片和 Twemproxy 最重要的优势。</p>
+<h2 id="51-扩容添加节点">5.1 扩容（添加节点）</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ---------- 第 1 步：启动新节点 ----------</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 准备 7006（新主）和 7007（新从）的配置并启动</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ---------- 第 2 步：把新节点加入集群 ----------</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 加为主节点（先加进来，此时它还没有任何槽）</span>
+</span></span><span class="line"><span class="cl">redis-cli -a <span class="nb">pwd</span> --cluster add-node 127.0.0.1:7006 127.0.0.1:7000
+</span></span><span class="line"><span class="cl"><span class="c1">#                                   ↑新节点        ↑集群里任意已有节点</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 加为从节点（--cluster-slave）</span>
+</span></span><span class="line"><span class="cl">redis-cli -a <span class="nb">pwd</span> --cluster add-node 127.0.0.1:7007 127.0.0.1:7000 <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --cluster-slave --cluster-master-id &lt;7006的节点ID&gt;
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 确认加入成功</span>
+</span></span><span class="line"><span class="cl">redis-cli -c -p <span class="m">7000</span> CLUSTER NODES
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ---------- 第 3 步：迁移槽（reshard）----------</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 交互式</span>
+</span></span><span class="line"><span class="cl">redis-cli -a <span class="nb">pwd</span> --cluster reshard 127.0.0.1:7000
+</span></span><span class="line"><span class="cl"><span class="c1"># 会依次询问：</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   How many slots do you want to move? → 4096（16384/4，4 个分片各 4096）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   What is the receiving node ID? → &lt;7006的节点ID&gt;</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   Source node #1: → all（从所有节点均匀取）或指定节点ID，done 结束</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 非交互式（脚本化）</span>
+</span></span><span class="line"><span class="cl">redis-cli -a <span class="nb">pwd</span> --cluster reshard 127.0.0.1:7000 <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --cluster-from &lt;源节点ID1&gt;,&lt;源节点ID2&gt;,&lt;源节点ID3&gt; <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --cluster-to &lt;7006的节点ID&gt; <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --cluster-slots <span class="m">4096</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --cluster-yes
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ---------- 第 4 步：验证 ----------</span>
+</span></span><span class="line"><span class="cl">redis-cli -a <span class="nb">pwd</span> --cluster check 127.0.0.1:7000
+</span></span><span class="line"><span class="cl"><span class="c1"># 应该显示 [OK] All 16384 slots covered，且各节点槽数均衡</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ---------- 可选：重新均衡 ----------</span>
+</span></span><span class="line"><span class="cl">redis-cli -a <span class="nb">pwd</span> --cluster rebalance 127.0.0.1:7000
+</span></span><span class="line"><span class="cl"><span class="c1"># 自动计算并均衡各节点的槽数</span>
+</span></span><span class="line"><span class="cl">redis-cli -a <span class="nb">pwd</span> --cluster rebalance 127.0.0.1:7000 --cluster-use-empty-masters
+</span></span></code></pre></div><h2 id="52-槽迁移的底层流程">5.2 槽迁移的底层流程</h2>
+<p>理解这个流程是理解 ASK 重定向的前提。<strong>迁移是以槽为单位、逐个 key 进行的</strong>：</p>
+<pre tabindex="0"><code>迁移槽 S 从节点 A（源）到节点 B（目标）：
+
+1. 在 B 上标记：CLUSTER SETSLOT &lt;S&gt; IMPORTING &lt;A的节点ID&gt;
+   → B 准备接收槽 S
+
+2. 在 A 上标记：CLUSTER SETSLOT &lt;S&gt; MIGRATING &lt;B的节点ID&gt;
+   → A 准备迁出槽 S
+
+3. 循环搬移 key：
+   ├─ 在 A 上执行 CLUSTER GETKEYSINSLOT &lt;S&gt; &lt;count&gt;，拿到一批 key
+   ├─ 对每个 key 执行：
+   │    MIGRATE &lt;B的IP&gt; &lt;B的端口&gt; &lt;key&gt; 0 &lt;timeout&gt;
+   │    （MIGRATE 内部 = DUMP 序列化 + 网络传输 + 目标节点 RESTORE + 源节点 DEL，
+   │      整个过程是【原子的】，且是【同步阻塞】的）
+   └─ 直到 CLUSTER COUNTKEYSINSLOT &lt;S&gt; 返回 0
+
+4. 【迁移期间的请求处理】（这是 ASK 存在的原因）：
+   客户端向 A 请求槽 S 里的 key：
+   ├─ 如果 key 还在 A 上 → A 【正常处理】
+   └─ 如果 key 已经不在 A 上 → A 返回 【ASK &lt;S&gt; &lt;B&gt;】
+      → 客户端去 B，先发 ASKING 再发命令
+      （B 因为槽处于 IMPORTING 状态，只接受带 ASKING 的请求）
+
+5. 迁移完成，更新槽的归属：
+   ├─ 在 B 上：CLUSTER SETSLOT &lt;S&gt; NODE &lt;B的节点ID&gt;
+   ├─ 在 A 上：CLUSTER SETSLOT &lt;S&gt; NODE &lt;B的节点ID&gt;
+   └─ 【最好在所有主节点上都执行】，加快配置扩散
+   → 此后客户端访问槽 S 会收到 MOVED 指向 B
+</code></pre><p><strong>关键认识</strong>：</p>
+<ol>
+<li><strong>迁移期间集群仍然可以正常读写</strong>（这就是&quot;在线&quot;扩容），代价是那些正在迁移的 key 会多一次 ASK 重定向；</li>
+<li><strong><code>MIGRATE</code> 是同步阻塞的</strong>——迁移一个大 key 时，源节点和目标节点<strong>都会阻塞</strong>。这是&quot;大 key 会让扩容极其痛苦&quot;的原因（见 5.4）；</li>
+<li><strong>一个槽不能被拆分到两个节点</strong>——这决定了 hash tag 用错会导致无法通过扩容解决倾斜问题。</li>
+</ol>
+<h2 id="53-缩容删除节点">5.3 缩容（删除节点）</h2>
+<p><strong>顺序很重要：必须先迁走槽，才能删除节点。</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ---------- 第 1 步：把要删除节点的槽全部迁走 ----------</span>
+</span></span><span class="line"><span class="cl">redis-cli -a <span class="nb">pwd</span> --cluster reshard 127.0.0.1:7000 <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --cluster-from &lt;要删除的节点ID&gt; <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --cluster-to &lt;接收节点ID&gt; <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --cluster-slots <span class="m">4096</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --cluster-yes
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 确认它已经没有槽了</span>
+</span></span><span class="line"><span class="cl">redis-cli -c -p <span class="m">7000</span> CLUSTER NODES <span class="p">|</span> grep &lt;要删除的节点ID&gt;
+</span></span><span class="line"><span class="cl"><span class="c1"># 该行末尾不应该有槽范围</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ---------- 第 2 步：先删从节点，再删主节点 ----------</span>
+</span></span><span class="line"><span class="cl">redis-cli -a <span class="nb">pwd</span> --cluster del-node 127.0.0.1:7000 &lt;从节点ID&gt;
+</span></span><span class="line"><span class="cl">redis-cli -a <span class="nb">pwd</span> --cluster del-node 127.0.0.1:7000 &lt;主节点ID&gt;
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># del-node 内部做的事：</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 1. 向集群里所有其他节点发送 CLUSTER FORGET &lt;节点ID&gt;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 2. 关闭被删除的节点</span>
+</span></span></code></pre></div><p><strong>注意 <code>CLUSTER FORGET</code> 的 60 秒黑名单</strong>：</p>
+<p>执行 <code>CLUSTER FORGET &lt;nodeID&gt;</code> 后，该节点会被加入一个<strong>60 秒的黑名单</strong>，期间不会通过 Gossip 重新认识它。</p>
+<p>这个设计是必需的：如果没有黑名单，你在节点 A 上 forget 了节点 X，但节点 B 还认识 X，B 就会通过 Gossip 把 X 重新介绍给 A，导致 forget 失败。60 秒的窗口保证你有足够时间在所有节点上执行 forget。</p>
+<p><strong>所以要在 60 秒内对所有节点执行 <code>CLUSTER FORGET</code></strong>（<code>--cluster del-node</code> 会自动帮你做这件事）。</p>
+<h2 id="54-大-key-让扩容变成灾难">5.4 大 key 让扩容变成灾难</h2>
+<p><strong>这是生产环境的真实痛点，必须理解。</strong></p>
+<pre tabindex="0"><code>MIGRATE 命令是【同步阻塞】的：
+├─ 源节点：DUMP 序列化整个 key（一个 1GB 的 hash 要序列化 1GB）
+├─ 网络：传输序列化后的数据
+├─ 目标节点：RESTORE 反序列化并构建数据结构
+└─ 整个过程中，源节点和目标节点的【主线程都被阻塞】
+</code></pre><p>一个 1GB 的大 key 迁移可能阻塞<strong>几十秒</strong>，期间：</p>
+<ul>
+<li>源节点和目标节点都无法响应任何请求；</li>
+<li>客户端大面积超时；</li>
+<li>哨兵/集群可能误判节点下线，<strong>触发不必要的故障转移</strong>；</li>
+<li><code>MIGRATE</code> 本身可能超时失败，导致迁移中断、槽处于不一致的中间状态。</li>
+</ul>
+<p><strong>所以扩容前必须先处理大 key</strong>（第 15 篇讲排查手法）：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">redis-cli --bigkeys                 <span class="c1"># 找大 key</span>
+</span></span><span class="line"><span class="cl">redis-cli --memkeys                 <span class="c1"># 按内存排序</span>
+</span></span><span class="line"><span class="cl">MEMORY USAGE &lt;key&gt;                  <span class="c1"># 单个 key 的内存</span>
+</span></span></code></pre></div><p><strong>大 key 的处理</strong>：拆分（把一个大 hash 拆成多个小 hash）、迁到独立实例、或者改用其他存储。</p>
+<p>另外可以调大 <code>MIGRATE</code> 的 timeout 参数，但那只是让它别失败，阻塞该发生的还是会发生。</p>
+<hr>
+<h1 id="6-gossip-协议与集群通信">6. Gossip 协议与集群通信</h1>
+<h2 id="61-集群总线">6.1 集群总线</h2>
+<p>每个节点除了监听数据端口（如 6379），还监听一个<strong>集群总线端口 = 数据端口 + 10000</strong>（如 16379）。</p>
+<ul>
+<li>总线用<strong>二进制协议</strong>（不是 RESP），为了高效；</li>
+<li>节点之间<strong>两两建立 TCP 连接</strong>（全连接网状拓扑）。所以 N 个节点有 <code>N*(N-1)/2</code> 条连接——这是集群规模不能太大（设计上 &lt;= 1000 节点）的原因之一。</li>
+</ul>
+<h2 id="62-五种消息类型">6.2 五种消息类型</h2>
+<table>
+<thead>
+<tr>
+<th>消息</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>MEET</strong></td>
+<td>邀请一个新节点加入集群（<code>CLUSTER MEET</code> 触发）</td>
+</tr>
+<tr>
+<td><strong>PING</strong></td>
+<td>心跳，携带自己的信息和<strong>随机几个其他节点的信息</strong>（gossip 部分）</td>
+</tr>
+<tr>
+<td><strong>PONG</strong></td>
+<td>对 PING/MEET 的回复，也用于主动广播配置变更</td>
+</tr>
+<tr>
+<td><strong>FAIL</strong></td>
+<td>广播&quot;某个节点已被判定为客观下线（FAIL）&quot;</td>
+</tr>
+<tr>
+<td><strong>PUBLISH</strong></td>
+<td>转发 pub/sub 消息（7.0 前会全集群广播，见第 9 篇）</td>
+</tr>
+</tbody>
+</table>
+<p>7.0+ 还有 <code>MODULE</code>、<code>PUBLISHSHARD</code>（分片 pub/sub）等。</p>
+<h2 id="63-gossip-的工作方式">6.3 Gossip 的工作方式</h2>
+<p><strong>每个节点每秒随机选取部分节点发送 PING</strong>：</p>
+<pre tabindex="0"><code>每 100ms 执行一次 clusterCron：
+1. 从所有已知节点里【随机选 5 个】，挑其中 PONG 回复时间最久的那个发 PING
+   → 这保证了&#34;最久没联系的节点优先被检查&#34;
+
+2. 【强制机制】遍历所有节点，如果某个节点超过
+   cluster-node-timeout / 2 没收到过它的 PONG，
+   【立即】向它发 PING（不等随机选中）
+   → 这保证了故障检测的及时性上界
+</code></pre><p><strong>PING/PONG 消息里携带的 gossip 信息</strong>：</p>
+<p>除了发送方自己的状态（节点 ID、负责的槽位图、配置纪元、是主还是从等），还会<strong>随机挑选大约 1/10 的已知节点的信息</strong>捎带过去（每个 gossip entry 约 104 字节）。</p>
+<p>这就是 Gossip（流言）协议的精髓：<strong>信息像流言一样在节点间自然扩散</strong>，不需要中心节点广播。一条信息通常在 <code>O(logN)</code> 轮内传遍全集群。</p>
+<p><strong>消息大小估算</strong>（回到&quot;为什么是 16384 个槽&quot;）：</p>
+<pre tabindex="0"><code>clusterMsg 头部 ≈ 2KB（其中槽位图占 2048 字节）
++ gossip 部分：节点数/10 × 104 字节
+</code></pre><p>所以 1000 个节点的集群，一条 PING 消息约 <code>2KB + 100 × 104B ≈ 12KB</code>。如果槽是 65536 个，头部就变成 8KB，总消息变成 18KB——增长 50%，而每个节点每秒要发好几条。</p>
+<h2 id="64-故障检测pfail-与-fail">6.4 故障检测：PFAIL 与 FAIL</h2>
+<p>Cluster 的故障检测机制和哨兵的 SDOWN/ODOWN 概念类似，但实现完全不同（去中心化）。</p>
+<h3 id="pfailpossible-failure疑似下线">PFAIL（Possible Failure，疑似下线）</h3>
+<pre tabindex="0"><code>节点 A 向节点 B 发 PING，超过 cluster-node-timeout 没收到 PONG
+→ A 在自己的视角把 B 标记为 PFAIL
+</code></pre><p>这相当于哨兵的 SDOWN，是<strong>单个节点的主观判断</strong>。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">CLUSTER NODES 里会显示 fail? 标志
+</span></span><span class="line"><span class="cl">67ed2db... 127.0.0.1:7001@17001 master,fail? - ...
+</span></span></code></pre></div><h3 id="fail客观下线">FAIL（客观下线）</h3>
+<pre tabindex="0"><code>1. 节点 A 把 B 标记为 PFAIL
+2. A 通过 gossip 消息把&#34;我认为 B 是 PFAIL&#34;的信息传播出去
+3. 其他节点收到后，在自己的 B 节点记录里追加一条【故障报告】
+   （每条报告带时间戳，超过 cluster-node-timeout * 2 的旧报告会被清理）
+4. 【任意一个主节点】发现：
+   持有 B 的 PFAIL 报告的【主节点数量】&gt;= 集群中主节点总数的一半 + 1
+   → 把 B 标记为 FAIL
+5. 该节点【广播一条 FAIL 消息】给全集群
+6. 所有节点收到 FAIL 消息后立即把 B 标记为 FAIL（不需要自己判断）
+</code></pre><p><strong>三个关键点</strong>：</p>
+<ol>
+<li><strong>只有主节点的投票算数</strong>（从节点的 PFAIL 报告不计入统计）；</li>
+<li><strong>需要超过半数的主节点同意</strong>——这是防止网络分区的少数派误判并触发故障转移；</li>
+<li><strong>FAIL 是通过专门的广播消息传播的</strong>（不是靠 gossip 慢慢扩散），所以判定后能快速让全集群达成一致。</li>
+</ol>
+<p><strong>对从节点的 PFAIL 不会升级为 FAIL</strong>——因为从节点下线不需要任何自动处理（只是标记为不可用），和哨兵的设计一致。</p>
+<h2 id="65-从节点自动故障转移">6.5 从节点自动故障转移</h2>
+<p>主节点被标记 FAIL 后，它的从节点会自动竞选成为新主节点：</p>
+<pre tabindex="0"><code>1. 【资格检查】从节点检查自己是否有资格：
+   ├─ 与主节点的断开时间是否过长？
+   │  如果 断开时间 &gt; cluster-node-timeout × cluster-replica-validity-factor(默认10)
+   │  → 【放弃竞选】（数据太旧了，不配当主节点）
+   └─ 自己是否配置了 cluster-replica-no-failover？→ 放弃
+
+2. 【延迟计算】不同从节点等待不同的时间才发起选举：
+   delay = 500ms（固定，等 FAIL 状态在集群中扩散）
+         + random(0~500ms)（避免同时发起）
+         + rank × 1000ms
+   ↑ rank 是【按复制偏移量 offset 排名】：offset 最大的 rank=0，第二大 rank=1...
+   → 【数据最新的从节点最先发起选举，最可能当选】
+
+3. 【发起选举】延迟结束后：
+   ├─ 把集群的 currentEpoch + 1
+   └─ 向所有【主节点】广播 CLUSTERMSG_TYPE_FAILOVER_AUTH_REQUEST
+
+4. 【主节点投票】每个主节点在每个 epoch 里只投一票：
+   ├─ 检查请求方的主节点是否真的是 FAIL 状态
+   ├─ 检查自己在这个 epoch 是否已投过票
+   ├─ 检查请求方的 configEpoch 是否合法（不能比自己记录的更旧）
+   └─ 通过检查 → 回复 FAILOVER_AUTH_ACK
+
+5. 【当选】从节点收到的票数 &gt; 主节点总数/2 → 当选：
+   ├─ 把自己的 configEpoch 设为这次选举的 currentEpoch
+   ├─ 执行 REPLICAOF NO ONE，变成主节点
+   ├─ 接管原主节点的所有槽
+   └─ 【广播一个 PONG 消息】宣告自己是这些槽的新主人
+      （其他节点因为它的 configEpoch 更大而接受这个声明）
+
+6. 原主节点恢复后，发现槽已经属于别人（configEpoch 更大）
+   → 自动变成新主节点的从节点
+</code></pre><p><strong>这个流程与哨兵的对比</strong>：</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>哨兵</th>
+<th>Cluster</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>谁做故障检测</td>
+<td>独立的哨兵进程</td>
+<td><strong>每个节点自己</strong>（去中心化）</td>
+</tr>
+<tr>
+<td>谁投票</td>
+<td>哨兵</td>
+<td><strong>主节点</strong></td>
+</tr>
+<tr>
+<td>谁执行转移</td>
+<td>选出的哨兵 Leader</td>
+<td><strong>候选从节点自己</strong></td>
+</tr>
+<tr>
+<td>怎么保证顺序</td>
+<td>Raft 选 Leader</td>
+<td><strong>rank 延迟机制</strong>（offset 大的先发起）</td>
+</tr>
+<tr>
+<td>需要额外进程</td>
+<td><strong>是</strong>（3+ 个哨兵）</td>
+<td><strong>否</strong>（功能内置）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Cluster 的 rank 延迟机制很巧妙</strong>：不需要像哨兵那样先选 Leader 再由 Leader 选主，而是<strong>让数据最新的从节点先发起选举</strong>，它通常能率先拿到多数票。这简化了流程也减少了一轮通信。</p>
+<h2 id="66-configepoch-冲突解决">6.6 configEpoch 冲突解决</h2>
+<p>每个主节点有一个 <code>configEpoch</code>，用来解决&quot;两个节点都声称拥有同一个槽&quot;的冲突：<strong>configEpoch 更大的胜出</strong>。</p>
+<p>但在极端情况下（比如管理员手动操作、或者网络分区恢复后），可能出现两个节点有<strong>相同的 configEpoch</strong>。Redis 有一个自动修复机制：</p>
+<pre tabindex="0"><code>节点检测到另一个节点的 configEpoch 与自己相同，且对方的节点 ID 更大（字典序）
+→ 自己把 currentEpoch + 1 并设为自己的新 configEpoch
+→ 打破平局
+</code></pre><h2 id="67-cluster-require-full-coverage">6.7 cluster-require-full-coverage</h2>
+<pre tabindex="0"><code class="language-conf" data-lang="conf">cluster-require-full-coverage no        # 【生产建议 no】（默认是 yes）
+</code></pre><ul>
+<li><strong><code>yes</code>（默认）</strong>：如果<strong>有任何一个槽不可用</strong>（负责它的主节点和所有从节点都挂了），<strong>整个集群停止服务</strong>——所有节点对所有请求返回：</li>
+</ul>
+<pre tabindex="0"><code>(error) CLUSTERDOWN The cluster is down
+</code></pre><ul>
+<li><strong><code>no</code></strong>：只有<strong>访问那些不可用的槽</strong>时才报错，其他槽正常服务。</li>
+</ul>
+<p><strong>为什么默认是 yes</strong>：为了数据一致性——如果部分槽不可用还继续服务，客户端可能以为&quot;这个 key 不存在&quot;，进而做出错误的业务决策（比如缓存穿透去写了一条错误数据）。</p>
+<p><strong>为什么生产建议 no</strong>：可用性考虑。一个分片挂掉导致<strong>整个集群 100% 不可用</strong>通常比&quot;只有 1/3 的 key 不可用&quot;糟糕得多。大多数缓存场景更希望部分可用。</p>
+<p><strong>这个选择要根据业务性质决定</strong>：纯缓存 → <code>no</code>；数据一致性关键 → 保持 <code>yes</code> 并确保每个分片都有足够的从节点。</p>
+<hr>
+<h1 id="7-cluster-的限制">7. Cluster 的限制</h1>
+<p>这些限制<strong>必须在架构设计阶段就知道</strong>，否则迁移时会很痛苦。</p>
+<h2 id="71-只能使用-db0">7.1 只能使用 db0</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">127.0.0.1:7000&gt; SELECT <span class="m">1</span>
+</span></span><span class="line"><span class="cl"><span class="o">(</span>error<span class="o">)</span> ERR SELECT is not allowed in cluster mode
+</span></span></code></pre></div><p>原因：多 db 与槽的概念冲突（一个槽在一个节点上，但 db 是节点内的划分，两者交叉会让路由逻辑极其复杂）。</p>
+<p><strong>影响</strong>：如果现有代码用了多 db 做业务隔离，迁移到 Cluster 时必须改成 <strong>key 前缀</strong>方案（第 1 篇就建议不要用多 db，原因之一就是这个）。</p>
+<h2 id="72-跨槽的多-key-操作受限">7.2 跨槽的多 key 操作受限</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">127.0.0.1:7000&gt; MGET user:1 user:2
+</span></span><span class="line"><span class="cl"><span class="o">(</span>error<span class="o">)</span> CROSSSLOT Keys in request don<span class="s1">&#39;t hash to the same slot
+</span></span></span><span class="line"><span class="cl"><span class="s1">
+</span></span></span><span class="line"><span class="cl"><span class="s1">127.0.0.1:7000&gt; SINTERSTORE dst set1 set2
+</span></span></span><span class="line"><span class="cl"><span class="s1">(error) CROSSSLOT Keys in request don&#39;</span>t <span class="nb">hash</span> to the same slot
+</span></span></code></pre></div><p><strong>受影响的命令</strong>：<code>MGET</code>、<code>MSET</code>、<code>MSETNX</code>、<code>SINTER</code>/<code>SUNION</code>/<code>SDIFF</code>（及其 STORE 版本）、<code>ZUNIONSTORE</code>/<code>ZINTERSTORE</code>、<code>RENAME</code>、<code>SMOVE</code>、<code>BITOP</code>、<code>PFMERGE</code>、<code>PFCOUNT</code>（多 key）、<code>LMOVE</code>/<code>RPOPLPUSH</code>、<code>COPY</code>、<code>GEORADIUS ... STORE</code>、<code>SORT ... STORE</code>、<code>XREAD</code> 多 stream、以及<strong>任何涉及多个 key 的 Lua 脚本</strong>。</p>
+<p><strong>解决方案</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>方案</th>
+<th>说明</th>
+<th>代价</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>hash tag</strong></td>
+<td><code>{user1001}:name</code>、<code>{user1001}:age</code> 强制同槽</td>
+<td><strong>数据倾斜风险</strong></td>
+</tr>
+<tr>
+<td><strong>客户端拆分并行请求</strong></td>
+<td>把 <code>MGET</code> 按节点分组，并行发多个请求再合并</td>
+<td>成熟客户端（go-redis、Lettuce）<strong>自动做</strong>，<code>MGET</code> 可以照常用</td>
+</tr>
+<tr>
+<td><strong>改用 pipeline</strong></td>
+<td>拆成单 key 命令放进 pipeline</td>
+<td>客户端要按节点分组</td>
+</tr>
+<tr>
+<td><strong>重新设计数据模型</strong></td>
+<td>把需要一起操作的数据放进一个 hash</td>
+<td>最彻底</td>
+</tr>
+</tbody>
+</table>
+<p><strong>重要提示</strong>：<strong>大部分成熟客户端已经透明处理了 <code>MGET</code>/<code>MSET</code></strong> —— 它们会把 key 按槽分组，向各节点并行发送请求，再合并结果。所以在 go-redis / Lettuce 里 <code>MGET</code> 跨槽是能用的（但底层是多个请求）。<strong>只有直接用 <code>redis-cli</code> 或简单客户端时才会报 CROSSSLOT。</strong></p>
+<h2 id="73-lua-脚本必须所有-key-同槽">7.3 Lua 脚本必须所有 key 同槽</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-lua" data-lang="lua"><span class="line"><span class="cl"><span class="c1">-- 脚本里所有通过 KEYS 传入的 key 必须在同一个槽</span>
+</span></span><span class="line"><span class="cl"><span class="n">EVAL</span> <span class="s2">&#34;return redis.call(&#39;GET&#39;, KEYS[1]) .. redis.call(&#39;GET&#39;, KEYS[2])&#34;</span> <span class="mi">2</span> <span class="n">k1</span> <span class="n">k2</span>
+</span></span><span class="line"><span class="cl"><span class="c1">-- 如果 k1 和 k2 不同槽 → CROSSSLOT 错误</span>
+</span></span></code></pre></div><p>而且<strong>7.0+ 会检查脚本是否访问了没在 KEYS 里声明的 key</strong>：</p>
+<pre tabindex="0"><code>(error) ERR ... Script attempted to access a non local key in a cluster node
+</code></pre><p>这就是第 8 篇强调&quot;key 必须通过 KEYS 传入&quot;的硬性原因。</p>
+<p>7.0 提供了一个逃生舱：脚本声明 <code>allow-cross-slot-keys</code> 标志可以访问跨槽 key，但<strong>这样做很危险</strong>（脚本会在错误的节点上操作不属于它的 key），只在明确知道后果时用。</p>
+<h2 id="74-事务受限">7.4 事务受限</h2>
+<p><code>MULTI/EXEC</code> 里的所有 key 必须在同一个槽。<code>WATCH</code> 也一样。</p>
+<h2 id="75-pubsub-的问题">7.5 pub/sub 的问题</h2>
+<ul>
+<li><strong>7.0 之前</strong>：<code>PUBLISH</code> 会广播到集群所有节点（保证订阅者连任意节点都能收到），造成<strong>流量放大</strong>（N 个节点 = N 倍流量）；</li>
+<li><strong>7.0+</strong>：引入 <code>SPUBLISH</code>/<code>SSUBSCRIBE</code> 分片 pub/sub，消息只在负责该槽的分片内传播。代价是订阅者必须连到正确的节点。</li>
+</ul>
+<h2 id="76-其他限制">7.6 其他限制</h2>
+<table>
+<thead>
+<tr>
+<th>限制</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong><code>KEYS</code>/<code>SCAN</code> 只扫当前节点</strong></td>
+<td>要遍历全部数据必须对每个主节点分别执行</td>
+</tr>
+<tr>
+<td><strong><code>DBSIZE</code> 只是当前节点的</strong></td>
+<td>集群总 key 数要把所有主节点加起来</td>
+</tr>
+<tr>
+<td><strong><code>FLUSHALL</code> 只清当前节点</strong></td>
+<td><code>redis-cli --cluster call &lt;node&gt; FLUSHALL</code> 才能全清</td>
+</tr>
+<tr>
+<td><strong>不能跨槽的 <code>RENAME</code></strong></td>
+<td>因为要移动数据</td>
+</tr>
+<tr>
+<td><strong>客户端必须支持集群协议</strong></td>
+<td>老客户端/自研客户端可能只支持单机</td>
+</tr>
+<tr>
+<td><strong>一个槽不可拆分</strong></td>
+<td>单个槽的数据量过大（hash tag 用错）无法通过扩容解决</td>
+</tr>
+<tr>
+<td><strong>不支持&quot;读己之写&quot;</strong></td>
+<td>从节点异步复制，和主从一样有延迟问题</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h1 id="8-运维实战">8. 运维实战</h1>
+<h2 id="81-常用运维命令">8.1 常用运维命令</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ---------- 健康检查 ----------</span>
+</span></span><span class="line"><span class="cl">redis-cli -a <span class="nb">pwd</span> --cluster check 127.0.0.1:7000      <span class="c1"># 检查槽覆盖和一致性</span>
+</span></span><span class="line"><span class="cl">redis-cli -a <span class="nb">pwd</span> --cluster info 127.0.0.1:7000       <span class="c1"># 简要信息</span>
+</span></span><span class="line"><span class="cl">redis-cli -a <span class="nb">pwd</span> --cluster fix 127.0.0.1:7000        <span class="c1"># 修复槽不一致（谨慎！）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ---------- 对所有节点执行命令（非常有用）----------</span>
+</span></span><span class="line"><span class="cl">redis-cli -a <span class="nb">pwd</span> --cluster call 127.0.0.1:7000 DBSIZE
+</span></span><span class="line"><span class="cl">redis-cli -a <span class="nb">pwd</span> --cluster call 127.0.0.1:7000 INFO memory
+</span></span><span class="line"><span class="cl">redis-cli -a <span class="nb">pwd</span> --cluster call 127.0.0.1:7000 CONFIG SET maxmemory 4gb
+</span></span><span class="line"><span class="cl"><span class="c1"># 只对主节点执行</span>
+</span></span><span class="line"><span class="cl">redis-cli -a <span class="nb">pwd</span> --cluster call --cluster-only-masters 127.0.0.1:7000 DBSIZE
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ---------- 手动故障转移 ----------</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 在【从节点】上执行，让它变成主节点（用于计划内维护）</span>
+</span></span><span class="line"><span class="cl">redis-cli -c -p <span class="m">7003</span> CLUSTER FAILOVER
+</span></span><span class="line"><span class="cl"><span class="c1"># 变体：</span>
+</span></span><span class="line"><span class="cl">CLUSTER FAILOVER FORCE       <span class="c1"># 主节点不可达时也强制转移（不等主节点确认）</span>
+</span></span><span class="line"><span class="cl">CLUSTER FAILOVER TAKEOVER    <span class="c1"># 【最危险】不需要主节点集群授权，单方面接管</span>
+</span></span><span class="line"><span class="cl">                             <span class="c1"># 只在灾难恢复时用，可能造成数据丢失和脑裂</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ---------- 槽管理 ----------</span>
+</span></span><span class="line"><span class="cl">CLUSTER ADDSLOTS <span class="m">1</span> <span class="m">2</span> <span class="m">3</span>
+</span></span><span class="line"><span class="cl">CLUSTER ADDSLOTSRANGE <span class="m">0</span> <span class="m">5460</span>             <span class="c1"># 7.0+</span>
+</span></span><span class="line"><span class="cl">CLUSTER DELSLOTS <span class="m">1</span> <span class="m">2</span> <span class="m">3</span>
+</span></span><span class="line"><span class="cl">CLUSTER DELSLOTSRANGE <span class="m">0</span> <span class="m">100</span>              <span class="c1"># 7.0+</span>
+</span></span><span class="line"><span class="cl">CLUSTER SETSLOT &lt;slot&gt; NODE &lt;nodeID&gt;
+</span></span><span class="line"><span class="cl">CLUSTER SETSLOT &lt;slot&gt; MIGRATING &lt;nodeID&gt;
+</span></span><span class="line"><span class="cl">CLUSTER SETSLOT &lt;slot&gt; IMPORTING &lt;nodeID&gt;
+</span></span><span class="line"><span class="cl">CLUSTER SETSLOT &lt;slot&gt; STABLE            <span class="c1"># 清除 migrating/importing 状态</span>
+</span></span><span class="line"><span class="cl">CLUSTER FLUSHSLOTS                       <span class="c1"># 清空本节点的所有槽（危险）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ---------- 节点管理 ----------</span>
+</span></span><span class="line"><span class="cl">CLUSTER MEET &lt;ip&gt; &lt;port&gt;
+</span></span><span class="line"><span class="cl">CLUSTER FORGET &lt;nodeID&gt;                  <span class="c1"># 60 秒黑名单</span>
+</span></span><span class="line"><span class="cl">CLUSTER REPLICATE &lt;masterNodeID&gt;         <span class="c1"># 让本节点成为指定节点的从节点</span>
+</span></span><span class="line"><span class="cl">CLUSTER RESET <span class="o">[</span>HARD<span class="p">|</span>SOFT<span class="o">]</span>                <span class="c1"># 重置节点（HARD 会改变节点 ID）</span>
+</span></span><span class="line"><span class="cl">CLUSTER SLAVES &lt;nodeID&gt;                  <span class="c1"># 查看某主节点的从节点（旧名）</span>
+</span></span><span class="line"><span class="cl">CLUSTER REPLICAS &lt;nodeID&gt;                <span class="c1"># 5.0+ 新名</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ---------- 备份与迁移 ----------</span>
+</span></span><span class="line"><span class="cl">redis-cli -a <span class="nb">pwd</span> --cluster backup 127.0.0.1:7000 /backup/dir    <span class="c1"># 备份所有节点的 RDB</span>
+</span></span><span class="line"><span class="cl">redis-cli -a <span class="nb">pwd</span> --cluster import &lt;目标集群&gt; --cluster-from &lt;源单机&gt;    <span class="c1"># 从单机导入</span>
+</span></span></code></pre></div><h2 id="82-从单机主从迁移到-cluster">8.2 从单机/主从迁移到 Cluster</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 方案一：用 redis-cli --cluster import（适合小数据量）</span>
+</span></span><span class="line"><span class="cl">redis-cli -a <span class="nb">pwd</span> --cluster import 127.0.0.1:7000 <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --cluster-from 192.168.1.10:6379 <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --cluster-from-askpass
+</span></span><span class="line"><span class="cl"><span class="c1"># 原理：SCAN 源实例的所有 key，逐个 MIGRATE 到集群</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 缺点：慢、期间源实例的新写入不会同步（需要停写）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 方案二：redis-shake（推荐，阿里开源，支持全量 + 增量）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 支持单机→集群、集群→集群、且能持续同步增量，实现平滑迁移</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 方案三：双写 + 逐步切读（业务改造，最可控）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 1. 业务同时写老 Redis 和新集群</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 2. 用工具把老数据全量导入新集群</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 3. 逐步把读流量切到新集群，观察</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 4. 完全切换后下线老实例</span>
+</span></span></code></pre></div><h2 id="83-监控指标">8.3 监控指标</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ---------- 集群整体 ----------</span>
+</span></span><span class="line"><span class="cl">CLUSTER INFO
+</span></span><span class="line"><span class="cl">cluster_state:ok                 <span class="c1"># 【最关键】必须是 ok</span>
+</span></span><span class="line"><span class="cl">cluster_slots_assigned:16384     <span class="c1"># 必须是 16384</span>
+</span></span><span class="line"><span class="cl">cluster_slots_ok:16384
+</span></span><span class="line"><span class="cl">cluster_slots_pfail:0            <span class="c1"># 【告警】&gt; 0 说明有节点疑似下线</span>
+</span></span><span class="line"><span class="cl">cluster_slots_fail:0             <span class="c1"># 【告警】&gt; 0 说明有槽不可用</span>
+</span></span><span class="line"><span class="cl">cluster_known_nodes:6
+</span></span><span class="line"><span class="cl">cluster_size:3                   <span class="c1"># 分片数（有槽的主节点数）</span>
+</span></span><span class="line"><span class="cl">cluster_current_epoch:6
+</span></span><span class="line"><span class="cl">cluster_stats_messages_sent      <span class="c1"># 集群总线消息量</span>
+</span></span><span class="line"><span class="cl">cluster_stats_messages_received
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ---------- 单节点 ----------</span>
+</span></span><span class="line"><span class="cl">INFO replication                 <span class="c1"># 主从关系是否正常</span>
+</span></span><span class="line"><span class="cl">INFO memory                      <span class="c1"># 各节点内存是否均衡</span>
+</span></span><span class="line"><span class="cl">INFO clients
+</span></span><span class="line"><span class="cl">INFO stats <span class="p">|</span> grep -E <span class="s1">&#39;instantaneous_ops|keyspace_hits&#39;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ---------- 数据均衡性检查 ----------</span>
+</span></span><span class="line"><span class="cl">redis-cli -a <span class="nb">pwd</span> --cluster call --cluster-only-masters 127.0.0.1:7000 DBSIZE
+</span></span><span class="line"><span class="cl"><span class="c1"># 各节点的 key 数应该接近，差异大说明：</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   1. hash tag 用错导致倾斜</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   2. 槽分配不均（用 rebalance 修复）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   3. 有大 key</span>
+</span></span><span class="line"><span class="cl">redis-cli -a <span class="nb">pwd</span> --cluster call --cluster-only-masters 127.0.0.1:7000 INFO memory <span class="p">|</span> grep used_memory_human
+</span></span></code></pre></div><p><strong>告警项</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>指标</th>
+<th>阈值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>cluster_state</code></td>
+<td>!= ok 立即告警</td>
+</tr>
+<tr>
+<td><code>cluster_slots_assigned</code></td>
+<td>!= 16384 立即告警</td>
+</tr>
+<tr>
+<td><code>cluster_slots_pfail</code> / <code>cluster_slots_fail</code></td>
+<td>&gt; 0 立即告警</td>
+</tr>
+<tr>
+<td><code>cluster_known_nodes</code></td>
+<td>变化时告警（有节点加入/离开）</td>
+</tr>
+<tr>
+<td><code>cluster_size</code></td>
+<td>变化时告警</td>
+</tr>
+<tr>
+<td>各节点内存偏差</td>
+<td>&gt; 30% 告警（数据倾斜）</td>
+</tr>
+<tr>
+<td>主从关系</td>
+<td>某主节点没有从节点时告警</td>
+</tr>
+</tbody>
+</table>
+<h2 id="84-常见故障排查">8.4 常见故障排查</h2>
+<p><strong>问题一：<code>cluster_state:fail</code></strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 原因 1：有槽没被分配</span>
+</span></span><span class="line"><span class="cl">redis-cli -c -p <span class="m">7000</span> CLUSTER INFO <span class="p">|</span> grep slots_assigned    <span class="c1"># 是否 16384</span>
+</span></span><span class="line"><span class="cl">redis-cli -a <span class="nb">pwd</span> --cluster check 127.0.0.1:7000            <span class="c1"># 看哪些槽缺失</span>
+</span></span><span class="line"><span class="cl">redis-cli -a <span class="nb">pwd</span> --cluster fix 127.0.0.1:7000              <span class="c1"># 尝试自动修复</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 原因 2：有分片完全挂了（主从都挂）且 cluster-require-full-coverage yes</span>
+</span></span><span class="line"><span class="cl">redis-cli -c -p <span class="m">7000</span> CLUSTER NODES <span class="p">|</span> grep fail
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 原因 3：网络分区，当前节点在少数派一侧</span>
+</span></span></code></pre></div><p><strong>问题二：节点之间互相 <code>fail?</code></strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 排查</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 1. 集群总线端口（数据端口+10000）是否被防火墙拦了</span>
+</span></span><span class="line"><span class="cl">telnet &lt;node_ip&gt; <span class="m">17000</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 2. 容器/NAT 环境是否配了 announce</span>
+</span></span><span class="line"><span class="cl">redis-cli -p <span class="m">7000</span> CONFIG GET cluster-announce-ip
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 3. cluster-node-timeout 是否太小</span>
+</span></span><span class="line"><span class="cl">redis-cli -p <span class="m">7000</span> CONFIG GET cluster-node-timeout
+</span></span><span class="line"><span class="cl"><span class="c1"># 同机房建议 15000，跨机房 30000+</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 4. 节点是否有阻塞（fork、慢命令、swap）</span>
+</span></span><span class="line"><span class="cl">redis-cli -p <span class="m">7000</span> INFO stats <span class="p">|</span> grep latest_fork_usec
+</span></span><span class="line"><span class="cl">redis-cli -p <span class="m">7000</span> SLOWLOG GET <span class="m">10</span>
+</span></span></code></pre></div><p><strong>问题三：槽处于 migrating/importing 中间状态（迁移中断）</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">redis-cli -a <span class="nb">pwd</span> --cluster check 127.0.0.1:7000
+</span></span><span class="line"><span class="cl"><span class="c1"># [WARNING] Node 127.0.0.1:7000 has slots in migrating state (8722).</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 处理方式一：让工具自动修复</span>
+</span></span><span class="line"><span class="cl">redis-cli -a <span class="nb">pwd</span> --cluster fix 127.0.0.1:7000
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 处理方式二：手动处理</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 1. 确认这个槽的 key 在哪个节点</span>
+</span></span><span class="line"><span class="cl">redis-cli -c -p <span class="m">7000</span> CLUSTER COUNTKEYSINSLOT <span class="m">8722</span>
+</span></span><span class="line"><span class="cl">redis-cli -c -p <span class="m">7002</span> CLUSTER COUNTKEYSINSLOT <span class="m">8722</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 2. 要么继续完成迁移，要么回退</span>
+</span></span><span class="line"><span class="cl">CLUSTER SETSLOT <span class="m">8722</span> STABLE      <span class="c1"># 在两个节点上都执行，清除中间状态</span>
+</span></span><span class="line"><span class="cl">CLUSTER SETSLOT <span class="m">8722</span> NODE &lt;确定的归属节点ID&gt;    <span class="c1"># 在所有主节点上执行</span>
+</span></span></code></pre></div><p><strong>问题四：数据倾斜</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 1. 看各节点的 key 数和内存</span>
+</span></span><span class="line"><span class="cl">redis-cli -a <span class="nb">pwd</span> --cluster call --cluster-only-masters 127.0.0.1:7000 DBSIZE
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 2. 如果是槽分配不均 → rebalance</span>
+</span></span><span class="line"><span class="cl">redis-cli -a <span class="nb">pwd</span> --cluster rebalance 127.0.0.1:7000
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 3. 如果是 hash tag 用错导致某个槽超大 → 【无法通过扩容解决】</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    找出最大的槽</span>
+</span></span><span class="line"><span class="cl"><span class="k">for</span> slot in <span class="k">$(</span>seq <span class="m">0</span> 16383<span class="k">)</span><span class="p">;</span> <span class="k">do</span>
+</span></span><span class="line"><span class="cl">  <span class="nv">n</span><span class="o">=</span><span class="k">$(</span>redis-cli -c -p <span class="m">7000</span> CLUSTER COUNTKEYSINSLOT <span class="nv">$slot</span><span class="k">)</span>
+</span></span><span class="line"><span class="cl">  <span class="o">[</span> <span class="s2">&#34;</span><span class="nv">$n</span><span class="s2">&#34;</span> -gt <span class="m">100000</span> <span class="o">]</span> <span class="o">&amp;&amp;</span> <span class="nb">echo</span> <span class="s2">&#34;slot </span><span class="nv">$slot</span><span class="s2">: </span><span class="nv">$n</span><span class="s2"> keys&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="k">done</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    只能改数据模型（换更细粒度的 hash tag）并迁移数据</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 4. 如果是大 key → 拆分（见第 15 篇）</span>
+</span></span><span class="line"><span class="cl">redis-cli --bigkeys
+</span></span></code></pre></div><hr>
+<h1 id="9-cluster-vs-哨兵-vs-proxy">9. Cluster vs 哨兵 vs Proxy</h1>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>主从 + 哨兵</th>
+<th>Redis Cluster</th>
+<th>Proxy（Codis/Twemproxy）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>数据分片</strong></td>
+<td>❌ 单主节点</td>
+<td>✅ 16384 槽</td>
+<td>✅</td>
+</tr>
+<tr>
+<td><strong>写扩展</strong></td>
+<td>❌</td>
+<td>✅</td>
+<td>✅</td>
+</tr>
+<tr>
+<td><strong>存储扩展</strong></td>
+<td>❌ 受单机内存限制</td>
+<td>✅</td>
+<td>✅</td>
+</tr>
+<tr>
+<td><strong>高可用</strong></td>
+<td>✅ 哨兵</td>
+<td>✅ 内置</td>
+<td>依赖底层的主从+哨兵</td>
+</tr>
+<tr>
+<td><strong>在线扩容</strong></td>
+<td>❌</td>
+<td>✅ reshard</td>
+<td>Twemproxy ❌ / Codis ✅</td>
+</tr>
+<tr>
+<td><strong>额外组件</strong></td>
+<td>3+ 个哨兵进程</td>
+<td><strong>无</strong></td>
+<td>Proxy 集群 + ZK/etcd</td>
+</tr>
+<tr>
+<td><strong>网络跳数</strong></td>
+<td>1 跳（直连主节点）</td>
+<td><strong>1 跳</strong>（智能客户端）</td>
+<td><strong>2 跳</strong>（多一层代理）</td>
+</tr>
+<tr>
+<td><strong>客户端要求</strong></td>
+<td>支持哨兵协议</td>
+<td><strong>支持集群协议</strong></td>
+<td>无（像连单机）</td>
+</tr>
+<tr>
+<td><strong>多 db</strong></td>
+<td>✅ 16 个</td>
+<td>❌ 只有 db0</td>
+<td>通常 ❌</td>
+</tr>
+<tr>
+<td><strong>跨节点多 key</strong></td>
+<td>✅（单节点无此问题）</td>
+<td>❌ 需 hash tag</td>
+<td>❌</td>
+</tr>
+<tr>
+<td><strong>运维复杂度</strong></td>
+<td>中</td>
+<td>中高</td>
+<td>高</td>
+</tr>
+<tr>
+<td><strong>适用规模</strong></td>
+<td>数据 &lt; 10GB</td>
+<td><strong>数据 10GB ~ TB</strong></td>
+<td>遗留系统/特殊需求</td>
+</tr>
+</tbody>
+</table>
+<p><strong>选型建议</strong>：</p>
+<ol>
+<li><strong>数据量 &lt; 10GB、写 QPS &lt; 几万</strong> → <strong>主从 + 哨兵</strong>足够，简单可靠；</li>
+<li><strong>数据量或写量超过单机</strong> → <strong>Redis Cluster</strong>（官方方案，无中间层，1 跳直达）；</li>
+<li><strong>必须支持多 db、或客户端无法改造</strong> → 考虑 Proxy（但这通常意味着架构债，应该规划改造）；</li>
+<li><strong>云环境</strong> → 直接用云厂商的托管版（阿里云 Tair、AWS ElastiCache、腾讯云 Redis），它们通常提供 Proxy 模式和 Cluster 模式两种选择，还免去了运维。</li>
+</ol>
+<hr>
+<h1 id="10-高频面试题">10. 高频面试题</h1>
+<p><strong>Q1：Redis Cluster 为什么是 16384 个槽？</strong></p>
+<p>antirez 本人给出三个理由：</p>
+<ol>
+<li><strong>心跳包大小</strong>：Gossip 消息（<code>clusterMsg</code>）里带一个表示&quot;我负责哪些槽&quot;的<strong>位图</strong>。16384 槽 = <code>16384/8 = 2048 字节 = 2KB</code>；如果是 65536 槽就是 <strong>8KB</strong>。因为<strong>每个节点每秒都要向多个节点发心跳</strong>，8KB 会让集群总线流量增加 4 倍。2KB 是可接受的开销；</li>
+<li><strong>集群设计上不超过 1000 个节点</strong>（超过这个规模 Gossip 消息量不可控）。<code>16384 / 1000 ≈ 16</code> 个槽每节点，这个粒度足够均衡分配。槽太少（如 1024）在 1000 节点时每节点只有 1 个槽，无法均衡；</li>
+<li><strong>位图压缩率</strong>：位图会用游程编码压缩，节点少时用 65536 槽虽然压缩后也不大，但<strong>没必要为极端情况付出常态 4 倍的开销</strong>。</li>
+</ol>
+<p><strong>记忆</strong>：<strong>2KB 位图 + 1000 节点上限 + 压缩率</strong>。</p>
+<p><strong>Q2：key 是怎么映射到节点的？</strong></p>
+<p>两步：</p>
+<ol>
+<li><strong>key → 槽</strong>：<code>slot = CRC16(key) &amp; 16383</code>（16384 是 2 的幂，用位与代替取模）；</li>
+<li><strong>槽 → 节点</strong>：每个节点负责一段连续的槽范围，这个映射关系通过 Gossip 在所有节点间同步，<strong>每个节点都有完整的槽映射表</strong>。</li>
+</ol>
+<p><strong>智能客户端的做法</strong>：启动时执行 <code>CLUSTER SLOTS</code>（或 7.0+ 的 <code>CLUSTER SHARDS</code>）获取完整映射表并缓存，之后<strong>本地计算槽号直接连正确的节点</strong>，实现&quot;<strong>一跳直达</strong>&quot;，没有代理的额外延迟。只在收到 <code>MOVED</code> 时刷新映射表。</p>
+<p><strong>Q3：MOVED 和 ASK 有什么区别？</strong></p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>MOVED</th>
+<th>ASK</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>含义</strong></td>
+<td>槽<strong>永久</strong>属于目标节点</td>
+<td>槽<strong>正在迁移</strong>，这个 key 暂时在目标节点</td>
+</tr>
+<tr>
+<td><strong>客户端是否更新槽映射表</strong></td>
+<td><strong>是</strong></td>
+<td><strong>否</strong></td>
+</tr>
+<tr>
+<td><strong>是否要先发 <code>ASKING</code></strong></td>
+<td>否</td>
+<td><strong>是</strong></td>
+</tr>
+<tr>
+<td><strong>发生时机</strong></td>
+<td>客户端映射表过期（扩缩容后、故障转移后、首次连错节点）</td>
+<td><strong>仅在槽迁移过程中</strong></td>
+</tr>
+<tr>
+<td><strong>持续性</strong></td>
+<td>永久</td>
+<td><strong>一次性</strong></td>
+</tr>
+</tbody>
+</table>
+<p><strong>为什么 ASK 必须先发 <code>ASKING</code></strong>：目标节点的该槽处于 <code>IMPORTING</code> 状态，<strong>默认会拒绝</strong>该槽的请求（否则就和源节点的 MOVED 形成死循环）。<code>ASKING</code> 是一次性通行证，告诉目标节点&quot;我是被源节点介绍来的，请破例处理这一次&quot;。<code>ASKING</code> 只对紧接着的下一条命令有效。</p>
+<p><strong>记忆</strong>：<strong>MOVED 是&quot;搬家了，记住新地址&quot;；ASK 是&quot;这次先去那边找，但户口还没迁&quot;。</strong></p>
+<p><strong>Q4：槽迁移的完整流程是什么？为什么迁移期间集群还能用？</strong></p>
+<pre tabindex="0"><code>迁移槽 S 从 A 到 B：
+1. B 上：CLUSTER SETSLOT S IMPORTING &lt;A的ID&gt;
+2. A 上：CLUSTER SETSLOT S MIGRATING &lt;B的ID&gt;
+3. 循环搬 key：
+   ├─ A 上 CLUSTER GETKEYSINSLOT S &lt;count&gt; 取一批 key
+   ├─ 对每个 key：MIGRATE &lt;B&gt; &lt;key&gt; ...
+   │   （MIGRATE = DUMP + 传输 + 目标 RESTORE + 源 DEL，原子且【同步阻塞】）
+   └─ 直到 CLUSTER COUNTKEYSINSLOT S 返回 0
+4. 【迁移期间的请求】客户端访问 A 上槽 S 的 key：
+   ├─ key 还在 A → A 正常处理
+   └─ key 已迁走 → A 返回 ASK &lt;S&gt; &lt;B&gt; → 客户端去 B（先 ASKING）
+5. 完成后在所有主节点上：CLUSTER SETSLOT S NODE &lt;B的ID&gt;
+   → 之后访问会得到 MOVED
+</code></pre><p><strong>能在线服务的原因</strong>：迁移是<strong>以 key 为单位逐个进行</strong>的，任何时刻每个 key 都明确在 A 或 B 上，通过 <code>ASK</code> 机制精确地把请求引导到 key 实际所在的节点。代价只是那些已迁移的 key 会多一次重定向。</p>
+<p><strong>Q5：为什么大 key 会让扩容变成灾难？</strong></p>
+<p>因为 <strong><code>MIGRATE</code> 是同步阻塞的</strong>：</p>
+<pre tabindex="0"><code>MIGRATE 内部 = 源节点 DUMP 序列化整个 key → 网络传输 → 目标节点 RESTORE 反序列化 → 源节点 DEL
+整个过程中，【源节点和目标节点的主线程都被阻塞】
+</code></pre><p>一个 1GB 的大 key 迁移可能阻塞<strong>几十秒</strong>，后果：</p>
+<ol>
+<li>两个节点都无法响应任何请求，客户端大面积超时；</li>
+<li>集群可能因为节点无响应而<strong>误判它下线（PFAIL→FAIL），触发不必要的故障转移</strong>；</li>
+<li><code>MIGRATE</code> 本身可能超时失败，<strong>导致槽卡在 migrating/importing 的中间状态</strong>，需要人工修复。</li>
+</ol>
+<p><strong>所以扩容前必须先处理大 key</strong>（<code>redis-cli --bigkeys</code>/<code>--memkeys</code> 排查，拆分或迁到独立实例）。调大 MIGRATE timeout 只能让它别失败，阻塞照样发生。</p>
+<p><strong>Q6：什么是 hash tag？用错了会怎样？</strong></p>
+<p><strong>hash tag</strong>：如果 key 中包含 <code>{...}</code>，<strong>只用第一对 <code>{}</code> 里的内容</strong>计算 CRC16。这样可以让相关的 key 强制落在同一个槽，从而支持多 key 操作。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">CLUSTER KEYSLOT <span class="s1">&#39;{user1001}:name&#39;</span>   <span class="c1"># 5798</span>
+</span></span><span class="line"><span class="cl">CLUSTER KEYSLOT <span class="s1">&#39;{user1001}:age&#39;</span>    <span class="c1"># 5798（相同）</span>
+</span></span><span class="line"><span class="cl">MGET <span class="o">{</span>user1001<span class="o">}</span>:name <span class="o">{</span>user1001<span class="o">}</span>:age <span class="c1"># 可以执行</span>
+</span></span></code></pre></div><p><strong>精确规则</strong>：找第一个 <code>{</code>，再找它之后的第一个 <code>}</code>，如果<strong>两者之间至少有一个字符</strong>就用这部分算哈希，否则用整个 key。</p>
+<p><strong>用错的最大风险：数据倾斜。</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ❌ 灾难：tag 粒度太粗，所有订单挤在【同一个槽、同一个节点】</span>
+</span></span><span class="line"><span class="cl"><span class="o">{</span>orders<span class="o">}</span>:1, <span class="o">{</span>orders<span class="o">}</span>:2, <span class="o">{</span>orders<span class="o">}</span>:3 ...
+</span></span></code></pre></div><p>后果：那个节点内存爆满而其他节点空闲、成为 QPS 热点、而且<strong>无法通过扩容解决</strong>（因为<strong>一个槽不能被拆分到两个节点</strong>）。只能改数据模型重新迁移。</p>
+<p><strong>正确用法</strong>：tag 用<strong>高基数的标识</strong>（用户 ID、订单 ID）：<code>{user:1001}:profile</code>、<code>{order:88888}:info</code>。</p>
+<p><strong>Q7：Cluster 是怎么做故障检测和故障转移的？</strong></p>
+<p><strong>故障检测（类似哨兵的 SDOWN/ODOWN，但去中心化）</strong>：</p>
+<pre tabindex="0"><code>1. PFAIL（疑似下线）：节点 A 向 B 发 PING，超过 cluster-node-timeout 没收到 PONG
+   → A 在自己视角标记 B 为 PFAIL
+2. A 通过 gossip 把&#34;B 是 PFAIL&#34;传播出去，其他节点记录【故障报告】（带时间戳）
+3. 任意主节点发现：持有 B 的 PFAIL 报告的【主节点数】&gt;= 主节点总数/2 + 1
+   → 标记 B 为 FAIL
+4. 【广播 FAIL 消息】给全集群，所有节点立即标记 B 为 FAIL
+</code></pre><p>关键：<strong>只有主节点的报告算数</strong>、<strong>需要超过半数主节点同意</strong>（防止分区少数派误判）、<strong>FAIL 用专门的广播消息</strong>（不靠 gossip 慢慢扩散）。</p>
+<p><strong>故障转移（从节点自己竞选，不需要外部协调者）</strong>：</p>
+<pre tabindex="0"><code>1. 【资格检查】断开时间 &gt; cluster-node-timeout × cluster-replica-validity-factor(10)
+   → 放弃竞选（数据太旧）
+2. 【延迟计算】delay = 500ms + random(0~500ms) + rank × 1000ms
+   rank = 按复制 offset 排名（offset 最大的 rank=0）
+   → 【数据最新的从节点最先发起选举】
+3. 【发起选举】currentEpoch+1，向所有【主节点】广播 FAILOVER_AUTH_REQUEST
+4. 【主节点投票】每个 epoch 只投一票
+5. 【当选】得票 &gt; 主节点总数/2 → 提升自己为主节点、接管槽、
+   把 configEpoch 设为本次 epoch、【广播 PONG】宣告新归属
+6. 原主节点恢复后发现槽已归他人（configEpoch 更大）→ 自动变成从节点
+</code></pre><p><strong>与哨兵的核心区别</strong>：Cluster 用 <strong>rank 延迟机制</strong>让数据最新的从节点先发起选举，<strong>不需要先选 Leader</strong>；投票者是<strong>主节点</strong>而非独立的哨兵进程；整套逻辑<strong>内置在节点里</strong>，不需要额外部署组件。</p>
+<p><strong>Q8：Cluster 和哨兵的区别？什么时候用哪个？</strong></p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>主从 + 哨兵</th>
+<th>Redis Cluster</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>数据分片</strong></td>
+<td>❌（单主节点）</td>
+<td>✅ 16384 槽</td>
+</tr>
+<tr>
+<td><strong>写/存储扩展</strong></td>
+<td>❌</td>
+<td>✅</td>
+</tr>
+<tr>
+<td><strong>额外组件</strong></td>
+<td>3+ 个哨兵进程</td>
+<td><strong>无</strong>（功能内置）</td>
+</tr>
+<tr>
+<td><strong>故障检测者</strong></td>
+<td>哨兵</td>
+<td><strong>每个节点自己</strong></td>
+</tr>
+<tr>
+<td><strong>投票者</strong></td>
+<td>哨兵</td>
+<td><strong>主节点</strong></td>
+</tr>
+<tr>
+<td><strong>执行转移者</strong></td>
+<td>哨兵 Leader</td>
+<td><strong>候选从节点自己</strong></td>
+</tr>
+<tr>
+<td><strong>多 db</strong></td>
+<td>✅ 16 个</td>
+<td>❌ <strong>只有 db0</strong></td>
+</tr>
+<tr>
+<td><strong>跨节点多 key</strong></td>
+<td>✅</td>
+<td>❌ 需 hash tag</td>
+</tr>
+<tr>
+<td><strong>在线扩容</strong></td>
+<td>❌</td>
+<td>✅ reshard</td>
+</tr>
+<tr>
+<td><strong>客户端要求</strong></td>
+<td>支持哨兵协议</td>
+<td>支持集群协议</td>
+</tr>
+</tbody>
+</table>
+<p><strong>选型</strong>：</p>
+<ul>
+<li><strong>数据 &lt; 10GB、写 QPS &lt; 几万</strong> → <strong>哨兵</strong>（简单可靠，功能无限制）；</li>
+<li><strong>数据量或写量超单机</strong> → <strong>Cluster</strong>；</li>
+<li><strong>升级信号</strong>：单实例超 10GB（fork 慢、恢复慢、全量同步压力大）、写 QPS 到瓶颈、需要在线扩容。</li>
+</ul>
+<p><strong>Q9：Cluster 有哪些使用限制？</strong></p>
+<ol>
+<li><strong>只能用 db0</strong>（<code>SELECT 1</code> 报错）——所以设计阶段就不该用多 db 做隔离；</li>
+<li><strong>跨槽多 key 操作报 <code>CROSSSLOT</code></strong>：<code>MGET</code>/<code>MSET</code>/<code>SINTER</code>/<code>ZUNIONSTORE</code>/<code>RENAME</code>/<code>SMOVE</code>/<code>BITOP</code>/<code>PFMERGE</code>/<code>LMOVE</code>/<code>SORT...STORE</code> 等。<strong>但成熟客户端（go-redis、Lettuce）会自动把 <code>MGET</code>/<code>MSET</code> 按槽分组并行发送</strong>，所以业务代码通常无感；</li>
+<li><strong>Lua 脚本的所有 key 必须同槽</strong>，且 7.0+ 会检查&quot;脚本是否访问了未在 KEYS 声明的 key&quot;；</li>
+<li><strong>事务（<code>MULTI</code>/<code>WATCH</code>）的 key 必须同槽</strong>；</li>
+<li><strong>pub/sub</strong>：7.0 前 <code>PUBLISH</code> 全集群广播造成流量放大，7.0+ 用 <code>SPUBLISH</code>/<code>SSUBSCRIBE</code> 分片；</li>
+<li><strong><code>KEYS</code>/<code>SCAN</code>/<code>DBSIZE</code>/<code>FLUSHALL</code> 只作用于当前节点</strong>，要全集群操作得用 <code>--cluster call</code>；</li>
+<li><strong>一个槽不能拆分到两个节点</strong>——hash tag 用错造成的超大槽无法通过扩容解决。</li>
+</ol>
+<p><strong>Q10：<code>cluster-require-full-coverage</code> 应该设 yes 还是 no？</strong></p>
+<ul>
+<li><strong><code>yes</code>（默认）</strong>：<strong>任何一个槽不可用（该分片主从全挂），整个集群停止服务</strong>，所有请求返回 <code>CLUSTERDOWN The cluster is down</code>；</li>
+<li><strong><code>no</code></strong>：只有访问不可用的槽才报错，其他槽正常服务。</li>
+</ul>
+<p><strong>默认 yes 的理由</strong>：数据一致性——部分槽不可用还继续服务，客户端可能误以为&quot;这个 key 不存在&quot;，进而做出错误决策（比如缓存穿透写入了错误数据）。</p>
+<p><strong>生产建议 <code>no</code> 的理由</strong>：可用性——一个分片挂掉导致<strong>整个集群 100% 不可用</strong>通常比&quot;1/3 的 key 不可用&quot;糟糕得多。</p>
+<p><strong>结论</strong>：纯缓存场景 → <code>no</code>；数据一致性关键 → 保持 <code>yes</code> 并确保每个分片都有足够从节点。</p>
+<p><strong>Q11：Cluster 节点之间怎么通信？</strong></p>
+<p><strong>集群总线（Cluster Bus）</strong>：每个节点额外监听 <strong>数据端口 + 10000</strong>（如 6379 → 16379），用<strong>二进制协议</strong>（不是 RESP）通信，节点之间<strong>两两建立 TCP 连接</strong>（全连接网状）。</p>
+<p><strong>注意运维要点：总线端口也必须在防火墙/安全组放开</strong>，很多人只开了 6379 忘了 16379。</p>
+<p><strong>五种消息</strong>：<code>MEET</code>（邀请新节点）、<code>PING</code>（心跳，携带自己 + 随机部分其他节点的信息）、<code>PONG</code>（回复，也用于广播配置变更）、<code>FAIL</code>（广播客观下线）、<code>PUBLISH</code>（转发 pub/sub）。</p>
+<p><strong>Gossip 工作方式</strong>：</p>
+<pre tabindex="0"><code>每 100ms 的 clusterCron：
+1. 从已知节点里【随机选 5 个】，挑其中最久没回 PONG 的那个发 PING
+2. 【强制机制】遍历所有节点，超过 cluster-node-timeout/2 没收到 PONG 的
+   【立即】发 PING → 保证故障检测的及时性上界
+</code></pre><p>每条 PING/PONG 会<strong>捎带大约 1/10 已知节点的信息</strong>（每个 gossip entry 约 104 字节），信息像流言一样在 <code>O(logN)</code> 轮内传遍全集群。</p>
+<p><strong>Q12：容器化部署 Cluster 要注意什么？</strong></p>
+<p><strong>核心是地址广播问题</strong>（比哨兵更严重）：节点通过 Gossip 交换彼此地址，如果一个节点广播的是<strong>容器内网 IP</strong>，其他节点和客户端都连不上它。</p>
+<pre tabindex="0"><code class="language-conf" data-lang="conf">cluster-announce-ip &lt;可路由的IP&gt;
+cluster-announce-port 7000
+cluster-announce-bus-port 17000        # 【别忘了总线端口】
+</code></pre><p><strong>没配的症状</strong>：节点互相 <code>fail?</code>、客户端收到无法连接的重定向地址、集群 state 一直不 ok。</p>
+<p><strong>其他注意点</strong>：</p>
+<ul>
+<li><strong>总线端口（+10000）必须放开</strong>；</li>
+<li>用 <strong>StatefulSet</strong> 保证稳定的网络标识和存储；</li>
+<li><strong><code>nodes.conf</code> 必须持久化</strong>（存了节点 ID 和拓扑，丢了节点身份就变了）；</li>
+<li><strong><code>cluster-node-timeout</code> 要适当调大</strong>（容器环境网络抖动更多，建议 15000~30000）；</li>
+<li>内存 limit 要留 fork COW 的余量，<code>maxmemory</code> 必须小于 limit；</li>
+<li><strong>K8s 环境推荐用 Operator</strong>（如 Redis Enterprise Operator、KubeDB）而不是手工维护。</li>
+</ul>
+<p><strong>Q13：<code>CLUSTER FAILOVER</code> 的三种模式有什么区别？</strong></p>
+<p>在<strong>从节点</strong>上执行：</p>
+<table>
+<thead>
+<tr>
+<th>命令</th>
+<th>行为</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong><code>CLUSTER FAILOVER</code></strong></td>
+<td>与主节点协调：暂停写入 → 等 offset 追平 → 切换。<strong>零数据丢失</strong></td>
+<td><strong>计划内维护</strong>（如主节点要重启）</td>
+</tr>
+<tr>
+<td><strong><code>CLUSTER FAILOVER FORCE</code></strong></td>
+<td>不等主节点确认（主节点已不可达时用），但<strong>仍需集群多数主节点授权</strong></td>
+<td>主节点宕机但自动转移没触发</td>
+</tr>
+<tr>
+<td><strong><code>CLUSTER FAILOVER TAKEOVER</code></strong></td>
+<td><strong>不需要任何集群授权</strong>，单方面把自己 configEpoch 提高并接管槽</td>
+<td><strong>仅灾难恢复</strong>（如多数主节点都挂了）</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>TAKEOVER</code> 极其危险</strong>：它绕过了所有一致性检查，可能造成<strong>数据丢失和脑裂</strong>（两个节点都认为自己拥有同一批槽）。只在&quot;集群已经无法自愈、必须强行恢复服务&quot;时使用。</p>
+<p><strong>Q14：为什么 <code>CLUSTER FORGET</code> 有 60 秒黑名单？</strong></p>
+<p>执行 <code>CLUSTER FORGET &lt;nodeID&gt;</code> 后，该节点被加入一个 <strong>60 秒黑名单</strong>，期间不会通过 Gossip 重新认识它。</p>
+<p><strong>必要性</strong>：如果没有黑名单，你在节点 A 上 forget 了节点 X，但节点 B 还认识 X，<strong>B 会通过 Gossip 把 X 重新介绍给 A</strong>，forget 就失效了。</p>
+<p>60 秒的窗口保证你有足够时间<strong>在所有节点上都执行 forget</strong>。<code>redis-cli --cluster del-node</code> 会自动帮你对所有节点执行。</p>
+<p><strong>Q15：集群里某个节点内存明显高于其他节点，怎么排查？</strong></p>
+<p>按顺序排查四种原因：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 1. 槽分配不均</span>
+</span></span><span class="line"><span class="cl">redis-cli --cluster check 127.0.0.1:7000     <span class="c1"># 看各节点槽数</span>
+</span></span><span class="line"><span class="cl">redis-cli --cluster rebalance 127.0.0.1:7000 <span class="c1"># 均衡槽数</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 2. hash tag 用错导致某个槽超大（最常见且最难解决）</span>
+</span></span><span class="line"><span class="cl"><span class="k">for</span> slot in <span class="k">$(</span>seq <span class="m">0</span> 16383<span class="k">)</span><span class="p">;</span> <span class="k">do</span>
+</span></span><span class="line"><span class="cl">  <span class="nv">n</span><span class="o">=</span><span class="k">$(</span>redis-cli -c -p <span class="m">7000</span> CLUSTER COUNTKEYSINSLOT <span class="nv">$slot</span><span class="k">)</span>
+</span></span><span class="line"><span class="cl">  <span class="o">[</span> <span class="s2">&#34;</span><span class="nv">$n</span><span class="s2">&#34;</span> -gt <span class="m">100000</span> <span class="o">]</span> <span class="o">&amp;&amp;</span> <span class="nb">echo</span> <span class="s2">&#34;slot </span><span class="nv">$slot</span><span class="s2">: </span><span class="nv">$n</span><span class="s2"> keys&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="k">done</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># → 【无法通过扩容解决】（一个槽不可拆分），只能改数据模型重新迁移</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 3. 大 key</span>
+</span></span><span class="line"><span class="cl">redis-cli -p &lt;该节点&gt; --bigkeys
+</span></span><span class="line"><span class="cl">redis-cli -p &lt;该节点&gt; --memkeys
+</span></span><span class="line"><span class="cl"><span class="c1"># → 拆分大 key</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 4. 内存碎片或客户端缓冲区</span>
+</span></span><span class="line"><span class="cl">redis-cli -p &lt;该节点&gt; INFO memory <span class="p">|</span> grep -E <span class="s1">&#39;fragmentation|used_memory_rss&#39;</span>
+</span></span><span class="line"><span class="cl">redis-cli -p &lt;该节点&gt; MEMORY STATS
+</span></span><span class="line"><span class="cl">redis-cli -p &lt;该节点&gt; CLIENT LIST    <span class="c1"># 看 omem</span>
+</span></span></code></pre></div><p><strong>根本预防</strong>：设计阶段就把 hash tag 的粒度控制在<strong>高基数标识</strong>（用户 ID/订单 ID），并做<strong>大 key 监控</strong>。</p>
+<hr>
+<h1 id="小结">小结</h1>
+<ul>
+<li>分片三种方案：<strong>客户端分片</strong>（快但扩容痛苦）、<strong>Proxy</strong>（透明但多一跳且要维护代理）、<strong>Redis Cluster</strong>（官方、无中间层、内置高可用和在线扩缩容）。</li>
+<li><strong>16384 个槽的三个理由</strong>：心跳位图 <strong>2KB</strong>（65536 槽要 8KB，流量翻 4 倍）、<strong>设计上不超过 1000 节点</strong>（16 槽/节点足够均衡）、位图压缩率考虑。</li>
+<li><strong>key → 槽</strong>：<code>CRC16(key) &amp; 16383</code>；<strong>槽 → 节点</strong>：Gossip 同步的映射表。<strong>智能客户端本地缓存映射表实现&quot;一跳直达&quot;</strong>，这是它优于 Proxy 的核心。</li>
+<li><strong>hash tag</strong>：只用第一对 <code>{}</code> 里的内容算哈希，用来让相关 key 同槽。<strong>最大风险是数据倾斜</strong>——tag 粒度太粗（如 <code>{orders}:1</code>）会让所有数据挤在一个槽，而<strong>一个槽不能拆分</strong>，无法通过扩容解决。要用<strong>高基数标识</strong>（<code>{user:1001}</code>）。</li>
+<li><strong>MOVED</strong>（槽永久归属变了，<strong>更新映射表</strong>）vs <strong>ASK</strong>（槽正在迁移，<strong>不更新映射表</strong>，且<strong>必须先发 <code>ASKING</code></strong>，因为目标节点的 IMPORTING 槽默认拒绝请求）。</li>
+<li><strong>槽迁移</strong>：<code>IMPORTING</code>/<code>MIGRATING</code> 标记 → 逐个 key <code>MIGRATE</code> → 期间靠 <code>ASK</code> 引导请求 → <code>SETSLOT NODE</code> 完成。<strong><code>MIGRATE</code> 是同步阻塞的</strong>，所以<strong>大 key 会让扩容变成灾难</strong>（阻塞几十秒、误触发故障转移、迁移超时留下中间状态）——扩容前必须先处理大 key。</li>
+<li><strong>集群总线</strong> = 数据端口 + 10000，二进制协议，节点两两全连接。<strong>防火墙必须放开总线端口</strong>。五种消息：MEET/PING/PONG/FAIL/PUBLISH。</li>
+<li><strong>Gossip</strong>：每 100ms 随机选 5 个挑最久没回 PONG 的发 PING，<strong>外加&quot;超过 <code>node-timeout/2</code> 没收到 PONG 就立即 PING&quot;的强制机制</strong>；每条消息捎带约 1/10 已知节点的信息。</li>
+<li><strong>故障检测</strong>：<strong>PFAIL</strong>（单节点主观）→ gossip 传播故障报告 → <strong>超过半数主节点</strong>持有报告 → <strong>FAIL</strong> → <strong>专门的广播消息</strong>告知全集群。只有主节点的报告算数。</li>
+<li><strong>故障转移</strong>：从节点<strong>自己竞选</strong>（不需要外部协调者）。<strong><code>delay = 500ms + random(0~500) + rank × 1000ms</code>，rank 按 offset 排名</strong>，让数据最新的从节点先发起；主节点投票，得票 &gt; 半数则接管槽并广播 PONG（靠更大的 configEpoch 生效）。</li>
+<li><strong>Cluster 的限制</strong>：<strong>只能用 db0</strong>、跨槽多 key 报 <code>CROSSSLOT</code>（但成熟客户端会自动拆分 <code>MGET</code>/<code>MSET</code>）、Lua/事务的 key 必须同槽、<code>KEYS</code>/<code>SCAN</code>/<code>DBSIZE</code> 只作用于当前节点、7.0 前 pub/sub 全集群广播。</li>
+<li><strong><code>cluster-require-full-coverage</code></strong>：默认 <code>yes</code>（一个槽不可用则整个集群停服，保一致性），<strong>生产缓存场景建议 <code>no</code></strong>（保可用性）。</li>
+<li>运维必备：<strong><code>--cluster check</code></strong>（槽覆盖与一致性）、<code>--cluster call</code>（对所有节点执行命令）、<code>--cluster rebalance</code>、<code>--cluster fix</code>（修复中间状态）。<strong><code>CLUSTER FORGET</code> 有 60 秒黑名单</strong>（防止 gossip 把节点重新介绍回来）。</li>
+<li><strong><code>CLUSTER FAILOVER</code></strong>（协调、零丢失、计划内维护）&lt; <strong><code>FORCE</code></strong>（主节点不可达但仍需多数授权）&lt; <strong><code>TAKEOVER</code></strong>（<strong>绕过所有授权，极危险，仅灾难恢复</strong>）。</li>
+<li>容器化必配 <strong><code>cluster-announce-ip</code> / <code>cluster-announce-port</code> / <code>cluster-announce-bus-port</code></strong>，<code>nodes.conf</code> 必须持久化，<code>cluster-node-timeout</code> 适当调大。</li>
+<li>核心监控：<strong><code>cluster_state</code>（必须 ok）、<code>cluster_slots_assigned</code>（必须 16384）、<code>cluster_slots_pfail</code>/<code>fail</code>（&gt; 0 告警）、<code>cluster_known_nodes</code>/<code>cluster_size</code> 变化、各节点内存偏差 &gt; 30%</strong>（数据倾斜）。</li>
+</ul>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2025-11-01</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/redis/">redis</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/redis/redis_13_%E5%88%86%E5%B8%83%E5%BC%8F%E9%94%81/" class="prev" rel="prev" title="Redis-13 分布式锁"><i class="fas fa-angle-left fa-fw"></i>Redis-13 分布式锁</a>
+            <a href="/posts/redis/redis_11_%E5%93%A8%E5%85%B5Sentinel%E9%AB%98%E5%8F%AF%E7%94%A8/" class="next" rel="next" title="Redis-11 哨兵 Sentinel 高可用">Redis-11 哨兵 Sentinel 高可用<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2025-11-01T11:00:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Redis-12 Cluster 集群"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

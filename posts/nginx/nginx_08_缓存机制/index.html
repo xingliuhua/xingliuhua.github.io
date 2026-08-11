@@ -1,0 +1,930 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>Nginx-08 缓存机制 - xingliuhua博客</title><meta name="Description" content="proxy_cache 完整配置、缓存 key 设计、缓存击穿与雪崩防护、stale-while-revalidate、主动清除缓存、多级缓存架构"><meta property="og:title" content="Nginx-08 缓存机制" />
+<meta property="og:description" content="proxy_cache 完整配置、缓存 key 设计、缓存击穿与雪崩防护、stale-while-revalidate、主动清除缓存、多级缓存架构" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/nginx/nginx_08_%E7%BC%93%E5%AD%98%E6%9C%BA%E5%88%B6/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2026-08-03T19:30:00+08:00" />
+<meta property="article:modified_time" content="2026-08-03T19:30:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="Nginx-08 缓存机制"/>
+<meta name="twitter:description" content="proxy_cache 完整配置、缓存 key 设计、缓存击穿与雪崩防护、stale-while-revalidate、主动清除缓存、多级缓存架构"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/nginx/nginx_08_%E7%BC%93%E5%AD%98%E6%9C%BA%E5%88%B6/" /><link rel="prev" href="https://xingliuhua.github.io/posts/nginx/nginx_09_%E9%99%90%E6%B5%81%E9%99%90%E8%BF%9E%E4%B8%8E%E5%AE%89%E5%85%A8%E9%98%B2%E6%8A%A4/" /><link rel="next" href="https://xingliuhua.github.io/posts/nginx/nginx_07_%E5%8A%A8%E9%9D%99%E5%88%86%E7%A6%BB%E4%B8%8E%E9%9D%99%E6%80%81%E8%B5%84%E6%BA%90%E4%BC%98%E5%8C%96/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Nginx-08 缓存机制",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/nginx\/nginx_08_%E7%BC%93%E5%AD%98%E6%9C%BA%E5%88%B6\/"
+        },"genre": "posts","keywords": "nginx","wordcount":  6373 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/nginx\/nginx_08_%E7%BC%93%E5%AD%98%E6%9C%BA%E5%88%B6\/","datePublished": "2026-08-03T19:30:00+08:00","dateModified": "2026-08-03T19:30:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "proxy_cache 完整配置、缓存 key 设计、缓存击穿与雪崩防护、stale-while-revalidate、主动清除缓存、多级缓存架构"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">Nginx-08 缓存机制</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2026-08-03">2026-08-03</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 6373 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 13 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-proxy_cache-基础">1. proxy_cache 基础</a>
+      <ol>
+        <li><a href="#11-最小可用配置">1.1 最小可用配置</a></li>
+        <li><a href="#12-proxy_cache_path-参数详解">1.2 proxy_cache_path 参数详解</a></li>
+        <li><a href="#13-缓存状态-upstream_cache_status">1.3 缓存状态 $upstream_cache_status</a></li>
+      </ol>
+    </li>
+    <li><a href="#2-缓存-key-设计">2. 缓存 key 设计</a>
+      <ol>
+        <li><a href="#21-默认-key">2.1 默认 key</a></li>
+        <li><a href="#22-常见的-key-定制">2.2 常见的 key 定制</a></li>
+        <li><a href="#23-vary-头的处理">2.3 Vary 头的处理</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-什么该缓存什么不该">3. 什么该缓存、什么不该</a>
+      <ol>
+        <li><a href="#31-缓存方法与条件">3.1 缓存方法与条件</a></li>
+        <li><a href="#32-不缓存登录用户的完整方案">3.2 不缓存登录用户的完整方案</a></li>
+        <li><a href="#33-上游的缓存控制头">3.3 上游的缓存控制头</a></li>
+      </ol>
+    </li>
+    <li><a href="#4-缓存击穿与雪崩防护">4. 缓存击穿与雪崩防护</a>
+      <ol>
+        <li><a href="#41-问题缓存过期瞬间的惊群">4.1 问题：缓存过期瞬间的惊群</a></li>
+        <li><a href="#42-proxy_cache_lock--只让一个请求回源">4.2 proxy_cache_lock —— 只让一个请求回源</a></li>
+        <li><a href="#43-proxy_cache_use_stale--用过期数据兜底">4.3 proxy_cache_use_stale —— 用过期数据兜底</a></li>
+        <li><a href="#44-proxy_cache_revalidate--省带宽">4.4 proxy_cache_revalidate —— 省带宽</a></li>
+        <li><a href="#45-缓存雪崩过期时间打散">4.5 缓存雪崩：过期时间打散</a></li>
+        <li><a href="#46-完整的高可用缓存配置">4.6 完整的高可用缓存配置</a></li>
+      </ol>
+    </li>
+    <li><a href="#5-主动清除缓存">5. 主动清除缓存</a>
+      <ol>
+        <li><a href="#51-商业版proxy_cache_purge">5.1 商业版：proxy_cache_purge</a></li>
+        <li><a href="#52-开源版方案一ngx_cache_purge-模块">5.2 开源版方案一：ngx_cache_purge 模块</a></li>
+        <li><a href="#53-开源版方案二直接删文件最实用">5.3 开源版方案二：直接删文件（最实用）</a></li>
+        <li><a href="#54-用-openresty-实现灵活的-purge">5.4 用 OpenResty 实现灵活的 purge</a></li>
+      </ol>
+    </li>
+    <li><a href="#6-缓存预热">6. 缓存预热</a></li>
+    <li><a href="#7-多级缓存架构">7. 多级缓存架构</a>
+      <ol>
+        <li><a href="#71-用-nginx-做小文件的本地缓存加速">7.1 用 Nginx 做小文件的本地缓存加速</a></li>
+      </ol>
+    </li>
+    <li><a href="#8-fastcgi--uwsgi--grpc-缓存">8. FastCGI / uwsgi / gRPC 缓存</a></li>
+    <li><a href="#9-缓存监控">9. 缓存监控</a>
+      <ol>
+        <li><a href="#91-关键指标">9.1 关键指标</a></li>
+        <li><a href="#92-用-prometheus-采集">9.2 用 Prometheus 采集</a></li>
+        <li><a href="#93-命中率低的排查清单">9.3 命中率低的排查清单</a></li>
+      </ol>
+    </li>
+    <li><a href="#10-面试题">10. 面试题</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><blockquote>
+<p>前置阅读：<a href="../nginx_07_%e5%8a%a8%e9%9d%99%e5%88%86%e7%a6%bb%e4%b8%8e%e9%9d%99%e6%80%81%e8%b5%84%e6%ba%90%e4%bc%98%e5%8c%96/" rel="">Nginx-07 动静分离与静态资源优化</a>、<a href="../../network/network_13_HTTP%e7%bc%93%e5%ad%98/" rel="">网络-13 HTTP 缓存</a></p>
+</blockquote>
+<p>上一篇讲的是<strong>浏览器端</strong>的缓存（让客户端别来请求）。这一篇讲<strong>Nginx 自己的缓存</strong>（请求来了不回源）。两者是不同层次，配合使用效果最好。</p>
+<h1 id="1-proxy_cache-基础">1. proxy_cache 基础</h1>
+<h2 id="11-最小可用配置">1.1 最小可用配置</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-nginx" data-lang="nginx"><span class="line"><span class="cl"><span class="k">http</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="c1"># 定义缓存区（必须在 http 层，不能在 server/location 里）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="kn">proxy_cache_path</span> <span class="s">/var/cache/nginx/proxy</span>
+</span></span><span class="line"><span class="cl">                     <span class="s">levels=1:2</span>
+</span></span><span class="line"><span class="cl">                     <span class="s">keys_zone=my_cache:100m</span>
+</span></span><span class="line"><span class="cl">                     <span class="s">max_size=10g</span>
+</span></span><span class="line"><span class="cl">                     <span class="s">inactive=60m</span>
+</span></span><span class="line"><span class="cl">                     <span class="s">use_temp_path=off</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="kn">server</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="kn">location</span> <span class="s">/api/</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="kn">proxy_pass</span> <span class="s">http://backend</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">            <span class="kn">proxy_cache</span> <span class="s">my_cache</span><span class="p">;</span>                    <span class="c1"># 启用哪个缓存区
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>            <span class="kn">proxy_cache_valid</span> <span class="mi">200</span> <span class="mi">302</span> <span class="mi">10m</span><span class="p">;</span>           <span class="c1"># 2xx/302 缓存 10 分钟
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>            <span class="kn">proxy_cache_valid</span> <span class="mi">404</span> <span class="mi">1m</span><span class="p">;</span>                <span class="c1"># 404 缓存 1 分钟
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>            <span class="kn">proxy_cache_valid</span> <span class="s">any</span> <span class="mi">1m</span><span class="p">;</span>                <span class="c1"># 其他状态码
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl">            <span class="kn">add_header</span> <span class="s">X-Cache-Status</span> <span class="nv">$upstream_cache_status</span><span class="p">;</span>   <span class="c1"># 便于调试
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><h2 id="12-proxy_cache_path-参数详解">1.2 proxy_cache_path 参数详解</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-nginx" data-lang="nginx"><span class="line"><span class="cl"><span class="k">proxy_cache_path</span> <span class="s">/var/cache/nginx/proxy</span>
+</span></span><span class="line"><span class="cl">                 <span class="s">levels=1:2</span>
+</span></span><span class="line"><span class="cl">                 <span class="s">keys_zone=my_cache:100m</span>
+</span></span><span class="line"><span class="cl">                 <span class="s">max_size=10g</span>
+</span></span><span class="line"><span class="cl">                 <span class="s">inactive=60m</span>
+</span></span><span class="line"><span class="cl">                 <span class="s">min_free=1g</span>
+</span></span><span class="line"><span class="cl">                 <span class="s">manager_files=100</span>
+</span></span><span class="line"><span class="cl">                 <span class="s">manager_sleep=200ms</span>
+</span></span><span class="line"><span class="cl">                 <span class="s">manager_threshold=300ms</span>
+</span></span><span class="line"><span class="cl">                 <span class="s">use_temp_path=off</span><span class="p">;</span>
+</span></span></code></pre></div><table>
+<thead>
+<tr>
+<th>参数</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>第一个参数</td>
+<td>缓存文件的存放目录</td>
+</tr>
+<tr>
+<td><code>levels=1:2</code></td>
+<td>目录层级：一级目录名 1 个字符，二级 2 个字符</td>
+</tr>
+<tr>
+<td><code>keys_zone=名字:大小</code></td>
+<td><strong>共享内存</strong>区，存缓存 key 的元数据。1MB 约能存 8000 个 key</td>
+</tr>
+<tr>
+<td><code>max_size</code></td>
+<td>缓存文件占用的<strong>磁盘</strong>上限，超了由 cache manager 按 LRU 淘汰</td>
+</tr>
+<tr>
+<td><code>inactive</code></td>
+<td>多久没被访问就删除（<strong>不管有没有过期</strong>）</td>
+</tr>
+<tr>
+<td><code>min_free</code></td>
+<td>磁盘剩余空间低于此值就开始淘汰（1.19.1+）</td>
+</tr>
+<tr>
+<td><code>use_temp_path=off</code></td>
+<td><strong>必须设 off</strong>，让临时文件直接写在缓存目录里</td>
+</tr>
+<tr>
+<td><code>manager_*</code></td>
+<td>控制 cache manager 的清理节奏，避免清理时 I/O 抖动</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>levels</code> 为什么需要？</strong> 缓存文件名是 key 的 MD5 值。如果全放一个目录，几百万个文件会让文件系统的目录查找变得极慢（ext4 虽有 htree 索引但仍不理想）。分层后：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">key = &#34;httpGETbackend/api/user/1&#34;
+</span></span><span class="line"><span class="cl">md5 = c0a8f5e2b1d4...3f7a
+</span></span><span class="line"><span class="cl">levels=1:2 → /var/cache/nginx/proxy/a/f7/c0a8f5e2b1d4...3f7a
+</span></span><span class="line"><span class="cl">                                    ↑  ↑
+</span></span><span class="line"><span class="cl">                              倒数第1位 倒数第2-3位
+</span></span></code></pre></div><p>注意是<strong>从 MD5 的末尾取字符</strong>。<code>levels=1:2</code> 产生 16 × 256 = 4096 个目录，每个目录放几千个文件比较合适；文件更多可以用 <code>levels=2:2</code>（65536 个目录）。</p>
+<p><strong><code>use_temp_path=off</code> 为什么必须设？</strong> 默认情况下 Nginx 先把上游响应写到 <code>proxy_temp_path</code>，完成后再 <code>rename</code> 到缓存目录。如果这两个路径不在同一个文件系统上，<code>rename</code> 会退化成<strong>跨文件系统的复制</strong>，造成额外的磁盘 I/O。设 <code>off</code> 后临时文件直接写在缓存目录下，<code>rename</code> 是同文件系统内的原子操作，几乎零成本。</p>
+<p><strong><code>keys_zone</code> 大小怎么算？</strong> 每个 key 的元数据占约 128 字节。<code>100m</code> ≈ 80 万个 key。<strong>共享内存满了的后果是开始按 LRU 强制淘汰</strong>，即使磁盘还有空间。所以 <code>keys_zone</code> 和 <code>max_size</code> 要匹配：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">预估 key 数量 = max_size / 平均响应体大小
+</span></span><span class="line"><span class="cl">keys_zone 大小 = 预估 key 数量 × 128 字节 × 1.5（留余量）
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">例：max_size=10g，平均响应 20KB → 约 50 万个 key → keys_zone 需要 ≈ 96MB
+</span></span></code></pre></div><h2 id="13-缓存状态-upstream_cache_status">1.3 缓存状态 $upstream_cache_status</h2>
+<table>
+<thead>
+<tr>
+<th>值</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>MISS</code></td>
+<td>没命中缓存，回源了，响应已被缓存</td>
+</tr>
+<tr>
+<td><code>HIT</code></td>
+<td>命中缓存，没回源</td>
+</tr>
+<tr>
+<td><code>EXPIRED</code></td>
+<td>缓存存在但已过期，回源取了新的</td>
+</tr>
+<tr>
+<td><code>STALE</code></td>
+<td>用了过期的缓存（<code>proxy_cache_use_stale</code> 生效）</td>
+</tr>
+<tr>
+<td><code>UPDATING</code></td>
+<td>用了过期缓存，同时另一个请求正在更新（<code>proxy_cache_use_stale updating</code>）</td>
+</tr>
+<tr>
+<td><code>REVALIDATED</code></td>
+<td>缓存过期，向上游验证后发现没变（<code>proxy_cache_revalidate on</code>）</td>
+</tr>
+<tr>
+<td><code>BYPASS</code></td>
+<td>被 <code>proxy_cache_bypass</code> 规则跳过，直接回源</td>
+</tr>
+<tr>
+<td><code>-</code></td>
+<td>这个 location 没启用缓存</td>
+</tr>
+</tbody>
+</table>
+<p>调试时一定要把它加到响应头和日志里：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-nginx" data-lang="nginx"><span class="line"><span class="cl"><span class="k">add_header</span> <span class="s">X-Cache-Status</span> <span class="nv">$upstream_cache_status</span> <span class="s">always</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">log_format</span> <span class="s">cache</span> <span class="s">&#39;</span><span class="nv">$remote_addr</span> <span class="s">&#34;</span><span class="nv">$request&#34;</span> <span class="nv">$status</span> <span class="s">&#39;</span>
+</span></span><span class="line"><span class="cl">                 <span class="s">&#39;cache=</span><span class="nv">$upstream_cache_status</span> <span class="s">rt=</span><span class="nv">$request_time</span> <span class="s">&#39;</span>
+</span></span><span class="line"><span class="cl">                 <span class="s">&#39;urt=</span><span class="nv">$upstream_response_time&#39;</span><span class="p">;</span>
+</span></span></code></pre></div><p>统计命中率：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">awk <span class="s1">&#39;{for(i=1;i&lt;=NF;i++) if($i ~ /^cache=/) print $i}&#39;</span> access.log <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>    <span class="p">|</span> sort <span class="p">|</span> uniq -c <span class="p">|</span> sort -rn
+</span></span><span class="line"><span class="cl"><span class="c1">#  85234 cache=HIT</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   8912 cache=MISS</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   1203 cache=EXPIRED</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    455 cache=BYPASS</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 命中率 = HIT / 总数 ≈ 89%</span>
+</span></span></code></pre></div><h1 id="2-缓存-key-设计">2. 缓存 key 设计</h1>
+<h2 id="21-默认-key">2.1 默认 key</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-nginx" data-lang="nginx"><span class="line"><span class="cl"><span class="k">proxy_cache_key</span> <span class="nv">$scheme$proxy_host$request_uri</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 默认其实是：$scheme$proxy_host$request_uri
+</span></span></span></code></pre></div><p>这个默认值有个问题：<strong>没有包含请求方法</strong>。GET 和 HEAD 会共用同一个缓存条目。实践中建议显式指定：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-nginx" data-lang="nginx"><span class="line"><span class="cl"><span class="k">proxy_cache_key</span> <span class="s">&#34;</span><span class="nv">$scheme$request_method$host$request_uri&#34;</span><span class="p">;</span>
+</span></span></code></pre></div><h2 id="22-常见的-key-定制">2.2 常见的 key 定制</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-nginx" data-lang="nginx"><span class="line"><span class="cl"><span class="c1"># ① 区分登录用户（每个用户独立缓存）
+</span></span></span><span class="line"><span class="cl"><span class="c1"># ⚠️ 慎用！会导致缓存条目数量爆炸
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">proxy_cache_key</span> <span class="s">&#34;</span><span class="nv">$scheme$request_method$host$request_uri$cookie_uid&#34;</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ② 区分设备类型（移动端和桌面端返回不同内容）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">map</span> <span class="nv">$http_user_agent</span> <span class="nv">$device</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">default</span>          <span class="s">&#34;pc&#34;</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">~*mobile|android</span> <span class="s">&#34;mobile&#34;</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="k">proxy_cache_key</span> <span class="s">&#34;</span><span class="nv">$scheme$request_method$host$request_uri$device&#34;</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ③ 区分语言
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">proxy_cache_key</span> <span class="s">&#34;</span><span class="nv">$scheme$request_method$host$request_uri$http_accept_language&#34;</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ④ 忽略无关的查询参数（提高命中率）
+</span></span></span><span class="line"><span class="cl"><span class="c1"># 比如 ?utm_source=xxx 这类营销参数不影响响应内容
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">map</span> <span class="nv">$args</span> <span class="nv">$cache_args</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">default</span>    <span class="nv">$args</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">~*^(?:.*&amp;)?utm_[^&amp;]*(?:&amp;(?&lt;rest&gt;.*))?$</span>   <span class="nv">$rest</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="k">proxy_cache_key</span> <span class="s">&#34;</span><span class="nv">$scheme$request_method$host$uri?$cache_args&#34;</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ⑤ 只按路径缓存，完全忽略查询参数
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">proxy_cache_key</span> <span class="s">&#34;</span><span class="nv">$scheme$request_method$host$uri&#34;</span><span class="p">;</span>
+</span></span></code></pre></div><p><strong>key 设计的核心权衡</strong>：key 越细，缓存越准确但命中率越低、条目越多；key 越粗，命中率越高但可能返回错误的内容给用户。</p>
+<p><strong>最危险的错误是「把用户相关的响应用粗 key 缓存」</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-nginx" data-lang="nginx"><span class="line"><span class="cl"><span class="c1"># ⚠️ 严重安全事故
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">location</span> <span class="s">/api/user/profile</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">proxy_pass</span> <span class="s">http://backend</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">proxy_cache</span> <span class="s">my_cache</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">proxy_cache_valid</span> <span class="mi">200</span> <span class="mi">10m</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="c1"># key 里没有用户标识！
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="c1"># 结果：用户 A 的个人信息被缓存，用户 B 请求时直接命中，看到 A 的数据
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span></code></pre></div><p><strong>规则：带 <code>Set-Cookie</code>、<code>Authorization</code> 或任何用户态信息的响应，默认不要缓存。</strong></p>
+<p>Nginx 有个保护机制：<strong>上游响应带 <code>Set-Cookie</code> 时默认不缓存</strong>。但如果你写了 <code>proxy_ignore_headers Set-Cookie;</code> 就把这层保护关掉了——这个指令要格外小心。</p>
+<h2 id="23-vary-头的处理">2.3 Vary 头的处理</h2>
+<p>上游返回 <code>Vary: Accept-Encoding</code> 时，Nginx 会自动把对应的请求头加入 key，为每个变体存独立的缓存条目。</p>
+<p>但 <code>Vary: User-Agent</code> 或 <code>Vary: *</code> 会让缓存基本失效（UA 千变万化，每个都是独立条目）。如果上游返回了这种头：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-nginx" data-lang="nginx"><span class="line"><span class="cl"><span class="c1"># 让 Nginx 忽略 Vary（确认过内容不真的随 UA 变化再这么做）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">proxy_ignore_headers</span> <span class="s">Vary</span><span class="p">;</span>
+</span></span></code></pre></div><h1 id="3-什么该缓存什么不该">3. 什么该缓存、什么不该</h1>
+<h2 id="31-缓存方法与条件">3.1 缓存方法与条件</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-nginx" data-lang="nginx"><span class="line"><span class="cl"><span class="k">location</span> <span class="s">/api/</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">proxy_pass</span> <span class="s">http://backend</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">proxy_cache</span> <span class="s">my_cache</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1"># 只缓存这些方法（默认只有 GET HEAD）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="kn">proxy_cache_methods</span> <span class="s">GET</span> <span class="s">HEAD</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1"># 至少被请求 N 次才缓存（过滤长尾冷数据，节省磁盘）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="kn">proxy_cache_min_uses</span> <span class="mi">2</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1"># 什么情况跳过缓存直接回源（变量非空且不为 &#34;0&#34; 时跳过）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="kn">proxy_cache_bypass</span> <span class="nv">$cookie_nocache</span> <span class="nv">$arg_nocache</span> <span class="nv">$http_x_bypass_cache</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1"># 什么情况不存入缓存
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="kn">proxy_no_cache</span> <span class="nv">$cookie_nocache</span> <span class="nv">$arg_nocache</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><strong><code>proxy_cache_bypass</code> 和 <code>proxy_no_cache</code> 的区别</strong>：</p>
+<ul>
+<li><code>bypass</code>：<strong>读</strong>的时候跳过缓存（直接回源），但响应仍会<strong>写入</strong>缓存</li>
+<li><code>no_cache</code>：<strong>写</strong>的时候不存入缓存</li>
+</ul>
+<p>想「完全绕过缓存」要两个都配。</p>
+<h2 id="32-不缓存登录用户的完整方案">3.2 不缓存登录用户的完整方案</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-nginx" data-lang="nginx"><span class="line"><span class="cl"><span class="k">map</span> <span class="nv">$http_cookie</span> <span class="nv">$skip_cache</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">default</span>   <span class="mi">0</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">~*session_id=</span>  <span class="mi">1</span><span class="p">;</span>      <span class="c1"># 有 session cookie 的一律不缓存
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="kn">~*token=</span>       <span class="mi">1</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 也把某些路径排除
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">map</span> <span class="nv">$request_uri</span> <span class="nv">$skip_cache_uri</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">default</span>        <span class="mi">0</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">~^/api/user/</span>   <span class="mi">1</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">~^/api/cart/</span>   <span class="mi">1</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">~^/admin/</span>      <span class="mi">1</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">map</span> <span class="s">&#34;</span><span class="nv">$skip_cache$skip_cache_uri&#34;</span> <span class="nv">$no_cache</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">default</span>  <span class="mi">1</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">&#34;00&#34;</span>     <span class="mi">0</span><span class="p">;</span>      <span class="c1"># 只有两个都是 0 才缓存
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">location</span> <span class="s">/api/</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">proxy_pass</span> <span class="s">http://backend</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">proxy_cache</span> <span class="s">my_cache</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">proxy_cache_valid</span> <span class="mi">200</span> <span class="mi">5m</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="kn">proxy_cache_bypass</span> <span class="nv">$no_cache</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">proxy_no_cache</span>     <span class="nv">$no_cache</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="kn">add_header</span> <span class="s">X-Cache-Status</span> <span class="nv">$upstream_cache_status</span> <span class="s">always</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><h2 id="33-上游的缓存控制头">3.3 上游的缓存控制头</h2>
+<p>默认情况下，上游返回这些头会<strong>阻止 Nginx 缓存</strong>：</p>
+<ul>
+<li><code>Cache-Control: no-cache</code> / <code>no-store</code> / <code>private</code> / <code>max-age=0</code></li>
+<li><code>Expires</code> 是过去的时间</li>
+<li><code>Set-Cookie</code>（任何值）</li>
+<li><code>Vary: *</code></li>
+<li><code>X-Accel-Expires: 0</code></li>
+</ul>
+<p>想强行缓存要用 <code>proxy_ignore_headers</code>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-nginx" data-lang="nginx"><span class="line"><span class="cl"><span class="c1"># ⚠️ 谨慎使用，你在覆盖上游明确表达的意图
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">proxy_ignore_headers</span> <span class="s">Cache-Control</span> <span class="s">Expires</span> <span class="s">Set-Cookie</span> <span class="s">X-Accel-Expires</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="k">proxy_cache_valid</span> <span class="mi">200</span> <span class="mi">10m</span><span class="p">;</span>
+</span></span></code></pre></div><p><strong>更好的做法是让上游正确设置头，而不是在 Nginx 层忽略。</strong> 上游可以用 <code>X-Accel-Expires</code> 精确控制 Nginx 的缓存时长，而不影响浏览器缓存：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// Go 后端：让 Nginx 缓存 5 分钟，但浏览器不缓存
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">c</span><span class="p">.</span><span class="nf">Header</span><span class="p">(</span><span class="s">&#34;X-Accel-Expires&#34;</span><span class="p">,</span> <span class="s">&#34;300&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="nx">c</span><span class="p">.</span><span class="nf">Header</span><span class="p">(</span><span class="s">&#34;Cache-Control&#34;</span><span class="p">,</span> <span class="s">&#34;no-store&#34;</span><span class="p">)</span>
+</span></span></code></pre></div><p><code>X-Accel-Expires</code> 的优先级最高，且<strong>这个头不会被转发给客户端</strong>。这是控制 Nginx 缓存最干净的方式。</p>
+<h1 id="4-缓存击穿与雪崩防护">4. 缓存击穿与雪崩防护</h1>
+<p>这一节是缓存配置的<strong>精华</strong>，也是面试的深水区。</p>
+<h2 id="41-问题缓存过期瞬间的惊群">4.1 问题：缓存过期瞬间的惊群</h2>
+<p>一个热点 URL 的缓存过期了，此时有 1000 个并发请求打过来。默认行为是：<strong>1000 个请求全部回源</strong>，后端瞬间被打爆。这就是缓存击穿。</p>
+<h2 id="42-proxy_cache_lock--只让一个请求回源">4.2 proxy_cache_lock —— 只让一个请求回源</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-nginx" data-lang="nginx"><span class="line"><span class="cl"><span class="k">location</span> <span class="s">/api/</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">proxy_pass</span> <span class="s">http://backend</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">proxy_cache</span> <span class="s">my_cache</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">proxy_cache_valid</span> <span class="mi">200</span> <span class="mi">10m</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1"># 同一个 key 只允许一个请求回源，其他请求等待
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="kn">proxy_cache_lock</span> <span class="no">on</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1"># 其他请求最多等多久，超时后自己也回源
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="kn">proxy_cache_lock_timeout</span> <span class="s">5s</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1"># 持有锁的请求最多多久必须完成，否则释放锁让别人来
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="kn">proxy_cache_lock_age</span> <span class="s">5s</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>效果：1000 个请求里只有 1 个回源，其余 999 个在 Nginx 里等着，第一个请求填充缓存后，它们直接读缓存返回。</p>
+<p><strong>注意 <code>proxy_cache_lock</code> 是每个 worker 独立还是全局的？</strong> 是<strong>基于共享内存的全局锁</strong>，所有 worker 共享。</p>
+<p>代价：等待的请求会占用连接和内存。<code>proxy_cache_lock_timeout</code> 不要设太大。</p>
+<h2 id="43-proxy_cache_use_stale--用过期数据兜底">4.3 proxy_cache_use_stale —— 用过期数据兜底</h2>
+<p>这是<strong>可用性的关键配置</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-nginx" data-lang="nginx"><span class="line"><span class="cl"><span class="k">location</span> <span class="s">/api/</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">proxy_pass</span> <span class="s">http://backend</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">proxy_cache</span> <span class="s">my_cache</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">proxy_cache_valid</span> <span class="mi">200</span> <span class="mi">10m</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1"># 后端出问题时，用过期的缓存顶上，而不是给用户 502
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="kn">proxy_cache_use_stale</span> <span class="s">error</span> <span class="s">timeout</span> <span class="s">invalid_header</span>
+</span></span><span class="line"><span class="cl">                          <span class="s">http_500</span> <span class="s">http_502</span> <span class="s">http_503</span> <span class="s">http_504</span>
+</span></span><span class="line"><span class="cl">                          <span class="s">updating</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1"># 后台异步更新：过期后先返回旧数据，同时后台去回源刷新
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="c1"># （1.11.10+，相当于 stale-while-revalidate）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="kn">proxy_cache_background_update</span> <span class="no">on</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><code>updating</code> 这个值特别有价值：<strong>缓存正在被某个请求更新时，其他请求直接用旧数据</strong>，不用等。配合 <code>proxy_cache_background_update on</code> 就实现了 <code>stale-while-revalidate</code> 语义：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">请求到来 → 缓存已过期
+</span></span><span class="line"><span class="cl">   ↓
+</span></span><span class="line"><span class="cl">立即返回过期的缓存内容（用户零等待，X-Cache-Status: STALE 或 UPDATING）
+</span></span><span class="line"><span class="cl">   ↓
+</span></span><span class="line"><span class="cl">同时在后台发起子请求回源，更新缓存
+</span></span><span class="line"><span class="cl">   ↓
+</span></span><span class="line"><span class="cl">下一个请求就拿到新数据了
+</span></span></code></pre></div><p><strong>这是缓存配置里性价比最高的两行</strong>。它同时解决了两个问题：</p>
+<ol>
+<li>缓存过期时用户不用等回源（延迟毛刺消失）</li>
+<li>后端挂了时用户还能看到（虽然是旧的）内容，而不是 502</li>
+</ol>
+<h2 id="44-proxy_cache_revalidate--省带宽">4.4 proxy_cache_revalidate —— 省带宽</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-nginx" data-lang="nginx"><span class="line"><span class="cl"><span class="k">proxy_cache_revalidate</span> <span class="no">on</span><span class="p">;</span>
+</span></span></code></pre></div><p>缓存过期后，Nginx 带着 <code>If-Modified-Since</code> / <code>If-None-Match</code> 去回源。上游如果返回 304，Nginx 就<strong>只更新缓存的过期时间，不重新下载响应体</strong>。</p>
+<p>对大响应体（大 JSON、图片）效果明显。状态显示为 <code>REVALIDATED</code>。</p>
+<h2 id="45-缓存雪崩过期时间打散">4.5 缓存雪崩：过期时间打散</h2>
+<p>如果一批缓存在同一时刻集体过期（比如批量预热的），会造成瞬间的回源洪峰。</p>
+<p>Nginx 没有内置的过期时间随机化，但可以用上游控制：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// Go 后端：给缓存时长加随机抖动
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">jitter</span> <span class="o">:=</span> <span class="nx">rand</span><span class="p">.</span><span class="nf">Intn</span><span class="p">(</span><span class="mi">120</span><span class="p">)</span>   <span class="c1">// 0-120 秒随机
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">c</span><span class="p">.</span><span class="nf">Header</span><span class="p">(</span><span class="s">&#34;X-Accel-Expires&#34;</span><span class="p">,</span> <span class="nx">strconv</span><span class="p">.</span><span class="nf">Itoa</span><span class="p">(</span><span class="mi">600</span><span class="o">+</span><span class="nx">jitter</span><span class="p">))</span>
+</span></span></code></pre></div><p>或者用 OpenResty：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-nginx" data-lang="nginx"><span class="line"><span class="cl"><span class="k">set_by_lua_block</span> <span class="nv">$cache_ttl</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">return</span> <span class="mi">600</span> <span class="s">+</span> <span class="s">math.random(0,</span> <span class="mi">120</span><span class="s">)</span>
+</span></span><span class="line"><span class="cl"><span class="err">}</span>
+</span></span><span class="line"><span class="cl"><span class="s">proxy_cache_valid</span> <span class="mi">200</span> <span class="nv">${cache_ttl}s</span><span class="p">;</span>   <span class="kn">--</span> <span class="s">注意：proxy_cache_valid</span> <span class="s">不支持变量</span>
+</span></span></code></pre></div><p><strong><code>proxy_cache_valid</code> 不支持变量</strong>，所以只能靠上游的 <code>X-Accel-Expires</code> 或 <code>Cache-Control: max-age</code> 来做动态 TTL。</p>
+<h2 id="46-完整的高可用缓存配置">4.6 完整的高可用缓存配置</h2>
+<p>把上面所有防护组合起来：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-nginx" data-lang="nginx"><span class="line"><span class="cl"><span class="k">http</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">proxy_cache_path</span> <span class="s">/var/cache/nginx/proxy</span>
+</span></span><span class="line"><span class="cl">                     <span class="s">levels=1:2</span>
+</span></span><span class="line"><span class="cl">                     <span class="s">keys_zone=api_cache:200m</span>
+</span></span><span class="line"><span class="cl">                     <span class="s">max_size=20g</span>
+</span></span><span class="line"><span class="cl">                     <span class="s">inactive=2h</span>
+</span></span><span class="line"><span class="cl">                     <span class="s">use_temp_path=off</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="kn">server</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="kn">location</span> <span class="s">/api/</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="kn">proxy_pass</span> <span class="s">http://backend</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">            <span class="kn">include</span> <span class="s">snippets/proxy-headers.conf</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">            <span class="kn">proxy_cache</span> <span class="s">api_cache</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">            <span class="kn">proxy_cache_key</span> <span class="s">&#34;</span><span class="nv">$scheme$request_method$host$request_uri&#34;</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">            <span class="kn">proxy_cache_valid</span> <span class="mi">200</span> <span class="mi">301</span> <span class="mi">302</span> <span class="mi">10m</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">            <span class="kn">proxy_cache_valid</span> <span class="mi">404</span> <span class="mi">1m</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">            <span class="kn">proxy_cache_min_uses</span> <span class="mi">1</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">            <span class="c1"># 防击穿：只让一个请求回源
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>            <span class="kn">proxy_cache_lock</span> <span class="no">on</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">            <span class="kn">proxy_cache_lock_timeout</span> <span class="s">5s</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">            <span class="kn">proxy_cache_lock_age</span> <span class="s">5s</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">            <span class="c1"># 高可用：后端挂了用旧数据顶
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>            <span class="kn">proxy_cache_use_stale</span> <span class="s">error</span> <span class="s">timeout</span> <span class="s">invalid_header</span>
+</span></span><span class="line"><span class="cl">                                  <span class="s">http_500</span> <span class="s">http_502</span> <span class="s">http_503</span> <span class="s">http_504</span>
+</span></span><span class="line"><span class="cl">                                  <span class="s">updating</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">            <span class="kn">proxy_cache_background_update</span> <span class="no">on</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">            <span class="c1"># 省带宽
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>            <span class="kn">proxy_cache_revalidate</span> <span class="no">on</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">            <span class="c1"># 登录用户不走缓存
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>            <span class="kn">proxy_cache_bypass</span> <span class="nv">$no_cache</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">            <span class="kn">proxy_no_cache</span>     <span class="nv">$no_cache</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">            <span class="kn">add_header</span> <span class="s">X-Cache-Status</span> <span class="nv">$upstream_cache_status</span> <span class="s">always</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>这套配置的效果：</p>
+<ul>
+<li>正常情况：高命中率，过期时只有一个请求回源</li>
+<li>缓存过期：用户立刻拿到旧数据，后台静默更新</li>
+<li>后端全挂：用户仍能看到过期内容（在 <code>inactive</code> 期限内），而不是 502</li>
+</ul>
+<h1 id="5-主动清除缓存">5. 主动清除缓存</h1>
+<h2 id="51-商业版proxy_cache_purge">5.1 商业版：proxy_cache_purge</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-nginx" data-lang="nginx"><span class="line"><span class="cl"><span class="c1"># NGINX Plus
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">map</span> <span class="nv">$request_method</span> <span class="nv">$purge_method</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">PURGE</span> <span class="mi">1</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">default</span> <span class="mi">0</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">location</span> <span class="s">/api/</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">proxy_cache</span> <span class="s">my_cache</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">proxy_cache_purge</span> <span class="nv">$purge_method</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">curl -X PURGE http://example.com/api/user/1
+</span></span></code></pre></div><h2 id="52-开源版方案一ngx_cache_purge-模块">5.2 开源版方案一：ngx_cache_purge 模块</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">git clone https://github.com/FRiCKLE/ngx_cache_purge
+</span></span><span class="line"><span class="cl">./configure --add-module<span class="o">=</span>../ngx_cache_purge ...
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-nginx" data-lang="nginx"><span class="line"><span class="cl"><span class="k">location</span> <span class="p">~</span> <span class="sr">/purge(/.*)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">allow</span> <span class="mi">127</span><span class="s">.0.0.1</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">allow</span> <span class="mi">10</span><span class="s">.0.0.0/8</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">deny</span> <span class="s">all</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">proxy_cache_purge</span> <span class="s">my_cache</span> <span class="s">&#34;</span><span class="nv">$scheme$request_method$host$1&#34;</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">curl http://127.0.0.1/purge/api/user/1
+</span></span></code></pre></div><h2 id="53-开源版方案二直接删文件最实用">5.3 开源版方案二：直接删文件（最实用）</h2>
+<p>缓存文件名是 key 的 MD5，可以直接算出来删掉：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="cp">#!/bin/bash
+</span></span></span><span class="line"><span class="cl"><span class="cp"></span><span class="c1"># purge-cache.sh —— 删除指定 URL 的缓存</span>
+</span></span><span class="line"><span class="cl"><span class="nv">CACHE_DIR</span><span class="o">=</span>/var/cache/nginx/proxy
+</span></span><span class="line"><span class="cl"><span class="nv">LEVELS</span><span class="o">=</span><span class="s2">&#34;1:2&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="nv">KEY</span><span class="o">=</span><span class="s2">&#34;httpsGETexample.com</span><span class="nv">$1</span><span class="s2">&#34;</span>          <span class="c1"># 必须和 proxy_cache_key 完全一致</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="nv">MD5</span><span class="o">=</span><span class="k">$(</span><span class="nb">echo</span> -n <span class="s2">&#34;</span><span class="nv">$KEY</span><span class="s2">&#34;</span> <span class="p">|</span> md5sum <span class="p">|</span> awk <span class="s1">&#39;{print $1}&#39;</span><span class="k">)</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># levels=1:2 → 取 MD5 末尾 1 位 / 末尾 2-3 位</span>
+</span></span><span class="line"><span class="cl"><span class="nv">L1</span><span class="o">=</span><span class="si">${</span><span class="nv">MD5</span><span class="p">: -1</span><span class="si">}</span>
+</span></span><span class="line"><span class="cl"><span class="nv">L2</span><span class="o">=</span><span class="si">${</span><span class="nv">MD5</span><span class="p">: -3:</span><span class="nv">2</span><span class="si">}</span>
+</span></span><span class="line"><span class="cl"><span class="nv">FILE</span><span class="o">=</span><span class="s2">&#34;</span><span class="nv">$CACHE_DIR</span><span class="s2">/</span><span class="nv">$L1</span><span class="s2">/</span><span class="nv">$L2</span><span class="s2">/</span><span class="nv">$MD5</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">if</span> <span class="o">[</span> -f <span class="s2">&#34;</span><span class="nv">$FILE</span><span class="s2">&#34;</span> <span class="o">]</span><span class="p">;</span> <span class="k">then</span>
+</span></span><span class="line"><span class="cl">    rm -f <span class="s2">&#34;</span><span class="nv">$FILE</span><span class="s2">&#34;</span> <span class="o">&amp;&amp;</span> <span class="nb">echo</span> <span class="s2">&#34;purged: </span><span class="nv">$1</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="k">else</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">echo</span> <span class="s2">&#34;not found: </span><span class="nv">$1</span><span class="s2"> (key=</span><span class="nv">$KEY</span><span class="s2">, file=</span><span class="nv">$FILE</span><span class="s2">)&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="k">fi</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">./purge-cache.sh /api/user/1
+</span></span></code></pre></div><p>批量清除（按内容匹配）：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 找出所有缓存了某个字符串的文件并删除</span>
+</span></span><span class="line"><span class="cl">grep -rl <span class="s2">&#34;some-pattern&#34;</span> /var/cache/nginx/proxy/ <span class="p">|</span> xargs rm -f
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 清空整个缓存（不用 reload，Nginx 会自动发现文件不存在）</span>
+</span></span><span class="line"><span class="cl">find /var/cache/nginx/proxy -type f -delete
+</span></span></code></pre></div><p><strong>注意</strong>：直接删文件后共享内存里的 key 元数据还在，Nginx 下次访问时发现文件不存在会自动当成 MISS 处理并清理元数据。所以不需要 reload。</p>
+<h2 id="54-用-openresty-实现灵活的-purge">5.4 用 OpenResty 实现灵活的 purge</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-nginx" data-lang="nginx"><span class="line"><span class="cl"><span class="k">location</span> <span class="p">~</span> <span class="sr">^/purge(/.*)$</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">allow</span> <span class="mi">10</span><span class="s">.0.0.0/8</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">deny</span> <span class="s">all</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="kn">content_by_lua_block</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="kn">local</span> <span class="s">uri</span> <span class="p">=</span> <span class="s">ngx.var[1]</span>
+</span></span><span class="line"><span class="cl">        <span class="s">local</span> <span class="s">key</span> <span class="p">=</span> <span class="s">&#34;https&#34;</span> <span class="s">..</span> <span class="s">&#34;GET&#34;</span> <span class="s">..</span> <span class="s">ngx.var.host</span> <span class="s">..</span> <span class="s">uri</span>
+</span></span><span class="line"><span class="cl">        <span class="s">local</span> <span class="s">md5</span> <span class="p">=</span> <span class="s">ngx.md5(key)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">        <span class="s">local</span> <span class="s">l1</span> <span class="p">=</span> <span class="s">md5:sub(-1)</span>
+</span></span><span class="line"><span class="cl">        <span class="s">local</span> <span class="s">l2</span> <span class="p">=</span> <span class="s">md5:sub(-3,</span> <span class="s">-2)</span>
+</span></span><span class="line"><span class="cl">        <span class="s">local</span> <span class="s">path</span> <span class="p">=</span> <span class="s">&#34;/var/cache/nginx/proxy/&#34;</span> <span class="s">..</span> <span class="s">l1</span> <span class="s">..</span> <span class="s">&#34;/&#34;</span> <span class="s">..</span> <span class="s">l2</span> <span class="s">..</span> <span class="s">&#34;/&#34;</span> <span class="s">..</span> <span class="s">md5</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">        <span class="s">local</span> <span class="s">ok,</span> <span class="s">err</span> <span class="p">=</span> <span class="s">os.remove(path)</span>
+</span></span><span class="line"><span class="cl">        <span class="s">if</span> <span class="s">ok</span> <span class="s">then</span>
+</span></span><span class="line"><span class="cl">            <span class="s">ngx.say(&#34;purged:</span> <span class="s">&#34;,</span> <span class="s">uri)</span>
+</span></span><span class="line"><span class="cl">        <span class="s">else</span>
+</span></span><span class="line"><span class="cl">            <span class="s">ngx.status</span> <span class="p">=</span> <span class="mi">404</span>
+</span></span><span class="line"><span class="cl">            <span class="s">ngx.say(&#34;not</span> <span class="s">found:</span> <span class="s">&#34;,</span> <span class="s">uri,</span> <span class="s">&#34;</span> <span class="s">(&#34;,</span> <span class="s">tostring(err),</span> <span class="s">&#34;)&#34;)</span>
+</span></span><span class="line"><span class="cl">        <span class="s">end</span>
+</span></span><span class="line"><span class="cl">    <span class="err">}</span>
+</span></span><span class="line"><span class="cl"><span class="err">}</span>
+</span></span></code></pre></div><h1 id="6-缓存预热">6. 缓存预热</h1>
+<p>新上线的缓存节点是空的，第一批流量会全部回源。预热可以避免这个冲击：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="cp">#!/bin/bash
+</span></span></span><span class="line"><span class="cl"><span class="cp"></span><span class="c1"># warmup.sh —— 从访问日志里提取热门 URL 并预热</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 1. 从昨天的日志里找出访问量 top 1000 的 URL</span>
+</span></span><span class="line"><span class="cl">zcat /var/log/nginx/access.log-<span class="k">$(</span>date -d yesterday +%Y%m%d<span class="k">)</span>.gz <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  <span class="p">|</span> awk <span class="s1">&#39;{print $7}&#39;</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  <span class="p">|</span> grep -E <span class="s1">&#39;^/api/&#39;</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  <span class="p">|</span> sort <span class="p">|</span> uniq -c <span class="p">|</span> sort -rn <span class="p">|</span> head -1000 <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  <span class="p">|</span> awk <span class="s1">&#39;{print $2}&#39;</span> &gt; /tmp/hot_urls.txt
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 2. 并发预热（控制并发度，别把后端打爆）</span>
+</span></span><span class="line"><span class="cl">cat /tmp/hot_urls.txt <span class="p">|</span> xargs -P <span class="m">10</span> -I<span class="o">{}</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>    curl -s -o /dev/null -w <span class="s2">&#34;%{http_code} %{time_total}s {}\n&#34;</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>    <span class="s2">&#34;http://127.0.0.1{}&#34;</span>
+</span></span></code></pre></div><p>预热时验证效果：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 预热前后对比命中率</span>
+</span></span><span class="line"><span class="cl">curl -s -o /dev/null -D - http://127.0.0.1/api/hot <span class="p">|</span> grep -i x-cache
+</span></span></code></pre></div><h1 id="7-多级缓存架构">7. 多级缓存架构</h1>
+<p>一个完整的缓存体系是分层的，每一层拦掉一部分流量：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">浏览器缓存（Cache-Control）
+</span></span><span class="line"><span class="cl">   ↓ miss
+</span></span><span class="line"><span class="cl">CDN 边缘节点
+</span></span><span class="line"><span class="cl">   ↓ miss
+</span></span><span class="line"><span class="cl">Nginx proxy_cache（本篇）
+</span></span><span class="line"><span class="cl">   ↓ miss
+</span></span><span class="line"><span class="cl">应用层缓存（本地内存 / Redis）
+</span></span><span class="line"><span class="cl">   ↓ miss
+</span></span><span class="line"><span class="cl">数据库
+</span></span></code></pre></div><p>各层的定位：</p>
+<table>
+<thead>
+<tr>
+<th>层</th>
+<th>命中率</th>
+<th>适合缓存什么</th>
+<th>TTL</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>浏览器</td>
+<td>高（对单用户）</td>
+<td>静态资源、用户专属数据</td>
+<td>长（hash 资源）/ 短</td>
+</tr>
+<tr>
+<td>CDN</td>
+<td>很高</td>
+<td>静态资源、公共 API</td>
+<td>中长</td>
+</tr>
+<tr>
+<td>Nginx</td>
+<td>中</td>
+<td>公共 API、页面片段</td>
+<td>短（分钟级）</td>
+</tr>
+<tr>
+<td>Redis</td>
+<td>中</td>
+<td>需要主动失效的业务数据</td>
+<td>灵活</td>
+</tr>
+<tr>
+<td>本地内存</td>
+<td>低但极快</td>
+<td>配置、字典表</td>
+<td>长</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Nginx 缓存的定位是「短 TTL、抗突发」</strong>。它的优势是零网络开销、零序列化开销；劣势是无法精确失效（不像 Redis 能 <code>DEL key</code>）、多台 Nginx 之间不共享。</p>
+<p>所以：</p>
+<ul>
+<li>需要<strong>精确失效</strong>的业务数据 → Redis</li>
+<li>能容忍<strong>几分钟延迟</strong>的公共数据 → Nginx proxy_cache（TTL 设短一点，靠自然过期）</li>
+<li>静态资源 → CDN + 浏览器</li>
+</ul>
+<h2 id="71-用-nginx-做小文件的本地缓存加速">7.1 用 Nginx 做小文件的本地缓存加速</h2>
+<p>一个实用场景：Nginx 缓存对象存储（S3/OSS）的内容，减少回源费用和延迟。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-nginx" data-lang="nginx"><span class="line"><span class="cl"><span class="k">proxy_cache_path</span> <span class="s">/var/cache/nginx/oss</span>
+</span></span><span class="line"><span class="cl">                 <span class="s">levels=2:2</span>
+</span></span><span class="line"><span class="cl">                 <span class="s">keys_zone=oss:500m</span>
+</span></span><span class="line"><span class="cl">                 <span class="s">max_size=200g</span>
+</span></span><span class="line"><span class="cl">                 <span class="s">inactive=30d</span>
+</span></span><span class="line"><span class="cl">                 <span class="s">use_temp_path=off</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">server</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">listen</span> <span class="mi">80</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">server_name</span> <span class="s">img.example.com</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="kn">location</span> <span class="s">/</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="kn">proxy_pass</span> <span class="s">https://my-bucket.oss-cn-hangzhou.aliyuncs.com</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">        <span class="kn">proxy_set_header</span> <span class="s">Host</span> <span class="s">my-bucket.oss-cn-hangzhou.aliyuncs.com</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">        <span class="c1"># 不传客户端的这些头给 OSS
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="kn">proxy_set_header</span> <span class="s">Authorization</span> <span class="s">&#34;&#34;</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">        <span class="kn">proxy_set_header</span> <span class="s">Cookie</span> <span class="s">&#34;&#34;</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">        <span class="kn">proxy_cache</span> <span class="s">oss</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">        <span class="kn">proxy_cache_key</span> <span class="s">&#34;</span><span class="nv">$uri&#34;</span><span class="p">;</span>              <span class="c1"># 图片按路径缓存就够了
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="kn">proxy_cache_valid</span> <span class="mi">200</span> <span class="s">30d</span><span class="p">;</span>           <span class="c1"># 图片基本不变，缓存很久
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="kn">proxy_cache_valid</span> <span class="mi">404</span> <span class="mi">1m</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">        <span class="kn">proxy_cache_lock</span> <span class="no">on</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">        <span class="kn">proxy_cache_use_stale</span> <span class="s">error</span> <span class="s">timeout</span> <span class="s">updating</span> <span class="s">http_5xx</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">        <span class="kn">proxy_cache_background_update</span> <span class="no">on</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">        <span class="c1"># 忽略 OSS 返回的缓存控制头
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="kn">proxy_ignore_headers</span> <span class="s">Cache-Control</span> <span class="s">Expires</span> <span class="s">Set-Cookie</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">        <span class="c1"># 给客户端的缓存头由我们自己控制
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="kn">expires</span> <span class="s">30d</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">        <span class="kn">add_header</span> <span class="s">Cache-Control</span> <span class="s">&#34;public&#34;</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">        <span class="kn">add_header</span> <span class="s">X-Cache-Status</span> <span class="nv">$upstream_cache_status</span> <span class="s">always</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><h1 id="8-fastcgi--uwsgi--grpc-缓存">8. FastCGI / uwsgi / gRPC 缓存</h1>
+<p>同样的机制，换个前缀：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-nginx" data-lang="nginx"><span class="line"><span class="cl"><span class="c1"># PHP-FPM
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">fastcgi_cache_path</span> <span class="s">/var/cache/nginx/fcgi</span> <span class="s">levels=1:2</span> <span class="s">keys_zone=php:100m</span>
+</span></span><span class="line"><span class="cl">                   <span class="s">max_size=5g</span> <span class="s">inactive=60m</span> <span class="s">use_temp_path=off</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">location</span> <span class="p">~</span> <span class="sr">\.php$</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">fastcgi_pass</span> <span class="s">unix:/run/php-fpm.sock</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">include</span> <span class="s">fastcgi_params</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">fastcgi_param</span> <span class="s">SCRIPT_FILENAME</span> <span class="nv">$document_root$fastcgi_script_name</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="kn">fastcgi_cache</span> <span class="s">php</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">fastcgi_cache_key</span> <span class="s">&#34;</span><span class="nv">$scheme$request_method$host$request_uri&#34;</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">fastcgi_cache_valid</span> <span class="mi">200</span> <span class="mi">10m</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">fastcgi_cache_lock</span> <span class="no">on</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">fastcgi_cache_use_stale</span> <span class="s">error</span> <span class="s">timeout</span> <span class="s">updating</span> <span class="s">http_500</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">fastcgi_cache_background_update</span> <span class="no">on</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">fastcgi_no_cache</span> <span class="nv">$no_cache</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">fastcgi_cache_bypass</span> <span class="nv">$no_cache</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="kn">add_header</span> <span class="s">X-Cache-Status</span> <span class="nv">$upstream_cache_status</span> <span class="s">always</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><code>grpc_cache</code> <strong>不存在</strong>——gRPC 是流式的，Nginx 不支持缓存 gRPC 响应。</p>
+<h1 id="9-缓存监控">9. 缓存监控</h1>
+<h2 id="91-关键指标">9.1 关键指标</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 命中率</span>
+</span></span><span class="line"><span class="cl">awk <span class="s1">&#39;/cache=HIT/{h++} /cache=/{t++} END{printf &#34;hit rate: %.2f%%\n&#34;, h/t*100}&#39;</span> access.log
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 磁盘占用</span>
+</span></span><span class="line"><span class="cl">du -sh /var/cache/nginx/proxy
+</span></span><span class="line"><span class="cl"><span class="c1"># 应该接近但不超过 max_size</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 缓存文件数</span>
+</span></span><span class="line"><span class="cl">find /var/cache/nginx/proxy -type f <span class="p">|</span> wc -l
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 共享内存使用情况（需要 NGINX Plus 或第三方模块）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 开源版只能间接判断：如果磁盘占用远小于 max_size 但一直在淘汰，</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 说明 keys_zone 满了</span>
+</span></span></code></pre></div><h2 id="92-用-prometheus-采集">9.2 用 Prometheus 采集</h2>
+<p>配合 <code>nginx-vts-module</code> 或 <code>nginx-module-vts</code>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-nginx" data-lang="nginx"><span class="line"><span class="cl"><span class="k">http</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="kn">vhost_traffic_status_zone</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="kn">server</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="kn">location</span> <span class="s">/status</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="kn">vhost_traffic_status_display</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">            <span class="kn">vhost_traffic_status_display_format</span> <span class="s">prometheus</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">            <span class="kn">allow</span> <span class="mi">10</span><span class="s">.0.0.0/8</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">            <span class="kn">deny</span> <span class="s">all</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>输出里包含 <code>nginx_vts_cache_*</code> 系列指标（hit/miss/bypass/expired/stale 的字节数和次数），直接接 Prometheus。</p>
+<h2 id="93-命中率低的排查清单">9.3 命中率低的排查清单</h2>
+<table>
+<thead>
+<tr>
+<th>可能原因</th>
+<th>怎么确认</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>上游返回 <code>Set-Cookie</code></td>
+<td><code>curl -I</code> 看上游响应头</td>
+</tr>
+<tr>
+<td>上游返回 <code>Cache-Control: no-cache/private</code></td>
+<td>同上</td>
+</tr>
+<tr>
+<td><code>proxy_cache_key</code> 里包含了变化的变量（如 <code>$request_id</code>、时间戳参数）</td>
+<td>检查配置</td>
+</tr>
+<tr>
+<td>请求 URL 带随机参数（<code>?_=1234567890</code>）</td>
+<td>看 access_log 里的 URI</td>
+</tr>
+<tr>
+<td><code>keys_zone</code> 太小，一直在 LRU 淘汰</td>
+<td>磁盘占用远小于 <code>max_size</code> 但 MISS 很多</td>
+</tr>
+<tr>
+<td><code>inactive</code> 太短</td>
+<td>冷门内容还没被再次访问就被删了</td>
+</tr>
+<tr>
+<td><code>proxy_cache_min_uses</code> 设得太高</td>
+<td>检查配置</td>
+</tr>
+<tr>
+<td>请求方法不是 GET/HEAD</td>
+<td>看 access_log</td>
+</tr>
+<tr>
+<td><code>Vary: User-Agent</code> 导致每个 UA 独立缓存</td>
+<td><code>curl -I</code> 看上游响应头</td>
+</tr>
+</tbody>
+</table>
+<h1 id="10-面试题">10. 面试题</h1>
+<p><strong>Q：Nginx 的 <code>proxy_cache</code> 是怎么工作的？</strong></p>
+<p>按 <code>proxy_cache_key</code> 计算一个 MD5 作为缓存标识，key 的元数据（过期时间、文件名、引用计数）存在 <code>keys_zone</code> 共享内存里，响应体存在磁盘文件里（路径按 <code>levels</code> 分层，从 MD5 末尾取字符）。请求到来时先查共享内存：命中且未过期直接读磁盘文件返回；未命中或过期则回源，同时把响应写入缓存。cache manager 进程按 <code>max_size</code>（LRU）和 <code>inactive</code> 淘汰文件，cache loader 在启动时把已有缓存的元信息载入共享内存。</p>
+<p><strong>Q：<code>levels=1:2</code> 是什么意思？为什么需要分层目录？</strong></p>
+<p>一级目录用 1 个字符，二级用 2 个字符，字符取自缓存 key MD5 值的末尾。分层是为了避免单个目录下文件过多——几百万个文件在同一目录会让文件系统的查找性能急剧下降。<code>levels=1:2</code> 产生 4096 个子目录。</p>
+<p><strong>Q：<code>use_temp_path=off</code> 为什么重要？</strong></p>
+<p>默认 Nginx 先把上游响应写到 <code>proxy_temp_path</code>，完成后 <code>rename</code> 到缓存目录。如果两个路径跨文件系统，<code>rename</code> 会退化成完整的文件复制，产生翻倍的磁盘 I/O。设 <code>off</code> 后临时文件直接写在缓存目录内，<code>rename</code> 是同文件系统的原子操作，几乎零开销。</p>
+<p><strong>Q：怎么防止缓存击穿（大量并发同时回源）？</strong></p>
+<p><code>proxy_cache_lock on;</code> 让同一个 key 同时只有一个请求回源，其他请求等待（<code>proxy_cache_lock_timeout</code> 控制等待上限）。更好的组合是再加 <code>proxy_cache_use_stale updating;</code> + <code>proxy_cache_background_update on;</code>——过期时立即返回旧数据，后台异步更新，用户完全不用等。</p>
+<p><strong>Q：<code>proxy_cache_use_stale</code> 的作用是什么？</strong></p>
+<p>在指定条件下（后端 error/timeout/5xx、或缓存正在被更新）允许返回已过期的缓存内容。这是保证可用性的关键：后端全挂时用户仍能看到旧内容而不是 502。配合 <code>proxy_cache_background_update on</code> 就实现了 <code>stale-while-revalidate</code> 语义。</p>
+<p><strong>Q：<code>proxy_cache_bypass</code> 和 <code>proxy_no_cache</code> 有什么区别？</strong></p>
+<p><code>proxy_cache_bypass</code> 控制<strong>读</strong>：条件成立时跳过缓存直接回源，但响应仍会被写入缓存。<code>proxy_no_cache</code> 控制<strong>写</strong>：条件成立时响应不存入缓存。要完全绕过缓存需要两个都配。</p>
+<p><strong>Q：开源版怎么主动清除某个 URL 的缓存？</strong></p>
+<p>三种方式：(1) 编译 <code>ngx_cache_purge</code> 第三方模块，提供 PURGE 接口；(2) 按 <code>proxy_cache_key</code> 算出 MD5，直接删对应的缓存文件（不需要 reload，Nginx 下次访问发现文件不存在会自动按 MISS 处理）；(3) 用 OpenResty 写一个 Lua 接口做同样的事。官方的 <code>proxy_cache_purge</code> 指令只有 NGINX Plus 有。</p>
+<p><strong>Q：<code>keys_zone</code> 设小了会有什么后果？</strong></p>
+<p>共享内存放不下更多 key 时会强制按 LRU 淘汰，即使磁盘还远没到 <code>max_size</code>。表现是磁盘占用远低于 <code>max_size</code> 但命中率上不去。估算方法：每个 key 约占 128 字节元数据，<code>keys_zone</code> 大小应该 ≥ 预期 key 数量 × 128 字节 × 1.5。</p>
+<p><strong>Q：为什么用户相关的接口不能随便缓存？</strong></p>
+<p>如果 <code>proxy_cache_key</code> 里不包含用户标识，用户 A 的响应会被缓存，用户 B 请求同一 URL 时直接命中，<strong>看到 A 的数据</strong>——这是严重的信息泄露。Nginx 有一层保护：上游返回 <code>Set-Cookie</code> 时默认不缓存，但 <code>proxy_ignore_headers Set-Cookie</code> 会把这层保护关掉，所以这个指令要格外小心。</p>
+<p><strong>Q：Nginx 缓存和 Redis 缓存怎么分工？</strong></p>
+<p>Nginx 缓存零网络开销、零序列化开销，但无法精确失效、多机不共享，适合<strong>短 TTL 的公共内容</strong>（靠自然过期）。Redis 支持精确 <code>DEL</code>、多机共享，适合<strong>需要主动失效的业务数据</strong>。典型分工：公共 API 响应用 Nginx 缓存几分钟抗突发，业务数据用 Redis 并在写操作时主动失效。</p>
+<hr>
+<p>上一篇：<a href="../nginx_07_%e5%8a%a8%e9%9d%99%e5%88%86%e7%a6%bb%e4%b8%8e%e9%9d%99%e6%80%81%e8%b5%84%e6%ba%90%e4%bc%98%e5%8c%96/" rel="">Nginx-07 动静分离与静态资源优化</a> ｜ 下一篇：<a href="../nginx_09_%e9%99%90%e6%b5%81%e9%99%90%e8%bf%9e%e4%b8%8e%e5%ae%89%e5%85%a8%e9%98%b2%e6%8a%a4/" rel="">Nginx-09 限流限连与安全防护</a></p>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2026-08-03</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/nginx/">nginx</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/nginx/nginx_09_%E9%99%90%E6%B5%81%E9%99%90%E8%BF%9E%E4%B8%8E%E5%AE%89%E5%85%A8%E9%98%B2%E6%8A%A4/" class="prev" rel="prev" title="Nginx-09 限流限连与安全防护"><i class="fas fa-angle-left fa-fw"></i>Nginx-09 限流限连与安全防护</a>
+            <a href="/posts/nginx/nginx_07_%E5%8A%A8%E9%9D%99%E5%88%86%E7%A6%BB%E4%B8%8E%E9%9D%99%E6%80%81%E8%B5%84%E6%BA%90%E4%BC%98%E5%8C%96/" class="next" rel="next" title="Nginx-07 动静分离与静态资源优化">Nginx-07 动静分离与静态资源优化<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2026-08-03T19:30:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Nginx-08 缓存机制"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

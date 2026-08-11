@@ -1,0 +1,1250 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>Linux-19 namespace 与 cgroup - xingliuhua博客</title><meta name="Description" content="容器的两大支柱、八种 namespace 的作用与实操、cgroup v1 与 v2 的差异、CPU 内存 IO 的限制方式、用 unshare 手写一个迷你容器、容器里各种指标失真的原因"><meta property="og:title" content="Linux-19 namespace 与 cgroup" />
+<meta property="og:description" content="容器的两大支柱、八种 namespace 的作用与实操、cgroup v1 与 v2 的差异、CPU 内存 IO 的限制方式、用 unshare 手写一个迷你容器、容器里各种指标失真的原因" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/linux/linux_19_namespace%E4%B8%8Ecgroup/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2026-08-06T14:00:00+08:00" />
+<meta property="article:modified_time" content="2026-08-06T14:00:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="Linux-19 namespace 与 cgroup"/>
+<meta name="twitter:description" content="容器的两大支柱、八种 namespace 的作用与实操、cgroup v1 与 v2 的差异、CPU 内存 IO 的限制方式、用 unshare 手写一个迷你容器、容器里各种指标失真的原因"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/linux/linux_19_namespace%E4%B8%8Ecgroup/" /><link rel="prev" href="https://xingliuhua.github.io/posts/linux/linux_20_%E7%BA%BF%E4%B8%8A%E9%97%AE%E9%A2%98%E6%8E%92%E6%9F%A5%E5%AE%9E%E6%88%98/" /><link rel="next" href="https://xingliuhua.github.io/posts/linux/linux_18_%E6%80%A7%E8%83%BD%E5%88%86%E6%9E%90%E5%B7%A5%E5%85%B7%E9%93%BE/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Linux-19 namespace 与 cgroup",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_19_namespace%E4%B8%8Ecgroup\/"
+        },"genre": "posts","keywords": "linux, docker","wordcount":  11373 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_19_namespace%E4%B8%8Ecgroup\/","datePublished": "2026-08-06T14:00:00+08:00","dateModified": "2026-08-06T14:00:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "容器的两大支柱、八种 namespace 的作用与实操、cgroup v1 与 v2 的差异、CPU 内存 IO 的限制方式、用 unshare 手写一个迷你容器、容器里各种指标失真的原因"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">Linux-19 namespace 与 cgroup</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2026-08-06">2026-08-06</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 11373 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 23 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-容器的本质">1. 容器的本质</a></li>
+    <li><a href="#2-namespace隔离能看到什么">2. namespace：隔离「能看到什么」</a>
+      <ol>
+        <li><a href="#21-三个核心系统调用">2.1 三个核心系统调用</a></li>
+        <li><a href="#22-uts-namespace最容易理解的例子">2.2 UTS namespace：最容易理解的例子</a></li>
+        <li><a href="#23-pid-namespace">2.3 PID namespace</a></li>
+        <li><a href="#24-net-namespace容器网络的基础">2.4 NET namespace：容器网络的基础</a></li>
+        <li><a href="#25-mnt-namespace">2.5 MNT namespace</a></li>
+        <li><a href="#26-nsenter进入容器排查问题">2.6 nsenter：进入容器排查问题</a></li>
+        <li><a href="#27-user-namespace为什么默认不开">2.7 USER namespace：为什么默认不开</a></li>
+        <li><a href="#28-lsns查看系统上的所有-namespace">2.8 lsns：查看系统上的所有 namespace</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-cgroup限制能用多少">3. cgroup：限制「能用多少」</a>
+      <ol>
+        <li><a href="#31-v1-与-v2-的关键差异">3.1 v1 与 v2 的关键差异</a></li>
+        <li><a href="#32-cgroup-v2-的目录结构">3.2 cgroup v2 的目录结构</a></li>
+        <li><a href="#33-手动创建-cgroup-限制资源">3.3 手动创建 cgroup 限制资源</a></li>
+        <li><a href="#34-cpu-限制的两种方式">3.4 CPU 限制的两种方式</a></li>
+        <li><a href="#35-用-systemd-管理-cgroup推荐">3.5 用 systemd 管理 cgroup（推荐）</a></li>
+        <li><a href="#36-slice资源分组">3.6 slice：资源分组</a></li>
+      </ol>
+    </li>
+    <li><a href="#4-手写一个迷你容器">4. 手写一个迷你容器</a></li>
+    <li><a href="#5-容器里的指标为什么失真">5. 容器里的指标为什么失真</a>
+      <ol>
+        <li><a href="#51-根本原因">5.1 根本原因</a></li>
+        <li><a href="#52-具体的失真项">5.2 具体的失真项</a></li>
+        <li><a href="#53-正确的做法读-cgroup">5.3 正确的做法：读 cgroup</a></li>
+        <li><a href="#54-语言运行时的适配">5.4 语言运行时的适配</a></li>
+        <li><a href="#55-让容器里的工具显示正确数据">5.5 让容器里的工具显示正确数据</a></li>
+      </ol>
+    </li>
+    <li><a href="#6-实战容器-cpu-限流导致的延迟毛刺">6. 实战：容器 CPU 限流导致的延迟毛刺</a></li>
+    <li><a href="#7-一些量级感">7. 一些量级感</a></li>
+    <li><a href="#8-面试题">8. 面试题</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><blockquote>
+<p>前置阅读：<a href="../linux_06_%e8%bf%9b%e7%a8%8b%e7%ae%a1%e7%90%86%e4%b8%8e%e4%bd%9c%e4%b8%9a%e6%8e%a7%e5%88%b6/" rel="">Linux-06 进程管理与作业控制</a>、<a href="../linux_10_%e5%86%85%e5%ad%98%e7%ae%a1%e7%90%86/" rel="">Linux-10 内存管理</a></p>
+</blockquote>
+<p><strong>容器不是虚拟机，它就是一个普通的 Linux 进程</strong>——只是被 namespace 限制了「能看到什么」，被 cgroup 限制了「能用多少」。</p>
+<p>这一篇把这两个机制讲透。理解它们能解决一大类困惑：为什么容器里 <code>top</code> 看到的是宿主机的负载、为什么 JVM 在容器里会认错 CPU 核数、为什么 <code>nsenter</code> 能进入容器的网络排查问题。</p>
+<h1 id="1-容器的本质">1. 容器的本质</h1>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">容器 = 一个普通进程 + namespace（视图隔离）+ cgroup（资源限制）+ 文件系统隔离
+</span></span><span class="line"><span class="cl">                        ^ 你能看到什么      ^ 你能用多少      ^ 你的根目录在哪
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">对比虚拟机：
+</span></span><span class="line"><span class="cl">  虚拟机  -&gt; 完整的内核 + 硬件模拟，隔离彻底但开销大（几百 MB 内存，秒级启动）
+</span></span><span class="line"><span class="cl">  容器    -&gt; 【共享宿主机内核】，隔离靠内核特性，开销近零（几 MB，毫秒级启动）
+</span></span></code></pre></div><p><strong>「共享内核」是容器所有优势和所有局限的共同来源</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>优势</th>
+<th>局限</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>启动快（毫秒级）</td>
+<td><strong>无法运行不同内核</strong>（Linux 上跑不了 Windows 容器）</td>
+</tr>
+<tr>
+<td>开销小（无硬件模拟）</td>
+<td><strong>内核漏洞可能导致逃逸</strong>，隔离性弱于虚拟机</td>
+</tr>
+<tr>
+<td>密度高（单机上千容器）</td>
+<td><strong>内核参数大多是全局的</strong>，容器改不了</td>
+</tr>
+<tr>
+<td>直接用宿主机的硬件加速</td>
+<td>一个容器触发内核 panic 会拖垮所有容器</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 验证：容器里的进程在宿主机上就是普通进程</span>
+</span></span><span class="line"><span class="cl">docker run -d --name <span class="nb">test</span> nginx
+</span></span><span class="line"><span class="cl">docker inspect -f <span class="s1">&#39;{{.State.Pid}}&#39;</span> <span class="nb">test</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 12345</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 宿主机上直接能看到</span>
+</span></span><span class="line"><span class="cl">ps -ef <span class="p">|</span> grep <span class="m">12345</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># root  12345  12300  0 14:00 ?  00:00:00 nginx: master process nginx -g daemon off;</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#       ^^^^^ 就是一个普通进程，没有任何特殊之处</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 看它的 namespace</span>
+</span></span><span class="line"><span class="cl">ls -l /proc/12345/ns/
+</span></span><span class="line"><span class="cl"><span class="c1"># lrwxrwxrwx 1 root root 0 Aug 6 14:00 cgroup -&gt; &#39;cgroup:[4026531835]&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># lrwxrwxrwx 1 root root 0 Aug 6 14:00 ipc -&gt; &#39;ipc:[4026532467]&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># lrwxrwxrwx 1 root root 0 Aug 6 14:00 mnt -&gt; &#39;mnt:[4026532465]&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># lrwxrwxrwx 1 root root 0 Aug 6 14:00 net -&gt; &#39;net:[4026532470]&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># lrwxrwxrwx 1 root root 0 Aug 6 14:00 pid -&gt; &#39;pid:[4026532468]&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># lrwxrwxrwx 1 root root 0 Aug 6 14:00 user -&gt; &#39;user:[4026531837]&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># lrwxrwxrwx 1 root root 0 Aug 6 14:00 uts -&gt; &#39;uts:[4026532466]&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                                              ^^^^^^^^^^^^^^^^^^ inode 号</span>
+</span></span></code></pre></div><p><strong>方括号里的数字是 namespace 的 inode 号</strong>——这是判断「两个进程是否在同一个 namespace」的依据：数字相同就是同一个。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 对比容器和宿主机的 namespace</span>
+</span></span><span class="line"><span class="cl">readlink /proc/1/ns/net           <span class="c1"># 宿主机 init</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># net:[4026531840]</span>
+</span></span><span class="line"><span class="cl">readlink /proc/12345/ns/net       <span class="c1"># 容器</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># net:[4026532470]                &lt;- 不同，说明网络被隔离了</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">readlink /proc/1/ns/user
+</span></span><span class="line"><span class="cl">readlink /proc/12345/ns/user
+</span></span><span class="line"><span class="cl"><span class="c1"># 两个都是 user:[4026531837]      &lt;- 相同！说明【没有】开 user namespace</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                                   这就是第 3 篇讲的「容器里的 uid 就是宿主机的 uid」</span>
+</span></span></code></pre></div><h1 id="2-namespace隔离能看到什么">2. namespace：隔离「能看到什么」</h1>
+<p>Linux 目前有 8 种 namespace：</p>
+<table>
+<thead>
+<tr>
+<th>namespace</th>
+<th>隔离什么</th>
+<th>内核版本</th>
+<th>容器里的表现</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>PID</strong></td>
+<td>进程 ID</td>
+<td>2.6.24</td>
+<td>容器里的 PID 1 是自己的主进程</td>
+</tr>
+<tr>
+<td><strong>NET</strong></td>
+<td>网络栈（网卡、IP、路由、iptables、端口）</td>
+<td>2.6.29</td>
+<td>容器有独立 IP 和端口空间</td>
+</tr>
+<tr>
+<td><strong>MNT</strong></td>
+<td>挂载点</td>
+<td>2.4.19</td>
+<td>容器有自己的文件系统视图</td>
+</tr>
+<tr>
+<td><strong>UTS</strong></td>
+<td>hostname、domainname</td>
+<td>2.6.19</td>
+<td>容器有独立的主机名</td>
+</tr>
+<tr>
+<td><strong>IPC</strong></td>
+<td>System V IPC、POSIX 消息队列</td>
+<td>2.6.19</td>
+<td>容器间共享内存隔离</td>
+</tr>
+<tr>
+<td><strong>USER</strong></td>
+<td>UID/GID 映射</td>
+<td>3.8</td>
+<td><strong>默认不开</strong>，见 §2.7</td>
+</tr>
+<tr>
+<td><strong>CGROUP</strong></td>
+<td>cgroup 根目录视图</td>
+<td>4.6</td>
+<td>容器看到的 cgroup 路径是相对的</td>
+</tr>
+<tr>
+<td><strong>TIME</strong></td>
+<td>系统时间偏移</td>
+<td>5.6</td>
+<td>很少用</td>
+</tr>
+</tbody>
+</table>
+<h2 id="21-三个核心系统调用">2.1 三个核心系统调用</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="c1">// ① clone：创建新进程并同时进入新的 namespace
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">pid_t</span> <span class="n">pid</span> <span class="o">=</span> <span class="n">clone</span><span class="p">(</span><span class="n">child_func</span><span class="p">,</span> <span class="n">stack</span><span class="p">,</span> <span class="n">CLONE_NEWPID</span> <span class="o">|</span> <span class="n">CLONE_NEWNET</span> <span class="o">|</span> <span class="n">SIGCHLD</span><span class="p">,</span> <span class="n">arg</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// ② unshare：让【当前进程】脱离原 namespace，进入新的
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">unshare</span><span class="p">(</span><span class="n">CLONE_NEWNS</span> <span class="o">|</span> <span class="n">CLONE_NEWUTS</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// ③ setns：加入一个【已存在】的 namespace（通过 /proc/&lt;pid&gt;/ns/xxx 的 fd）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kt">int</span> <span class="n">fd</span> <span class="o">=</span> <span class="n">open</span><span class="p">(</span><span class="s">&#34;/proc/12345/ns/net&#34;</span><span class="p">,</span> <span class="n">O_RDONLY</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="n">setns</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span> <span class="n">CLONE_NEWNET</span><span class="p">);</span>
+</span></span></code></pre></div><p>对应的命令行工具：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">unshare    <span class="c1"># 对应 unshare()，创建新 namespace 并执行命令</span>
+</span></span><span class="line"><span class="cl">nsenter    <span class="c1"># 对应 setns()，进入已有进程的 namespace</span>
+</span></span><span class="line"><span class="cl">lsns       <span class="c1"># 列出系统上所有 namespace</span>
+</span></span></code></pre></div><h2 id="22-uts-namespace最容易理解的例子">2.2 UTS namespace：最容易理解的例子</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 在新的 UTS namespace 里改主机名</span>
+</span></span><span class="line"><span class="cl">sudo unshare --uts bash
+</span></span><span class="line"><span class="cl">hostname
+</span></span><span class="line"><span class="cl"><span class="c1"># myhost</span>
+</span></span><span class="line"><span class="cl">hostname container-test          <span class="c1"># 改主机名</span>
+</span></span><span class="line"><span class="cl">hostname
+</span></span><span class="line"><span class="cl"><span class="c1"># container-test</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="nb">exit</span>                             <span class="c1"># 退出</span>
+</span></span><span class="line"><span class="cl">hostname
+</span></span><span class="line"><span class="cl"><span class="c1"># myhost                         &lt;- 宿主机完全不受影响</span>
+</span></span></code></pre></div><p><strong>这就是 namespace 的本质</strong>：同一个内核数据结构，不同 namespace 里的进程看到不同的值。</p>
+<h2 id="23-pid-namespace">2.3 PID namespace</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">sudo unshare --pid --fork --mount-proc bash
+</span></span><span class="line"><span class="cl"><span class="c1">#                    ^^^^^^ 必须加：否则 ps 仍读宿主机的 /proc</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">ps -ef
+</span></span><span class="line"><span class="cl"><span class="c1"># UID    PID  PPID  C STIME TTY  TIME     CMD</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># root     1     0  0 14:10 pts/0 00:00:00 bash      &lt;- bash 成了 PID 1</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># root     9     1  0 14:10 pts/0 00:00:00 ps</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#          ^ 只能看到自己 namespace 里的进程</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="nv">$$</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 1</span>
+</span></span></code></pre></div><p><strong><code>--mount-proc</code> 是必需的</strong>：<code>ps</code> 是通过读 <code>/proc</code> 来列进程的，如果不重新挂载 <code>/proc</code>，它读到的还是宿主机的，就看不出隔离效果。</p>
+<p><strong>PID namespace 的两个特性</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">① 层级性：父 namespace 能看到子 namespace 的所有进程（但 PID 不同），
+</span></span><span class="line"><span class="cl">          子 namespace 看不到父的
+</span></span><span class="line"><span class="cl">          -&gt; 所以宿主机能看到并管理所有容器进程
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">② PID 1 的特殊性（第 8 篇 §2.2 讲过）：
+</span></span><span class="line"><span class="cl">   - 不执行信号的默认动作 -&gt; 没注册 handler 时 SIGTERM 被丢弃
+</span></span><span class="line"><span class="cl">   - 负责收养孤儿进程并 wait -&gt; 应用通常不实现，导致僵尸堆积
+</span></span><span class="line"><span class="cl">   - PID 1 退出 -&gt; 整个 namespace 里的所有进程被 SIGKILL
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 同一个进程在不同 namespace 里有不同的 PID</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 容器内</span>
+</span></span><span class="line"><span class="cl">docker <span class="nb">exec</span> <span class="nb">test</span> ps -ef <span class="p">|</span> head -2
+</span></span><span class="line"><span class="cl"><span class="c1"># UID  PID  PPID  CMD</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># root   1     0  nginx: master process</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 宿主机上</span>
+</span></span><span class="line"><span class="cl">docker inspect -f <span class="s1">&#39;{{.State.Pid}}&#39;</span> <span class="nb">test</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 12345                        &lt;- 同一个进程，宿主机视角是 12345，容器内是 1</span>
+</span></span></code></pre></div><h2 id="24-net-namespace容器网络的基础">2.4 NET namespace：容器网络的基础</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 创建一个网络 namespace</span>
+</span></span><span class="line"><span class="cl">sudo ip netns add myns
+</span></span><span class="line"><span class="cl">sudo ip netns list
+</span></span><span class="line"><span class="cl"><span class="c1"># myns</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 在里面执行命令</span>
+</span></span><span class="line"><span class="cl">sudo ip netns <span class="nb">exec</span> myns ip addr
+</span></span><span class="line"><span class="cl"><span class="c1"># 1: lo: &lt;LOOPBACK&gt; mtu 65536 state DOWN</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    ^ 只有一个 lo，而且还是 DOWN 状态 —— 完全干净的网络栈</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">sudo ip netns <span class="nb">exec</span> myns ip link <span class="nb">set</span> lo up
+</span></span></code></pre></div><p><strong>用 veth pair 把 namespace 连到宿主机</strong>——这正是 Docker 的 bridge 网络的实现原理：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ① 创建一对虚拟网卡（像一根虚拟网线的两端）</span>
+</span></span><span class="line"><span class="cl">sudo ip link add veth-host <span class="nb">type</span> veth peer name veth-ns
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ② 把一端放进 namespace</span>
+</span></span><span class="line"><span class="cl">sudo ip link <span class="nb">set</span> veth-ns netns myns
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ③ 配置宿主机这一端</span>
+</span></span><span class="line"><span class="cl">sudo ip addr add 10.200.1.1/24 dev veth-host
+</span></span><span class="line"><span class="cl">sudo ip link <span class="nb">set</span> veth-host up
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ④ 配置 namespace 那一端</span>
+</span></span><span class="line"><span class="cl">sudo ip netns <span class="nb">exec</span> myns ip addr add 10.200.1.2/24 dev veth-ns
+</span></span><span class="line"><span class="cl">sudo ip netns <span class="nb">exec</span> myns ip link <span class="nb">set</span> veth-ns up
+</span></span><span class="line"><span class="cl">sudo ip netns <span class="nb">exec</span> myns ip route add default via 10.200.1.1
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ⑤ 测试连通</span>
+</span></span><span class="line"><span class="cl">ping -c <span class="m">2</span> 10.200.1.2
+</span></span><span class="line"><span class="cl">sudo ip netns <span class="nb">exec</span> myns ping -c <span class="m">2</span> 10.200.1.1
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ⑥ 让 namespace 能访问外网（NAT，第 13 篇讲的 iptables）</span>
+</span></span><span class="line"><span class="cl">sudo sysctl -w net.ipv4.ip_forward<span class="o">=</span><span class="m">1</span>
+</span></span><span class="line"><span class="cl">sudo iptables -t nat -A POSTROUTING -s 10.200.1.0/24 -o eth0 -j MASQUERADE
+</span></span><span class="line"><span class="cl">sudo ip netns <span class="nb">exec</span> myns ping -c <span class="m">2</span> 8.8.8.8
+</span></span></code></pre></div><p><strong>这六步就是 Docker <code>bridge</code> 网络模式的完整原理</strong>——只是 Docker 用 <code>docker0</code> 网桥连接所有 veth，而不是直接点对点。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 在宿主机上看容器的 veth</span>
+</span></span><span class="line"><span class="cl">ip link <span class="p">|</span> grep veth
+</span></span><span class="line"><span class="cl"><span class="c1"># 5: veth1a2b3c4@if4: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; ... master docker0</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                                                            ^^^^^^^^^^^^^ 挂在 docker0 网桥上</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 清理</span>
+</span></span><span class="line"><span class="cl">sudo ip netns del myns
+</span></span></code></pre></div><h2 id="25-mnt-namespace">2.5 MNT namespace</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">sudo unshare --mount bash
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 在这里挂载，宿主机看不到</span>
+</span></span><span class="line"><span class="cl">mount -t tmpfs tmpfs /mnt
+</span></span><span class="line"><span class="cl">df -h /mnt
+</span></span><span class="line"><span class="cl"><span class="c1"># tmpfs  7.8G  0  7.8G  0% /mnt</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="nb">exit</span>
+</span></span><span class="line"><span class="cl">df -h /mnt
+</span></span><span class="line"><span class="cl"><span class="c1"># 宿主机的 /mnt 没有这个挂载    ✅</span>
+</span></span></code></pre></div><p><strong>MNT namespace 配合 <code>pivot_root</code> 才实现了「容器有自己的根文件系统」</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 简化演示：用 chroot（真实容器用 pivot_root，更安全）</span>
+</span></span><span class="line"><span class="cl">sudo unshare --mount --pid --fork chroot /path/to/rootfs /bin/bash
+</span></span></code></pre></div><p><code>chroot</code> 与 <code>pivot_root</code> 的区别：<code>chroot</code> 只是改变进程的根目录视图，<strong>老的根文件系统仍然挂载着</strong>、理论上可以逃逸出去（著名的 chroot 逃逸技巧）；<code>pivot_root</code> 会把老的根<strong>卸载掉</strong>，无法回退。所以容器运行时用 <code>pivot_root</code>。</p>
+<h2 id="26-nsenter进入容器排查问题">2.6 nsenter：进入容器排查问题</h2>
+<p>**这是本篇最实用的一个工具。**当容器镜像是 distroless、里面连 <code>bash</code>、<code>curl</code>、<code>ss</code> 都没有时，你在宿主机上用 <code>nsenter</code> 就能带着宿主机的工具进去排查。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 拿到容器的 PID</span>
+</span></span><span class="line"><span class="cl"><span class="nv">PID</span><span class="o">=</span><span class="k">$(</span>docker inspect -f <span class="s1">&#39;{{.State.Pid}}&#39;</span> mycontainer<span class="k">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 进入容器的【网络】namespace，用【宿主机的】ss 命令</span>
+</span></span><span class="line"><span class="cl">sudo nsenter -t <span class="nv">$PID</span> -n ss -tlnp
+</span></span><span class="line"><span class="cl"><span class="c1">#                    ^^ 只进 net namespace</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># State  Recv-Q Send-Q Local Address:Port</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># LISTEN 0      511          0.0.0.0:80</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 在容器的网络里抓包（容器里没有 tcpdump 也没关系）</span>
+</span></span><span class="line"><span class="cl">sudo nsenter -t <span class="nv">$PID</span> -n tcpdump -i eth0 -nn port <span class="m">80</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 进入容器的网络里 curl</span>
+</span></span><span class="line"><span class="cl">sudo nsenter -t <span class="nv">$PID</span> -n curl -s localhost/health
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 全部 namespace 都进（等效 docker exec，但用宿主机的 shell）</span>
+</span></span><span class="line"><span class="cl">sudo nsenter -t <span class="nv">$PID</span> -a /bin/bash
+</span></span></code></pre></div><table>
+<thead>
+<tr>
+<th>参数</th>
+<th>进入哪个 namespace</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>-n</code></td>
+<td>net</td>
+</tr>
+<tr>
+<td><code>-p</code></td>
+<td>pid</td>
+</tr>
+<tr>
+<td><code>-m</code></td>
+<td>mount</td>
+</tr>
+<tr>
+<td><code>-u</code></td>
+<td>uts</td>
+</tr>
+<tr>
+<td><code>-i</code></td>
+<td>ipc</td>
+</tr>
+<tr>
+<td><code>-U</code></td>
+<td>user</td>
+</tr>
+<tr>
+<td><code>-a</code></td>
+<td>全部</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>nsenter -t PID -n</code> 是排查容器网络问题的标准手法</strong>——它只进网络 namespace，文件系统还是宿主机的，所以宿主机上的所有工具都能用。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># K8s 里的用法</span>
+</span></span><span class="line"><span class="cl"><span class="nv">POD_PID</span><span class="o">=</span><span class="k">$(</span>crictl inspect <span class="k">$(</span>crictl ps -q --name myapp<span class="k">)</span> <span class="p">|</span> jq -r <span class="s1">&#39;.info.pid&#39;</span><span class="k">)</span>
+</span></span><span class="line"><span class="cl">sudo nsenter -t <span class="nv">$POD_PID</span> -n ss -tanp
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 或者用调试容器（K8s 1.23+，更方便）</span>
+</span></span><span class="line"><span class="cl">kubectl debug -it mypod --image<span class="o">=</span>nicolaka/netshoot --target<span class="o">=</span>myapp
+</span></span></code></pre></div><h2 id="27-user-namespace为什么默认不开">2.7 USER namespace：为什么默认不开</h2>
+<p><strong>这是容器安全最重要的一环，但 Docker 默认不启用。</strong></p>
+<p>USER namespace 能把容器内的 root（uid 0）映射到宿主机上的一个<strong>普通用户</strong>（比如 uid 100000）：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">不开 user namespace（默认）：
+</span></span><span class="line"><span class="cl">  容器内 uid 0  ==  宿主机 uid 0（真正的 root）
+</span></span><span class="line"><span class="cl">  -&gt; 容器逃逸后直接是宿主机 root
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">开启 user namespace：
+</span></span><span class="line"><span class="cl">  容器内 uid 0  -&gt;  宿主机 uid 100000（无特权用户）
+</span></span><span class="line"><span class="cl">  -&gt; 即使逃逸，也只是一个普通用户
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 验证当前是否开启</span>
+</span></span><span class="line"><span class="cl">readlink /proc/1/ns/user /proc/<span class="k">$(</span>docker inspect -f <span class="s1">&#39;{{.State.Pid}}&#39;</span> <span class="nb">test</span><span class="k">)</span>/ns/user
+</span></span><span class="line"><span class="cl"><span class="c1"># user:[4026531837]</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># user:[4026531837]            &lt;- 相同 = 【没开】user namespace</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 手动体验</span>
+</span></span><span class="line"><span class="cl">unshare --user --map-root-user bash
+</span></span><span class="line"><span class="cl">id
+</span></span><span class="line"><span class="cl"><span class="c1"># uid=0(root) gid=0(root)      &lt;- 容器内看是 root</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 但在宿主机上看这个进程仍是原来的普通用户</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">cat /proc/self/uid_map
+</span></span><span class="line"><span class="cl"><span class="c1">#          0       1000          1</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#          ^ ns内  ^ 宿主机   ^ 范围</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   含义：namespace 里的 uid 0 映射到宿主机的 uid 1000</span>
+</span></span></code></pre></div><p><strong>为什么 Docker 默认不开</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">① 挂载卷的权限会很麻烦 —— 宿主机上的文件属主需要是映射后的 uid
+</span></span><span class="line"><span class="cl">② 部分功能不兼容（某些 --privileged 场景、部分存储驱动）
+</span></span><span class="line"><span class="cl">③ 镜像层需要 chown，占用额外磁盘空间
+</span></span><span class="line"><span class="cl">④ 历史包袱：早期实现不成熟
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 开启（Docker）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># /etc/docker/daemon.json</span>
+</span></span><span class="line"><span class="cl"><span class="o">{</span>
+</span></span><span class="line"><span class="cl">  <span class="s2">&#34;userns-remap&#34;</span>: <span class="s2">&#34;default&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="o">}</span>
+</span></span><span class="line"><span class="cl">systemctl restart docker
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 之后宿主机上会有映射用户</span>
+</span></span><span class="line"><span class="cl">cat /etc/subuid
+</span></span><span class="line"><span class="cl"><span class="c1"># dockremap:100000:65536       &lt;- 容器 uid 0~65535 映射到宿主机 100000~165535</span>
+</span></span></code></pre></div><p><strong>替代方案（更常用）</strong>：不开 user namespace，但<strong>容器内不用 root 运行</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-yaml" data-lang="yaml"><span class="line"><span class="cl"><span class="c"># K8s 的标准安全配置（第 3 篇提过）</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="nt">securityContext</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="nt">runAsNonRoot</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="nt">runAsUser</span><span class="p">:</span><span class="w"> </span><span class="m">1000</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="nt">runAsGroup</span><span class="p">:</span><span class="w"> </span><span class="m">1000</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="nt">fsGroup</span><span class="p">:</span><span class="w"> </span><span class="m">1000</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="nt">allowPrivilegeEscalation</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="nt">readOnlyRootFilesystem</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="nt">capabilities</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">drop</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&#34;ALL&#34;</span><span class="p">]</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="nt">seccompProfile</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l">RuntimeDefault</span><span class="w">
+</span></span></span></code></pre></div><p><strong>规律：<code>runAsNonRoot: true</code> + <code>drop: ALL</code> 的收益/成本比远好于开 user namespace，应该作为默认配置。</strong></p>
+<h2 id="28-lsns查看系统上的所有-namespace">2.8 lsns：查看系统上的所有 namespace</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">lsns
+</span></span><span class="line"><span class="cl"><span class="c1">#         NS TYPE   NPROCS   PID USER   COMMAND</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 4026531835 cgroup    234     1 root   /sbin/init</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 4026531837 user      234     1 root   /sbin/init</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 4026532465 mnt         3 12345 root   nginx: master process</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 4026532470 net         3 12345 root   nginx: master process</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">lsns -t net              <span class="c1"># 只看网络 namespace</span>
+</span></span><span class="line"><span class="cl">lsns -p <span class="m">12345</span>            <span class="c1"># 看某个进程属于哪些 namespace</span>
+</span></span></code></pre></div><h1 id="3-cgroup限制能用多少">3. cgroup：限制「能用多少」</h1>
+<p><strong>cgroup（control group）负责资源限制、统计和隔离。</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">cgroup 提供三件事：
+</span></span><span class="line"><span class="cl">  ① 限制（limit）    —— 最多能用多少
+</span></span><span class="line"><span class="cl">  ② 统计（accounting）—— 实际用了多少
+</span></span><span class="line"><span class="cl">  ③ 控制（control）  —— 冻结、恢复、批量杀死
+</span></span></code></pre></div><h2 id="31-v1-与-v2-的关键差异">3.1 v1 与 v2 的关键差异</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 判断当前系统用的是哪个版本</span>
+</span></span><span class="line"><span class="cl">stat -fc %T /sys/fs/cgroup/
+</span></span><span class="line"><span class="cl"><span class="c1"># cgroup2fs       &lt;- v2（统一层级）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># tmpfs           &lt;- v1（多层级）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">mount <span class="p">|</span> grep cgroup
+</span></span></code></pre></div><table>
+<thead>
+<tr>
+<th>维度</th>
+<th>cgroup v1</th>
+<th>cgroup v2</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>层级结构</td>
+<td><strong>每个控制器一个独立层级</strong></td>
+<td><strong>单一统一层级</strong></td>
+</tr>
+<tr>
+<td>路径</td>
+<td><code>/sys/fs/cgroup/cpu/</code>、<code>/memory/</code> …</td>
+<td><code>/sys/fs/cgroup/</code> 下统一</td>
+</tr>
+<tr>
+<td>进程归属</td>
+<td>同一进程在不同控制器下可属于不同 cgroup</td>
+<td><strong>一个进程只属于一个 cgroup</strong></td>
+</tr>
+<tr>
+<td>内存+IO 协同</td>
+<td>不支持（writeback 无法正确归属）</td>
+<td><strong>支持</strong></td>
+</tr>
+<tr>
+<td>PSI 压力指标</td>
+<td>无</td>
+<td><strong>有（<code>cpu.pressure</code> 等）</strong></td>
+</tr>
+<tr>
+<td>默认于</td>
+<td>CentOS 7、Ubuntu 20.04 及更早</td>
+<td><strong>RHEL 9、Ubuntu 22.04+、Fedora 31+</strong></td>
+</tr>
+</tbody>
+</table>
+<p><strong>v1 的核心问题是「多层级导致语义混乱」</strong>：一个进程可以在 CPU 控制器里属于 group A、在内存控制器里属于 group B，这让「这个进程组用了多少资源」变得难以回答。更实际的问题是<strong>内存和 IO 无法协同</strong>——脏页回写发生在内核线程里，v1 无法把这部分 IO 归属到产生它的 cgroup，所以 buffered write 的限流在 v1 里基本无效。</p>
+<p><strong>v2 修正了这些</strong>，并新增了 <strong>PSI（Pressure Stall Information）</strong>——这是个非常有价值的指标：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">cat /sys/fs/cgroup/cpu.pressure
+</span></span><span class="line"><span class="cl"><span class="c1"># some avg10=12.34 avg60=8.21 avg300=3.45 total=892340123</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ^^^^ 至少【一个】任务因为等 CPU 而停滞的时间占比</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">cat /sys/fs/cgroup/memory.pressure
+</span></span><span class="line"><span class="cl"><span class="c1"># some avg10=0.00 avg60=0.00 avg300=0.00 total=0</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># full avg10=0.00 avg60=0.00 avg300=0.00 total=0</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ^^^^ 【所有】任务都在等的时间占比 —— full &gt; 0 就是严重问题</span>
+</span></span></code></pre></div><p><strong>PSI 比 load average 好在哪</strong>：load 只是「可运行+不可中断的进程数」，无法区分「有 8 个进程但 CPU 够用」和「有 8 个进程在互相抢」。PSI 直接量化了<strong>因资源不足而损失的时间</strong>，<code>some avg10=12.34</code> 意味着最近 10 秒有 12.34% 的时间至少有一个任务在等 CPU。这是判断「是否需要扩容」最准确的指标。</p>
+<h2 id="32-cgroup-v2-的目录结构">3.2 cgroup v2 的目录结构</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">ls /sys/fs/cgroup/
+</span></span><span class="line"><span class="cl"><span class="c1"># cgroup.controllers      当前可用的控制器</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># cgroup.procs            属于这个 cgroup 的进程 PID 列表</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># cgroup.subtree_control  【授权给子 cgroup 的控制器】</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># cpu.max                 CPU 限制</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># cpu.stat                CPU 统计</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># cpu.pressure            PSI</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># memory.max              内存上限</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># memory.current          当前使用</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># memory.stat             详细统计</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># memory.events           事件计数（含 oom_kill）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># io.max                  IO 限制</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># io.stat                 IO 统计</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># pids.max                进程数上限</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">cat /sys/fs/cgroup/cgroup.controllers
+</span></span><span class="line"><span class="cl"><span class="c1"># cpuset cpu io memory hugetlb pids rdma misc</span>
+</span></span></code></pre></div><h2 id="33-手动创建-cgroup-限制资源">3.3 手动创建 cgroup 限制资源</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ① 创建一个 cgroup（就是建目录，内核自动生成控制文件）</span>
+</span></span><span class="line"><span class="cl">sudo mkdir /sys/fs/cgroup/mytest
+</span></span><span class="line"><span class="cl">ls /sys/fs/cgroup/mytest/
+</span></span><span class="line"><span class="cl"><span class="c1"># 自动出现了一堆控制文件</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ② 【关键】父 cgroup 必须先授权控制器给子级</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;+cpu +memory +io +pids&#34;</span> <span class="p">|</span> sudo tee /sys/fs/cgroup/cgroup.subtree_control
+</span></span><span class="line"><span class="cl">cat /sys/fs/cgroup/mytest/cgroup.controllers
+</span></span><span class="line"><span class="cl"><span class="c1"># cpu io memory pids            &lt;- 现在子 cgroup 才能用这些控制器</span>
+</span></span></code></pre></div><p><strong><code>cgroup.subtree_control</code> 是 v2 新增的机制，也是最容易踩的坑</strong>：如果不在父 cgroup 里写入 <code>+cpu</code>，子 cgroup 里根本不会出现 <code>cpu.max</code> 文件，写限制会报 <code>No such file or directory</code>。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ③ CPU 限制：每 100ms 周期内最多用 50ms = 0.5 核</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;50000 100000&#34;</span> <span class="p">|</span> sudo tee /sys/fs/cgroup/mytest/cpu.max
+</span></span><span class="line"><span class="cl"><span class="c1">#      ^^^^^ quota  ^^^^^^ period（微秒）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 写 &#34;max 100000&#34; 表示不限制</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ④ 内存限制：512MB</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;536870912&#34;</span> <span class="p">|</span> sudo tee /sys/fs/cgroup/mytest/memory.max
+</span></span><span class="line"><span class="cl"><span class="c1"># 软限制（超过后积极回收但不 OOM）</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;402653184&#34;</span> <span class="p">|</span> sudo tee /sys/fs/cgroup/mytest/memory.high
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ⑤ 进程数限制（防 fork 炸弹）</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;100&#34;</span> <span class="p">|</span> sudo tee /sys/fs/cgroup/mytest/pids.max
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ⑥ IO 限制（需要设备号）</span>
+</span></span><span class="line"><span class="cl">lsblk -d -o NAME,MAJ:MIN
+</span></span><span class="line"><span class="cl"><span class="c1"># nvme0n1  259:0</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;259:0 rbps=10485760 wbps=10485760&#34;</span> <span class="p">|</span> sudo tee /sys/fs/cgroup/mytest/io.max
+</span></span><span class="line"><span class="cl"><span class="c1">#              ^^^^ 读 10MB/s      ^^^^ 写 10MB/s</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ⑦ 把进程加进去</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="nv">$$</span> <span class="p">|</span> sudo tee /sys/fs/cgroup/mytest/cgroup.procs
+</span></span><span class="line"><span class="cl"><span class="c1"># 之后这个 shell 及其所有子进程都受限制</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ⑧ 验证 CPU 限制</span>
+</span></span><span class="line"><span class="cl">yes &gt; /dev/null <span class="p">&amp;</span>
+</span></span><span class="line"><span class="cl">top -bn2 <span class="p">|</span> grep yes <span class="p">|</span> tail -1
+</span></span><span class="line"><span class="cl"><span class="c1"># 12345 root  20 0 ... 50.0  0.0  0:05.23 yes</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                       ^^^^ 正好 50%，限制生效</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">cat /sys/fs/cgroup/mytest/cpu.stat
+</span></span><span class="line"><span class="cl"><span class="c1"># usage_usec 5234012</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># nr_periods 234</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># nr_throttled 198          &lt;- 被限流了 198 次</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># throttled_usec 8923401    &lt;- 累计限流时间</span>
+</span></span></code></pre></div><p><strong><code>nr_throttled</code> 和 <code>throttled_usec</code> 是判断「是否被 CPU 限流」的唯一可靠指标</strong>（第 7 篇的实战案例就是靠这个定位的）。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ⑨ 验证内存限制</span>
+</span></span><span class="line"><span class="cl">cat /sys/fs/cgroup/mytest/memory.current
+</span></span><span class="line"><span class="cl">cat /sys/fs/cgroup/mytest/memory.events
+</span></span><span class="line"><span class="cl"><span class="c1"># low 0</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># high 234</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># max 12</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># oom 3</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># oom_kill 3                &lt;- 发生过 3 次 OOM kill</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ⑩ 清理</span>
+</span></span><span class="line"><span class="cl">sudo rmdir /sys/fs/cgroup/mytest       <span class="c1"># 必须先把进程移出去</span>
+</span></span></code></pre></div><h2 id="34-cpu-限制的两种方式">3.4 CPU 限制的两种方式</h2>
+<p><strong>这两种的语义完全不同，容易混淆：</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 方式一：cpu.max —— 硬性配额（hard limit）</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;200000 100000&#34;</span> &gt; cpu.max        <span class="c1"># 最多 2 核，【即使 CPU 空闲也不给更多】</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 对应 K8s 的 resources.limits.cpu: &#34;2&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 方式二：cpu.weight —— 相对权重（soft，仅在争抢时生效）</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;200&#34;</span> &gt; cpu.weight               <span class="c1"># 默认 100，范围 1~10000</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 对应 K8s 的 resources.requests.cpu</span>
+</span></span></code></pre></div><table>
+<thead>
+<tr>
+<th></th>
+<th><code>cpu.max</code>（quota）</th>
+<th><code>cpu.weight</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>语义</td>
+<td><strong>绝对上限</strong></td>
+<td>争抢时的<strong>相对份额</strong></td>
+</tr>
+<tr>
+<td>CPU 空闲时</td>
+<td>仍然限制</td>
+<td><strong>可以超用</strong></td>
+</tr>
+<tr>
+<td>会不会限流</td>
+<td><strong>会</strong>（<code>nr_throttled</code> 增长）</td>
+<td>不会</td>
+</tr>
+<tr>
+<td>K8s 对应</td>
+<td><code>limits.cpu</code></td>
+<td><code>requests.cpu</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>这解释了 K8s 里 requests 和 limits 的本质区别</strong>，也解释了一个常见的性能问题：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">设了 limits.cpu = 1 的容器，即使宿主机 CPU 空闲，也只能用 1 核
+</span></span><span class="line"><span class="cl">-&gt; 突发流量时无法借用空闲 CPU，延迟飙升（nr_throttled 暴涨）
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">设了 requests.cpu = 1 但不设 limits
+</span></span><span class="line"><span class="cl">-&gt; 平时保证 1 核，空闲时可以用更多，突发流量能扛住
+</span></span><span class="line"><span class="cl">-&gt; 但可能影响同机的其他容器
+</span></span></code></pre></div><p><strong>生产建议：延迟敏感的在线服务，<code>requests</code> 设准、<code>limits</code> 设宽松（或不设）</strong>——CPU 是可压缩资源，限流带来的延迟毛刺往往比「占用多一点 CPU」更有害。内存则相反，<strong><code>limits.memory</code> 必须设</strong>（内存是不可压缩资源，超了只能 OOM）。</p>
+<h2 id="35-用-systemd-管理-cgroup推荐">3.5 用 systemd 管理 cgroup（推荐）</h2>
+<p><strong>手动操作 <code>/sys/fs/cgroup</code> 只适合学习和临时验证</strong>——重启就丢，而且容易和 systemd 冲突（systemd 是 cgroup 的默认管理者）。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 临时启动一个受限的进程</span>
+</span></span><span class="line"><span class="cl">systemd-run --scope -p <span class="nv">CPUQuota</span><span class="o">=</span>50% -p <span class="nv">MemoryMax</span><span class="o">=</span>512M -p <span class="nv">IOReadBandwidthMax</span><span class="o">=</span><span class="s2">&#34;/dev/nvme0n1 10M&#34;</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>    stress-ng --cpu <span class="m">4</span> --timeout <span class="m">30</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 给已有服务加限制（第 14 篇的 drop-in）</span>
+</span></span><span class="line"><span class="cl">systemctl set-property myapp.service <span class="nv">CPUQuota</span><span class="o">=</span>200% <span class="nv">MemoryMax</span><span class="o">=</span>4G
+</span></span><span class="line"><span class="cl"><span class="c1"># 立即生效并持久化到 /etc/systemd/system.control/</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="c1"># unit 文件里配置（推荐）</span>
+</span></span><span class="line"><span class="cl"><span class="k">[Service]</span>
+</span></span><span class="line"><span class="cl"><span class="na">CPUQuota</span><span class="o">=</span><span class="s">400%                 # = 4 核</span>
+</span></span><span class="line"><span class="cl"><span class="na">CPUWeight</span><span class="o">=</span><span class="s">200                 # 相对权重</span>
+</span></span><span class="line"><span class="cl"><span class="na">MemoryMax</span><span class="o">=</span><span class="s">4G                  # 硬限制</span>
+</span></span><span class="line"><span class="cl"><span class="na">MemoryHigh</span><span class="o">=</span><span class="s">3G                 # 软限制，超过后积极回收</span>
+</span></span><span class="line"><span class="cl"><span class="na">IOWeight</span><span class="o">=</span><span class="s">100</span>
+</span></span><span class="line"><span class="cl"><span class="na">IOReadBandwidthMax</span><span class="o">=</span><span class="s">/dev/nvme0n1 100M</span>
+</span></span><span class="line"><span class="cl"><span class="na">TasksMax</span><span class="o">=</span><span class="s">4096                 # 进程/线程数上限</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 查看服务的实际资源占用（按 cgroup 聚合）</span>
+</span></span><span class="line"><span class="cl">systemd-cgtop
+</span></span><span class="line"><span class="cl"><span class="c1"># Control Group          Tasks   %CPU   Memory  Input/s Output/s</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># /                        423   28.3     8.2G        -        -</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># system.slice             198   22.1     6.1G     1.2M    45.3M</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># system.slice/mysql       124   18.4     4.2G   890.0K    42.1M</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">systemd-cgls                          <span class="c1"># cgroup 树</span>
+</span></span><span class="line"><span class="cl">systemctl show myapp -p CPUQuotaPerSecUSec,MemoryMax
+</span></span></code></pre></div><h2 id="36-slice资源分组">3.6 slice：资源分组</h2>
+<p>systemd 用 slice 组织 cgroup 层级，可以给<strong>一整类服务</strong>设限制：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">-.slice                      根
+</span></span><span class="line"><span class="cl">+-- system.slice             所有系统服务
+</span></span><span class="line"><span class="cl">|   +-- mysql.service
+</span></span><span class="line"><span class="cl">|   +-- nginx.service
+</span></span><span class="line"><span class="cl">+-- user.slice               所有用户会话
+</span></span><span class="line"><span class="cl">|   +-- user-1000.slice
+</span></span><span class="line"><span class="cl">+-- machine.slice            虚拟机和容器
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 创建自定义 slice，把批处理任务都放进去统一限制</span>
+</span></span><span class="line"><span class="cl">cat &gt; /etc/systemd/system/batch.slice <span class="s">&lt;&lt;&#39;EOF&#39;
+</span></span></span><span class="line"><span class="cl"><span class="s">[Unit]
+</span></span></span><span class="line"><span class="cl"><span class="s">Description=Batch jobs slice
+</span></span></span><span class="line"><span class="cl"><span class="s">
+</span></span></span><span class="line"><span class="cl"><span class="s">[Slice]
+</span></span></span><span class="line"><span class="cl"><span class="s">CPUQuota=200%
+</span></span></span><span class="line"><span class="cl"><span class="s">CPUWeight=50                  # 权重低，争抢时让给在线服务
+</span></span></span><span class="line"><span class="cl"><span class="s">MemoryMax=8G
+</span></span></span><span class="line"><span class="cl"><span class="s">IOWeight=10                   # IO 优先级低
+</span></span></span><span class="line"><span class="cl"><span class="s">EOF</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">systemctl daemon-reload
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="c1"># 让服务归属这个 slice</span>
+</span></span><span class="line"><span class="cl"><span class="k">[Service]</span>
+</span></span><span class="line"><span class="cl"><span class="na">Slice</span><span class="o">=</span><span class="s">batch.slice</span>
+</span></span><span class="line"><span class="cl"><span class="na">Nice</span><span class="o">=</span><span class="s">19</span>
+</span></span><span class="line"><span class="cl"><span class="na">IOSchedulingClass</span><span class="o">=</span><span class="s">idle</span>
+</span></span></code></pre></div><p><strong>这是第 18 篇实战案例里「在线服务与批处理隔离」的标准做法</strong>——所有批处理任务共享一份资源配额，无论跑多少个都不会挤占在线服务。</p>
+<h1 id="4-手写一个迷你容器">4. 手写一个迷你容器</h1>
+<p>把 namespace + cgroup + 文件系统隔离串起来，用纯 shell 实现一个「容器」。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="cp">#!/usr/bin/env bash
+</span></span></span><span class="line"><span class="cl"><span class="cp"></span><span class="c1"># minicontainer.sh —— 用 unshare + cgroup 实现的极简容器</span>
+</span></span><span class="line"><span class="cl"><span class="nb">set</span> -euo pipefail
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="nv">ROOTFS</span><span class="o">=</span><span class="s2">&#34;</span><span class="si">${</span><span class="nv">ROOTFS</span><span class="k">:-</span><span class="p">/tmp/minicontainer-rootfs</span><span class="si">}</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="nv">CG</span><span class="o">=</span><span class="s2">&#34;/sys/fs/cgroup/minicontainer&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="nv">NAME</span><span class="o">=</span><span class="s2">&#34;mini-</span><span class="nv">$$</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ---------- ① 准备根文件系统 ----------</span>
+</span></span><span class="line"><span class="cl">prepare_rootfs<span class="o">()</span> <span class="o">{</span>
+</span></span><span class="line"><span class="cl">    <span class="o">[[</span> -d <span class="s2">&#34;</span><span class="nv">$ROOTFS</span><span class="s2">/bin&#34;</span> <span class="o">]]</span> <span class="o">&amp;&amp;</span> <span class="k">return</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">echo</span> <span class="s2">&#34;准备 rootfs...&#34;</span>
+</span></span><span class="line"><span class="cl">    mkdir -p <span class="s2">&#34;</span><span class="nv">$ROOTFS</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="c1"># 用 docker 导出一个现成的最小 rootfs</span>
+</span></span><span class="line"><span class="cl">    docker create --name <span class="s2">&#34;</span><span class="nv">$NAME</span><span class="s2">-export&#34;</span> alpine:latest &gt;/dev/null
+</span></span><span class="line"><span class="cl">    docker <span class="nb">export</span> <span class="s2">&#34;</span><span class="nv">$NAME</span><span class="s2">-export&#34;</span> <span class="p">|</span> tar -x -C <span class="s2">&#34;</span><span class="nv">$ROOTFS</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl">    docker rm <span class="s2">&#34;</span><span class="nv">$NAME</span><span class="s2">-export&#34;</span> &gt;/dev/null
+</span></span><span class="line"><span class="cl"><span class="o">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ---------- ② 创建 cgroup 限制 ----------</span>
+</span></span><span class="line"><span class="cl">setup_cgroup<span class="o">()</span> <span class="o">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">echo</span> <span class="s2">&#34;+cpu +memory +pids&#34;</span> &gt; /sys/fs/cgroup/cgroup.subtree_control 2&gt;/dev/null <span class="o">||</span> <span class="nb">true</span>
+</span></span><span class="line"><span class="cl">    mkdir -p <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">echo</span> <span class="s2">&#34;50000 100000&#34;</span> &gt; <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/cpu.max&#34;</span>       <span class="c1"># 0.5 核</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">echo</span> <span class="s2">&#34;268435456&#34;</span>    &gt; <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/memory.max&#34;</span>    <span class="c1"># 256MB</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">echo</span> <span class="s2">&#34;64&#34;</span>           &gt; <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/pids.max&#34;</span>      <span class="c1"># 最多 64 个进程</span>
+</span></span><span class="line"><span class="cl"><span class="o">}</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ---------- ③ 在容器里执行的初始化 ----------</span>
+</span></span><span class="line"><span class="cl">container_init<span class="o">()</span> <span class="o">{</span>
+</span></span><span class="line"><span class="cl">    <span class="c1"># 把自己加进 cgroup（此时已经在新 namespace 里）</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">echo</span> <span class="nv">$$</span> &gt; <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/cgroup.procs&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    hostname minicontainer                   <span class="c1"># UTS namespace 生效</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1"># 挂载必要的伪文件系统（MNT namespace 生效）</span>
+</span></span><span class="line"><span class="cl">    mount -t proc  proc  <span class="s2">&#34;</span><span class="nv">$ROOTFS</span><span class="s2">/proc&#34;</span>
+</span></span><span class="line"><span class="cl">    mount -t sysfs sys   <span class="s2">&#34;</span><span class="nv">$ROOTFS</span><span class="s2">/sys&#34;</span>  2&gt;/dev/null <span class="o">||</span> <span class="nb">true</span>
+</span></span><span class="line"><span class="cl">    mount -t tmpfs tmpfs <span class="s2">&#34;</span><span class="nv">$ROOTFS</span><span class="s2">/tmp&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1"># 切换根目录并执行 shell</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">exec</span> chroot <span class="s2">&#34;</span><span class="nv">$ROOTFS</span><span class="s2">&#34;</span> /bin/sh
+</span></span><span class="line"><span class="cl"><span class="o">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ---------- 主流程 ----------</span>
+</span></span><span class="line"><span class="cl">main<span class="o">()</span> <span class="o">{</span>
+</span></span><span class="line"><span class="cl">    <span class="o">[[</span> <span class="nv">$EUID</span> -eq <span class="m">0</span> <span class="o">]]</span> <span class="o">||</span> <span class="o">{</span> <span class="nb">echo</span> <span class="s2">&#34;需要 root&#34;</span><span class="p">;</span> <span class="nb">exit</span> 1<span class="p">;</span> <span class="o">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    prepare_rootfs
+</span></span><span class="line"><span class="cl">    setup_cgroup
+</span></span><span class="line"><span class="cl">    <span class="nb">export</span> ROOTFS CG
+</span></span><span class="line"><span class="cl">    <span class="nb">export</span> -f container_init
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="nb">echo</span> <span class="s2">&#34;启动容器（CPU 0.5 核 / 内存 256MB / 最多 64 进程）&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="c1"># unshare 创建 5 种 namespace，然后执行初始化</span>
+</span></span><span class="line"><span class="cl">    unshare --pid --mount --uts --ipc --net --fork <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>        bash -c <span class="s1">&#39;container_init&#39;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1"># 清理</span>
+</span></span><span class="line"><span class="cl">    umount <span class="s2">&#34;</span><span class="nv">$ROOTFS</span><span class="s2">/proc&#34;</span> <span class="s2">&#34;</span><span class="nv">$ROOTFS</span><span class="s2">/tmp&#34;</span> 2&gt;/dev/null <span class="o">||</span> <span class="nb">true</span>
+</span></span><span class="line"><span class="cl">    rmdir <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">&#34;</span> 2&gt;/dev/null <span class="o">||</span> <span class="nb">true</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">echo</span> <span class="s2">&#34;容器已退出&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="o">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">main <span class="s2">&#34;</span><span class="nv">$@</span><span class="s2">&#34;</span>
+</span></span></code></pre></div><p><strong>运行验证</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">sudo <span class="nv">ROOTFS</span><span class="o">=</span>/tmp/mini bash minicontainer.sh
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 容器里的验证</span>
+</span></span><span class="line"><span class="cl">/ <span class="c1"># hostname</span>
+</span></span><span class="line"><span class="cl">minicontainer                    &lt;- UTS 隔离 ✅
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">/ <span class="c1"># ps -ef</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># PID   USER  COMMAND</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   1   root  /bin/sh              &lt;- PID 隔离，自己是 PID 1 ✅</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   8   root  ps -ef</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">/ <span class="c1"># ip addr</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 1: lo: &lt;LOOPBACK&gt; mtu 65536 state DOWN     &lt;- NET 隔离，只有 lo ✅</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">/ <span class="c1"># cat /proc/self/cgroup</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 0::/                             &lt;- cgroup 视图</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">/ <span class="c1"># ls /</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># bin dev etc home lib proc root sys tmp usr var    &lt;- 是 alpine 的 rootfs ✅</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 验证 CPU 限制</span>
+</span></span><span class="line"><span class="cl">/ <span class="c1"># yes &gt; /dev/null &amp;</span>
+</span></span><span class="line"><span class="cl">/ <span class="c1"># yes &gt; /dev/null &amp;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 宿主机上看</span>
+</span></span><span class="line"><span class="cl">top -bn2 <span class="p">|</span> grep yes <span class="p">|</span> tail -2
+</span></span><span class="line"><span class="cl"><span class="c1"># 两个 yes 进程加起来只用 50% CPU        ✅</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 验证内存限制</span>
+</span></span><span class="line"><span class="cl">/ <span class="c1"># dd if=/dev/zero of=/tmp/big bs=1M count=300</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Killed                            &lt;- 超过 256MB 被 OOM killed ✅</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 宿主机上确认</span>
+</span></span><span class="line"><span class="cl">cat /sys/fs/cgroup/minicontainer/memory.events
+</span></span><span class="line"><span class="cl"><span class="c1"># oom_kill 1</span>
+</span></span></code></pre></div><p><strong>这个脚本缺少的（也就是真实容器运行时额外做的事）</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>缺少的能力</th>
+<th>真实容器怎么做</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>网络连通（现在只有 lo）</td>
+<td>veth pair + 网桥 + iptables NAT（§2.4）</td>
+</tr>
+<tr>
+<td>用 <code>pivot_root</code> 而非 <code>chroot</code></td>
+<td>防止 chroot 逃逸</td>
+</tr>
+<tr>
+<td>镜像分层（OverlayFS）</td>
+<td>联合文件系统，实现层复用</td>
+</tr>
+<tr>
+<td>capabilities 裁剪</td>
+<td><code>capset()</code> 丢弃不需要的特权</td>
+</tr>
+<tr>
+<td>seccomp 过滤系统调用</td>
+<td>只允许必要的系统调用</td>
+</tr>
+<tr>
+<td>AppArmor / SELinux</td>
+<td>强制访问控制</td>
+</tr>
+<tr>
+<td>user namespace</td>
+<td>uid 映射（§2.7）</td>
+</tr>
+<tr>
+<td>init 进程职责</td>
+<td>tini/dumb-init 收养孤儿并 wait</td>
+</tr>
+</tbody>
+</table>
+<p>**但核心机制就是上面这些——namespace 隔离视图，cgroup 限制资源，chroot/pivot_root 换根。**理解到这一层，容器就不再是黑盒了。</p>
+<h1 id="5-容器里的指标为什么失真">5. 容器里的指标为什么失真</h1>
+<p><strong>这是本篇最实用的一节</strong>，解释了容器化之后一大类「监控数据不对」的问题。</p>
+<h2 id="51-根本原因">5.1 根本原因</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">/proc 和 /sys 的绝大部分内容【没有被 namespace 隔离】
+</span></span><span class="line"><span class="cl">                    v
+</span></span><span class="line"><span class="cl">容器里读 /proc/cpuinfo、/proc/meminfo、/proc/loadavg
+</span></span><span class="line"><span class="cl">                    v
+</span></span><span class="line"><span class="cl">拿到的是【宿主机】的数据
+</span></span></code></pre></div><h2 id="52-具体的失真项">5.2 具体的失真项</h2>
+<table>
+<thead>
+<tr>
+<th>容器里读</th>
+<th>实际拿到</th>
+<th>后果</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/proc/cpuinfo</code>、<code>nproc</code></td>
+<td><strong>宿主机核数</strong></td>
+<td>JVM/Go 线程池开太大</td>
+</tr>
+<tr>
+<td><code>/proc/meminfo</code>、<code>free</code></td>
+<td><strong>宿主机内存</strong></td>
+<td>JVM 堆按宿主机内存算，必然 OOM</td>
+</tr>
+<tr>
+<td><code>/proc/loadavg</code>、<code>uptime</code></td>
+<td><strong>宿主机负载</strong></td>
+<td>监控告警完全失真</td>
+</tr>
+<tr>
+<td><code>/proc/stat</code></td>
+<td>宿主机 CPU 时间</td>
+<td><code>top</code> 显示的使用率不是容器的</td>
+</tr>
+<tr>
+<td><code>/proc/diskstats</code></td>
+<td>宿主机磁盘</td>
+<td><code>iostat</code> 数据不属于本容器</td>
+</tr>
+<tr>
+<td><code>/proc/net/*</code></td>
+<td><strong>容器自己的</strong>（NET namespace 隔离了）</td>
+<td>✅ 这个是准的</td>
+</tr>
+<tr>
+<td><code>/proc/&lt;pid&gt;/*</code></td>
+<td><strong>容器自己的</strong>（PID namespace 隔离了）</td>
+<td>✅ 准的</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 实测</span>
+</span></span><span class="line"><span class="cl">docker run --rm --cpus<span class="o">=</span><span class="m">1</span> --memory<span class="o">=</span>512m alpine sh -c <span class="s1">&#39;
+</span></span></span><span class="line"><span class="cl"><span class="s1">  echo &#34;nproc:      $(nproc)&#34;
+</span></span></span><span class="line"><span class="cl"><span class="s1">  echo &#34;MemTotal:   $(grep MemTotal /proc/meminfo)&#34;
+</span></span></span><span class="line"><span class="cl"><span class="s1">  echo &#34;loadavg:    $(cat /proc/loadavg)&#34;
+</span></span></span><span class="line"><span class="cl"><span class="s1">&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># nproc:      16                        &lt;- 宿主机 16 核，但只给了 1 核！</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># MemTotal:   MemTotal: 16283492 kB     &lt;- 宿主机 16GB，但只给了 512MB！</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># loadavg:    12.34 8.21 4.11 ...       &lt;- 宿主机负载</span>
+</span></span></code></pre></div><h2 id="53-正确的做法读-cgroup">5.3 正确的做法：读 cgroup</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ✅ CPU 限额（cgroup v2）</span>
+</span></span><span class="line"><span class="cl">cat /sys/fs/cgroup/cpu.max
+</span></span><span class="line"><span class="cl"><span class="c1"># 100000 100000        -&gt; quota/period = 1 核</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 内存限额</span>
+</span></span><span class="line"><span class="cl">cat /sys/fs/cgroup/memory.max
+</span></span><span class="line"><span class="cl"><span class="c1"># 536870912            -&gt; 512MB</span>
+</span></span><span class="line"><span class="cl">cat /sys/fs/cgroup/memory.current
+</span></span><span class="line"><span class="cl"><span class="c1"># 234881024            -&gt; 当前用了 224MB</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ CPU 使用与限流</span>
+</span></span><span class="line"><span class="cl">cat /sys/fs/cgroup/cpu.stat
+</span></span><span class="line"><span class="cl"><span class="c1"># usage_usec 8923401234</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># nr_throttled 198</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># throttled_usec 892340</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ PSI —— 比 loadavg 有意义得多</span>
+</span></span><span class="line"><span class="cl">cat /sys/fs/cgroup/cpu.pressure
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># cgroup v1 的路径</span>
+</span></span><span class="line"><span class="cl">cat /sys/fs/cgroup/cpu/cpu.cfs_quota_us
+</span></span><span class="line"><span class="cl">cat /sys/fs/cgroup/cpu/cpu.cfs_period_us
+</span></span><span class="line"><span class="cl">cat /sys/fs/cgroup/memory/memory.limit_in_bytes
+</span></span></code></pre></div><h2 id="54-语言运行时的适配">5.4 语言运行时的适配</h2>
+<p><strong>这是必须做的配置，不做就会有性能问题或 OOM：</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># Java：JDK 10+ 默认开启，JDK 8u191+ 需要显式加</span>
+</span></span><span class="line"><span class="cl">java -XX:+UseContainerSupport -XX:MaxRAMPercentage<span class="o">=</span><span class="m">70</span> -jar app.jar
+</span></span><span class="line"><span class="cl"><span class="c1">#      ^^^^^^^^^^^^^^^^^^^^^^ 让 JVM 读 cgroup 而不是 /proc/meminfo</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                             ^^^^^^^^^^^^^^^^^^^ 堆占容器限额的 70%，留 30% 给堆外</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// Go：必须引入 automaxprocs，否则 GOMAXPROCS = 宿主机核数
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kn">import</span> <span class="nx">_</span> <span class="s">&#34;go.uber.org/automaxprocs&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// 以及设置内存上限（Go 1.19+）
+</span></span></span><span class="line"><span class="cl"><span class="c1">// GOMEMLIMIT=450MiB   （容器限 512MB，留余量）
+</span></span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="c1"># Python：multiprocessing 的默认进程数也是错的</span>
+</span></span><span class="line"><span class="cl"><span class="kn">import</span> <span class="nn">os</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ❌ os.cpu_count() 返回宿主机核数</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 读 cgroup</span>
+</span></span><span class="line"><span class="cl"><span class="k">def</span> <span class="nf">container_cpus</span><span class="p">():</span>
+</span></span><span class="line"><span class="cl">    <span class="k">try</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s1">&#39;/sys/fs/cgroup/cpu.max&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">            <span class="n">quota</span><span class="p">,</span> <span class="n">period</span> <span class="o">=</span> <span class="n">f</span><span class="o">.</span><span class="n">read</span><span class="p">()</span><span class="o">.</span><span class="n">split</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">            <span class="k">if</span> <span class="n">quota</span> <span class="o">!=</span> <span class="s1">&#39;max&#39;</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">                <span class="k">return</span> <span class="nb">max</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="nb">int</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">quota</span><span class="p">)</span> <span class="o">/</span> <span class="nb">int</span><span class="p">(</span><span class="n">period</span><span class="p">)))</span>
+</span></span><span class="line"><span class="cl">    <span class="k">except</span> <span class="ne">FileNotFoundError</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">        <span class="k">pass</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="n">os</span><span class="o">.</span><span class="n">cpu_count</span><span class="p">()</span>
+</span></span></code></pre></div><p><strong>Go 不加 <code>automaxprocs</code> 的后果</strong>（本篇 §6 的实战案例）：16 核宿主机上 <code>GOMAXPROCS=16</code>，但 cgroup 只给 2 核——16 个 P 抢 2 核的配额，产生大量非自愿上下文切换和 CPU 限流，延迟暴涨而 CPU 使用率看起来不高。</p>
+<h2 id="55-让容器里的工具显示正确数据">5.5 让容器里的工具显示正确数据</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># lxcfs：把 cgroup 数据伪装成 /proc 的内容</span>
+</span></span><span class="line"><span class="cl">apt install lxcfs
+</span></span><span class="line"><span class="cl">systemctl <span class="nb">enable</span> --now lxcfs
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">docker run -it <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  -v /var/lib/lxcfs/proc/cpuinfo:/proc/cpuinfo:ro <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  -v /var/lib/lxcfs/proc/meminfo:/proc/meminfo:ro <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  -v /var/lib/lxcfs/proc/stat:/proc/stat:ro <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  -v /var/lib/lxcfs/proc/diskstats:/proc/diskstats:ro <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --cpus<span class="o">=</span><span class="m">1</span> --memory<span class="o">=</span>512m alpine sh -c <span class="s1">&#39;nproc; grep MemTotal /proc/meminfo&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 1                              ✅ 现在对了</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># MemTotal: 524288 kB            ✅</span>
+</span></span></code></pre></div><p><strong>lxcfs 的价值</strong>：让容器里的 <code>free</code>、<code>top</code>、<code>nproc</code> 以及<strong>不感知 cgroup 的老应用</strong>都能拿到正确数据。代价是需要在宿主机部署 lxcfs 并挂载。K8s 里可以用 webhook 自动注入这些挂载。</p>
+<p><strong>规律：容器里的监控数据，CPU/内存/负载一律读 cgroup，网络和进程信息可以读 /proc。</strong></p>
+<h1 id="6-实战容器-cpu-限流导致的延迟毛刺">6. 实战：容器 CPU 限流导致的延迟毛刺</h1>
+<p><strong>现象</strong>：K8s 上的 Go 服务，P99 延迟每隔几秒就出现一次 200ms+ 的尖刺，但 CPU 使用率监控显示只有 40%。</p>
+<p><strong>① 确认是否被限流</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">kubectl <span class="nb">exec</span> -it mypod -- cat /sys/fs/cgroup/cpu.stat
+</span></span><span class="line"><span class="cl"><span class="c1"># usage_usec 892340123</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># user_usec 723401234</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># system_usec 168938889</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># nr_periods 89234</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># nr_throttled 42318         &lt;- 47% 的周期被限流了！</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># throttled_usec 8923401234  &lt;- 累计限流 8923 秒</span>
+</span></span></code></pre></div><p><strong><code>nr_throttled / nr_periods = 47%</code></strong> —— 接近一半的调度周期里进程被强制暂停。这与「CPU 使用率 40%」并不矛盾：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">容器 limits.cpu = 2（即每 100ms 周期给 200ms 配额）
+</span></span><span class="line"><span class="cl">应用有 16 个 P（GOMAXPROCS 取了宿主机核数）
+</span></span><span class="line"><span class="cl">        v
+</span></span><span class="line"><span class="cl">16 个线程并行跑，在【前 12.5ms】就把 200ms 配额用完了
+</span></span><span class="line"><span class="cl">        v
+</span></span><span class="line"><span class="cl">剩下的 87.5ms 全部被强制暂停（throttled）
+</span></span><span class="line"><span class="cl">        v
+</span></span><span class="line"><span class="cl">平均下来 CPU 使用率 = 200ms/100ms/16核 ≈ 12.5%... 监控看着很低
+</span></span><span class="line"><span class="cl">但每个周期都有 87.5ms 的「完全停止服务」-&gt; P99 尖刺
+</span></span></code></pre></div><p><strong>② 确认 GOMAXPROCS</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">kubectl <span class="nb">exec</span> -it mypod -- sh -c <span class="s1">&#39;cat /proc/1/environ | tr &#34;\0&#34; &#34;\n&#34; | grep -i gomaxprocs&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># （空）                       &lt;- 没设置</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">kubectl <span class="nb">exec</span> -it mypod -- nproc
+</span></span><span class="line"><span class="cl"><span class="c1"># 16                           &lt;- 读到的是宿主机核数</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">kubectl get pod mypod -o <span class="nv">jsonpath</span><span class="o">=</span><span class="s1">&#39;{.spec.containers[0].resources}&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># {&#34;limits&#34;:{&#34;cpu&#34;:&#34;2&#34;,&#34;memory&#34;:&#34;2Gi&#34;},&#34;requests&#34;:{&#34;cpu&#34;:&#34;1&#34;,&#34;memory&#34;:&#34;1Gi&#34;}}</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                    ^^^ 只给 2 核，但 GOMAXPROCS=16</span>
+</span></span></code></pre></div><p><strong>根因确认：<code>GOMAXPROCS</code> 与 cgroup 配额严重不匹配。</strong></p>
+<p><strong>③ 修复：三个方案</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// ✅ 方案一（推荐）：引入 automaxprocs，自动读 cgroup 设置 GOMAXPROCS
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kn">import</span> <span class="nx">_</span> <span class="s">&#34;go.uber.org/automaxprocs&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="c1">// 启动时会打印：maxprocs: Updating GOMAXPROCS=2: determined from CPU quota
+</span></span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-yaml" data-lang="yaml"><span class="line"><span class="cl"><span class="c"># ✅ 方案二：用 Downward API 显式注入</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="nt">env</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span>- <span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l">GOMAXPROCS</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">valueFrom</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">      </span><span class="nt">resourceFieldRef</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">        </span><span class="nt">resource</span><span class="p">:</span><span class="w"> </span><span class="l">limits.cpu       </span><span class="w"> </span><span class="c"># 自动取 limits.cpu 的值</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">        </span><span class="nt">divisor</span><span class="p">:</span><span class="w"> </span><span class="s2">&#34;1&#34;</span><span class="w">
+</span></span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-yaml" data-lang="yaml"><span class="line"><span class="cl"><span class="c"># ✅ 方案三：放宽或去掉 CPU limits（延迟敏感服务推荐）</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="nt">resources</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="nt">requests</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">cpu</span><span class="p">:</span><span class="w"> </span><span class="s2">&#34;2&#34;</span><span class="w">          </span><span class="c"># 保证 2 核</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">memory</span><span class="p">:</span><span class="w"> </span><span class="l">1Gi</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="nt">limits</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="c"># 不设 cpu limits，允许突发时借用空闲 CPU</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">memory</span><span class="p">:</span><span class="w"> </span><span class="l">2Gi      </span><span class="w"> </span><span class="c"># 内存必须设！</span><span class="w">
+</span></span></span></code></pre></div><p><strong>方案三需要解释</strong>：CPU 是<strong>可压缩资源</strong>（不够就变慢），内存是<strong>不可压缩资源</strong>（不够只能 OOM）。所以：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">延迟敏感的在线服务：
+</span></span><span class="line"><span class="cl">  requests.cpu  设准（保证基础份额，影响调度）
+</span></span><span class="line"><span class="cl">  limits.cpu    设宽松或不设（允许突发，避免限流毛刺）
+</span></span><span class="line"><span class="cl">  limits.memory 必须设（防止一个容器吃掉整个节点）
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">批处理 / 离线任务：
+</span></span><span class="line"><span class="cl">  limits.cpu    要设（防止挤占在线服务）
+</span></span><span class="line"><span class="cl">  配合低 CPUWeight 和 IOWeight
+</span></span></code></pre></div><p><strong>④ 验证</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">kubectl rollout restart deploy/myapp
+</span></span><span class="line"><span class="cl">sleep <span class="m">60</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">kubectl <span class="nb">exec</span> -it mypod -- sh -c <span class="s1">&#39;cat /proc/1/environ | tr &#34;\0&#34; &#34;\n&#34; | grep -i gomaxprocs&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># GOMAXPROCS=2                 ✅</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">kubectl <span class="nb">exec</span> -it mypod -- cat /sys/fs/cgroup/cpu.stat <span class="p">|</span> grep -E <span class="s2">&#34;nr_periods|nr_throttled&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># nr_periods 3421</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># nr_throttled 12              &lt;- 从 47% 降到 0.35%  ✅</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># PSI 也确认压力下降</span>
+</span></span><span class="line"><span class="cl">kubectl <span class="nb">exec</span> -it mypod -- cat /sys/fs/cgroup/cpu.pressure
+</span></span><span class="line"><span class="cl"><span class="c1"># some avg10=0.42 avg60=0.38 avg300=0.41</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#           ^^^^ 之前是 45+</span>
+</span></span></code></pre></div><p><strong>结果</strong>：P99 从 240ms 降到 45ms，尖刺消失，CPU 使用率反而从 40% 降到 28%（少了限流带来的无效切换）。</p>
+<p><strong>规律：容器里 CPU 使用率不高但有周期性延迟尖刺 → 一定要查 <code>cpu.stat</code> 的 <code>nr_throttled</code>。根因通常是运行时的并发度（GOMAXPROCS / JVM 线程池 / worker 数）没有按 cgroup 配额设置。</strong></p>
+<h1 id="7-一些量级感">7. 一些量级感</h1>
+<table>
+<thead>
+<tr>
+<th>项</th>
+<th>量级</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>容器启动时间</td>
+<td>50 ~ 500 ms</td>
+</tr>
+<tr>
+<td>虚拟机启动时间</td>
+<td>5 ~ 60 s</td>
+</tr>
+<tr>
+<td>容器内存开销（相比裸进程）</td>
+<td>几乎为 0</td>
+</tr>
+<tr>
+<td>虚拟机内存开销</td>
+<td>200 MB ~ 1 GB</td>
+</tr>
+<tr>
+<td>单机容器密度</td>
+<td>数百 ~ 数千</td>
+</tr>
+<tr>
+<td>namespace 创建开销</td>
+<td>微秒级</td>
+</tr>
+<tr>
+<td>cgroup 创建开销</td>
+<td>微秒级</td>
+</tr>
+<tr>
+<td>CFS 默认调度周期（<code>cpu.max</code> 的 period）</td>
+<td>100 ms</td>
+</tr>
+<tr>
+<td>健康的 <code>nr_throttled / nr_periods</code></td>
+<td><strong>&lt; 1%</strong></td>
+</tr>
+</tbody>
+</table>
+<h1 id="8-面试题">8. 面试题</h1>
+<p><strong>Q：容器和虚拟机的本质区别是什么？</strong></p>
+<p>虚拟机通过 Hypervisor 模拟硬件、<strong>运行完整的独立内核</strong>，隔离彻底但开销大（几百 MB 内存、秒级启动）。容器<strong>共享宿主机内核</strong>，本质上就是一个被 namespace 限制了视图、被 cgroup 限制了资源、被 chroot/pivot_root 换了根目录的<strong>普通 Linux 进程</strong>——在宿主机上 <code>ps</code> 能直接看到它。这带来的优势是启动毫秒级、内存开销近零、单机密度可达数千；局限是<strong>无法运行不同的内核</strong>（Linux 上跑不了 Windows 容器）、<strong>内核漏洞可能导致逃逸</strong>因此隔离性弱于虚拟机、以及大部分内核参数是全局的容器改不了。</p>
+<p><strong>Q：namespace 有哪几种？分别隔离什么？</strong></p>
+<p>八种：<strong>PID</strong>（进程 ID，容器里的主进程成为 PID 1）、<strong>NET</strong>（网络栈：网卡、IP、路由、iptables、端口空间）、<strong>MNT</strong>（挂载点）、<strong>UTS</strong>（hostname）、<strong>IPC</strong>（System V IPC 和 POSIX 消息队列）、<strong>USER</strong>（UID/GID 映射，<strong>Docker 默认不开</strong>）、<strong>CGROUP</strong>（cgroup 根目录视图）、<strong>TIME</strong>（时间偏移，5.6+）。判断两个进程是否在同一个 namespace，看 <code>/proc/&lt;pid&gt;/ns/xxx</code> 软链接指向的 <strong>inode 号</strong>是否相同。三个相关系统调用：<code>clone()</code> 创建进程时进入新 namespace、<code>unshare()</code> 让当前进程脱离原 namespace、<code>setns()</code> 加入已存在的 namespace——对应命令行工具 <code>unshare</code> 和 <code>nsenter</code>。</p>
+<p><strong>Q：容器镜像里没有 <code>bash</code>/<code>curl</code>/<code>tcpdump</code>，怎么排查它的网络问题？</strong></p>
+<p>用 <strong><code>nsenter</code></strong> 从宿主机进入容器的 namespace，但<strong>只进网络 namespace</strong>，这样文件系统还是宿主机的、宿主机的所有工具都能用：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="nv">PID</span><span class="o">=</span><span class="k">$(</span>docker inspect -f <span class="s1">&#39;{{.State.Pid}}&#39;</span> mycontainer<span class="k">)</span>
+</span></span><span class="line"><span class="cl">nsenter -t <span class="nv">$PID</span> -n ss -tlnp          <span class="c1"># 用宿主机的 ss 看容器的端口</span>
+</span></span><span class="line"><span class="cl">nsenter -t <span class="nv">$PID</span> -n tcpdump -i eth0   <span class="c1"># 在容器网络里抓包</span>
+</span></span><span class="line"><span class="cl">nsenter -t <span class="nv">$PID</span> -n curl localhost/health
+</span></span></code></pre></div><p>这是排查 distroless 容器网络问题的标准手法。K8s 1.23+ 也可以用 <code>kubectl debug --image=nicolaka/netshoot --target=&lt;container&gt;</code> 注入一个调试容器共享目标容器的 namespace。</p>
+<p><strong>Q：cgroup v1 和 v2 的主要区别？</strong></p>
+<p>v1 是<strong>每个控制器一个独立层级</strong>（<code>/sys/fs/cgroup/cpu/</code>、<code>/memory/</code> 各一套），同一个进程在不同控制器下可以属于不同的 cgroup，导致「这组进程用了多少资源」难以回答；更实际的问题是<strong>内存和 IO 无法协同</strong>——脏页回写发生在内核线程里，v1 无法把这部分 IO 归属到产生它的 cgroup，所以 buffered write 的限流基本无效。v2 改为<strong>单一统一层级</strong>，一个进程只属于一个 cgroup，内存和 IO 能协同，并新增了 **PSI（Pressure Stall Information）**指标。v2 特有的坑是 <strong><code>cgroup.subtree_control</code></strong>：父 cgroup 必须先写入 <code>+cpu +memory</code> 把控制器授权给子级，否则子 cgroup 里根本不会出现 <code>cpu.max</code> 文件。</p>
+<p><strong>Q：PSI 是什么？比 load average 好在哪？</strong></p>
+<p>PSI（Pressure Stall Information）是 cgroup v2 提供的指标，直接量化<strong>因资源不足而损失的时间比例</strong>：<code>some</code> 表示至少一个任务因等待该资源而停滞的时间占比，<code>full</code> 表示所有任务都在等的时间占比。相比 load average 的优势在于<strong>语义明确</strong>——load 只是「可运行 + 不可中断的进程数」，无法区分「有 8 个进程但 CPU 完全够用」和「8 个进程在激烈争抢」；而 <code>cpu.pressure</code> 的 <code>some avg10=12.34</code> 明确告诉你最近 10 秒有 12.34% 的时间至少有一个任务在等 CPU。<strong><code>full &gt; 0</code> 是严重信号</strong>，意味着整个 cgroup 完全停滞过。这是判断是否需要扩容最准确的指标。</p>
+<p><strong>Q：<code>cpu.max</code> 和 <code>cpu.weight</code> 有什么区别？对应 K8s 的什么字段？</strong></p>
+<p><code>cpu.max</code>（quota/period）是<strong>硬性上限</strong>——即使宿主机 CPU 完全空闲，也不会给超过配额的时间，超了就<strong>限流</strong>（<code>nr_throttled</code> 增长）；对应 K8s 的 <code>limits.cpu</code>。<code>cpu.weight</code> 是<strong>相对权重</strong>，只在 CPU 争抢时决定份额分配，空闲时可以超用，不会限流；对应 <code>requests.cpu</code>。<strong>实践建议</strong>：CPU 是可压缩资源（不够就变慢），内存是不可压缩资源（不够只能 OOM），所以延迟敏感的在线服务应该 <strong><code>requests.cpu</code> 设准、<code>limits.cpu</code> 设宽松或不设</strong>（避免限流毛刺），而 <strong><code>limits.memory</code> 必须设</strong>（防止一个容器吃掉整个节点）。批处理任务反过来，必须设 <code>limits.cpu</code> 并配低 <code>CPUWeight</code>。</p>
+<p><strong>Q：为什么容器里 <code>nproc</code> 和 <code>free</code> 显示的是宿主机的数据？有什么后果？</strong></p>
+<p>因为 <strong><code>/proc</code> 和 <code>/sys</code> 的绝大部分内容没有被 namespace 隔离</strong>——<code>/proc/cpuinfo</code>、<code>/proc/meminfo</code>、<code>/proc/loadavg</code>、<code>/proc/stat</code>、<code>/proc/diskstats</code> 读到的都是宿主机数据。只有 <code>/proc/net/*</code>（NET namespace 隔离）和 <code>/proc/&lt;pid&gt;/*</code>（PID namespace 隔离）是准的。后果很严重：<strong>JVM 按宿主机内存算堆大小必然 OOM</strong>、<strong>Go 的 <code>GOMAXPROCS</code> 取宿主机核数导致大量 CPU 限流</strong>、Python 的 <code>multiprocessing</code> 开太多进程、监控告警完全失真。正确做法是<strong>读 cgroup</strong>（<code>/sys/fs/cgroup/cpu.max</code>、<code>memory.max</code>），运行时层面用 <code>-XX:+UseContainerSupport -XX:MaxRAMPercentage</code>（Java）、<code>go.uber.org/automaxprocs</code> + <code>GOMEMLIMIT</code>（Go）。宿主机可以部署 <strong>lxcfs</strong> 把 cgroup 数据伪装成 <code>/proc</code> 内容，让不感知 cgroup 的老应用也能拿到正确值。</p>
+<p><strong>Q：容器 CPU 使用率只有 40%，但 P99 延迟有周期性尖刺，为什么？</strong></p>
+<p>典型的 <strong>CPU 限流（throttling）<strong>问题。查 <code>/sys/fs/cgroup/cpu.stat</code> 的 <code>nr_throttled / nr_periods</code> 比例——如果很高（比如 47%），说明进程在每个 100ms 调度周期里很快用完配额然后被</strong>强制暂停</strong>。机制是：容器 <code>limits.cpu=2</code>（每 100ms 给 200ms 配额），但应用有 16 个线程（<code>GOMAXPROCS</code> 取了宿主机核数），16 个线程并行在前 12.5ms 就把配额耗尽，<strong>剩下 87.5ms 完全停止服务</strong> → P99 尖刺；而平均 CPU 使用率算下来却很低，所以监控看不出问题。根因是<strong>运行时并发度与 cgroup 配额不匹配</strong>，修复方式是引入 <code>automaxprocs</code>、用 Downward API 注入 <code>GOMAXPROCS=limits.cpu</code>、或者放宽 CPU limits。</p>
+<p><strong>Q：为什么 Docker 默认不开 user namespace？不开有什么风险？</strong></p>
+<p>不开的话<strong>容器内的 uid 0 就是宿主机的 uid 0</strong>（真正的 root），一旦通过内核漏洞或错误的挂载配置逃逸，攻击者直接获得宿主机 root。开启后容器内 root 映射到宿主机的一个无特权用户（如 uid 100000），逃逸后也只是普通用户。Docker 默认不开的原因：① 挂载卷的权限处理变复杂（宿主机文件属主要是映射后的 uid）；② 部分功能不兼容（<code>--privileged</code>、某些存储驱动）；③ 镜像层需要 chown 占额外磁盘。<strong>更常用的替代方案是不开 user namespace 但容器内不用 root 运行</strong>：K8s 里配 <code>runAsNonRoot: true</code> + <code>runAsUser: 1000</code> + <code>capabilities.drop: [&quot;ALL&quot;]</code> + <code>readOnlyRootFilesystem: true</code>——收益/成本比远好于开 user namespace，应该作为默认配置。</p>
+<p><strong>Q：怎么用 shell 手写一个「容器」？</strong></p>
+<p>三步：① <strong>namespace 隔离视图</strong>——<code>unshare --pid --mount --uts --ipc --net --fork</code> 创建新的各类 namespace，注意 PID namespace 必须配 <code>--fork</code> 和重新挂载 <code>/proc</code>（否则 <code>ps</code> 读的还是宿主机的）；② <strong>cgroup 限制资源</strong>——<code>mkdir /sys/fs/cgroup/mytest</code>，先在父级写 <code>+cpu +memory</code> 到 <code>cgroup.subtree_control</code>，再写 <code>cpu.max</code>、<code>memory.max</code>、<code>pids.max</code>，最后把 PID 写进 <code>cgroup.procs</code>；③ <strong>换根</strong>——<code>chroot</code> 到一个 rootfs（可以用 <code>docker export</code> 导出 alpine 的）。真实容器运行时额外做的是：veth pair + 网桥 + NAT 提供网络、用 <code>pivot_root</code> 而非 <code>chroot</code>（防逃逸）、OverlayFS 实现镜像分层、裁剪 capabilities、seccomp 过滤系统调用、以及用 tini 履行 PID 1 的 init 职责。</p>
+<hr>
+<p>上一篇：<a href="../linux_18_%e6%80%a7%e8%83%bd%e5%88%86%e6%9e%90%e5%b7%a5%e5%85%b7%e9%93%be/" rel="">Linux-18 性能分析工具链与方法论</a> ｜ 下一篇：<a href="../linux_20_%e7%ba%bf%e4%b8%8a%e9%97%ae%e9%a2%98%e6%8e%92%e6%9f%a5%e5%ae%9e%e6%88%98/" rel="">Linux-20 线上问题排查实战案例</a></p>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2026-08-06</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/linux/">linux</a>,&nbsp;<a href="/tags/docker/">docker</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/linux/linux_20_%E7%BA%BF%E4%B8%8A%E9%97%AE%E9%A2%98%E6%8E%92%E6%9F%A5%E5%AE%9E%E6%88%98/" class="prev" rel="prev" title="Linux-20 线上问题排查实战案例"><i class="fas fa-angle-left fa-fw"></i>Linux-20 线上问题排查实战案例</a>
+            <a href="/posts/linux/linux_18_%E6%80%A7%E8%83%BD%E5%88%86%E6%9E%90%E5%B7%A5%E5%85%B7%E9%93%BE/" class="next" rel="next" title="Linux-18 性能分析工具链与方法论">Linux-18 性能分析工具链与方法论<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2026-08-06T14:00:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Linux-19 namespace 与 cgroup"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

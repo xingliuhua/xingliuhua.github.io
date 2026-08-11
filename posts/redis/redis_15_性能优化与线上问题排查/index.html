@@ -1,0 +1,1854 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>Redis-15 性能优化与线上问题排查 - xingliuhua博客</title><meta name="Description" content="延迟分析方法论、慢查询与阻塞源定位、内存诊断与碎片治理、bigkey/hotkey 排查、系统与内核调优、benchmark 压测、真实事故案例复盘"><meta property="og:title" content="Redis-15 性能优化与线上问题排查" />
+<meta property="og:description" content="延迟分析方法论、慢查询与阻塞源定位、内存诊断与碎片治理、bigkey/hotkey 排查、系统与内核调优、benchmark 压测、真实事故案例复盘" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/redis/redis_15_%E6%80%A7%E8%83%BD%E4%BC%98%E5%8C%96%E4%B8%8E%E7%BA%BF%E4%B8%8A%E9%97%AE%E9%A2%98%E6%8E%92%E6%9F%A5/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2025-11-01T09:30:00+08:00" />
+<meta property="article:modified_time" content="2025-11-01T09:30:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="Redis-15 性能优化与线上问题排查"/>
+<meta name="twitter:description" content="延迟分析方法论、慢查询与阻塞源定位、内存诊断与碎片治理、bigkey/hotkey 排查、系统与内核调优、benchmark 压测、真实事故案例复盘"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/redis/redis_15_%E6%80%A7%E8%83%BD%E4%BC%98%E5%8C%96%E4%B8%8E%E7%BA%BF%E4%B8%8A%E9%97%AE%E9%A2%98%E6%8E%92%E6%9F%A5/" /><link rel="prev" href="https://xingliuhua.github.io/posts/redis/redis_16_Go%E5%AE%A2%E6%88%B7%E7%AB%AFgo-redis%E5%AE%9E%E6%88%98/" /><link rel="next" href="https://xingliuhua.github.io/posts/redis/redis_14_%E7%BC%93%E5%AD%98%E8%AE%BE%E8%AE%A1%E4%B8%8E%E7%BB%8F%E5%85%B8%E9%97%AE%E9%A2%98/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Redis-15 性能优化与线上问题排查",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/redis\/redis_15_%E6%80%A7%E8%83%BD%E4%BC%98%E5%8C%96%E4%B8%8E%E7%BA%BF%E4%B8%8A%E9%97%AE%E9%A2%98%E6%8E%92%E6%9F%A5\/"
+        },"genre": "posts","keywords": "redis","wordcount":  17855 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/redis\/redis_15_%E6%80%A7%E8%83%BD%E4%BC%98%E5%8C%96%E4%B8%8E%E7%BA%BF%E4%B8%8A%E9%97%AE%E9%A2%98%E6%8E%92%E6%9F%A5\/","datePublished": "2025-11-01T09:30:00+08:00","dateModified": "2025-11-01T09:30:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "延迟分析方法论、慢查询与阻塞源定位、内存诊断与碎片治理、bigkey/hotkey 排查、系统与内核调优、benchmark 压测、真实事故案例复盘"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">Redis-15 性能优化与线上问题排查</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2025-11-01">2025-11-01</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 17855 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 36 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-排查方法论">1. 排查方法论</a></li>
+    <li><a href="#2-延迟分析">2. 延迟分析</a>
+      <ol>
+        <li><a href="#21-三个层次的延迟">2.1 三个层次的延迟</a></li>
+        <li><a href="#22-测量服务端延迟">2.2 测量服务端延迟</a></li>
+        <li><a href="#23-测量机器固有延迟">2.3 测量机器固有延迟</a></li>
+        <li><a href="#24-延迟监控latency-monitor">2.4 延迟监控（Latency Monitor）</a></li>
+        <li><a href="#25-慢查询日志">2.5 慢查询日志</a></li>
+        <li><a href="#26-命令级统计">2.6 命令级统计</a></li>
+        <li><a href="#27-实时监控">2.7 实时监控</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-阻塞源的定位与消除">3. 阻塞源的定位与消除</a>
+      <ol>
+        <li><a href="#31-阻塞源清单与对策">3.1 阻塞源清单与对策</a></li>
+        <li><a href="#32-排查偶发毛刺的标准流程">3.2 排查&quot;偶发毛刺&quot;的标准流程</a></li>
+        <li><a href="#33-消除阻塞的配置清单">3.3 消除阻塞的配置清单</a></li>
+      </ol>
+    </li>
+    <li><a href="#4-内存优化与诊断">4. 内存优化与诊断</a>
+      <ol>
+        <li><a href="#41-内存都花在哪">4.1 内存都花在哪</a></li>
+        <li><a href="#42-内存优化清单">4.2 内存优化清单</a></li>
+        <li><a href="#43-内存碎片治理">4.3 内存碎片治理</a></li>
+        <li><a href="#44-排查内存持续增长">4.4 排查内存持续增长</a></li>
+      </ol>
+    </li>
+    <li><a href="#5-系统与内核调优">5. 系统与内核调优</a>
+      <ol>
+        <li><a href="#51-必做的四项第-1-篇提过这里给完整版">5.1 必做的四项（第 1 篇提过，这里给完整版）</a></li>
+        <li><a href="#52-其他内核参数">5.2 其他内核参数</a></li>
+        <li><a href="#53-cpu-绑核多实例部署时">5.3 CPU 绑核（多实例部署时）</a></li>
+        <li><a href="#54-磁盘">5.4 磁盘</a></li>
+      </ol>
+    </li>
+    <li><a href="#6-客户端优化">6. 客户端优化</a>
+      <ol>
+        <li><a href="#61-连接池配置">6.1 连接池配置</a></li>
+        <li><a href="#62-减少网络往返">6.2 减少网络往返</a></li>
+        <li><a href="#63-客户端侧的其他优化">6.3 客户端侧的其他优化</a></li>
+      </ol>
+    </li>
+    <li><a href="#7-压测">7. 压测</a>
+      <ol>
+        <li><a href="#71-redis-benchmark">7.1 redis-benchmark</a></li>
+        <li><a href="#72-压测的注意事项">7.2 压测的注意事项</a></li>
+        <li><a href="#73-更专业的工具">7.3 更专业的工具</a></li>
+      </ol>
+    </li>
+    <li><a href="#8-真实事故案例复盘">8. 真实事故案例复盘</a>
+      <ol>
+        <li><a href="#81-案例一一条-keys--打挂整个服务">8.1 案例一：一条 <code>KEYS *</code> 打挂整个服务</a></li>
+        <li><a href="#82-案例二一个大-key-导致的雪崩">8.2 案例二：一个大 key 导致的雪崩</a></li>
+        <li><a href="#83-案例三主节点无持久化重启导致全量数据丢失">8.3 案例三：主节点无持久化重启导致全量数据丢失</a></li>
+        <li><a href="#84-案例四复制风暴打垮主节点">8.4 案例四：复制风暴打垮主节点</a></li>
+        <li><a href="#85-案例五lua-脚本死循环导致必须重启">8.5 案例五：Lua 脚本死循环导致必须重启</a></li>
+        <li><a href="#86-案例六ttl-陷阱导致内存泄漏">8.6 案例六：TTL 陷阱导致内存泄漏</a></li>
+      </ol>
+    </li>
+    <li><a href="#9-监控体系">9. 监控体系</a>
+      <ol>
+        <li><a href="#91-必须监控的指标清单">9.1 必须监控的指标清单</a></li>
+        <li><a href="#92-关键告警规则">9.2 关键告警规则</a></li>
+        <li><a href="#93-监控工具">9.3 监控工具</a></li>
+      </ol>
+    </li>
+    <li><a href="#10-高频面试题">10. 高频面试题</a></li>
+    <li><a href="#小结">小结</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><h1 id="1-排查方法论">1. 排查方法论</h1>
+<p>线上出现&quot;Redis 慢&quot;时，不要一上来就乱调参数。按这个顺序定位：</p>
+<pre tabindex="0"><code>1. 【确认现象】到底是什么慢？
+   ├─ 所有请求都慢 → 服务端问题（阻塞、swap、CPU 打满）
+   ├─ 部分请求慢 → 特定命令/key 的问题（大 key、慢命令）
+   ├─ 偶发毛刺 → fork、AOF fsync、过期删除、rehash
+   └─ 单个客户端慢 → 客户端问题（连接池、GC、网络）
+
+2. 【区分是谁的问题】
+   ├─ redis-cli --latency 测服务端延迟
+   ├─ redis-cli --intrinsic-latency 测机器固有延迟
+   └─ 客户端埋点的 P99 对比服务端的耗时
+      → 两者差值大 = 网络或客户端问题
+
+3. 【定位服务端瓶颈】
+   ├─ SLOWLOG          有没有慢命令
+   ├─ INFO commandstats 哪个命令占用时间最多
+   ├─ INFO memory      是否用了 swap、碎片率
+   ├─ INFO stats       latest_fork_usec、evicted_keys、拒绝连接
+   ├─ INFO persistence aof_delayed_fsync、rewrite 状态
+   └─ INFO clients     连接数、缓冲区
+
+4. 【定位数据问题】
+   ├─ --bigkeys / --memkeys
+   └─ --hotkeys / 客户端埋点
+
+5. 【检查系统层】
+   └─ top / vmstat / iostat / free / dmesg
+</code></pre><p><strong>核心原则：先测量，再优化。</strong> 大多数&quot;性能问题&quot;其实是某个具体的错误用法（一个大 key、一条 <code>KEYS *</code>、忘了 pipeline），而不是需要调参的系统性问题。</p>
+<hr>
+<h1 id="2-延迟分析">2. 延迟分析</h1>
+<h2 id="21-三个层次的延迟">2.1 三个层次的延迟</h2>
+<pre tabindex="0"><code>客户端观测到的总延迟
+= 网络往返时间（RTT）
++ 服务端排队时间       ← 前面有慢命令时会很大
++ 命令执行时间         ← SLOWLOG 只记录这一段
++ 客户端处理时间       ← GC、序列化、连接池等待
+</code></pre><p><strong>关键认识</strong>：<strong><code>SLOWLOG</code> 只记录&quot;命令执行时间&quot;</strong>，不包含网络传输、排队等待、结果写回。这解释了一个常见困惑——<strong>客户端大量超时，但慢日志里干干净净</strong>。这种情况说明问题在<strong>排队</strong>（前面有慢命令或阻塞）或<strong>网络/客户端</strong>。</p>
+<h2 id="22-测量服务端延迟">2.2 测量服务端延迟</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 持续 PING 并统计延迟（毫秒）</span>
+</span></span><span class="line"><span class="cl">$ redis-cli --latency
+</span></span><span class="line"><span class="cl">min: 0, max: 3, avg: 0.11 <span class="o">(</span><span class="m">1429</span> samples<span class="o">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 按 15 秒区间输出历史（观察趋势和毛刺）</span>
+</span></span><span class="line"><span class="cl">$ redis-cli --latency-history
+</span></span><span class="line"><span class="cl">min: 0, max: 2, avg: 0.10 <span class="o">(</span><span class="m">1435</span> samples<span class="o">)</span> -- 15.01 seconds range
+</span></span><span class="line"><span class="cl">min: 0, max: 87, avg: 0.35 <span class="o">(</span><span class="m">1201</span> samples<span class="o">)</span> -- 15.00 seconds range   ← 有毛刺！
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 延迟分布彩色图（看长尾）</span>
+</span></span><span class="line"><span class="cl">$ redis-cli --latency-dist
+</span></span></code></pre></div><p><code>--latency</code> 测的是 <code>PING</code> 的往返时间，所以它包含了<strong>网络 RTT + 排队 + 执行</strong>。如果 avg 很低但 max 很高，说明<strong>有偶发的阻塞</strong>。</p>
+<h2 id="23-测量机器固有延迟">2.3 测量机器固有延迟</h2>
+<p><strong>这一步非常重要</strong>——它能区分&quot;Redis 慢&quot;和&quot;机器本身就慢&quot;。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 在【Redis 所在的机器上】运行，跑 100 秒</span>
+</span></span><span class="line"><span class="cl">$ redis-cli --intrinsic-latency <span class="m">100</span>
+</span></span><span class="line"><span class="cl">Max latency so far: <span class="m">1</span> microseconds.
+</span></span><span class="line"><span class="cl">Max latency so far: <span class="m">15</span> microseconds.
+</span></span><span class="line"><span class="cl">Max latency so far: <span class="m">3120</span> microseconds.       ← 3ms！机器本身有问题
+</span></span><span class="line"><span class="cl">...
+</span></span><span class="line"><span class="cl">Max latency so far: <span class="m">3120</span> microseconds.
+</span></span><span class="line"><span class="cl"><span class="m">1957014</span> total runs <span class="o">(</span>avg latency: 0.0510 microseconds / 51.02 nanoseconds per run<span class="o">)</span>.
+</span></span><span class="line"><span class="cl">Worst run took 61154x longer than the average latency.
+</span></span></code></pre></div><p><strong>这个命令完全不涉及 Redis 的数据操作</strong>——它只是在一个循环里反复测量&quot;执行一个空操作需要多久&quot;，测的是<strong>内核调度、CPU 争抢、虚拟化开销、SMI 中断</strong>造成的延迟。</p>
+<p><strong>判断标准</strong>：</p>
+<ul>
+<li><strong>正常物理机</strong>：最大延迟通常在 <strong>几十微秒</strong>以内；</li>
+<li><strong>虚拟机/容器</strong>：可能到几百微秒；</li>
+<li><strong>&gt; 1ms</strong>：机器有严重问题（CPU 超卖、宿主机争抢、节能模式、虚拟化开销大）。</li>
+</ul>
+<p><strong>如果固有延迟就有几毫秒，那么再怎么优化 Redis 都没用</strong>——要换机器或者排查宿主机。</p>
+<h2 id="24-延迟监控latency-monitor">2.4 延迟监控（Latency Monitor）</h2>
+<p>Redis 内置了一个延迟事件记录器：</p>
+<pre tabindex="0"><code class="language-conf" data-lang="conf">latency-monitor-threshold 100      # 单位毫秒，超过这个值的事件会被记录，0 = 关闭
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">redis-cli CONFIG SET latency-monitor-threshold <span class="m">100</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 查看有哪些延迟事件</span>
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; LATENCY LATEST
+</span></span><span class="line"><span class="cl">1<span class="o">)</span> 1<span class="o">)</span> <span class="s2">&#34;command&#34;</span>              <span class="c1"># 事件类型</span>
+</span></span><span class="line"><span class="cl">   2<span class="o">)</span> <span class="o">(</span>integer<span class="o">)</span> <span class="m">1785657600</span>   <span class="c1"># 最近一次发生的时间戳</span>
+</span></span><span class="line"><span class="cl">   3<span class="o">)</span> <span class="o">(</span>integer<span class="o">)</span> <span class="m">350</span>          <span class="c1"># 最近一次的延迟（毫秒）</span>
+</span></span><span class="line"><span class="cl">   4<span class="o">)</span> <span class="o">(</span>integer<span class="o">)</span> <span class="m">1200</span>         <span class="c1"># 【历史最大延迟】</span>
+</span></span><span class="line"><span class="cl">2<span class="o">)</span> 1<span class="o">)</span> <span class="s2">&#34;fork&#34;</span>
+</span></span><span class="line"><span class="cl">   2<span class="o">)</span> <span class="o">(</span>integer<span class="o">)</span> <span class="m">1785657500</span>
+</span></span><span class="line"><span class="cl">   3<span class="o">)</span> <span class="o">(</span>integer<span class="o">)</span> <span class="m">180</span>
+</span></span><span class="line"><span class="cl">   4<span class="o">)</span> <span class="o">(</span>integer<span class="o">)</span> <span class="m">450</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 查看某个事件的历史（最多 160 个样本）</span>
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; LATENCY HISTORY <span class="nb">command</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 【非常有用】生成一份人类可读的延迟诊断报告</span>
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; LATENCY DOCTOR
+</span></span><span class="line"><span class="cl">Dave, I have observed latency spikes in this Redis instance.
+</span></span><span class="line"><span class="cl">You don<span class="err">&#39;</span>t mind talking about it, <span class="k">do</span> you Dave?
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">1. command: <span class="m">12</span> latency spikes <span class="o">(</span>average 350ms, mean deviation 120ms,
+</span></span><span class="line"><span class="cl">   period 45.20 sec<span class="o">)</span>. Worst all <span class="nb">time</span> event 1200ms.
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">I have a few advices <span class="k">for</span> you:
+</span></span><span class="line"><span class="cl">- Check your Slow Log to understand what are the commands you are running
+</span></span><span class="line"><span class="cl">  which are too slow to execute. ...
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; LATENCY RESET       <span class="c1"># 清空</span>
+</span></span></code></pre></div><p><strong>Redis 会记录的延迟事件类型</strong>（看到哪个就知道该往哪查）：</p>
+<table>
+<thead>
+<tr>
+<th>事件</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong><code>command</code></strong></td>
+<td>某条命令执行太慢 → 查 <code>SLOWLOG</code></td>
+</tr>
+<tr>
+<td><strong><code>fast-command</code></strong></td>
+<td>本该 O(1)/O(logN) 的命令变慢了 → 通常是大 key 或系统问题</td>
+</tr>
+<tr>
+<td><strong><code>fork</code></strong></td>
+<td>fork 耗时过长 → 实例太大 / 开了 THP / 虚拟化</td>
+</tr>
+<tr>
+<td><code>expire-cycle</code></td>
+<td>过期删除周期耗时长 → 大量 key 同时过期</td>
+</tr>
+<tr>
+<td><code>eviction-del</code> / <code>eviction-cycle</code></td>
+<td>淘汰过程耗时 → 内存不足 + 大 key</td>
+</tr>
+<tr>
+<td><code>aof-write</code> / <code>aof-fsync-always</code> / <code>aof-write-pending-fsync</code></td>
+<td>AOF 写盘慢 → 磁盘性能不足</td>
+</tr>
+<tr>
+<td><code>aof-rewrite-diff-write</code></td>
+<td>AOF 重写期间追加缓冲区（7.0 前）</td>
+</tr>
+<tr>
+<td><code>rdb-unlink-temp-file</code></td>
+<td>删除临时 RDB 文件慢</td>
+</tr>
+<tr>
+<td><code>active-defrag-cycle</code></td>
+<td>内存碎片整理耗时</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>LATENCY DOCTOR</code> 是排查毛刺问题的第一站</strong>，它会直接告诉你是哪类事件造成的延迟。</p>
+<h2 id="25-慢查询日志">2.5 慢查询日志</h2>
+<pre tabindex="0"><code class="language-conf" data-lang="conf">slowlog-log-slower-than 10000      # 微秒，默认 10000 = 10ms
+slowlog-max-len 128                # 最多保留条数，建议调大到 1000
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">redis-cli CONFIG SET slowlog-log-slower-than <span class="m">5000</span>    <span class="c1"># 排查时可以调到 5ms</span>
+</span></span><span class="line"><span class="cl">redis-cli CONFIG SET slowlog-max-len <span class="m">1000</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; SLOWLOG GET <span class="m">5</span>
+</span></span><span class="line"><span class="cl">1<span class="o">)</span> 1<span class="o">)</span> <span class="o">(</span>integer<span class="o">)</span> <span class="m">14</span>              <span class="c1"># 唯一 ID</span>
+</span></span><span class="line"><span class="cl">   2<span class="o">)</span> <span class="o">(</span>integer<span class="o">)</span> <span class="m">1785657600</span>      <span class="c1"># 发生时间戳</span>
+</span></span><span class="line"><span class="cl">   3<span class="o">)</span> <span class="o">(</span>integer<span class="o">)</span> <span class="m">152300</span>          <span class="c1"># 【耗时：微秒】= 152ms</span>
+</span></span><span class="line"><span class="cl">   4<span class="o">)</span> 1<span class="o">)</span> <span class="s2">&#34;HGETALL&#34;</span>              <span class="c1"># 命令及参数</span>
+</span></span><span class="line"><span class="cl">      2<span class="o">)</span> <span class="s2">&#34;user:big:hash&#34;</span>
+</span></span><span class="line"><span class="cl">   5<span class="o">)</span> <span class="s2">&#34;10.0.0.9:52133&#34;</span>          <span class="c1"># 客户端地址</span>
+</span></span><span class="line"><span class="cl">   6<span class="o">)</span> <span class="s2">&#34;order-service-1&#34;</span>         <span class="c1"># 客户端名字（CLIENT SETNAME 设置的）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; SLOWLOG LEN
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; SLOWLOG RESET
+</span></span></code></pre></div><p><strong>实践要点</strong>：</p>
+<ol>
+<li><strong><code>slowlog-max-len</code> 默认 128 太小</strong>，高 QPS 下几秒就被冲掉了，建议 <strong>1000</strong>；</li>
+<li><strong>一定要让应用 <code>CLIENT SETNAME</code></strong>，否则慢日志里只有 IP，无法定位是哪个服务；</li>
+<li><strong>慢日志是环形的</strong>，只保留最近 N 条，要定期采集到监控系统（否则重启就丢了）；</li>
+<li><strong><code>slowlog-log-slower-than 0</code></strong> 会记录所有命令（调试用，生产不要开）。</li>
+</ol>
+<h2 id="26-命令级统计">2.6 命令级统计</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">127.0.0.1:6379&gt; INFO commandstats
+</span></span><span class="line"><span class="cl">cmdstat_get:calls<span class="o">=</span>1000000,usec<span class="o">=</span>1500000,usec_per_call<span class="o">=</span>1.50,rejected_calls<span class="o">=</span>0,failed_calls<span class="o">=</span><span class="m">0</span>
+</span></span><span class="line"><span class="cl">cmdstat_hgetall:calls<span class="o">=</span>1000,usec<span class="o">=</span>15000000,usec_per_call<span class="o">=</span>15000.00,...
+</span></span><span class="line"><span class="cl"><span class="c1">#                     ↑ 只调用 1000 次        ↑ 但总耗时 15 秒！平均 15ms</span>
+</span></span><span class="line"><span class="cl">cmdstat_keys:calls<span class="o">=</span>5,usec<span class="o">=</span>8000000,usec_per_call<span class="o">=</span>1600000.00,...
+</span></span><span class="line"><span class="cl"><span class="c1">#                                  ↑ 平均 1.6 秒！</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 6.2+ 还有延迟百分位分布</span>
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; INFO latencystats
+</span></span><span class="line"><span class="cl">latency_percentiles_usec_get:p50<span class="o">=</span>1.003,p99<span class="o">=</span>3.007,p99.9<span class="o">=</span>8.031
+</span></span><span class="line"><span class="cl">latency_percentiles_usec_hgetall:p50<span class="o">=</span>1200.5,p99<span class="o">=</span>45000.0,p99.9<span class="o">=</span>180000.0
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 重置统计（做基线对比时用）</span>
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; CONFIG RESETSTAT
+</span></span></code></pre></div><p><strong><code>INFO commandstats</code> 是找&quot;总时间黑洞&quot;的最佳工具</strong>：</p>
+<ul>
+<li><strong><code>usec_per_call</code> 高</strong>的命令 → 单次执行慢（大 key、O(N) 命令）；</li>
+<li><strong><code>calls × usec_per_call</code> 总和大</strong>的命令 → 即使单次不慢，总量占用了大部分 CPU 时间（比如一个平均 0.1ms 但每秒调用 10 万次的命令）。</li>
+</ul>
+<p><strong>排查手法</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 按总耗时排序，找出占用时间最多的命令</span>
+</span></span><span class="line"><span class="cl">redis-cli INFO commandstats <span class="p">|</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  sed <span class="s1">&#39;s/cmdstat_//&#39;</span> <span class="p">|</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  awk -F<span class="s1">&#39;[:,=]&#39;</span> <span class="s1">&#39;{print $6, $2}&#39;</span> <span class="p">|</span> sort -rn <span class="p">|</span> head -10
+</span></span><span class="line"><span class="cl"><span class="c1">#                    ↑usec  ↑命令名</span>
+</span></span></code></pre></div><h2 id="27-实时监控">2.7 实时监控</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 类似 top，每秒刷新核心指标</span>
+</span></span><span class="line"><span class="cl">$ redis-cli --stat
+</span></span><span class="line"><span class="cl">------- data ------ --------------------- load -------------------- - child -
+</span></span><span class="line"><span class="cl">keys       mem      clients blocked requests            connections
+</span></span><span class="line"><span class="cl"><span class="m">1000000</span>    1.20G    <span class="m">52</span>      <span class="m">0</span>       <span class="m">12345678</span> <span class="o">(</span>+1234<span class="o">)</span>    <span class="m">5678</span>
+</span></span><span class="line"><span class="cl"><span class="m">1000012</span>    1.20G    <span class="m">52</span>      <span class="m">0</span>       <span class="m">12346912</span> <span class="o">(</span>+1234<span class="o">)</span>    <span class="m">5678</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 实时打印所有命令（【生产慎用】，官方压测显示吞吐下降 50%+）</span>
+</span></span><span class="line"><span class="cl">$ redis-cli monitor
+</span></span><span class="line"><span class="cl"><span class="c1"># 抓一小段样本就 Ctrl+C</span>
+</span></span><span class="line"><span class="cl">$ timeout <span class="m">5</span> redis-cli monitor &gt; /tmp/monitor.log
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 统计样本里最频繁的命令和 key</span>
+</span></span><span class="line"><span class="cl">$ awk <span class="s1">&#39;{print $4}&#39;</span> /tmp/monitor.log <span class="p">|</span> sort <span class="p">|</span> uniq -c <span class="p">|</span> sort -rn <span class="p">|</span> head -20
+</span></span><span class="line"><span class="cl">$ awk <span class="s1">&#39;{print $4, $5}&#39;</span> /tmp/monitor.log <span class="p">|</span> sort <span class="p">|</span> uniq -c <span class="p">|</span> sort -rn <span class="p">|</span> head -20
+</span></span></code></pre></div><hr>
+<h1 id="3-阻塞源的定位与消除">3. 阻塞源的定位与消除</h1>
+<p>Redis 单线程执行命令，<strong>任何阻塞都会影响所有请求</strong>（第 5 篇）。这是排查性能问题的核心视角。</p>
+<h2 id="31-阻塞源清单与对策">3.1 阻塞源清单与对策</h2>
+<table>
+<thead>
+<tr>
+<th>阻塞源</th>
+<th>典型耗时</th>
+<th>定位方法</th>
+<th>对策</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>O(N) 命令</strong>（<code>KEYS</code>/<code>HGETALL</code>/<code>SMEMBERS</code>/<code>LRANGE 0 -1</code>）</td>
+<td>百 ms ~ 秒</td>
+<td><code>SLOWLOG</code>、<code>commandstats</code></td>
+<td>换 <code>SCAN</code> 系列、控制 key 大小</td>
+</tr>
+<tr>
+<td><strong>集合运算</strong>（<code>SINTERSTORE</code>/<code>ZUNIONSTORE</code>）</td>
+<td>O(N*M)</td>
+<td>同上</td>
+<td>控制规模、移到从节点、业务层算</td>
+</tr>
+<tr>
+<td><strong><code>DEL</code> 大 key</strong></td>
+<td>百 ms ~ 秒</td>
+<td><code>SLOWLOG</code>、<code>LATENCY LATEST</code></td>
+<td><strong><code>UNLINK</code></strong> + <code>lazyfree-*</code> 全开</td>
+</tr>
+<tr>
+<td><strong><code>FLUSHALL</code>/<code>FLUSHDB</code></strong></td>
+<td>秒级</td>
+<td>—</td>
+<td>加 <code>ASYNC</code></td>
+</tr>
+<tr>
+<td><strong>fork</strong>（RDB/AOF 重写）</td>
+<td><strong>每 GB 20~100ms</strong></td>
+<td><code>latest_fork_usec</code>、<code>LATENCY LATEST</code> 的 fork 事件</td>
+<td>控制实例 &lt;= 10GB、<strong>关 THP</strong>、<code>vm.overcommit_memory=1</code></td>
+</tr>
+<tr>
+<td><strong>AOF <code>appendfsync always</code></strong></td>
+<td>每次写等磁盘</td>
+<td><code>aof_delayed_fsync</code></td>
+<td>改 <code>everysec</code></td>
+</tr>
+<tr>
+<td><strong>磁盘慢导致 AOF write 阻塞</strong></td>
+<td>不确定</td>
+<td><code>aof_delayed_fsync</code> 持续增长</td>
+<td>SSD、AOF 独立磁盘、<code>no-appendfsync-on-rewrite yes</code></td>
+</tr>
+<tr>
+<td><strong>Lua 脚本执行慢</strong></td>
+<td>直到脚本结束</td>
+<td><code>SLOWLOG</code>（记录为 <code>eval</code>）</td>
+<td>脚本必须简短、循环有小上限</td>
+</tr>
+<tr>
+<td><strong>内存 swap</strong></td>
+<td>ms ~ 十 ms</td>
+<td><code>mem_fragmentation_ratio &lt; 1</code>、<code>/proc/pid/smaps</code></td>
+<td>关 swap、设 <code>maxmemory</code></td>
+</tr>
+<tr>
+<td><strong>大量 key 同时过期</strong></td>
+<td>每周期 25ms</td>
+<td><code>expired_time_cap_reached_count</code></td>
+<td>TTL 加随机抖动</td>
+</tr>
+<tr>
+<td><strong>淘汰大量 key</strong></td>
+<td>累积可观</td>
+<td><code>evicted_keys</code> 快速增长</td>
+<td>扩容、<code>lazyfree-lazy-eviction yes</code></td>
+</tr>
+<tr>
+<td><strong>渐进式 rehash</strong></td>
+<td>分摊后较小</td>
+<td>难直接观测</td>
+<td>预估容量、避免瞬间插入海量 key</td>
+</tr>
+<tr>
+<td><strong>大 value 的网络传输</strong></td>
+<td>与带宽相关</td>
+<td><code>INFO stats</code> 的 <code>total_net_output_bytes</code></td>
+<td>拆分大 key、压缩</td>
+</tr>
+<tr>
+<td><strong><code>MIGRATE</code> 大 key</strong>（集群扩容）</td>
+<td>秒 ~ 十秒</td>
+<td>扩容期间的超时</td>
+<td><strong>扩容前先处理大 key</strong></td>
+</tr>
+<tr>
+<td><strong>从节点加载 RDB</strong></td>
+<td>秒级</td>
+<td><code>master_sync_in_progress</code></td>
+<td>控制实例大小、错峰</td>
+</tr>
+<tr>
+<td><strong><code>activedefrag</code> 碎片整理</strong></td>
+<td>视力度</td>
+<td><code>LATENCY LATEST</code> 的 defrag 事件</td>
+<td>降低 <code>active-defrag-cycle-max</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="32-排查偶发毛刺的标准流程">3.2 排查&quot;偶发毛刺&quot;的标准流程</h2>
+<p>这是最难排查的一类问题（平时都好，偶尔卡一下）：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 1. 先确认是不是 fork（最常见的毛刺来源）</span>
+</span></span><span class="line"><span class="cl">redis-cli INFO stats <span class="p">|</span> grep latest_fork_usec
+</span></span><span class="line"><span class="cl"><span class="c1"># 如果 &gt; 100000（100ms），且毛刺时间点和 bgsave/bgrewriteaof 吻合 → 就是它</span>
+</span></span><span class="line"><span class="cl">redis-cli INFO persistence <span class="p">|</span> grep -E <span class="s1">&#39;rdb_last_save_time|aof_rewrite&#39;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 2. 看延迟事件记录（最直接）</span>
+</span></span><span class="line"><span class="cl">redis-cli CONFIG SET latency-monitor-threshold <span class="m">50</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 等待一段时间后</span>
+</span></span><span class="line"><span class="cl">redis-cli LATENCY LATEST
+</span></span><span class="line"><span class="cl">redis-cli LATENCY DOCTOR
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 3. 看是否有周期性的慢命令</span>
+</span></span><span class="line"><span class="cl">redis-cli SLOWLOG GET <span class="m">100</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 4. 排查系统层</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># CPU 是否被抢占</span>
+</span></span><span class="line"><span class="cl">top -H -p <span class="k">$(</span>pgrep -f redis-server<span class="k">)</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 是否在 swap</span>
+</span></span><span class="line"><span class="cl">cat /proc/<span class="k">$(</span>pgrep -f redis-server<span class="k">)</span>/smaps <span class="p">|</span> grep -i swap <span class="p">|</span> awk <span class="s1">&#39;{s+=$2} END {print s&#34; kB&#34;}&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 磁盘 IO 是否饱和</span>
+</span></span><span class="line"><span class="cl">iostat -x <span class="m">1</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 网络是否有丢包/重传</span>
+</span></span><span class="line"><span class="cl">netstat -s <span class="p">|</span> grep -i retrans
+</span></span><span class="line"><span class="cl">sar -n DEV <span class="m">1</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 5. 排查是否有其他进程争抢资源</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#（常见：同一台机器上跑了多个 Redis 实例，同时 bgsave）</span>
+</span></span></code></pre></div><h2 id="33-消除阻塞的配置清单">3.3 消除阻塞的配置清单</h2>
+<pre tabindex="0"><code class="language-conf" data-lang="conf"># ---------- 惰性删除（必开）----------
+lazyfree-lazy-eviction yes         # 淘汰时异步释放
+lazyfree-lazy-expire yes           # 过期删除异步释放
+lazyfree-lazy-server-del yes       # 隐式删除（rename 覆盖等）异步
+lazyfree-lazy-user-del yes         # 让 DEL 表现得像 UNLINK
+lazyfree-lazy-user-flush yes       # 7.0+ FLUSHALL/FLUSHDB 默认异步
+replica-lazy-flush yes             # 从节点全量同步前清空数据异步
+
+# ---------- 持久化 ----------
+appendfsync everysec               # 不要用 always
+no-appendfsync-on-rewrite yes      # 机械盘/IO 紧张时开，换稳定延迟
+auto-aof-rewrite-percentage 100
+auto-aof-rewrite-min-size 256mb    # 调大避免频繁重写
+
+# ---------- 内存 ----------
+maxmemory &lt;物理内存的 60%~70%&gt;
+maxmemory-policy allkeys-lfu
+activedefrag yes                   # 碎片率高时开
+active-defrag-cycle-max 50         # 限制碎片整理的 CPU 占用
+
+# ---------- 危险命令 ----------
+rename-command KEYS &#34;&#34;
+rename-command FLUSHALL &#34;&#34;
+rename-command FLUSHDB &#34;&#34;
+rename-command MONITOR &#34;&#34;
+rename-command DEBUG &#34;&#34;
+rename-command CONFIG CONFIG_9f2b7c
+
+# ---------- 慢查询与延迟监控 ----------
+slowlog-log-slower-than 10000
+slowlog-max-len 1000
+latency-monitor-threshold 100
+</code></pre><hr>
+<h1 id="4-内存优化与诊断">4. 内存优化与诊断</h1>
+<h2 id="41-内存都花在哪">4.1 内存都花在哪</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">127.0.0.1:6379&gt; MEMORY STATS
+</span></span><span class="line"><span class="cl"> 1<span class="o">)</span> <span class="s2">&#34;peak.allocated&#34;</span>                      <span class="c1"># 历史峰值</span>
+</span></span><span class="line"><span class="cl"> 2<span class="o">)</span> <span class="o">(</span>integer<span class="o">)</span> <span class="m">5368709120</span>
+</span></span><span class="line"><span class="cl"> 3<span class="o">)</span> <span class="s2">&#34;total.allocated&#34;</span>                     <span class="c1"># 当前总分配</span>
+</span></span><span class="line"><span class="cl"> 4<span class="o">)</span> <span class="o">(</span>integer<span class="o">)</span> <span class="m">4294967296</span>
+</span></span><span class="line"><span class="cl"> 5<span class="o">)</span> <span class="s2">&#34;startup.allocated&#34;</span>                   <span class="c1"># 启动时的基础开销（约几 MB）</span>
+</span></span><span class="line"><span class="cl"> 7<span class="o">)</span> <span class="s2">&#34;replication.backlog&#34;</span>                 <span class="c1"># 【复制积压缓冲区】</span>
+</span></span><span class="line"><span class="cl"> 9<span class="o">)</span> <span class="s2">&#34;clients.slaves&#34;</span>                      <span class="c1"># 【从节点客户端缓冲区总和】</span>
+</span></span><span class="line"><span class="cl">11<span class="o">)</span> <span class="s2">&#34;clients.normal&#34;</span>                      <span class="c1"># 【普通客户端缓冲区总和】</span>
+</span></span><span class="line"><span class="cl">13<span class="o">)</span> <span class="s2">&#34;cluster.links&#34;</span>                       <span class="c1"># 集群链路缓冲</span>
+</span></span><span class="line"><span class="cl">15<span class="o">)</span> <span class="s2">&#34;aof.buffer&#34;</span>                          <span class="c1"># AOF 缓冲区</span>
+</span></span><span class="line"><span class="cl">17<span class="o">)</span> <span class="s2">&#34;lua.caches&#34;</span>                          <span class="c1"># 【Lua 脚本缓存】（动态生成脚本会泄漏）</span>
+</span></span><span class="line"><span class="cl">19<span class="o">)</span> <span class="s2">&#34;functions.caches&#34;</span>
+</span></span><span class="line"><span class="cl">21<span class="o">)</span> <span class="s2">&#34;db.0&#34;</span>
+</span></span><span class="line"><span class="cl">22<span class="o">)</span>  1<span class="o">)</span> <span class="s2">&#34;overhead.hashtable.main&#34;</span>          <span class="c1"># 主字典的元数据开销</span>
+</span></span><span class="line"><span class="cl">     3<span class="o">)</span> <span class="s2">&#34;overhead.hashtable.expires&#34;</span>       <span class="c1"># 【过期字典的开销】（带 TTL 的 key 多时很大）</span>
+</span></span><span class="line"><span class="cl">     5<span class="o">)</span> <span class="s2">&#34;overhead.hashtable.slot-to-keys&#34;</span>
+</span></span><span class="line"><span class="cl">...
+</span></span><span class="line"><span class="cl"><span class="s2">&#34;overhead.total&#34;</span>                           <span class="c1"># 所有非数据开销总和</span>
+</span></span><span class="line"><span class="cl"><span class="s2">&#34;keys.count&#34;</span>                               <span class="c1"># key 总数</span>
+</span></span><span class="line"><span class="cl"><span class="s2">&#34;keys.bytes-per-key&#34;</span>                       <span class="c1"># 【平均每个 key 占多少字节】</span>
+</span></span><span class="line"><span class="cl"><span class="s2">&#34;dataset.bytes&#34;</span>                            <span class="c1"># 纯数据占用</span>
+</span></span><span class="line"><span class="cl"><span class="s2">&#34;dataset.percentage&#34;</span>                       <span class="c1"># 数据占总内存的比例</span>
+</span></span><span class="line"><span class="cl"><span class="s2">&#34;peak.percentage&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="s2">&#34;allocator.allocated&#34;</span> / <span class="s2">&#34;allocator.active&#34;</span> / <span class="s2">&#34;allocator.resident&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="s2">&#34;allocator-fragmentation.ratio&#34;</span>            <span class="c1"># 【分配器层面的碎片率】（比 mem_fragmentation_ratio 更准）</span>
+</span></span><span class="line"><span class="cl"><span class="s2">&#34;fragmentation&#34;</span>                             <span class="c1"># 总碎片率</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># Redis 自己的诊断建议</span>
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; MEMORY DOCTOR
+</span></span><span class="line"><span class="cl">Sam, I detected a few issues in this Redis instance memory implants:
+</span></span><span class="line"><span class="cl"> * High allocator fragmentation: This instance has an allocator external
+</span></span><span class="line"><span class="cl">   fragmentation greater than 1.1. ...
+</span></span><span class="line"><span class="cl"> * Big keys found: ...
+</span></span></code></pre></div><p><strong>关键指标解读</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>指标</th>
+<th>含义与阈值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong><code>keys.bytes-per-key</code></strong></td>
+<td>平均每 key 的开销。如果远大于你的实际数据大小，说明<strong>key 数量太多</strong>（每个 key 至少有 robj 16 字节 + dictEntry 32 字节 + SDS 头的固定开销）</td>
+</tr>
+<tr>
+<td><strong><code>overhead.total / total.allocated</code></strong></td>
+<td>元数据占比。超过 30% 说明 key 太碎（应该合并成 hash）</td>
+</tr>
+<tr>
+<td><strong><code>overhead.hashtable.expires</code></strong></td>
+<td>过期字典开销。很大说明带 TTL 的 key 非常多</td>
+</tr>
+<tr>
+<td><strong><code>replication.backlog</code></strong></td>
+<td>复制积压缓冲区（<code>repl-backlog-size</code>）。这是固定占用，要算进预算</td>
+</tr>
+<tr>
+<td><strong><code>clients.normal</code> / <code>clients.slaves</code></strong></td>
+<td>客户端缓冲区。异常大说明有大 key 读取或慢消费者</td>
+</tr>
+<tr>
+<td><strong><code>lua.caches</code></strong></td>
+<td>Lua 脚本缓存。持续增长说明<strong>动态生成脚本导致泄漏</strong>（第 8 篇）</td>
+</tr>
+</tbody>
+</table>
+<h2 id="42-内存优化清单">4.2 内存优化清单</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ---------- 1. 用 hash 代替多个 string key（最有效）----------</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 差：3 个 key，每个都有 robj(16) + dictEntry(32) + key的SDS + value的SDS</span>
+</span></span><span class="line"><span class="cl">SET user:1001:name tom
+</span></span><span class="line"><span class="cl">SET user:1001:age <span class="m">20</span>
+</span></span><span class="line"><span class="cl">SET user:1001:city beijing
+</span></span><span class="line"><span class="cl"><span class="c1"># 好：1 个 key，listpack 编码下每个字段只占几字节</span>
+</span></span><span class="line"><span class="cl">HSET user:1001 name tom age <span class="m">20</span> city beijing
+</span></span><span class="line"><span class="cl"><span class="c1"># 内存可省 3~5 倍</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ---------- 2. 大 hash 分桶保持 listpack 编码 ----------</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 100 万字段的大 hash（hashtable 编码，每字段 60~90 字节）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># → 拆成 1000 个各 1000 字段的小 hash（listpack 编码，每字段 5~10 字节）</span>
+</span></span><span class="line"><span class="cl">HSET bucket:<span class="k">$(</span>id/1000<span class="k">)</span> <span class="k">$(</span>id%1000<span class="k">)</span> value
+</span></span><span class="line"><span class="cl">CONFIG SET hash-max-listpack-entries <span class="m">1000</span>    <span class="c1"># 配合调大阈值</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 内存可省 5~10 倍（Instagram 的经典优化，第 4 篇）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ---------- 3. key 名尽量短（但保持可读）----------</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 差：user:information:detail:profile:1001  （35 字节）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 好：u:d:1001                              （8 字节）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 1 亿个 key，每个省 27 字节 = 省 2.7GB</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ---------- 4. 整数尽量存整数 ----------</span>
+</span></span><span class="line"><span class="cl">SET count <span class="m">100</span>                <span class="c1"># int 编码，且 0~9999 用共享对象</span>
+</span></span><span class="line"><span class="cl">SET count <span class="s2">&#34;100&#34;</span>              <span class="c1"># 同样是 int 编码（Redis 会识别）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ---------- 5. 布尔状态用 Bitmap ----------</span>
+</span></span><span class="line"><span class="cl">SETBIT active:20260729 <span class="m">1001</span> <span class="m">1</span>     <span class="c1"># 1 亿用户只要 12.5MB（第 3 篇）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ---------- 6. 海量基数统计用 HyperLogLog ----------</span>
+</span></span><span class="line"><span class="cl">PFADD uv:20260729 user1001        <span class="c1"># 固定 12KB，误差 0.81%</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ---------- 7. 小整数打包用 Bitfield ----------</span>
+</span></span><span class="line"><span class="cl">BITFIELD counters SET u8 <span class="c1">#1001 42  # 1 亿个 u8 计数器只要 100MB</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ---------- 8. 应用层压缩大 value ----------</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># JSON 用 gzip/zstd 通常能压到 20%~30%</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 代价：CPU 开销 + 无法在服务端做部分操作</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ---------- 9. 检查并调优编码阈值 ----------</span>
+</span></span><span class="line"><span class="cl">OBJECT ENCODING mykey
+</span></span><span class="line"><span class="cl">CONFIG GET hash-max-listpack-entries
+</span></span><span class="line"><span class="cl"><span class="c1"># 如果集合通常在 200~500，可以把阈值调到 512（但不要超过 1000，第 4 篇）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ---------- 10. 清理无用数据 ----------</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 找出没有 TTL 的 key（可能是忘了设过期的泄漏源）</span>
+</span></span><span class="line"><span class="cl">redis-cli --scan --pattern <span class="s1">&#39;cache:*&#39;</span> <span class="p">|</span> <span class="k">while</span> <span class="nb">read</span> k<span class="p">;</span> <span class="k">do</span>
+</span></span><span class="line"><span class="cl">  <span class="o">[</span> <span class="s2">&#34;</span><span class="k">$(</span>redis-cli TTL <span class="s2">&#34;</span><span class="nv">$k</span><span class="s2">&#34;</span><span class="k">)</span><span class="s2">&#34;</span> <span class="o">=</span> <span class="s2">&#34;-1&#34;</span> <span class="o">]</span> <span class="o">&amp;&amp;</span> <span class="nb">echo</span> <span class="s2">&#34;</span><span class="nv">$k</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="k">done</span>
+</span></span></code></pre></div><h2 id="43-内存碎片治理">4.3 内存碎片治理</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">127.0.0.1:6379&gt; INFO memory
+</span></span><span class="line"><span class="cl">used_memory_human:3.85G                <span class="c1"># Redis 认为自己用了多少</span>
+</span></span><span class="line"><span class="cl">used_memory_rss_human:5.20G            <span class="c1"># 操作系统看到的物理内存</span>
+</span></span><span class="line"><span class="cl">mem_fragmentation_ratio:1.35           <span class="c1"># rss / used</span>
+</span></span><span class="line"><span class="cl">allocator_frag_ratio:1.12              <span class="c1"># 【分配器层面的碎片率，更准确】</span>
+</span></span><span class="line"><span class="cl">allocator_frag_bytes:412316860
+</span></span><span class="line"><span class="cl">mem_allocator:jemalloc-5.2.1
+</span></span></code></pre></div><p><strong>碎片率的解读</strong>：</p>
+<table>
+<thead>
+<tr>
+<th><code>mem_fragmentation_ratio</code></th>
+<th>含义</th>
+<th>处理</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>&lt; 1</strong></td>
+<td><strong>部分内存被换到 swap</strong></td>
+<td><strong>紧急！</strong> 关 swap、减少数据量、检查 <code>maxmemory</code></td>
+</tr>
+<tr>
+<td>1.0 ~ 1.5</td>
+<td>正常范围</td>
+<td>无需处理</td>
+</tr>
+<tr>
+<td><strong>&gt; 1.5</strong></td>
+<td>碎片严重</td>
+<td>开 <code>activedefrag</code>、<code>MEMORY PURGE</code>、或重启</td>
+</tr>
+<tr>
+<td>明显偏大但 <code>allocator_frag_ratio</code> 正常</td>
+<td>是 RSS 里包含了非分配器的内存（如复制缓冲区、堆栈）</td>
+<td>看 <code>MEMORY STATS</code> 定位</td>
+</tr>
+</tbody>
+</table>
+<p><strong>碎片产生的原因</strong>：</p>
+<ol>
+<li><strong>jemalloc 的分档分配</strong>：申请 17 字节实际分配 32 字节（内部碎片）；</li>
+<li><strong>删除/修改导致的空洞</strong>：大量 key 被删除后，空闲内存散落在各个 page 里，<strong>无法归还给操作系统</strong>（外部碎片）；</li>
+<li><strong>大小不一的 value 频繁变更</strong>。</li>
+</ol>
+<p><strong>治理</strong>：</p>
+<pre tabindex="0"><code class="language-conf" data-lang="conf"># 4.0+ 自动碎片整理（要求编译时用 jemalloc，标准发行版都是）
+activedefrag yes
+
+# 碎片达到多少字节才开始整理
+active-defrag-ignore-bytes 100mb
+# 碎片率达到多少百分比开始（10 = 10%）
+active-defrag-threshold-lower 10
+# 碎片率达到多少时用最大力度（100 = 100%）
+active-defrag-threshold-upper 100
+# CPU 时间占比的下限/上限（整理在主线程做，必须限制！）
+active-defrag-cycle-min 5
+active-defrag-cycle-max 50            # 默认 75 太激进，建议 50
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 手动让 jemalloc 把空闲页归还给 OS（不是真正的碎片整理，但常常有效）</span>
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; MEMORY PURGE
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 动态开启碎片整理</span>
+</span></span><span class="line"><span class="cl">redis-cli CONFIG SET activedefrag yes
+</span></span><span class="line"><span class="cl"><span class="c1"># 观察效果</span>
+</span></span><span class="line"><span class="cl">watch -n <span class="m">2</span> <span class="s1">&#39;redis-cli INFO memory | grep -E &#34;fragmentation|used_memory_rss_human&#34;&#39;</span>
+</span></span></code></pre></div><p><strong>重要提醒</strong>：<strong>碎片整理是在主线程里做的</strong>（要移动对象并更新所有指向它的指针，必须原子），会消耗 CPU 并造成延迟。所以：</p>
+<ul>
+<li><code>active-defrag-cycle-max</code> 不要设太高（建议 50，默认 75 太激进）；</li>
+<li>在<strong>低峰期</strong>开启效果最好；</li>
+<li>如果碎片率极高（&gt; 2）且业务允许，<strong>重启实例（先切主从）是最快的解法</strong>。</li>
+</ul>
+<h2 id="44-排查内存持续增长">4.4 排查内存持续增长</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 1. 是数据涨了还是开销涨了</span>
+</span></span><span class="line"><span class="cl">MEMORY STATS   <span class="c1"># 比较 dataset.bytes 和 overhead.total 的变化</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 2. key 数量在涨？</span>
+</span></span><span class="line"><span class="cl">DBSIZE
+</span></span><span class="line"><span class="cl">INFO keyspace     <span class="c1"># 对比 keys 和 expires——如果 keys 涨而 expires 没涨，</span>
+</span></span><span class="line"><span class="cl">                  <span class="c1"># 说明有大量 key 没设 TTL（常见泄漏源！）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 3. 有大 key 在涨？</span>
+</span></span><span class="line"><span class="cl">redis-cli --bigkeys
+</span></span><span class="line"><span class="cl"><span class="c1"># 定期记录关键 key 的大小</span>
+</span></span><span class="line"><span class="cl">MEMORY USAGE somekey
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 4. 客户端缓冲区在涨？</span>
+</span></span><span class="line"><span class="cl">CLIENT LIST <span class="p">|</span> awk <span class="s1">&#39;{for(i=1;i&lt;=NF;i++) if($i ~ /^omem=/) print $i}&#39;</span> <span class="p">|</span> sort -t<span class="o">=</span> -k2 -rn <span class="p">|</span> head
+</span></span><span class="line"><span class="cl">INFO clients
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 5. Lua 脚本缓存在涨？（动态生成脚本的泄漏）</span>
+</span></span><span class="line"><span class="cl">MEMORY STATS <span class="p">|</span> grep -A1 lua.caches
+</span></span><span class="line"><span class="cl">SCRIPT FLUSH      <span class="c1"># 清空（会导致客户端的 EVALSHA 收到 NOSCRIPT，但客户端会自动回退）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 6. 复制缓冲区在涨？</span>
+</span></span><span class="line"><span class="cl">INFO replication  <span class="c1"># 看从节点的 offset 差距</span>
+</span></span><span class="line"><span class="cl">CLIENT LIST TYPE replica
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 7. 是不是碎片</span>
+</span></span><span class="line"><span class="cl">INFO memory <span class="p">|</span> grep fragmentation
+</span></span></code></pre></div><p><strong>最常见的三个内存泄漏原因</strong>：</p>
+<ol>
+<li><strong>忘了给 key 设 TTL</strong>（尤其是用 <code>SET key val</code> 覆盖了原本有 TTL 的 key——第 2 篇的 TTL 陷阱）；</li>
+<li><strong>动态生成 Lua 脚本</strong>（每个变体占一份缓存，永不淘汰）；</li>
+<li><strong>Stream/List 没有裁剪</strong>（<code>XADD</code> 不带 <code>MAXLEN</code>、<code>LPUSH</code> 不配 <code>LTRIM</code>）。</li>
+</ol>
+<hr>
+<h1 id="5-系统与内核调优">5. 系统与内核调优</h1>
+<h2 id="51-必做的四项第-1-篇提过这里给完整版">5.1 必做的四项（第 1 篇提过，这里给完整版）</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ---------- 1. 内存过量分配（否则 fork 可能失败）----------</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s1">&#39;vm.overcommit_memory = 1&#39;</span> &gt;&gt; /etc/sysctl.conf
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ---------- 2. TCP 全连接队列（默认 128 太小）----------</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s1">&#39;net.core.somaxconn = 1024&#39;</span> &gt;&gt; /etc/sysctl.conf
+</span></span><span class="line"><span class="cl"><span class="c1"># Redis 的 tcp-backlog 也要相应调大</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># redis.conf: tcp-backlog 511</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ---------- 3. 关闭透明大页（COW 粒度从 4KB 变 2MB，放大 512 倍）----------</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> never &gt; /sys/kernel/mm/transparent_hugepage/enabled
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> never &gt; /sys/kernel/mm/transparent_hugepage/defrag
+</span></span><span class="line"><span class="cl"><span class="c1"># 持久化（写进 rc.local 或用 tuned profile）</span>
+</span></span><span class="line"><span class="cl">cat &gt;&gt; /etc/rc.local <span class="s">&lt;&lt;&#39;EOF&#39;
+</span></span></span><span class="line"><span class="cl"><span class="s">echo never &gt; /sys/kernel/mm/transparent_hugepage/enabled
+</span></span></span><span class="line"><span class="cl"><span class="s">echo never &gt; /sys/kernel/mm/transparent_hugepage/defrag
+</span></span></span><span class="line"><span class="cl"><span class="s">EOF</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ---------- 4. 文件描述符上限 ----------</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s1">&#39;* soft nofile 65535&#39;</span> &gt;&gt; /etc/security/limits.conf
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s1">&#39;* hard nofile 65535&#39;</span> &gt;&gt; /etc/security/limits.conf
+</span></span><span class="line"><span class="cl"><span class="c1"># systemd 服务还要加 LimitNOFILE=65535</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">sysctl -p
+</span></span></code></pre></div><p><strong>验证</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 启动 Redis 后看日志，如果有 WARNING 就是没配好</span>
+</span></span><span class="line"><span class="cl">grep -i warning /var/log/redis/redis.log
+</span></span><span class="line"><span class="cl"><span class="c1"># 常见警告：</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># WARNING: The TCP backlog setting of 511 cannot be enforced because</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#          /proc/sys/net/core/somaxconn is set to the lower value of 128.</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># WARNING overcommit_memory is set to 0!</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># WARNING you have Transparent Huge Pages (THP) support enabled</span>
+</span></span></code></pre></div><h2 id="52-其他内核参数">5.2 其他内核参数</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ---------- swap ----------</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 【最好完全关闭】</span>
+</span></span><span class="line"><span class="cl">swapoff -a
+</span></span><span class="line"><span class="cl"><span class="c1"># 或者至少让内核极不情愿使用 swap</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s1">&#39;vm.swappiness = 1&#39;</span> &gt;&gt; /etc/sysctl.conf
+</span></span><span class="line"><span class="cl"><span class="c1"># 注意：不是 0！0 在某些内核版本会触发 OOM Killer 而不是用 swap</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ---------- 脏页回写（影响 AOF 的 write 是否会阻塞）----------</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s1">&#39;vm.dirty_background_ratio = 5&#39;</span> &gt;&gt; /etc/sysctl.conf   <span class="c1"># 后台开始回写的阈值</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s1">&#39;vm.dirty_ratio = 10&#39;</span> &gt;&gt; /etc/sysctl.conf             <span class="c1"># 强制同步回写的阈值</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 默认值（10/20）在大内存机器上意味着可能积累几个 GB 脏页，</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 一次性回写会导致长时间的 IO 阻塞</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ---------- TCP 相关 ----------</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s1">&#39;net.ipv4.tcp_max_syn_backlog = 8192&#39;</span> &gt;&gt; /etc/sysctl.conf
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s1">&#39;net.ipv4.tcp_tw_reuse = 1&#39;</span> &gt;&gt; /etc/sysctl.conf       <span class="c1"># 复用 TIME_WAIT</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s1">&#39;net.ipv4.ip_local_port_range = 10000 65000&#39;</span> &gt;&gt; /etc/sysctl.conf
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s1">&#39;net.core.netdev_max_backlog = 5000&#39;</span> &gt;&gt; /etc/sysctl.conf
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ---------- NUMA ----------</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 检查是否有 NUMA</span>
+</span></span><span class="line"><span class="cl">numactl --hardware
+</span></span><span class="line"><span class="cl"><span class="c1"># 【不推荐】用 numactl 绑定（可能导致单节点内存不足）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 【推荐】关闭 NUMA balancing，或在 BIOS 里关闭 NUMA</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="m">0</span> &gt; /proc/sys/kernel/numa_balancing
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ---------- CPU 节能模式（会造成延迟毛刺）----------</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 设为 performance</span>
+</span></span><span class="line"><span class="cl"><span class="k">for</span> cpu in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor<span class="p">;</span> <span class="k">do</span>
+</span></span><span class="line"><span class="cl">  <span class="nb">echo</span> performance &gt; <span class="nv">$cpu</span>
+</span></span><span class="line"><span class="cl"><span class="k">done</span>
+</span></span></code></pre></div><h2 id="53-cpu-绑核多实例部署时">5.3 CPU 绑核（多实例部署时）</h2>
+<p>一台多核机器上跑多个 Redis 实例时，绑核能减少 CPU 缓存失效和线程迁移：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 用 taskset 绑定到特定核心</span>
+</span></span><span class="line"><span class="cl">taskset -c <span class="m">0</span> redis-server /etc/redis/7000.conf
+</span></span><span class="line"><span class="cl">taskset -c <span class="m">1</span> redis-server /etc/redis/7001.conf
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># systemd 里配置</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># CPUAffinity=0</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 【注意】6.0+ 有专门的配置项，比 taskset 更精细</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># redis.conf:</span>
+</span></span><span class="line"><span class="cl">server_cpulist 0-3          <span class="c1"># 主线程和 IO 线程用哪些核</span>
+</span></span><span class="line"><span class="cl">bio_cpulist 4,5             <span class="c1"># bio 后台线程</span>
+</span></span><span class="line"><span class="cl">aof_rewrite_cpulist 6,7     <span class="c1"># AOF 重写子进程</span>
+</span></span><span class="line"><span class="cl">bgsave_cpulist 6,7          <span class="c1"># RDB 子进程</span>
+</span></span></code></pre></div><p><strong>这个配置的价值</strong>：把<strong>持久化子进程（fork 出来的）绑到和主线程不同的核</strong>上，避免它们抢占主线程的 CPU 和缓存——这对减少持久化期间的延迟毛刺很有效。</p>
+<h2 id="54-磁盘">5.4 磁盘</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 1. AOF 和 RDB 放独立磁盘（避免和其他 IO 争抢）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># redis.conf: dir /data/redis   ← 挂载独立的 SSD</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 2. 检查磁盘性能</span>
+</span></span><span class="line"><span class="cl">fio --name<span class="o">=</span><span class="nb">test</span> --rw<span class="o">=</span>randwrite --bs<span class="o">=</span>4k --size<span class="o">=</span>1G --numjobs<span class="o">=</span><span class="m">1</span> --direct<span class="o">=</span><span class="m">1</span> --sync<span class="o">=</span><span class="m">1</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># fsync 延迟是关键指标（AOF everysec 依赖它）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 3. 监控磁盘饱和度</span>
+</span></span><span class="line"><span class="cl">iostat -x <span class="m">1</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># %util 接近 100% 说明磁盘饱和</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># await 高说明 IO 排队严重</span>
+</span></span></code></pre></div><hr>
+<h1 id="6-客户端优化">6. 客户端优化</h1>
+<p>服务端调优做到极致后，很多性能问题其实在客户端。</p>
+<h2 id="61-连接池配置">6.1 连接池配置</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="nx">rdb</span> <span class="o">:=</span> <span class="nx">redis</span><span class="p">.</span><span class="nf">NewClient</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">redis</span><span class="p">.</span><span class="nx">Options</span><span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">Addr</span><span class="p">:</span>     <span class="s">&#34;127.0.0.1:6379&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// 【连接池大小】：不是越大越好
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="c1">// 经验值：每个 CPU 核心 10 个连接，或者 QPS/1000
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="c1">// 太大会导致 Redis 端 maxclients 压力和更多的上下文切换
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">PoolSize</span><span class="p">:</span>     <span class="mi">50</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">MinIdleConns</span><span class="p">:</span> <span class="mi">10</span><span class="p">,</span>          <span class="c1">// 预热连接，避免突发流量时建连延迟
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// 【超时】必须设置，否则网络问题会导致 goroutine 无限堆积
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">DialTimeout</span><span class="p">:</span>  <span class="mi">1</span> <span class="o">*</span> <span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">ReadTimeout</span><span class="p">:</span>  <span class="mi">500</span> <span class="o">*</span> <span class="nx">time</span><span class="p">.</span><span class="nx">Millisecond</span><span class="p">,</span>   <span class="c1">// 大部分命令应该 &lt; 1ms
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">WriteTimeout</span><span class="p">:</span> <span class="mi">500</span> <span class="o">*</span> <span class="nx">time</span><span class="p">.</span><span class="nx">Millisecond</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">PoolTimeout</span><span class="p">:</span>  <span class="mi">1</span> <span class="o">*</span> <span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">,</span>          <span class="c1">// 等待可用连接的超时
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// 连接生命周期
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">ConnMaxIdleTime</span><span class="p">:</span> <span class="mi">5</span> <span class="o">*</span> <span class="nx">time</span><span class="p">.</span><span class="nx">Minute</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">ConnMaxLifetime</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span>                     <span class="c1">// 0 = 不主动关闭
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// 重试
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">MaxRetries</span><span class="p">:</span>      <span class="mi">2</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">MinRetryBackoff</span><span class="p">:</span> <span class="mi">8</span> <span class="o">*</span> <span class="nx">time</span><span class="p">.</span><span class="nx">Millisecond</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">MaxRetryBackoff</span><span class="p">:</span> <span class="mi">512</span> <span class="o">*</span> <span class="nx">time</span><span class="p">.</span><span class="nx">Millisecond</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl"><span class="p">})</span>
+</span></span></code></pre></div><p><strong>连接池的常见问题</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>问题</th>
+<th>症状</th>
+<th>原因</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>池太小</strong></td>
+<td><code>PoolTimeout</code> 错误、延迟高</td>
+<td>并发超过池大小，请求排队等连接</td>
+</tr>
+<tr>
+<td><strong>池太大</strong></td>
+<td>Redis 端 <code>maxclients</code> 满、内存高</td>
+<td>每个连接在 Redis 端有输入输出缓冲区</td>
+</tr>
+<tr>
+<td><strong>没设超时</strong></td>
+<td>goroutine/线程无限堆积 → OOM</td>
+<td>网络故障时请求永久挂起</td>
+</tr>
+<tr>
+<td><strong>阻塞命令占用池</strong></td>
+<td>池被耗尽</td>
+<td><code>BLPOP</code>/<code>XREAD BLOCK</code> 长期占用连接，<strong>必须用独立连接</strong></td>
+</tr>
+</tbody>
+</table>
+<p><strong>监控连接池</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="nx">stats</span> <span class="o">:=</span> <span class="nx">rdb</span><span class="p">.</span><span class="nf">PoolStats</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl"><span class="nx">log</span><span class="p">.</span><span class="nf">Printf</span><span class="p">(</span><span class="s">&#34;hits=%d misses=%d timeouts=%d total=%d idle=%d stale=%d&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">stats</span><span class="p">.</span><span class="nx">Hits</span><span class="p">,</span> <span class="nx">stats</span><span class="p">.</span><span class="nx">Misses</span><span class="p">,</span> <span class="nx">stats</span><span class="p">.</span><span class="nx">Timeouts</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">stats</span><span class="p">.</span><span class="nx">TotalConns</span><span class="p">,</span> <span class="nx">stats</span><span class="p">.</span><span class="nx">IdleConns</span><span class="p">,</span> <span class="nx">stats</span><span class="p">.</span><span class="nx">StaleConns</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="c1">// Timeouts &gt; 0 说明池不够用
+</span></span></span><span class="line"><span class="cl"><span class="c1">// Misses 高说明连接经常要新建（考虑调大 MinIdleConns）
+</span></span></span></code></pre></div><h2 id="62-减少网络往返">6.2 减少网络往返</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// ❌ N 次 RTT
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">for</span> <span class="nx">_</span><span class="p">,</span> <span class="nx">id</span> <span class="o">:=</span> <span class="k">range</span> <span class="nx">ids</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">rdb</span><span class="p">.</span><span class="nf">Get</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nf">key</span><span class="p">(</span><span class="nx">id</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// ✅ 1 次 RTT：批量命令
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">rdb</span><span class="p">.</span><span class="nf">MGet</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">keys</span><span class="o">...</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// ✅ 1 次 RTT：pipeline（命令类型不同时用）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">pipe</span> <span class="o">:=</span> <span class="nx">rdb</span><span class="p">.</span><span class="nf">Pipeline</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl"><span class="k">for</span> <span class="nx">_</span><span class="p">,</span> <span class="nx">id</span> <span class="o">:=</span> <span class="k">range</span> <span class="nx">ids</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">pipe</span><span class="p">.</span><span class="nf">HGetAll</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nf">key</span><span class="p">(</span><span class="nx">id</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="nx">cmds</span><span class="p">,</span> <span class="nx">_</span> <span class="o">:=</span> <span class="nx">pipe</span><span class="p">.</span><span class="nf">Exec</span><span class="p">(</span><span class="nx">ctx</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="c1">// 【必须遍历检查每条命令的错误】
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">for</span> <span class="nx">_</span><span class="p">,</span> <span class="nx">cmd</span> <span class="o">:=</span> <span class="k">range</span> <span class="nx">cmds</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">cmd</span><span class="p">.</span><span class="nf">Err</span><span class="p">()</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span> <span class="cm">/* ... */</span> <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// ✅ 需要逻辑判断时用 Lua（1 次 RTT + 原子）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">script</span><span class="p">.</span><span class="nf">Run</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">rdb</span><span class="p">,</span> <span class="nx">keys</span><span class="p">,</span> <span class="nx">args</span><span class="p">)</span>
+</span></span></code></pre></div><p><strong>RTT 的量级感知</strong>（第 5 篇算过）：同机房 RTT 约 0.1~0.5ms，跨机房 2~30ms。一个接口如果串行做 100 次 Redis 调用，同机房要 10~50ms，跨机房就是 200ms~3 秒。<strong>减少往返次数通常比优化 Redis 本身收益大得多</strong>。</p>
+<h2 id="63-客户端侧的其他优化">6.3 客户端侧的其他优化</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// 1. 【务必设置连接名】，让服务端的 CLIENT LIST 和 SLOWLOG 能定位到服务
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">rdb</span> <span class="o">:=</span> <span class="nx">redis</span><span class="p">.</span><span class="nf">NewClient</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">redis</span><span class="p">.</span><span class="nx">Options</span><span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">ClientName</span><span class="p">:</span> <span class="s">&#34;order-service-&#34;</span> <span class="o">+</span> <span class="nx">hostname</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl"><span class="p">})</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// 2. 序列化用更快的格式
+</span></span></span><span class="line"><span class="cl"><span class="c1">// JSON → msgpack / protobuf / sonic（更快的 JSON 库）
+</span></span></span><span class="line"><span class="cl"><span class="c1">// 大 value 加压缩（zstd/snappy）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl"><span class="c1">// 3. 本地缓存挡住热点（第 14 篇）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl"><span class="c1">// 4. 只读命令走从节点（谨慎，有延迟问题，第 10 篇）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl"><span class="c1">// 5. 避免在循环里做 Redis 调用（改成批量）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl"><span class="c1">// 6. 监控客户端侧的 P99 延迟，和服务端的 commandstats 对比
+</span></span></span><span class="line"><span class="cl"><span class="c1">//    两者差值大 = 网络或客户端问题
+</span></span></span></code></pre></div><hr>
+<h1 id="7-压测">7. 压测</h1>
+<h2 id="71-redis-benchmark">7.1 redis-benchmark</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 基本压测（默认 50 并发、10 万请求、测所有命令）</span>
+</span></span><span class="line"><span class="cl">redis-benchmark -h 127.0.0.1 -p <span class="m">6379</span> -a password
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 只测特定命令</span>
+</span></span><span class="line"><span class="cl">redis-benchmark -t set,get -n <span class="m">1000000</span> -c <span class="m">100</span> -q
+</span></span><span class="line"><span class="cl"><span class="c1"># -t 命令  -n 请求数  -c 并发连接数  -q 只输出汇总</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 测不同的 value 大小（很重要，大 value 的吞吐差别巨大）</span>
+</span></span><span class="line"><span class="cl">redis-benchmark -t <span class="nb">set</span> -n <span class="m">100000</span> -d <span class="m">100</span>      <span class="c1"># 100 字节</span>
+</span></span><span class="line"><span class="cl">redis-benchmark -t <span class="nb">set</span> -n <span class="m">100000</span> -d <span class="m">10240</span>    <span class="c1"># 10KB</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 测 pipeline 的效果</span>
+</span></span><span class="line"><span class="cl">redis-benchmark -t set,get -n <span class="m">1000000</span> -P <span class="m">16</span> -q
+</span></span><span class="line"><span class="cl"><span class="c1"># -P 16 = 每次 pipeline 16 个命令</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 用随机 key（避免所有请求都命中同一个 key，更接近真实场景）</span>
+</span></span><span class="line"><span class="cl">redis-benchmark -t set,get -n <span class="m">1000000</span> -r <span class="m">1000000</span> -q
+</span></span><span class="line"><span class="cl"><span class="c1"># -r 1000000 = key 在 100 万个随机值里选</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 测自定义命令</span>
+</span></span><span class="line"><span class="cl">redis-benchmark -n <span class="m">100000</span> <span class="nb">eval</span> <span class="s2">&#34;return redis.call(&#39;GET&#39;, KEYS[1])&#34;</span> <span class="m">1</span> mykey
+</span></span><span class="line"><span class="cl">redis-benchmark -n <span class="m">100000</span> hset myhash field:__rand_int__ value
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 集群模式</span>
+</span></span><span class="line"><span class="cl">redis-benchmark --cluster -h 127.0.0.1 -p <span class="m">7000</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 只保持连接不发命令（测 maxclients）</span>
+</span></span><span class="line"><span class="cl">redis-benchmark -c <span class="m">10000</span> -n <span class="m">1</span> --keep-alive
+</span></span></code></pre></div><p><strong>典型结果解读</strong>：</p>
+<pre tabindex="0"><code>SET: 89285.71 requests per second, p50=0.279 msec
+GET: 92592.59 requests per second, p50=0.271 msec
+</code></pre><p><strong>参考量级</strong>（普通云主机、100 字节 value）：</p>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th>QPS</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>单机 <code>GET</code>/<code>SET</code>，无 pipeline</td>
+<td>8 万 ~ 12 万</td>
+</tr>
+<tr>
+<td>单机 <code>GET</code>/<code>SET</code>，pipeline 16</td>
+<td><strong>50 万 ~ 100 万</strong></td>
+</tr>
+<tr>
+<td>10KB value</td>
+<td>2 万 ~ 4 万（网卡成瓶颈）</td>
+</tr>
+<tr>
+<td><code>HGETALL</code> 100 字段</td>
+<td>1 万 ~ 3 万</td>
+</tr>
+<tr>
+<td>Lua 脚本（简单）</td>
+<td>5 万 ~ 8 万</td>
+</tr>
+</tbody>
+</table>
+<p><strong>pipeline 能带来 5~10 倍提升</strong>，这是压测最能说明问题的一点。</p>
+<h2 id="72-压测的注意事项">7.2 压测的注意事项</h2>
+<ol>
+<li><strong>不要在生产实例上压测</strong>（会污染数据、影响业务）；</li>
+<li><strong><code>redis-benchmark</code> 自己可能成为瓶颈</strong>：单个 benchmark 进程受限于单核，测高 QPS 时要开多个进程或用 <code>memtier_benchmark</code>；</li>
+<li><strong>要模拟真实的 value 大小和 key 分布</strong>（<code>-d</code> 和 <code>-r</code> 参数）；</li>
+<li><strong>压测机和 Redis 之间的网络</strong>要和生产一致（同机房 vs 跨机房差别巨大）；</li>
+<li><strong>关注 P99 而不只是平均值</strong>；</li>
+<li><strong>压测时同时观察服务端指标</strong>（CPU、网卡、<code>INFO commandstats</code>）。</li>
+</ol>
+<h2 id="73-更专业的工具">7.3 更专业的工具</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># memtier_benchmark（Redis Labs 出品，功能更强）</span>
+</span></span><span class="line"><span class="cl">memtier_benchmark -s 127.0.0.1 -p <span class="m">6379</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --protocol<span class="o">=</span>redis <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  -c <span class="m">50</span> -t <span class="m">4</span> <span class="se">\ </span>                   <span class="c1"># 50 连接 × 4 线程</span>
+</span></span><span class="line"><span class="cl">  --ratio<span class="o">=</span>1:10 <span class="se">\ </span>                 <span class="c1"># 写:读 = 1:10</span>
+</span></span><span class="line"><span class="cl">  --data-size<span class="o">=</span><span class="m">100</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --key-pattern<span class="o">=</span>R:R <span class="se">\ </span>            <span class="c1"># 随机 key</span>
+</span></span><span class="line"><span class="cl">  --pipeline<span class="o">=</span><span class="m">16</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --test-time<span class="o">=</span><span class="m">60</span>
+</span></span></code></pre></div><hr>
+<h1 id="8-真实事故案例复盘">8. 真实事故案例复盘</h1>
+<h2 id="81-案例一一条-keys--打挂整个服务">8.1 案例一：一条 <code>KEYS *</code> 打挂整个服务</h2>
+<p><strong>现象</strong>：某天中午，所有依赖 Redis 的接口 P99 从 5ms 涨到 8 秒，持续 3 分钟后恢复。</p>
+<p><strong>排查</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">redis-cli SLOWLOG GET <span class="m">10</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 1) 1) (integer) 152</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    2) (integer) 1785657600</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    3) (integer) 3852000        ← 3.85 秒！</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    4) 1) &#34;KEYS&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#       2) &#34;*&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    5) &#34;10.0.0.88:41234&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    6) &#34;&#34;                        ← 没设置 client name，只能靠 IP 定位</span>
+</span></span></code></pre></div><p><strong>根因</strong>：一个运维脚本为了统计 key 数量，直接跑了 <code>KEYS *</code>。实例有 800 万 key，<code>KEYS</code> 是 O(N) 且在主线程执行，<strong>阻塞了 3.85 秒</strong>。期间所有请求排队，客户端大面积超时重试，进一步加剧堆积。</p>
+<p><strong>修复</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 1. 立即禁用危险命令</span>
+</span></span><span class="line"><span class="cl">CONFIG SET ... <span class="c1"># 需要改配置文件后重启，或用 ACL</span>
+</span></span><span class="line"><span class="cl">rename-command KEYS <span class="s2">&#34;&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 6.0+ 可以用 ACL 更灵活地控制</span>
+</span></span><span class="line"><span class="cl">ACL SETUSER <span class="nb">readonly</span> on &gt;pwd ~* +@read -keys -flushall -flushdb
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 2. 统计 key 数用 DBSIZE（O(1)）</span>
+</span></span><span class="line"><span class="cl">DBSIZE
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 3. 遍历用 SCAN</span>
+</span></span><span class="line"><span class="cl">redis-cli --scan --pattern <span class="s1">&#39;user:*&#39;</span> <span class="p">|</span> wc -l
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 4. 强制所有应用设置 CLIENT SETNAME（便于定位）</span>
+</span></span></code></pre></div><p><strong>教训</strong>：<strong>生产环境必须 rename 或用 ACL 禁用 <code>KEYS</code>/<code>FLUSHALL</code>/<code>FLUSHDB</code>/<code>MONITOR</code>/<code>DEBUG</code></strong>，不能靠&quot;约定不要用&quot;。</p>
+<h2 id="82-案例二一个大-key-导致的雪崩">8.2 案例二：一个大 key 导致的雪崩</h2>
+<p><strong>现象</strong>：某接口偶发超时，Redis 网卡流量周期性打满到 1Gbps。</p>
+<p><strong>排查</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">redis-cli --bigkeys
+</span></span><span class="line"><span class="cl"><span class="c1"># [00.00%] Biggest hash found so far &#39;product:categories:all&#39; with 1200000 fields</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">redis-cli MEMORY USAGE product:categories:all
+</span></span><span class="line"><span class="cl"><span class="c1"># (integer) 268435456           ← 256MB！</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">redis-cli INFO commandstats <span class="p">|</span> grep hgetall
+</span></span><span class="line"><span class="cl"><span class="c1"># cmdstat_hgetall:calls=3600,usec=1080000000,usec_per_call=300000.00</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                                              ↑ 平均 300ms</span>
+</span></span></code></pre></div><p><strong>根因</strong>：一个&quot;全量分类树&quot;被存成了一个 256MB 的 hash，某个接口每次都 <code>HGETALL</code> 它。每秒 4 次调用 = <strong>1GB/s 的网络流量</strong>，直接打满网卡；同时每次 <code>HGETALL</code> 阻塞主线程 300ms。</p>
+<p><strong>修复</strong>：</p>
+<pre tabindex="0"><code>1. 【紧急】给这个接口加本地缓存（TTL 60 秒），QPS 从 4 降到 0.017
+2. 【短期】把 HGETALL 改成 HMGET，只取需要的字段
+3. 【长期】按父分类拆分成多个小 hash（product:categories:{parentId}）
+4. 【长期】value 加 zstd 压缩
+5. 加监控：每天扫描 --bigkeys，超过 1MB 的 key 告警
+</code></pre><p><strong>教训</strong>：<strong>大 key 的危害是复合的</strong>——网络、阻塞、内存、迁移全都受影响（第 14 篇的六大危害）。</p>
+<h2 id="83-案例三主节点无持久化重启导致全量数据丢失">8.3 案例三：主节点无持久化重启导致全量数据丢失</h2>
+<p><strong>现象</strong>：凌晨机器重启后，Redis 里的数据全部消失，且从节点的数据也没了。</p>
+<p><strong>排查</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">grep -E <span class="s1">&#39;save|appendonly&#39;</span> redis.conf
+</span></span><span class="line"><span class="cl"><span class="c1"># save &#34;&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># appendonly no                 ← 完全没有持久化</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">systemctl cat redis
+</span></span><span class="line"><span class="cl"><span class="c1"># Restart=always                ← 自动重启</span>
+</span></span></code></pre></div><p><strong>根因链条</strong>（第 10 篇讲过的经典事故）：</p>
+<pre tabindex="0"><code>1. 主节点为了性能关闭了所有持久化
+2. 机器重启，systemd 的 Restart=always 让 Redis 自动起来了
+3. 主节点启动后是【空的】，但它仍然是主节点
+4. 从节点检测到与主节点连接恢复，发起 PSYNC
+5. replid 不匹配 → 全量同步
+6. 从节点【清空自己的所有数据】，从主节点加载一个空 RDB
+   → 全集群数据永久丢失
+</code></pre><p><strong>修复</strong>：</p>
+<pre tabindex="0"><code class="language-conf" data-lang="conf"># 1. 主节点至少保留低频 RDB 作为兜底
+save 3600 1
+
+# 2. 关闭自动重启（改成人工确认）
+# systemd: Restart=no 或 Restart=on-failure + StartLimitBurst=1
+
+# 3. 用哨兵管理拓扑，主节点重启后由哨兵决定它的角色
+
+# 4. 加监控：DBSIZE 突然归零立即告警
+</code></pre><p><strong>教训</strong>：<strong>&ldquo;纯缓存不需要持久化&quot;是一个危险的误解</strong>。即使数据能重建，持久化也能避免&quot;空实例重启引发的数据清空和雪崩&rdquo;。</p>
+<h2 id="84-案例四复制风暴打垮主节点">8.4 案例四：复制风暴打垮主节点</h2>
+<p><strong>现象</strong>：主节点 CPU 100%，<code>sync_full</code> 每分钟增长几次，从节点反复重连。</p>
+<p><strong>排查</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">redis-cli INFO stats <span class="p">|</span> grep -E <span class="s1">&#39;sync_full|sync_partial&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># sync_full:127                 ← 一小时增长了 127 次！</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># sync_partial_err:89</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">redis-cli CONFIG GET repl-backlog-size
+</span></span><span class="line"><span class="cl"><span class="c1"># 1) &#34;repl-backlog-size&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 2) &#34;1048576&#34;                  ← 只有 1MB（默认值）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">grep <span class="s1">&#39;scheduled to be closed&#39;</span> redis.log <span class="p">|</span> wc -l
+</span></span><span class="line"><span class="cl"><span class="c1"># 89                            ← 从节点因输出缓冲区超限被断开</span>
+</span></span></code></pre></div><p><strong>根因</strong>（第 10 篇的复制风暴）：</p>
+<pre tabindex="0"><code>1. 写入速率 8MB/s，但 repl-backlog-size 只有 1MB（默认值）
+   → 从节点断开 0.2 秒就会导致 offset 超出 backlog → 全量同步
+2. 全量同步期间主节点为该从节点维护的复制缓冲区快速增长
+3. 超过 client-output-buffer-limit replica 256mb → 主节点断开它
+4. 从节点重连 → 又是全量同步 → 【无限循环】
+</code></pre><p><strong>修复</strong>：</p>
+<pre tabindex="0"><code class="language-conf" data-lang="conf">repl-backlog-size 256mb                            # 从 1MB 调到 256MB
+client-output-buffer-limit replica 1gb 256mb 120   # 调大
+repl-timeout 300                                   # 避免大 RDB 传输被误判超时
+repl-diskless-sync yes                             # 无盘复制
+</code></pre><p><strong>教训</strong>：<strong><code>repl-backlog-size</code> 的默认值 1MB 在任何生产环境都不够</strong>，必须按&quot;写入速率 × 最长断线时间 × 安全系数&quot;计算。</p>
+<h2 id="85-案例五lua-脚本死循环导致必须重启">8.5 案例五：Lua 脚本死循环导致必须重启</h2>
+<p><strong>现象</strong>：Redis 完全无响应，所有客户端收到 <code>BUSY Redis is busy running a script</code>。</p>
+<p><strong>排查</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">redis-cli SCRIPT KILL
+</span></span><span class="line"><span class="cl"><span class="c1"># (error) UNKILLABLE Sorry the script already executed write commands</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#         against the dataset. You can either wait the script termination</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#         or kill the server in a hard way using the SHUTDOWN NOSAVE command.</span>
+</span></span></code></pre></div><p><strong>根因</strong>：一个新上线的 Lua 脚本里有个循环，循环次数由 <code>ARGV</code> 传入且没有上限校验。某次调用传了一个异常大的值，脚本执行了几分钟；而且它在循环里先做了写操作，所以<strong>无法 <code>SCRIPT KILL</code></strong>（会造成主从不一致，Redis 拒绝）。</p>
+<p><strong>处理</strong>：只能 <code>SHUTDOWN NOSAVE</code>（丢失未持久化的数据）+ 从备份/从节点恢复。</p>
+<p><strong>修复</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-lua" data-lang="lua"><span class="line"><span class="cl"><span class="c1">-- 1. 循环次数必须有【硬编码的小上限】</span>
+</span></span><span class="line"><span class="cl"><span class="kd">local</span> <span class="n">n</span> <span class="o">=</span> <span class="n">math.min</span><span class="p">(</span><span class="n">tonumber</span><span class="p">(</span><span class="n">ARGV</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span> <span class="ow">or</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">100</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="kr">for</span> <span class="n">i</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span> <span class="n">n</span> <span class="kr">do</span> <span class="p">...</span> <span class="kr">end</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">-- 2. 【所有校验在前，所有写入在后】</span>
+</span></span><span class="line"><span class="cl"><span class="c1">--    这样至少在校验阶段还能被 SCRIPT KILL</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">-- 3. 上线前必须用生产规模的数据测试</span>
+</span></span></code></pre></div><p><strong>教训</strong>（第 8 篇）：<strong><code>busy-reply-threshold</code> 不会杀掉脚本</strong>，只是开始返回 <code>BUSY</code>；<strong>写过数据的脚本无法 kill</strong>，唯一出路是重启丢数据。Lua 脚本必须简短、循环有小上限、上线前充分测试。</p>
+<h2 id="86-案例六ttl-陷阱导致内存泄漏">8.6 案例六：TTL 陷阱导致内存泄漏</h2>
+<p><strong>现象</strong>：内存持续缓慢增长，一个月从 2GB 涨到 12GB，<code>DBSIZE</code> 也在涨。</p>
+<p><strong>排查</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">redis-cli INFO keyspace
+</span></span><span class="line"><span class="cl"><span class="c1"># db0:keys=8000000,expires=1200000,avg_ttl=1800000</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#            ↑ 800 万 key      ↑ 但只有 120 万有 TTL！</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 抽样检查缓存 key 的 TTL</span>
+</span></span><span class="line"><span class="cl">redis-cli --scan --pattern <span class="s1">&#39;cache:user:*&#39;</span> <span class="p">|</span> head -100 <span class="p">|</span> <span class="k">while</span> <span class="nb">read</span> k<span class="p">;</span> <span class="k">do</span>
+</span></span><span class="line"><span class="cl">  <span class="nb">echo</span> <span class="s2">&#34;</span><span class="k">$(</span>redis-cli TTL <span class="s2">&#34;</span><span class="nv">$k</span><span class="s2">&#34;</span><span class="k">)</span><span class="s2"> </span><span class="nv">$k</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="k">done</span> <span class="p">|</span> sort -n <span class="p">|</span> head
+</span></span><span class="line"><span class="cl"><span class="c1"># -1 cache:user:1001            ← 没有过期时间！</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># -1 cache:user:1002</span>
+</span></span></code></pre></div><p><strong>根因</strong>（第 2 篇的 TTL 陷阱）：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// 写入时正确设置了 TTL
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">rdb</span><span class="p">.</span><span class="nf">Set</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">key</span><span class="p">,</span> <span class="nx">val</span><span class="p">,</span> <span class="nx">time</span><span class="p">.</span><span class="nx">Hour</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// 但更新时用了不带 TTL 的 SET —— 【TTL 被清除，key 变成永久】
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kd">func</span> <span class="nf">UpdateCache</span><span class="p">(</span><span class="nx">ctx</span> <span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span> <span class="nx">key</span> <span class="kt">string</span><span class="p">,</span> <span class="nx">val</span> <span class="p">[]</span><span class="kt">byte</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">rdb</span><span class="p">.</span><span class="nf">Set</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">key</span><span class="p">,</span> <span class="nx">val</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>      <span class="c1">// ← 0 表示永不过期！
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span></code></pre></div><p><strong>修复</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// 方案一：更新时也带 TTL
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">rdb</span><span class="p">.</span><span class="nf">Set</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">key</span><span class="p">,</span> <span class="nx">val</span><span class="p">,</span> <span class="nf">randomTTL</span><span class="p">(</span><span class="nx">time</span><span class="p">.</span><span class="nx">Hour</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// 方案二：用 KEEPTTL 保留原有 TTL（6.0+）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">rdb</span><span class="p">.</span><span class="nf">Set</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">key</span><span class="p">,</span> <span class="nx">val</span><span class="p">,</span> <span class="nx">redis</span><span class="p">.</span><span class="nx">KeepTTL</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// 方案三：更新时干脆删除，让下次读取重建（Cache Aside，第 14 篇）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">rdb</span><span class="p">.</span><span class="nf">Del</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="nx">key</span><span class="p">)</span>
+</span></span></code></pre></div><p><strong>加监控</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 定期比对 keys 和 expires 的比例，异常时告警</span>
+</span></span><span class="line"><span class="cl">redis-cli INFO keyspace
+</span></span></code></pre></div><p><strong>教训</strong>：<strong><code>SET</code> 会清除 TTL</strong>（<code>GETSET</code> 也会），这是最容易造成&quot;缓存变永久&quot;的坑。要么显式带 TTL，要么用 <code>KEEPTTL</code>，要么改成删除。</p>
+<hr>
+<h1 id="9-监控体系">9. 监控体系</h1>
+<h2 id="91-必须监控的指标清单">9.1 必须监控的指标清单</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ========== 可用性 ==========</span>
+</span></span><span class="line"><span class="cl">PING 是否成功
+</span></span><span class="line"><span class="cl">role（主从角色是否符合预期）
+</span></span><span class="line"><span class="cl">master_link_status（从节点，必须是 up）
+</span></span><span class="line"><span class="cl">cluster_state（集群，必须是 ok）
+</span></span><span class="line"><span class="cl">cluster_slots_assigned（必须 16384）
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ========== 性能 ==========</span>
+</span></span><span class="line"><span class="cl">instantaneous_ops_per_sec        <span class="c1"># 实时 QPS</span>
+</span></span><span class="line"><span class="cl">latency（redis-cli --latency 或客户端埋点 P99）
+</span></span><span class="line"><span class="cl">slowlog 条数增长
+</span></span><span class="line"><span class="cl">cmdstat_* 的 usec_per_call
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ========== 内存 ==========</span>
+</span></span><span class="line"><span class="cl">used_memory / maxmemory          <span class="c1"># 使用率，&gt; 80% 告警</span>
+</span></span><span class="line"><span class="cl">used_memory_rss
+</span></span><span class="line"><span class="cl">mem_fragmentation_ratio          <span class="c1"># &lt; 1 紧急（swap）；&gt; 1.5 告警（碎片）</span>
+</span></span><span class="line"><span class="cl">evicted_keys                     <span class="c1"># 快速增长 = 内存不足</span>
+</span></span><span class="line"><span class="cl">keys.bytes-per-key（MEMORY STATS）
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ========== 命中率 ==========</span>
+</span></span><span class="line"><span class="cl">keyspace_hits / <span class="o">(</span>keyspace_hits + keyspace_misses<span class="o">)</span>   <span class="c1"># &lt; 90% 要排查</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ========== 连接 ==========</span>
+</span></span><span class="line"><span class="cl">connected_clients                <span class="c1"># 接近 maxclients 告警</span>
+</span></span><span class="line"><span class="cl">blocked_clients                  <span class="c1"># 阻塞客户端数</span>
+</span></span><span class="line"><span class="cl">rejected_connections             <span class="c1"># &gt; 0 说明超过 maxclients</span>
+</span></span><span class="line"><span class="cl">client_recent_max_input_buffer
+</span></span><span class="line"><span class="cl">client_recent_max_output_buffer  <span class="c1"># 大 key 或慢消费者的信号</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ========== 持久化 ==========</span>
+</span></span><span class="line"><span class="cl">rdb_last_bgsave_status           <span class="c1"># 必须 ok</span>
+</span></span><span class="line"><span class="cl">aof_last_bgrewrite_status        <span class="c1"># 必须 ok</span>
+</span></span><span class="line"><span class="cl">aof_last_write_status            <span class="c1"># 必须 ok（不 ok 说明正在丢数据！）</span>
+</span></span><span class="line"><span class="cl">rdb_changes_since_last_save
+</span></span><span class="line"><span class="cl">latest_fork_usec                 <span class="c1"># &gt; 100000（100ms）告警</span>
+</span></span><span class="line"><span class="cl">aof_delayed_fsync                <span class="c1"># 持续增长 = 磁盘慢</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ========== 复制 ==========</span>
+</span></span><span class="line"><span class="cl">connected_slaves                 <span class="c1"># 少于预期告警</span>
+</span></span><span class="line"><span class="cl">master_repl_offset - slave_repl_offset   <span class="c1"># 复制延迟（字节）</span>
+</span></span><span class="line"><span class="cl">slaveN 的 lag                    <span class="c1"># 复制延迟（秒）</span>
+</span></span><span class="line"><span class="cl">sync_full                        <span class="c1"># 5 分钟内增长 &gt; 1 次告警</span>
+</span></span><span class="line"><span class="cl">sync_partial_err                 <span class="c1"># 任何增长都要关注</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ========== 过期与淘汰 ==========</span>
+</span></span><span class="line"><span class="cl">expired_keys
+</span></span><span class="line"><span class="cl">expired_time_cap_reached_count   <span class="c1"># 持续增长 = 过期压力大</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ========== 系统 ==========</span>
+</span></span><span class="line"><span class="cl">CPU 使用率（单核，Redis 主线程）
+</span></span><span class="line"><span class="cl">内存使用率
+</span></span><span class="line"><span class="cl">网卡流量（in/out，接近带宽上限告警）
+</span></span><span class="line"><span class="cl">磁盘 IO（%util、await）
+</span></span><span class="line"><span class="cl">是否在 swap
+</span></span></code></pre></div><h2 id="92-关键告警规则">9.2 关键告警规则</h2>
+<table>
+<thead>
+<tr>
+<th>级别</th>
+<th>指标</th>
+<th>阈值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>P0 紧急</strong></td>
+<td>PING 失败</td>
+<td>立即</td>
+</tr>
+<tr>
+<td><strong>P0</strong></td>
+<td><code>mem_fragmentation_ratio &lt; 1</code></td>
+<td>立即（用了 swap）</td>
+</tr>
+<tr>
+<td><strong>P0</strong></td>
+<td><code>aof_last_write_status != ok</code></td>
+<td>立即（正在丢数据）</td>
+</tr>
+<tr>
+<td><strong>P0</strong></td>
+<td><code>master_link_status != up</code></td>
+<td>立即</td>
+</tr>
+<tr>
+<td><strong>P0</strong></td>
+<td><code>cluster_state != ok</code></td>
+<td>立即</td>
+</tr>
+<tr>
+<td><strong>P0</strong></td>
+<td><code>DBSIZE</code> 突然归零</td>
+<td>立即（数据丢失）</td>
+</tr>
+<tr>
+<td><strong>P1 重要</strong></td>
+<td><code>used_memory / maxmemory &gt; 85%</code></td>
+<td>5 分钟</td>
+</tr>
+<tr>
+<td><strong>P1</strong></td>
+<td><code>evicted_keys</code> 快速增长</td>
+<td>5 分钟</td>
+</tr>
+<tr>
+<td><strong>P1</strong></td>
+<td><code>rdb_last_bgsave_status != ok</code></td>
+<td>5 分钟</td>
+</tr>
+<tr>
+<td><strong>P1</strong></td>
+<td><code>latest_fork_usec &gt; 500000</code>（500ms）</td>
+<td>5 分钟</td>
+</tr>
+<tr>
+<td><strong>P1</strong></td>
+<td><code>rejected_connections &gt; 0</code></td>
+<td>5 分钟</td>
+</tr>
+<tr>
+<td><strong>P1</strong></td>
+<td><code>sync_full</code> 5 分钟内 &gt; 1</td>
+<td>立即</td>
+</tr>
+<tr>
+<td><strong>P1</strong></td>
+<td>客户端 P99 延迟 &gt; 50ms</td>
+<td>5 分钟</td>
+</tr>
+<tr>
+<td><strong>P2 关注</strong></td>
+<td>命中率 &lt; 90%</td>
+<td>30 分钟</td>
+</tr>
+<tr>
+<td><strong>P2</strong></td>
+<td><code>mem_fragmentation_ratio &gt; 1.5</code></td>
+<td>30 分钟</td>
+</tr>
+<tr>
+<td><strong>P2</strong></td>
+<td>慢查询增长</td>
+<td>30 分钟</td>
+</tr>
+<tr>
+<td><strong>P2</strong></td>
+<td><code>aof_delayed_fsync</code> 增长</td>
+<td>30 分钟</td>
+</tr>
+<tr>
+<td><strong>P2</strong></td>
+<td>大 key 扫描发现 &gt; 1MB 的 key</td>
+<td>每日</td>
+</tr>
+</tbody>
+</table>
+<h2 id="93-监控工具">9.3 监控工具</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 1. Prometheus + redis_exporter（最主流）</span>
+</span></span><span class="line"><span class="cl">docker run -d -p 9121:9121 oliver006/redis_exporter <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --redis.addr<span class="o">=</span>redis://127.0.0.1:6379 <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --redis.password<span class="o">=</span>xxx
+</span></span><span class="line"><span class="cl"><span class="c1"># Grafana 导入 dashboard ID 763 或 11835</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 2. 云厂商自带监控（阿里云、腾讯云、AWS）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 通常包含热 key/大 key 分析、慢日志采集、性能趋势</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 3. 自建采集脚本（简单场景）</span>
+</span></span><span class="line"><span class="cl">redis-cli INFO all <span class="p">|</span> grep -E <span class="s1">&#39;used_memory:|connected_clients:|...&#39;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 4. 每日巡检脚本</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#!/bin/bash</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;=== 大 key 扫描 ===&#34;</span>
+</span></span><span class="line"><span class="cl">redis-cli --bigkeys 2&gt;<span class="p">&amp;</span><span class="m">1</span> <span class="p">|</span> grep -E <span class="s1">&#39;Biggest|found&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;=== 慢查询 Top 10 ===&#34;</span>
+</span></span><span class="line"><span class="cl">redis-cli SLOWLOG GET <span class="m">10</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;=== 内存诊断 ===&#34;</span>
+</span></span><span class="line"><span class="cl">redis-cli MEMORY DOCTOR
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;=== 延迟诊断 ===&#34;</span>
+</span></span><span class="line"><span class="cl">redis-cli LATENCY DOCTOR
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;=== 无 TTL 的缓存 key 抽样 ===&#34;</span>
+</span></span><span class="line"><span class="cl">redis-cli --scan --pattern <span class="s1">&#39;cache:*&#39;</span> <span class="p">|</span> head -100 <span class="p">|</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  <span class="k">while</span> <span class="nb">read</span> k<span class="p">;</span> <span class="k">do</span> <span class="o">[</span> <span class="s2">&#34;</span><span class="k">$(</span>redis-cli TTL <span class="s2">&#34;</span><span class="nv">$k</span><span class="s2">&#34;</span><span class="k">)</span><span class="s2">&#34;</span> <span class="o">=</span> <span class="s2">&#34;-1&#34;</span> <span class="o">]</span> <span class="o">&amp;&amp;</span> <span class="nb">echo</span> <span class="s2">&#34;</span><span class="nv">$k</span><span class="s2">&#34;</span><span class="p">;</span> <span class="k">done</span>
+</span></span></code></pre></div><hr>
+<h1 id="10-高频面试题">10. 高频面试题</h1>
+<p><strong>Q1：Redis 变慢了，你怎么排查？</strong></p>
+<p><strong>按&quot;先测量、再定位、后优化&quot;的顺序</strong>：</p>
+<p><strong>第一步：确认现象</strong></p>
+<ul>
+<li>所有请求都慢 → 服务端问题（阻塞、swap、CPU 打满）；</li>
+<li>部分请求慢 → 特定命令/key（大 key、O(N) 命令）；</li>
+<li>偶发毛刺 → fork、AOF fsync、过期删除、rehash；</li>
+<li>单个客户端慢 → 客户端问题（连接池、GC、网络）。</li>
+</ul>
+<p><strong>第二步：区分是谁的问题</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">redis-cli --latency                  <span class="c1"># 服务端 + 网络的延迟</span>
+</span></span><span class="line"><span class="cl">redis-cli --intrinsic-latency <span class="m">100</span>    <span class="c1"># 【机器固有延迟】，&gt; 1ms 说明机器本身有问题</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 客户端埋点的 P99 与服务端 commandstats 对比，差值大 = 网络或客户端问题</span>
+</span></span></code></pre></div><p><strong>第三步：定位服务端瓶颈</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">redis-cli LATENCY DOCTOR             <span class="c1"># 【最直接】告诉你是哪类延迟事件</span>
+</span></span><span class="line"><span class="cl">redis-cli SLOWLOG GET <span class="m">100</span>            <span class="c1"># 慢命令</span>
+</span></span><span class="line"><span class="cl">redis-cli INFO commandstats          <span class="c1"># 哪个命令占用总时间最多</span>
+</span></span><span class="line"><span class="cl">redis-cli INFO memory                <span class="c1"># 碎片率 &lt; 1 说明用了 swap</span>
+</span></span><span class="line"><span class="cl">redis-cli INFO stats                 <span class="c1"># latest_fork_usec、evicted_keys</span>
+</span></span><span class="line"><span class="cl">redis-cli INFO persistence           <span class="c1"># aof_delayed_fsync</span>
+</span></span></code></pre></div><p><strong>第四步：定位数据问题</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">redis-cli --bigkeys / --memkeys / --hotkeys
+</span></span></code></pre></div><p><strong>第五步：检查系统层</strong>：<code>top -H</code>、<code>iostat -x</code>、<code>free -m</code>、swap 使用量、网卡流量。</p>
+<p><strong>核心认知</strong>：大多数&quot;性能问题&quot;其实是某个具体的错误用法（一个大 key、一条 <code>KEYS *</code>、忘了用 pipeline），而不是需要调参的系统性问题。</p>
+<p><strong>Q2：<code>SLOWLOG</code> 里没有慢命令，但客户端大量超时，可能是什么原因？</strong></p>
+<p><strong>关键前提：<code>SLOWLOG</code> 只记录&quot;命令执行时间&quot;</strong>，不包含网络传输、<strong>排队等待</strong>、结果写回。</p>
+<p>客户端观测到的总延迟 = 网络 RTT + <strong>服务端排队</strong> + 命令执行 + 客户端处理。</p>
+<p><strong>所以可能的原因</strong>：</p>
+<ol>
+<li><strong>排队</strong>：某个慢命令或阻塞操作卡住了主线程，后面的正常命令全在排队。此时慢日志里可能只有那一条（或者阻塞源不是命令，比如 fork）；</li>
+<li><strong>fork 阻塞</strong>：<code>BGSAVE</code>/<code>BGREWRITEAOF</code> 的 fork（每 GB 20~100ms），不会出现在慢日志里 → 查 <code>latest_fork_usec</code> 和 <code>LATENCY LATEST</code> 的 fork 事件；</li>
+<li><strong>AOF fsync 阻塞</strong>：磁盘慢导致主线程被 AOF 的 write 阻塞 → 查 <code>aof_delayed_fsync</code>；</li>
+<li><strong>内存 swap</strong>：延迟从微秒恶化到毫秒 → 查 <code>mem_fragmentation_ratio &lt; 1</code>；</li>
+<li><strong>网络问题</strong>：丢包、重传、带宽打满（大 value 传输） → <code>netstat -s | grep retrans</code>、看网卡流量；</li>
+<li><strong>客户端问题</strong>：GC 停顿、连接池耗尽（<code>PoolTimeout</code>）、序列化慢；</li>
+<li><strong>机器固有延迟</strong>：CPU 超卖、宿主机争抢 → <code>--intrinsic-latency</code>。</li>
+</ol>
+<p><strong>Q3：<code>redis-cli --intrinsic-latency</code> 是干什么的？</strong></p>
+<p>它测量<strong>机器的固有延迟</strong>——在一个循环里反复测&quot;执行一个空操作需要多久&quot;，<strong>完全不涉及 Redis 的数据操作</strong>。测的是<strong>内核调度、CPU 争抢、虚拟化开销、SMI 中断</strong>造成的延迟。</p>
+<p><strong>用途：区分&quot;Redis 慢&quot;和&quot;机器本身就慢&quot;。</strong></p>
+<p><strong>判断标准</strong>：</p>
+<ul>
+<li>正常物理机：最大延迟 <strong>几十微秒</strong>以内；</li>
+<li>虚拟机/容器：可能到几百微秒；</li>
+<li><strong>&gt; 1ms</strong>：机器有严重问题（CPU 超卖、宿主机争抢、节能模式）。</li>
+</ul>
+<p><strong>如果固有延迟就有几毫秒，再怎么优化 Redis 都没用</strong>——要换机器或排查宿主机。</p>
+<p>注意：这个命令要<strong>在 Redis 所在的机器上运行</strong>（它测的是那台机器的调度延迟，不是网络）。</p>
+<p><strong>Q4：Redis 有哪些操作会阻塞主线程？</strong></p>
+<p><strong>（1）O(N) 命令</strong>：<code>KEYS *</code>、<code>HGETALL</code>/<code>SMEMBERS</code>/<code>LRANGE 0 -1</code> 大集合、<code>SINTERSTORE</code>/<code>ZUNIONSTORE</code>（O(N*M)）、<code>SORT</code> 大集合、<code>FLUSHALL</code>/<code>FLUSHDB</code>（不带 ASYNC）。</p>
+<p><strong>（2）删除大 key</strong>：<code>DEL</code> 一个千万级集合要同步释放内存，可能阻塞数秒 → 用 <code>UNLINK</code> + <code>lazyfree-*</code> 全开。</p>
+<p><strong>（3）持久化相关</strong>：</p>
+<ul>
+<li><strong>fork</strong>（每 GB 20~100ms，开了 THP 更糟）；</li>
+<li><code>appendfsync always</code>（每条写命令等磁盘）；</li>
+<li>磁盘慢时 AOF 的 <code>write</code> 也会阻塞（<code>aof_delayed_fsync</code> 增长）；</li>
+<li>AOF 重写期间主线程 fsync 与子进程抢 IO。</li>
+</ul>
+<p><strong>（4）Lua 脚本</strong>：执行期间完全不响应其他命令；<strong>超过 <code>busy-reply-threshold</code> 只是开始返回 <code>BUSY</code>，脚本仍在跑</strong>；<strong>写过数据的脚本无法 <code>SCRIPT KILL</code></strong>。</p>
+<p><strong>（5）系统层</strong>：内存 <strong>swap</strong>（延迟恶化 1000 倍）、CPU 争抢、NUMA 跨节点访问。</p>
+<p><strong>（6）其他</strong>：大量 key 同时过期（每周期 25ms 预算被打满）、淘汰大量 key、渐进式 rehash、<strong><code>MIGRATE</code> 大 key</strong>（集群扩容时阻塞几十秒）、从节点加载 RDB、<code>activedefrag</code> 碎片整理。</p>
+<p><strong>Q5：<code>mem_fragmentation_ratio</code> 的三种情况分别说明什么？</strong></p>
+<p><code>mem_fragmentation_ratio = used_memory_rss / used_memory</code></p>
+<table>
+<thead>
+<tr>
+<th>值</th>
+<th>含义</th>
+<th>处理</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>&lt; 1</strong></td>
+<td><strong>部分内存被换到 swap</strong>（OS 看到的物理内存少于 Redis 逻辑用量）</td>
+<td><strong>紧急</strong>：内存访问变磁盘访问，延迟恶化 1000 倍。关 swap、减少数据、设 <code>maxmemory</code></td>
+</tr>
+<tr>
+<td><strong>1.0 ~ 1.5</strong></td>
+<td>正常范围（jemalloc 的分档分配 + 删除产生的空洞）</td>
+<td>无需处理</td>
+</tr>
+<tr>
+<td><strong>&gt; 1.5</strong></td>
+<td>碎片严重</td>
+<td>开 <code>activedefrag</code>、<code>MEMORY PURGE</code>、或（业务允许时）切主从后重启</td>
+</tr>
+</tbody>
+</table>
+<p><strong>补充</strong>：<code>allocator_frag_ratio</code>（分配器层面的碎片率）比 <code>mem_fragmentation_ratio</code> <strong>更准确</strong>，因为后者的 RSS 还包含了复制缓冲区、客户端缓冲区、栈等非分配器内存。如果 <code>mem_fragmentation_ratio</code> 大但 <code>allocator_frag_ratio</code> 正常，说明是那些额外内存导致的，要查 <code>MEMORY STATS</code>。</p>
+<p><strong>碎片整理的注意点</strong>：<strong>它在主线程里做</strong>（要移动对象并更新指针），会消耗 CPU 并造成延迟。<code>active-defrag-cycle-max</code> 默认 75 太激进，建议 <strong>50</strong>；最好在低峰期开。</p>
+<p><strong>Q6：Redis 内存持续增长，怎么排查？</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 1. 是数据涨了还是开销涨了</span>
+</span></span><span class="line"><span class="cl">MEMORY STATS    <span class="c1"># 比较 dataset.bytes 和 overhead.total</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 2. 【最常见】有大量 key 没设 TTL</span>
+</span></span><span class="line"><span class="cl">INFO keyspace   <span class="c1"># 对比 keys 和 expires——keys 涨而 expires 没涨就是它</span>
+</span></span><span class="line"><span class="cl">redis-cli --scan --pattern <span class="s1">&#39;cache:*&#39;</span> <span class="p">|</span> head -100 <span class="p">|</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  <span class="k">while</span> <span class="nb">read</span> k<span class="p">;</span> <span class="k">do</span> <span class="o">[</span> <span class="s2">&#34;</span><span class="k">$(</span>redis-cli TTL <span class="s2">&#34;</span><span class="nv">$k</span><span class="s2">&#34;</span><span class="k">)</span><span class="s2">&#34;</span> <span class="o">=</span> <span class="s2">&#34;-1&#34;</span> <span class="o">]</span> <span class="o">&amp;&amp;</span> <span class="nb">echo</span> <span class="s2">&#34;</span><span class="nv">$k</span><span class="s2">&#34;</span><span class="p">;</span> <span class="k">done</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 3. 有大 key</span>
+</span></span><span class="line"><span class="cl">redis-cli --bigkeys / --memkeys
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 4. 客户端缓冲区</span>
+</span></span><span class="line"><span class="cl">CLIENT LIST     <span class="c1"># 看 omem</span>
+</span></span><span class="line"><span class="cl">INFO clients
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 5. Lua 脚本缓存泄漏（动态生成脚本）</span>
+</span></span><span class="line"><span class="cl">MEMORY STATS <span class="p">|</span> grep lua.caches
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 6. 复制缓冲区</span>
+</span></span><span class="line"><span class="cl">INFO replication
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 7. 碎片</span>
+</span></span><span class="line"><span class="cl">INFO memory <span class="p">|</span> grep fragmentation
+</span></span></code></pre></div><p><strong>最常见的三个泄漏原因</strong>：</p>
+<ol>
+<li><strong>忘了给 key 设 TTL</strong>——尤其是<strong>用不带 TTL 的 <code>SET</code> 覆盖了原本有 TTL 的 key</strong>（<code>SET</code> 会清除 TTL！用 <code>KEEPTTL</code> 或改成删除）；</li>
+<li><strong>动态生成 Lua 脚本</strong>（把参数拼进脚本文本，每个变体占一份永不淘汰的缓存）；</li>
+<li><strong>Stream/List 没裁剪</strong>（<code>XADD</code> 不带 <code>MAXLEN</code>、<code>LPUSH</code> 不配 <code>LTRIM</code>）。</li>
+</ol>
+<p><strong>Q7：怎么优化 Redis 的内存占用？</strong></p>
+<p><strong>按收益排序</strong>：</p>
+<ol>
+<li><strong>用 hash 代替多个 string key</strong>（省 3~5 倍）：每个 key 至少有 robj 16 字节 + dictEntry 32 字节 + key 的 SDS 的固定开销；</li>
+<li><strong>大 hash 分桶保持 listpack 编码</strong>（省 5~10 倍）：100 万字段的大 hash（hashtable，每字段 60~90 字节）拆成 1000 个各 1000 字段的小 hash（listpack，每字段 5~10 字节）。这是 Instagram 的经典优化（第 4 篇）；</li>
+<li><strong>布尔状态用 Bitmap</strong>（1 亿用户 12.5MB）；</li>
+<li><strong>海量基数统计用 HyperLogLog</strong>（固定 12KB，误差 0.81%）；</li>
+<li><strong>小整数用 Bitfield 打包</strong>；</li>
+<li><strong>key 名尽量短</strong>（1 亿 key 每个省 27 字节 = 2.7GB）；</li>
+<li><strong>应用层压缩大 value</strong>（JSON 用 zstd 能压到 20%~30%）；</li>
+<li><strong>适度调大编码阈值</strong>（如 <code>hash-max-listpack-entries</code> 到 512，但<strong>不要超过 1000</strong>，否则 O(N) 操作的常数会进入毫秒级）；</li>
+<li><strong>设置合理的 TTL</strong>，清理无用数据；</li>
+<li><strong>治理碎片</strong>（<code>activedefrag</code>）。</li>
+</ol>
+<p><strong>Q8：为什么一定要关闭 THP（透明大页）？</strong></p>
+<p>THP 把内存页从 <strong>4KB 变成 2MB</strong>，本意是减少 TLB miss。但对 Redis 有害：</p>
+<p><strong>fork 后父进程写入触发写时复制（COW），而 COW 的粒度是&quot;页&quot;。</strong> 4KB 页时改一个 key 只复制 4KB；2MB 页时要复制 2MB——<strong>复制量放大 512 倍</strong>。</p>
+<p>后果：</p>
+<ol>
+<li>RDB/AOF 重写期间<strong>内存暴涨</strong>（可能几倍于预期）；</li>
+<li>每次缺页异常要复制 2MB，造成<strong>明显的延迟毛刺</strong>（可达几十毫秒）；</li>
+<li>极端情况下 fork 后内存不足被 OOM Killer 杀掉。</li>
+</ol>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="nb">echo</span> never &gt; /sys/kernel/mm/transparent_hugepage/enabled
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> never &gt; /sys/kernel/mm/transparent_hugepage/defrag
+</span></span></code></pre></div><p>Redis 启动时会检测并打印 WARNING，<strong>看到警告就说明没配好</strong>。</p>
+<p><strong>Q9：生产环境的 Redis 必须做哪些系统层配置？</strong></p>
+<p><strong>四项必做</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 1. vm.overcommit_memory = 1</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    否则内核按最坏情况估算 fork 需要的内存，已用内存超过物理内存一半时 fork 会失败</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s1">&#39;vm.overcommit_memory = 1&#39;</span> &gt;&gt; /etc/sysctl.conf
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 2. net.core.somaxconn 调大（默认 128 太小，高并发建连会丢）</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s1">&#39;net.core.somaxconn = 1024&#39;</span> &gt;&gt; /etc/sysctl.conf
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 3. 关闭 THP（见 Q8）</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> never &gt; /sys/kernel/mm/transparent_hugepage/enabled
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 4. 提高文件描述符上限</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s1">&#39;* soft nofile 65535&#39;</span> &gt;&gt; /etc/security/limits.conf
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s1">&#39;* hard nofile 65535&#39;</span> &gt;&gt; /etc/security/limits.conf
+</span></span></code></pre></div><p><strong>其他重要配置</strong>：</p>
+<ul>
+<li><strong>关闭 swap</strong>（<code>swapoff -a</code>）或至少 <code>vm.swappiness = 1</code>（<strong>不是 0</strong>，0 在某些内核会直接触发 OOM Killer）；</li>
+<li><strong><code>vm.dirty_background_ratio = 5</code> / <code>vm.dirty_ratio = 10</code></strong>（默认 10/20 在大内存机器上会积累几 GB 脏页，一次性回写造成长时间 IO 阻塞，影响 AOF）；</li>
+<li><strong>CPU 设为 performance 模式</strong>（节能模式会造成延迟毛刺）；</li>
+<li><strong>关闭 NUMA balancing</strong>；</li>
+<li><strong>6.0+ 用 <code>server_cpulist</code>/<code>bgsave_cpulist</code> 绑核</strong>，把持久化子进程和主线程分到不同核，减少持久化期间的毛刺。</li>
+</ul>
+<p><strong>Q10：Redis 的连接池应该设多大？</strong></p>
+<p><strong>不是越大越好</strong>。经验值：<strong>每个 CPU 核心 10 个连接</strong>，或者 <strong>QPS / 1000</strong>。</p>
+<p><strong>池太小的症状</strong>：<code>PoolTimeout</code> 错误、延迟升高（请求排队等连接）。</p>
+<p><strong>池太大的问题</strong>：</p>
+<ol>
+<li>Redis 端接近 <code>maxclients</code>，<code>rejected_connections</code> 增长；</li>
+<li><strong>每个连接在 Redis 端都有输入输出缓冲区</strong>（输入上限 1GB，输出固定 16KB + 可增长的链表），连接多了内存开销可观；</li>
+<li>更多的 epoll 事件和上下文切换。</li>
+</ol>
+<p><strong>必须配置超时</strong>（否则网络故障时 goroutine/线程无限堆积导致 OOM）：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="nx">DialTimeout</span><span class="p">:</span>  <span class="mi">1</span> <span class="o">*</span> <span class="nx">time</span><span class="p">.</span><span class="nx">Second</span>
+</span></span><span class="line"><span class="cl"><span class="nx">ReadTimeout</span><span class="p">:</span>  <span class="mi">500</span> <span class="o">*</span> <span class="nx">time</span><span class="p">.</span><span class="nx">Millisecond</span>   <span class="c1">// 大部分命令应该 &lt; 1ms
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">WriteTimeout</span><span class="p">:</span> <span class="mi">500</span> <span class="o">*</span> <span class="nx">time</span><span class="p">.</span><span class="nx">Millisecond</span>
+</span></span><span class="line"><span class="cl"><span class="nx">PoolTimeout</span><span class="p">:</span>  <span class="mi">1</span> <span class="o">*</span> <span class="nx">time</span><span class="p">.</span><span class="nx">Second</span>
+</span></span></code></pre></div><p><strong>一个关键陷阱</strong>：<strong>阻塞命令（<code>BLPOP</code>/<code>XREAD BLOCK</code>）会长期占用连接</strong>，会耗尽连接池 → <strong>必须为阻塞消费开独立连接</strong>（第 5 篇）。</p>
+<p><strong>监控</strong>：<code>rdb.PoolStats()</code> 的 <code>Timeouts &gt; 0</code> 说明池不够用，<code>Misses</code> 高说明连接经常新建（调大 <code>MinIdleConns</code>）。</p>
+<p><strong>Q11：<code>redis-benchmark</code> 压测时要注意什么？单机能到多少 QPS？</strong></p>
+<p><strong>注意事项</strong>：</p>
+<ol>
+<li><strong>不要在生产实例上压测</strong>；</li>
+<li><strong><code>redis-benchmark</code> 自己可能成为瓶颈</strong>（单进程受限于单核），测高 QPS 要开多进程或用 <code>memtier_benchmark</code>；</li>
+<li><strong>要模拟真实的 value 大小（<code>-d</code>）和 key 分布（<code>-r</code>）</strong>——所有请求打同一个 key 的测试结果没有意义；</li>
+<li><strong>压测机与 Redis 的网络要和生产一致</strong>（同机房 vs 跨机房差别巨大）；</li>
+<li><strong>关注 P99 而不只是平均值</strong>；</li>
+<li><strong>同时观察服务端指标</strong>（CPU、网卡、<code>INFO commandstats</code>）。</li>
+</ol>
+<p><strong>参考量级</strong>（普通云主机、100 字节 value）：</p>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th>QPS</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>单机 <code>GET</code>/<code>SET</code> 无 pipeline</td>
+<td><strong>8 万 ~ 12 万</strong></td>
+</tr>
+<tr>
+<td>单机 <code>GET</code>/<code>SET</code> + pipeline 16</td>
+<td><strong>50 万 ~ 100 万</strong></td>
+</tr>
+<tr>
+<td>10KB value</td>
+<td>2 万 ~ 4 万（网卡成瓶颈）</td>
+</tr>
+<tr>
+<td><code>HGETALL</code> 100 字段</td>
+<td>1 万 ~ 3 万</td>
+</tr>
+<tr>
+<td>简单 Lua 脚本</td>
+<td>5 万 ~ 8 万</td>
+</tr>
+</tbody>
+</table>
+<p><strong>最重要的结论：pipeline 能带来 5~10 倍提升</strong>。这说明<strong>减少网络往返通常比优化 Redis 本身收益大得多</strong>。</p>
+<p><strong>Q12：命中率多少算正常？命中率低怎么办？</strong></p>
+<pre tabindex="0"><code>命中率 = keyspace_hits / (keyspace_hits + keyspace_misses)
+</code></pre><p><strong>正常值：&gt; 90%，理想是 95%~99%。</strong></p>
+<p><strong>命中率低的原因与对策</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>原因</th>
+<th>排查</th>
+<th>对策</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>内存不足导致大量淘汰</strong></td>
+<td><code>evicted_keys</code> 快速增长</td>
+<td>扩容内存、优化内存占用、检查大 key</td>
+</tr>
+<tr>
+<td><strong>TTL 设置太短</strong></td>
+<td>抽查 <code>TTL</code></td>
+<td>延长 TTL、用逻辑过期</td>
+</tr>
+<tr>
+<td><strong>缓存穿透</strong>（查不存在的数据）</td>
+<td>miss 的 key 是否大量不存在</td>
+<td>空值缓存 + 布隆过滤器（第 14 篇）</td>
+</tr>
+<tr>
+<td><strong>缓存刚重启/预热不足</strong></td>
+<td><code>uptime_in_seconds</code> 很小</td>
+<td>预热、开启持久化避免空启动</td>
+</tr>
+<tr>
+<td><strong>业务本身就是低复用</strong>（如唯一 ID 查询）</td>
+<td>分析访问模式</td>
+<td><strong>可能根本不该用缓存</strong></td>
+</tr>
+<tr>
+<td><strong>key 设计问题</strong>（缓存粒度太细，命中率天然低）</td>
+<td>分析 key 分布</td>
+<td>调整缓存粒度</td>
+</tr>
+</tbody>
+</table>
+<p><strong>注意</strong>：命中率低<strong>不一定是问题</strong>——如果业务本身访问的数据没有重复（比如每次都查不同的唯一 ID），缓存就是无效的，应该重新评估是否需要缓存。</p>
+<p><strong>Q13：<code>INFO commandstats</code> 怎么用来定位性能问题？</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">cmdstat_get:calls<span class="o">=</span>1000000,usec<span class="o">=</span>1500000,usec_per_call<span class="o">=</span>1.50
+</span></span><span class="line"><span class="cl">cmdstat_hgetall:calls<span class="o">=</span>1000,usec<span class="o">=</span>15000000,usec_per_call<span class="o">=</span>15000.00
+</span></span><span class="line"><span class="cl"><span class="c1">#                    ↑只调用1000次      ↑但总耗时15秒，平均15ms</span>
+</span></span></code></pre></div><p><strong>两个维度看</strong>：</p>
+<ol>
+<li><strong><code>usec_per_call</code> 高</strong> → 单次执行慢（大 key、O(N) 命令、复杂 Lua）；</li>
+<li><strong><code>calls × usec_per_call</code>（即 <code>usec</code>）总量大</strong> → 即使单次不慢，总量占用了大部分 CPU 时间（比如平均 0.1ms 但每秒 10 万次的命令）。</li>
+</ol>
+<p><strong>这是找&quot;总时间黑洞&quot;的最佳工具</strong>，比 <code>SLOWLOG</code> 更全面（慢日志只记录超过阈值的，而有些命令单次不超阈值但总量巨大）。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 按总耗时排序</span>
+</span></span><span class="line"><span class="cl">redis-cli INFO commandstats <span class="p">|</span> sed <span class="s1">&#39;s/cmdstat_//&#39;</span> <span class="p">|</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  awk -F<span class="s1">&#39;[:,=]&#39;</span> <span class="s1">&#39;{print $6, $2}&#39;</span> <span class="p">|</span> sort -rn <span class="p">|</span> head -10
+</span></span></code></pre></div><p><strong>6.2+ 还有 <code>INFO latencystats</code></strong> 提供每个命令的 P50/P99/P99.9 延迟分布，比平均值更有用。</p>
+<p><strong>做基线对比时用 <code>CONFIG RESETSTAT</code> 重置计数器。</strong></p>
+<p><strong>Q14：<code>LATENCY DOCTOR</code> 和 <code>MEMORY DOCTOR</code> 有什么用？</strong></p>
+<p>这是 Redis 内置的<strong>自动诊断工具</strong>，会用人类可读的语言告诉你问题在哪并给出建议。</p>
+<p><strong><code>LATENCY DOCTOR</code></strong>（需要先设 <code>latency-monitor-threshold</code>）：</p>
+<p>分析 Redis 记录的延迟事件，直接告诉你是哪类事件造成的毛刺：</p>
+<table>
+<thead>
+<tr>
+<th>事件</th>
+<th>指向的问题</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>command</code></td>
+<td>有慢命令 → 查 <code>SLOWLOG</code></td>
+</tr>
+<tr>
+<td><code>fast-command</code></td>
+<td>本该 O(1) 的命令变慢 → 大 key 或系统问题</td>
+</tr>
+<tr>
+<td><strong><code>fork</code></strong></td>
+<td>fork 耗时长 → 实例太大 / THP / 虚拟化</td>
+</tr>
+<tr>
+<td><code>expire-cycle</code></td>
+<td>大量 key 同时过期</td>
+</tr>
+<tr>
+<td><code>eviction-cycle</code></td>
+<td>内存不足在大量淘汰</td>
+</tr>
+<tr>
+<td><code>aof-write</code> / <code>aof-fsync-always</code></td>
+<td>磁盘性能不足</td>
+</tr>
+<tr>
+<td><code>active-defrag-cycle</code></td>
+<td>碎片整理耗时</td>
+</tr>
+</tbody>
+</table>
+<p><strong>这是排查毛刺问题的第一站</strong>——它能直接把你引导到正确的方向，省掉大量盲目排查。</p>
+<p><strong><code>MEMORY DOCTOR</code></strong>：分析内存使用，指出碎片率过高、有大 key、<code>used_memory</code> 接近 <code>maxmemory</code> 等问题。</p>
+<p>配合 <code>MEMORY STATS</code>（详细的内存分解）和 <code>LATENCY LATEST</code>/<code>LATENCY HISTORY</code>（具体事件的历史）一起用。</p>
+<p><strong>Q15：说一个你排查过的 Redis 线上问题。</strong></p>
+<p>（这题要讲自己的经历，这里给一个结构化的回答模板）</p>
+<p><strong>用&quot;现象 → 排查 → 根因 → 修复 → 教训&quot;五段式</strong>：</p>
+<blockquote>
+<p><strong>现象</strong>：某天中午所有依赖 Redis 的接口 P99 从 5ms 涨到 8 秒，持续 3 分钟后自动恢复。</p>
+<p><strong>排查</strong>：先用 <code>redis-cli --latency</code> 确认服务端延迟确实很高；然后 <code>SLOWLOG GET</code> 发现一条 <code>KEYS *</code> 耗时 3.85 秒。因为实例有 800 万 key，<code>KEYS</code> 是 O(N) 且在主线程执行，阻塞期间所有请求排队，客户端超时重试又加剧了堆积。</p>
+<p><strong>根因</strong>：一个运维脚本为了统计 key 数量直接跑了 <code>KEYS *</code>。</p>
+<p><strong>修复</strong>：① 立即用 <code>rename-command</code> 禁用 <code>KEYS</code>/<code>FLUSHALL</code>/<code>FLUSHDB</code>/<code>MONITOR</code>；② 统计 key 数改用 O(1) 的 <code>DBSIZE</code>，遍历改用 <code>SCAN</code>；③ 强制所有应用设置 <code>CLIENT SETNAME</code>（当时慢日志里只有 IP，定位花了额外时间）；④ 把 <code>slowlog-max-len</code> 从 128 调到 1000 并接入监控告警。</p>
+<p><strong>教训</strong>：生产环境不能靠&quot;约定不要用危险命令&quot;，必须从配置层面禁用（rename 或 ACL）。另外这次也暴露了监控盲区——慢查询日志没有被采集，我们是事后才看到的。</p>
+</blockquote>
+<p>其他可以讲的案例（本文第 8 节）：大 key 打满网卡、主节点无持久化重启导致全集群数据丢失、复制风暴、Lua 死循环必须重启、TTL 陷阱导致内存泄漏。</p>
+<hr>
+<h1 id="小结">小结</h1>
+<ul>
+<li><strong>排查方法论：先测量再优化</strong>。顺序是「确认现象 → 区分是谁的问题（<code>--latency</code> vs <code>--intrinsic-latency</code> vs 客户端埋点）→ 定位服务端瓶颈（<code>LATENCY DOCTOR</code>/<code>SLOWLOG</code>/<code>commandstats</code>/<code>INFO</code>）→ 定位数据问题（<code>--bigkeys</code>/<code>--hotkeys</code>）→ 检查系统层」。</li>
+<li><strong><code>SLOWLOG</code> 只记录命令执行时间</strong>，不含网络、<strong>排队</strong>、结果写回——这解释了&quot;客户端大量超时但慢日志干净&quot;的困惑（问题在排队、fork、AOF fsync、swap、网络或客户端）。</li>
+<li><strong><code>--intrinsic-latency</code> 测机器固有延迟</strong>（不涉及 Redis 数据操作），&gt; 1ms 说明机器本身有问题，此时优化 Redis 无用。</li>
+<li><strong><code>LATENCY DOCTOR</code> 是排查毛刺的第一站</strong>：能直接指出是 <code>command</code>/<code>fast-command</code>/<strong><code>fork</code></strong>/<code>expire-cycle</code>/<code>aof-write</code>/<code>defrag</code> 哪类事件造成的。</li>
+<li><strong><code>INFO commandstats</code> 是找&quot;总时间黑洞&quot;的最佳工具</strong>：既看 <code>usec_per_call</code>（单次慢），也看 <code>usec</code> 总量（单次快但量大）。6.2+ 的 <code>INFO latencystats</code> 提供 P99 分布。</li>
+<li><strong>阻塞源清单</strong>：O(N) 命令、删大 key（用 <code>UNLINK</code>）、<strong>fork（每 GB 20~100ms）</strong>、<code>appendfsync always</code>、磁盘慢导致 AOF write 阻塞、Lua 脚本、<strong>swap</strong>、大量 key 同时过期、<code>MIGRATE</code> 大 key、碎片整理。</li>
+<li><strong><code>lazyfree-*</code> 六项全开</strong>是消除阻塞的基础配置。</li>
+<li><strong><code>mem_fragmentation_ratio</code>：&lt; 1 是紧急（用了 swap，延迟恶化 1000 倍）</strong>，1.0~1.5 正常，&gt; 1.5 开 <code>activedefrag</code>（<strong><code>active-defrag-cycle-max</code> 建议 50 而非默认 75</strong>，因为整理在主线程做）。<code>allocator_frag_ratio</code> 更准确。</li>
+<li><strong>内存泄漏三大原因</strong>：<strong>忘了设 TTL（尤其是不带 TTL 的 <code>SET</code> 清掉了原有 TTL）</strong>、动态生成 Lua 脚本、Stream/List 没裁剪。用 <code>INFO keyspace</code> 对比 <code>keys</code> 和 <code>expires</code> 快速识别第一种。</li>
+<li><strong>内存优化收益排序</strong>：hash 代替多 key（3~5 倍）→ <strong>大 hash 分桶保 listpack（5~10 倍）</strong> → Bitmap/HLL/Bitfield → 短 key 名 → 压缩 value → 适度调编码阈值（不超过 1000）。</li>
+<li><strong>系统四项必做</strong>：<code>vm.overcommit_memory=1</code>、<code>somaxconn</code> 调大、<strong>关闭 THP（COW 粒度放大 512 倍）</strong>、<code>nofile</code> 上限。另外关 swap（<code>swappiness=1</code> 而非 0）、调 <code>dirty_ratio</code>、CPU 设 performance、6.0+ 用 <code>bgsave_cpulist</code> 把持久化子进程绑到独立核。</li>
+<li><strong>客户端优化</strong>：连接池按&quot;核数 × 10&quot;或&quot;QPS/1000&quot;（太大会撑爆 <code>maxclients</code> 和内存）、<strong>必须设超时</strong>（否则网络故障时 goroutine 无限堆积）、<strong>阻塞命令必须用独立连接</strong>、<strong>用 pipeline/MGET/Lua 减少 RTT（收益常比优化服务端更大）</strong>、设 <code>ClientName</code> 便于定位。</li>
+<li><strong>压测</strong>：<code>redis-benchmark</code> 要用 <code>-d</code>（真实 value 大小）和 <code>-r</code>（随机 key）；单机 <code>GET</code>/<code>SET</code> 约 8~12 万 QPS，<strong>加 pipeline 能到 50~100 万（5~10 倍）</strong>；benchmark 自身可能成为瓶颈。</li>
+<li><strong>六个真实事故的共同教训</strong>：① 危险命令必须从配置层禁用而非靠约定；② 大 key 的危害是复合的（网络+阻塞+内存+迁移）；③ <strong>&ldquo;纯缓存不需要持久化&quot;是危险的误解</strong>（空实例重启会清空整个集群）；④ <strong><code>repl-backlog-size</code> 默认 1MB 在任何生产环境都不够</strong>；⑤ Lua 循环必须有硬编码小上限（写过数据的脚本无法 kill）；⑥ <strong><code>SET</code> 会清除 TTL</strong>。</li>
+<li><strong>P0 告警</strong>：PING 失败、<code>mem_fragmentation_ratio &lt; 1</code>、<code>aof_last_write_status != ok</code>、<code>master_link_status != up</code>、<code>cluster_state != ok</code>、<code>DBSIZE</code> 归零。</li>
+</ul>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2025-11-01</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/redis/">redis</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/redis/redis_16_Go%E5%AE%A2%E6%88%B7%E7%AB%AFgo-redis%E5%AE%9E%E6%88%98/" class="prev" rel="prev" title="Redis-16 Go 客户端 go-redis 实战"><i class="fas fa-angle-left fa-fw"></i>Redis-16 Go 客户端 go-redis 实战</a>
+            <a href="/posts/redis/redis_14_%E7%BC%93%E5%AD%98%E8%AE%BE%E8%AE%A1%E4%B8%8E%E7%BB%8F%E5%85%B8%E9%97%AE%E9%A2%98/" class="next" rel="next" title="Redis-14 缓存设计与经典问题">Redis-14 缓存设计与经典问题<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2025-11-01T09:30:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Redis-15 性能优化与线上问题排查"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

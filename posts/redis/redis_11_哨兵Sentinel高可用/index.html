@@ -1,0 +1,1432 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>Redis-11 哨兵 Sentinel 高可用 - xingliuhua博客</title><meta name="Description" content="哨兵架构与部署、主观下线与客观下线、Raft 选举 leader、从节点选主规则、故障转移完整流程、客户端感知与脑裂问题"><meta property="og:title" content="Redis-11 哨兵 Sentinel 高可用" />
+<meta property="og:description" content="哨兵架构与部署、主观下线与客观下线、Raft 选举 leader、从节点选主规则、故障转移完整流程、客户端感知与脑裂问题" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/redis/redis_11_%E5%93%A8%E5%85%B5Sentinel%E9%AB%98%E5%8F%AF%E7%94%A8/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2025-11-01T11:30:00+08:00" />
+<meta property="article:modified_time" content="2025-11-01T11:30:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="Redis-11 哨兵 Sentinel 高可用"/>
+<meta name="twitter:description" content="哨兵架构与部署、主观下线与客观下线、Raft 选举 leader、从节点选主规则、故障转移完整流程、客户端感知与脑裂问题"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/redis/redis_11_%E5%93%A8%E5%85%B5Sentinel%E9%AB%98%E5%8F%AF%E7%94%A8/" /><link rel="prev" href="https://xingliuhua.github.io/posts/redis/redis_12_Cluster%E9%9B%86%E7%BE%A4/" /><link rel="next" href="https://xingliuhua.github.io/posts/redis/redis_10_%E4%B8%BB%E4%BB%8E%E5%A4%8D%E5%88%B6%E5%8E%9F%E7%90%86/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Redis-11 哨兵 Sentinel 高可用",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/redis\/redis_11_%E5%93%A8%E5%85%B5Sentinel%E9%AB%98%E5%8F%AF%E7%94%A8\/"
+        },"genre": "posts","keywords": "redis","wordcount":  17077 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/redis\/redis_11_%E5%93%A8%E5%85%B5Sentinel%E9%AB%98%E5%8F%AF%E7%94%A8\/","datePublished": "2025-11-01T11:30:00+08:00","dateModified": "2025-11-01T11:30:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "哨兵架构与部署、主观下线与客观下线、Raft 选举 leader、从节点选主规则、故障转移完整流程、客户端感知与脑裂问题"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">Redis-11 哨兵 Sentinel 高可用</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2025-11-01">2025-11-01</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 17077 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 35 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-为什么需要哨兵">1. 为什么需要哨兵</a></li>
+    <li><a href="#2-哨兵架构">2. 哨兵架构</a>
+      <ol>
+        <li><a href="#21-拓扑">2.1 拓扑</a></li>
+        <li><a href="#22-为什么哨兵至少要-3-个且是奇数">2.2 为什么哨兵至少要 3 个且是奇数</a></li>
+        <li><a href="#23-哨兵部署位置">2.3 哨兵部署位置</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-部署哨兵">3. 部署哨兵</a>
+      <ol>
+        <li><a href="#31-配置文件">3.1 配置文件</a></li>
+        <li><a href="#32-关键配置解析">3.2 关键配置解析</a>
+          <ol>
+            <li><a href="#sentinel-monitor-name-ip-port-quorum"><code>sentinel monitor &lt;name&gt; &lt;ip&gt; &lt;port&gt; &lt;quorum&gt;</code></a></li>
+            <li><a href="#down-after-milliseconds"><code>down-after-milliseconds</code></a></li>
+            <li><a href="#parallel-syncs"><code>parallel-syncs</code></a></li>
+            <li><a href="#failover-timeout"><code>failover-timeout</code></a></li>
+          </ol>
+        </li>
+        <li><a href="#33-启动与验证">3.3 启动与验证</a></li>
+        <li><a href="#34-哨兵会改写配置文件">3.4 哨兵会改写配置文件</a></li>
+      </ol>
+    </li>
+    <li><a href="#4-哨兵的工作机制">4. 哨兵的工作机制</a>
+      <ol>
+        <li><a href="#41-三个定时任务">4.1 三个定时任务</a>
+          <ol>
+            <li><a href="#任务一每-10-秒向所有主从节点发-info">任务一：每 10 秒向所有主/从节点发 <code>INFO</code></a></li>
+            <li><a href="#任务二每-2-秒通过-pubsub-交换信息">任务二：每 2 秒通过 pub/sub 交换信息</a></li>
+            <li><a href="#任务三每-1-秒向所有节点含其他哨兵发-ping">任务三：每 1 秒向所有节点（含其他哨兵）发 <code>PING</code></a></li>
+          </ol>
+        </li>
+        <li><a href="#42-主观下线sdown">4.2 主观下线（SDOWN）</a></li>
+        <li><a href="#43-客观下线odown">4.3 客观下线（ODOWN）</a></li>
+        <li><a href="#44-选举哨兵-leaderraft">4.4 选举哨兵 Leader（Raft）</a></li>
+        <li><a href="#45-选择新主节点从节点选主">4.5 选择新主节点（从节点选主）</a>
+          <ol>
+            <li><a href="#第一步过滤掉不健康的从节点">第一步：过滤掉不健康的从节点</a></li>
+            <li><a href="#第二步按四个条件依次排序">第二步：按四个条件依次排序</a></li>
+          </ol>
+        </li>
+        <li><a href="#46-执行故障转移">4.6 执行故障转移</a></li>
+      </ol>
+    </li>
+    <li><a href="#5-客户端如何感知主节点切换">5. 客户端如何感知主节点切换</a>
+      <ol>
+        <li><a href="#51-客户端的正确工作流程">5.1 客户端的正确工作流程</a></li>
+        <li><a href="#52-哨兵发布的关键事件">5.2 哨兵发布的关键事件</a></li>
+        <li><a href="#53-各语言客户端的用法">5.3 各语言客户端的用法</a></li>
+        <li><a href="#54-客户端侧的注意点">5.4 客户端侧的注意点</a></li>
+      </ol>
+    </li>
+    <li><a href="#6-脑裂问题">6. 脑裂问题</a>
+      <ol>
+        <li><a href="#61-什么是脑裂">6.1 什么是脑裂</a></li>
+        <li><a href="#62-缓解手段">6.2 缓解手段</a></li>
+        <li><a href="#63-redis-的-cap-定位">6.3 Redis 的 CAP 定位</a></li>
+      </ol>
+    </li>
+    <li><a href="#7-常见问题排查">7. 常见问题排查</a>
+      <ol>
+        <li><a href="#71-故障转移不执行">7.1 故障转移不执行</a></li>
+        <li><a href="#72-频繁误切换">7.2 频繁误切换</a></li>
+        <li><a href="#73-切换后旧主节点的数据没了">7.3 切换后旧主节点的数据没了</a></li>
+        <li><a href="#74-哨兵配置文件的运维">7.4 哨兵配置文件的运维</a></li>
+        <li><a href="#75-监控指标">7.5 监控指标</a></li>
+        <li><a href="#76-tilt-模式">7.6 TILT 模式</a></li>
+      </ol>
+    </li>
+    <li><a href="#8-哨兵的局限">8. 哨兵的局限</a></li>
+    <li><a href="#9-高频面试题">9. 高频面试题</a></li>
+    <li><a href="#小结">小结</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><h1 id="1-为什么需要哨兵">1. 为什么需要哨兵</h1>
+<p>第 10 篇讲的主从复制解决了数据冗余和读扩展，但留下一个致命缺口：<strong>主节点挂了怎么办？</strong></p>
+<p>纯主从架构下需要人工介入：</p>
+<pre tabindex="0"><code>1. 运维收到告警（可能已经过了几分钟）
+2. 登录服务器确认主节点真的挂了
+3. 选一个从节点，执行 REPLICAOF NO ONE 提升为主
+4. 把其他从节点指向新主节点
+5. 修改应用配置里的 Redis 地址，或者切换 VIP / DNS
+6. 重启或热加载应用
+</code></pre><p>整个过程可能十几分钟到几小时，期间<strong>服务完全不可写</strong>。</p>
+<p><strong>Sentinel（哨兵）就是把这套流程自动化的组件</strong>。它提供四个核心能力：</p>
+<table>
+<thead>
+<tr>
+<th>能力</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>监控（Monitoring）</strong></td>
+<td>持续检查主节点、从节点是否正常</td>
+</tr>
+<tr>
+<td><strong>通知（Notification）</strong></td>
+<td>节点出问题时通过 API/脚本通知管理员</td>
+</tr>
+<tr>
+<td><strong>自动故障转移（Automatic Failover）</strong></td>
+<td>主节点失效时自动选一个从节点提升为主，并让其他从节点跟随</td>
+</tr>
+<tr>
+<td><strong>配置提供者（Configuration Provider）</strong></td>
+<td>客户端向哨兵询问&quot;当前主节点是谁&quot;，哨兵充当服务发现</td>
+</tr>
+</tbody>
+</table>
+<p><strong>最后一点常被忽略但非常重要</strong>：哨兵不是代理，客户端<strong>不通过哨兵转发数据</strong>，而是<strong>向哨兵查询主节点地址，然后直连主节点</strong>。</p>
+<hr>
+<h1 id="2-哨兵架构">2. 哨兵架构</h1>
+<h2 id="21-拓扑">2.1 拓扑</h2>
+<pre tabindex="0"><code>        ┌──────────┐   ┌──────────┐   ┌──────────┐
+        │Sentinel 1│   │Sentinel 2│   │Sentinel 3│   ← 哨兵集群（奇数个）
+        └────┬─────┘   └────┬─────┘   └────┬─────┘
+             │              │              │
+             └──────────────┼──────────────┘
+                     监控 + 互相通信
+             ┌──────────────┼──────────────┐
+             ▼              ▼              ▼
+        ┌────────┐     ┌────────┐     ┌────────┐
+        │ Master │────▶│Replica1│     │Replica2│
+        └────────┘     └────────┘     └────────┘
+             ▲
+             │ 1. 询问主节点地址
+             │ 2. 直连主节点读写
+        ┌────────┐
+        │ Client │
+        └────────┘
+</code></pre><h2 id="22-为什么哨兵至少要-3-个且是奇数">2.2 为什么哨兵至少要 3 个且是奇数</h2>
+<p><strong>为什么至少 3 个</strong>：</p>
+<ol>
+<li><strong>避免误判</strong>：单个哨兵可能因为自己的网络问题而误认为主节点挂了。多个哨兵<strong>投票</strong>才能确认（客观下线需要达到 quorum）；</li>
+<li><strong>哨兵自身的高可用</strong>：哨兵挂了就没人监控了。如果只有 1 个哨兵，它就是新的单点；</li>
+<li><strong>满足选举要求</strong>：故障转移需要<strong>超过半数</strong>的哨兵同意（<code>majority</code>）。2 个哨兵时，1 个挂了剩下 1 个无法达到 <code>2/2+1 = 2</code> 的多数，故障转移永远无法进行。</li>
+</ol>
+<p><strong>为什么是奇数</strong>：</p>
+<p>和所有基于多数派（quorum）的分布式协议一样——<strong>偶数个节点在容错能力上没有提升，但成本更高</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>哨兵数</th>
+<th>majority（需要的多数）</th>
+<th>最多容忍宕机</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>2</td>
+<td>2</td>
+<td><strong>0</strong></td>
+</tr>
+<tr>
+<td><strong>3</strong></td>
+<td><strong>2</strong></td>
+<td><strong>1</strong></td>
+</tr>
+<tr>
+<td>4</td>
+<td>3</td>
+<td>1（和 3 一样！）</td>
+</tr>
+<tr>
+<td><strong>5</strong></td>
+<td><strong>3</strong></td>
+<td><strong>2</strong></td>
+</tr>
+<tr>
+<td>6</td>
+<td>4</td>
+<td>2（和 5 一样）</td>
+</tr>
+</tbody>
+</table>
+<p>4 个哨兵和 3 个哨兵的容错能力完全相同（都只能容忍 1 个宕机），但多了一台机器的成本。所以标配是 <strong>3 个</strong>，对可用性要求极高的用 <strong>5 个</strong>。</p>
+<h2 id="23-哨兵部署位置">2.3 哨兵部署位置</h2>
+<p><strong>哨兵应该部署在与客户端相同的网络环境里</strong>，而不是和 Redis 节点放在一起。</p>
+<p>原因：哨兵判断&quot;主节点是否可达&quot;，应该从<strong>客户端的视角</strong>来判断。如果哨兵和主节点在同一台机器/同一个机架，它们同时故障，哨兵就无法工作；反之，如果客户端到主节点的网络断了但哨兵到主节点是通的，哨兵不会触发切换，客户端就一直不可用。</p>
+<p><strong>推荐部署</strong>：3 个哨兵分布在<strong>三个不同的可用区/机架</strong>，与应用服务器部署在一起（或者独立的小规格机器）。</p>
+<hr>
+<h1 id="3-部署哨兵">3. 部署哨兵</h1>
+<h2 id="31-配置文件">3.1 配置文件</h2>
+<pre tabindex="0"><code class="language-conf" data-lang="conf"># sentinel.conf
+port 26379                          # 哨兵默认端口
+daemonize yes
+dir /data/redis/sentinel
+logfile &#34;/data/redis/sentinel/sentinel-26379.log&#34;
+
+# ---------- 核心配置 ----------
+# 格式：sentinel monitor &lt;主节点名&gt; &lt;IP&gt; &lt;端口&gt; &lt;quorum&gt;
+sentinel monitor mymaster 192.168.1.10 6379 2
+
+# 主节点的密码（如果 Redis 设了 requirepass）
+sentinel auth-pass mymaster mypassword
+# 6.0+ ACL
+sentinel auth-user mymaster myuser
+
+# 判定主观下线的超时时间（毫秒），默认 30000
+sentinel down-after-milliseconds mymaster 30000
+
+# 故障转移超时（毫秒），默认 180000（3 分钟）
+sentinel failover-timeout mymaster 180000
+
+# 故障转移后，同时有多少个从节点向新主节点发起全量同步
+# 设为 1 表示【逐个同步】，避免同时全量同步把新主节点压垮
+sentinel parallel-syncs mymaster 1
+
+# ---------- 可选配置 ----------
+# 哨兵自己的密码（哨兵之间通信要用）
+requirepass sentinelpassword
+
+# 容器/NAT 环境必配
+sentinel announce-ip 1.2.3.4
+sentinel announce-port 26379
+
+# 事件通知脚本（节点上下线时调用）
+sentinel notification-script mymaster /opt/scripts/notify.sh
+# 故障转移完成后调用的脚本（可用来更新 DNS/VIP/配置中心）
+sentinel client-reconfig-script mymaster /opt/scripts/reconfig.sh
+
+# 6.2+ 拒绝在没有明确 IP 的情况下解析主机名
+sentinel resolve-hostnames no
+sentinel announce-hostnames no
+
+# 5.0+ 是否允许在配置文件中使用 hostname
+# SENTINEL SIMULATE-FAILURE 用于测试
+</code></pre><h2 id="32-关键配置解析">3.2 关键配置解析</h2>
+<h3 id="sentinel-monitor-name-ip-port-quorum"><code>sentinel monitor &lt;name&gt; &lt;ip&gt; &lt;port&gt; &lt;quorum&gt;</code></h3>
+<p><code>quorum</code> 是<strong>判定客观下线所需的最少哨兵数</strong>，不是选举需要的多数。</p>
+<p><strong>极其重要的区分</strong>（面试高频）：</p>
+<table>
+<thead>
+<tr>
+<th>概念</th>
+<th>值</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>quorum</strong></td>
+<td>配置指定</td>
+<td><strong>判定客观下线</strong>需要多少个哨兵认为主节点主观下线</td>
+</tr>
+<tr>
+<td><strong>majority</strong></td>
+<td><code>哨兵总数/2 + 1</code>（自动计算）</td>
+<td><strong>实际执行故障转移</strong>需要多少个哨兵授权</td>
+</tr>
+</tbody>
+</table>
+<pre tabindex="0"><code>3 个哨兵，quorum = 2：
+├─ 需要 2 个哨兵认为主节点下线 → 判定客观下线
+└─ 需要 2 个哨兵（majority = 3/2+1 = 2）授权 → 才能执行故障转移
+
+3 个哨兵，quorum = 1（不推荐）：
+├─ 只需 1 个哨兵认为下线 → 判定客观下线（容易误判！）
+└─ 但仍需 2 个哨兵授权才能真正执行故障转移
+</code></pre><p><strong>关键点：即使 <code>quorum</code> 设得很小，故障转移仍然需要 majority 授权。</strong> 这是 Redis 的一个安全设计——防止在网络分区的少数派一侧发生故障转移（那会造成双主脑裂）。</p>
+<p><strong>推荐设置</strong>：<code>quorum = majority = 哨兵数/2 + 1</code>（3 个哨兵设 2，5 个设 3）。</p>
+<h3 id="down-after-milliseconds"><code>down-after-milliseconds</code></h3>
+<p>哨兵向主节点发 <code>PING</code>，如果连续 <code>down-after-milliseconds</code> 毫秒都没收到有效回复，就判定为<strong>主观下线</strong>。</p>
+<p><strong>权衡</strong>：</p>
+<ul>
+<li><strong>设太小</strong>（如 3000）：网络抖动、主节点做 <code>BGSAVE</code> fork 阻塞、Lua 脚本执行慢，都可能被误判为下线，触发不必要的故障转移；</li>
+<li><strong>设太大</strong>（如 60000）：真的宕机了也要等 1 分钟才发现，故障恢复时间长。</li>
+</ul>
+<p><strong>建议</strong>：<strong>同机房 5000~10000ms</strong>，跨机房 15000~30000ms。默认 30000 对大多数场景偏保守。</p>
+<p><strong>注意</strong>：这个值不只用于主节点，也用于判断从节点和其他哨兵的下线。</p>
+<h3 id="parallel-syncs"><code>parallel-syncs</code></h3>
+<p>故障转移完成后，其他从节点要改为从新主节点复制，这会触发<strong>全量同步</strong>（虽然 PSYNC2 让大部分情况可以部分重同步，但不保证）。</p>
+<p><code>parallel-syncs</code> 限制<strong>同时进行全量同步的从节点数量</strong>：</p>
+<ul>
+<li><strong>设为 1（默认，推荐）</strong>：从节点<strong>逐个</strong>同步。虽然整个过程慢一些，但保护了新主节点（避免同时给多个从节点生成和传输 RDB 把它压垮）；</li>
+<li>设大了：同步快，但新主节点的 CPU、内存、带宽压力大，可能影响正常服务。</li>
+</ul>
+<h3 id="failover-timeout"><code>failover-timeout</code></h3>
+<p>这个参数控制多个方面（容易混淆）：</p>
+<ol>
+<li><strong>同一个哨兵对同一主节点连续两次故障转移的间隔</strong>（实际是 <code>failover-timeout × 2</code>）；</li>
+<li><strong>从节点向新主节点发起复制的超时时间</strong>；</li>
+<li><strong>取消一个进行中的故障转移的超时时间</strong>；</li>
+<li><strong>等待所有从节点重新配置完成的时间上限</strong>。</li>
+</ol>
+<p>默认 180000（3 分钟）通常够用。设太小可能导致故障转移还没完成就被判定超时。</p>
+<h2 id="33-启动与验证">3.3 启动与验证</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 两种启动方式（完全等价）</span>
+</span></span><span class="line"><span class="cl">redis-sentinel /path/to/sentinel.conf
+</span></span><span class="line"><span class="cl">redis-server /path/to/sentinel.conf --sentinel
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 连接哨兵</span>
+</span></span><span class="line"><span class="cl">redis-cli -p <span class="m">26379</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 查看监控的主节点信息</span>
+</span></span><span class="line"><span class="cl">127.0.0.1:26379&gt; SENTINEL MASTER mymaster
+</span></span><span class="line"><span class="cl"> 1<span class="o">)</span> <span class="s2">&#34;name&#34;</span>
+</span></span><span class="line"><span class="cl"> 2<span class="o">)</span> <span class="s2">&#34;mymaster&#34;</span>
+</span></span><span class="line"><span class="cl"> 3<span class="o">)</span> <span class="s2">&#34;ip&#34;</span>
+</span></span><span class="line"><span class="cl"> 4<span class="o">)</span> <span class="s2">&#34;192.168.1.10&#34;</span>
+</span></span><span class="line"><span class="cl"> 5<span class="o">)</span> <span class="s2">&#34;port&#34;</span>
+</span></span><span class="line"><span class="cl"> 6<span class="o">)</span> <span class="s2">&#34;6379&#34;</span>
+</span></span><span class="line"><span class="cl"> 7<span class="o">)</span> <span class="s2">&#34;runid&#34;</span>
+</span></span><span class="line"><span class="cl"> 8<span class="o">)</span> <span class="s2">&#34;8371b4fb...&#34;</span>
+</span></span><span class="line"><span class="cl"> 9<span class="o">)</span> <span class="s2">&#34;flags&#34;</span>
+</span></span><span class="line"><span class="cl">10<span class="o">)</span> <span class="s2">&#34;master&#34;</span>
+</span></span><span class="line"><span class="cl">...
+</span></span><span class="line"><span class="cl"><span class="s2">&#34;num-slaves&#34;</span>          → <span class="m">2</span>
+</span></span><span class="line"><span class="cl"><span class="s2">&#34;num-other-sentinels&#34;</span> → <span class="m">2</span>         ← 发现了另外 <span class="m">2</span> 个哨兵
+</span></span><span class="line"><span class="cl"><span class="s2">&#34;quorum&#34;</span>              → <span class="m">2</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 其他常用命令</span>
+</span></span><span class="line"><span class="cl">SENTINEL MASTERS                       <span class="c1"># 所有被监控的主节点</span>
+</span></span><span class="line"><span class="cl">SENTINEL REPLICAS mymaster             <span class="c1"># 该主节点的所有从节点（旧名 SLAVES）</span>
+</span></span><span class="line"><span class="cl">SENTINEL SENTINELS mymaster            <span class="c1"># 监控同一主节点的其他哨兵</span>
+</span></span><span class="line"><span class="cl">SENTINEL GET-MASTER-ADDR-BY-NAME mymaster    <span class="c1"># 【客户端最常用】查询主节点地址</span>
+</span></span><span class="line"><span class="cl">SENTINEL CKQUORUM mymaster             <span class="c1"># 检查当前哨兵数量是否足够做故障转移</span>
+</span></span><span class="line"><span class="cl">SENTINEL FAILOVER mymaster             <span class="c1"># 【强制】手动触发故障转移（不需要 quorum 同意）</span>
+</span></span><span class="line"><span class="cl">SENTINEL RESET mymaster                <span class="c1"># 重置该主节点的状态（清空已发现的从节点和哨兵，重新发现）</span>
+</span></span><span class="line"><span class="cl">SENTINEL MONITOR &lt;name&gt; &lt;ip&gt; &lt;port&gt; &lt;quorum&gt;    <span class="c1"># 运行时新增监控</span>
+</span></span><span class="line"><span class="cl">SENTINEL REMOVE &lt;name&gt;                 <span class="c1"># 取消监控</span>
+</span></span><span class="line"><span class="cl">SENTINEL SET mymaster down-after-milliseconds <span class="m">5000</span>    <span class="c1"># 运行时改配置</span>
+</span></span><span class="line"><span class="cl">SENTINEL IS-MASTER-DOWN-BY-ADDR ...    <span class="c1"># 哨兵之间互相询问用的内部命令</span>
+</span></span><span class="line"><span class="cl">SENTINEL SIMULATE-FAILURE crash-after-election    <span class="c1"># 测试用，模拟故障</span>
+</span></span></code></pre></div><p><strong><code>SENTINEL CKQUORUM</code> 是很实用的巡检命令</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">127.0.0.1:26379&gt; SENTINEL CKQUORUM mymaster
+</span></span><span class="line"><span class="cl">OK <span class="m">3</span> usable Sentinels. Quorum and failover authorization can be reached
+</span></span></code></pre></div><p>如果哨兵数量不足，会返回错误，说明此时<strong>故障转移无法进行</strong>（相当于高可用已经失效），应该立即告警。</p>
+<h2 id="34-哨兵会改写配置文件">3.4 哨兵会改写配置文件</h2>
+<p><strong>这是一个必须知道的行为</strong>：哨兵会<strong>自动修改自己的配置文件</strong>，把发现的拓扑信息持久化下来。</p>
+<p>启动后配置文件会多出这些内容：</p>
+<pre tabindex="0"><code class="language-conf" data-lang="conf"># Generated by CONFIG REWRITE
+sentinel myid 7f8b3c2a9d1e4f5a6b7c8d9e0f1a2b3c4d5e6f7a
+sentinel config-epoch mymaster 3
+sentinel leader-epoch mymaster 3
+sentinel known-replica mymaster 192.168.1.11 6379
+sentinel known-replica mymaster 192.168.1.12 6379
+sentinel known-sentinel mymaster 192.168.1.21 26379 a1b2c3d4...
+sentinel known-sentinel mymaster 192.168.1.22 26379 e5f6a7b8...
+sentinel current-epoch 3
+</code></pre><p><strong>含义与影响</strong>：</p>
+<ol>
+<li><strong><code>sentinel monitor</code> 那一行的 IP 会被改成当前的主节点</strong>（故障转移后自动更新）。所以你在配置文件里写的初始主节点地址只是&quot;入口&quot;，之后会被哨兵自己维护；</li>
+<li><strong><code>sentinel myid</code></strong> 是哨兵的唯一标识，<strong>不能重复</strong>。<strong>用容器镜像批量部署时，如果配置文件里已经有 <code>myid</code>，所有哨兵会有相同的 ID，导致它们互相认为是同一个哨兵</strong>，故障转移永远无法达到 majority。这是容器化部署最经典的坑；</li>
+<li><strong>配置文件必须可写</strong>，否则哨兵启动失败（<code>Sentinel config file ... is not writable</code>）；</li>
+<li><strong>不能用同一个配置文件启动多个哨兵</strong>。</li>
+</ol>
+<hr>
+<h1 id="4-哨兵的工作机制">4. 哨兵的工作机制</h1>
+<h2 id="41-三个定时任务">4.1 三个定时任务</h2>
+<p>哨兵的所有工作都由三个定时任务驱动（在 <code>sentinelTimer</code> 里）：</p>
+<h3 id="任务一每-10-秒向所有主从节点发-info">任务一：每 10 秒向所有主/从节点发 <code>INFO</code></h3>
+<pre tabindex="0"><code>目的：获取拓扑信息
+├─ 从主节点的 INFO replication 输出里【自动发现所有从节点】
+│  （所以你只需要配置主节点地址，从节点是自动发现的）
+├─ 确认每个节点的 role（master/slave）
+├─ 获取从节点的复制偏移量、优先级、连接状态
+└─ 故障转移后，通过 role 变化确认新拓扑已生效
+</code></pre><p><strong>这就是为什么容器环境必须配 <code>replica-announce-ip</code></strong>——哨兵靠主节点 <code>INFO</code> 里的从节点地址去连接从节点，如果那个地址不可达，哨兵就发现不了从节点，故障转移时没有候选者。</p>
+<p><strong>发现频率的特殊情况</strong>：如果主节点处于客观下线状态（正在故障转移），<code>INFO</code> 的频率会提高到<strong>每秒一次</strong>，以便尽快感知拓扑变化。</p>
+<h3 id="任务二每-2-秒通过-pubsub-交换信息">任务二：每 2 秒通过 pub/sub 交换信息</h3>
+<p>哨兵之间<strong>不直接互相连接来交换主节点状态</strong>，而是<strong>借道被监控的 Redis 节点的 pub/sub 频道</strong>：</p>
+<pre tabindex="0"><code>频道名：__sentinel__:hello
+
+每个哨兵每 2 秒向所有被监控的主/从节点 PUBLISH 一条消息：
+&lt;哨兵IP&gt;,&lt;哨兵端口&gt;,&lt;哨兵runid&gt;,&lt;哨兵current_epoch&gt;,&lt;主节点名&gt;,&lt;主节点IP&gt;,&lt;主节点端口&gt;,&lt;主节点config_epoch&gt;
+
+同时每个哨兵都 SUBSCRIBE 这个频道，所以能收到其他哨兵的消息
+</code></pre><p>这个设计非常巧妙，它实现了两件事：</p>
+<ol>
+<li><strong>哨兵自动发现</strong>：新加入的哨兵只要监控同一个主节点，就能通过这个频道被其他哨兵发现（不需要在配置里写死其他哨兵的地址）；</li>
+<li><strong>交换主节点的配置版本（config-epoch）</strong>：哨兵通过比较对方消息里的 <code>config_epoch</code>，判断自己的主节点信息是否过期。如果对方的 epoch 更大，就更新自己的认知。<strong>这是故障转移后所有哨兵能达成一致的关键</strong>。</li>
+</ol>
+<h3 id="任务三每-1-秒向所有节点含其他哨兵发-ping">任务三：每 1 秒向所有节点（含其他哨兵）发 <code>PING</code></h3>
+<pre tabindex="0"><code>目的：故障检测
+├─ 对主节点、从节点、其他哨兵都发 PING
+├─ 有效回复：+PONG / -LOADING / -MASTERDOWN
+│  （注意 -LOADING 和 -MASTERDOWN 也算&#34;活着&#34;，只是暂时不可用）
+└─ 连续 down-after-milliseconds 没有有效回复 → 判定【主观下线】
+</code></pre><h2 id="42-主观下线sdown">4.2 主观下线（SDOWN）</h2>
+<p><strong>Subjectively Down</strong>：<strong>单个哨兵</strong>认为某个节点下线了。</p>
+<pre tabindex="0"><code>哨兵 S1 在 down-after-milliseconds 内没收到主节点 M 的有效 PING 回复
+→ S1 把 M 标记为 SDOWN（在 S1 自己的视角里）
+</code></pre><p><strong>特点</strong>：</p>
+<ul>
+<li>这只是<strong>一个哨兵的个人判断</strong>，可能是误判（比如 S1 自己的网络有问题）；</li>
+<li><strong>对从节点和其他哨兵，只有 SDOWN 没有 ODOWN</strong>——因为从节点下线不需要做任何自动处理（只是标记为不可用，不作为故障转移候选），不需要投票确认；</li>
+<li><strong>只有主节点的 SDOWN 会升级为 ODOWN</strong>。</li>
+</ul>
+<h2 id="43-客观下线odown">4.3 客观下线（ODOWN）</h2>
+<p><strong>Objectively Down</strong>：<strong>足够多的哨兵</strong>（&gt;= quorum）都认为主节点下线了。</p>
+<pre tabindex="0"><code>1. S1 判定主节点 M 为 SDOWN
+2. S1 向其他所有哨兵发送：
+   SENTINEL is-master-down-by-addr &lt;M的IP&gt; &lt;M的端口&gt; &lt;S1的current_epoch&gt; &lt;runid或*&gt;
+3. 其他哨兵回复三个信息：
+   ├─ down_state：1 表示我也认为它下线了，0 表示我认为它还活着
+   ├─ leader_runid：我投票给谁做 leader（或 * 表示不投票）
+   └─ leader_epoch：投票的纪元
+4. S1 统计认为 M 下线的哨兵数（含自己）
+5. 数量 &gt;= quorum → 把 M 标记为 ODOWN，【开始故障转移流程】
+</code></pre><p><strong>注意 <code>is-master-down-by-addr</code> 命令的双重作用</strong>：它既询问&quot;你觉得主节点挂了吗&quot;，又顺便<strong>拉票</strong>（如果第 4 个参数是自己的 runid 而不是 <code>*</code>，就是在请求对方投票给自己当 leader）。</p>
+<p><strong>只有 ODOWN 才会触发故障转移</strong>，这防止了单个哨兵的误判造成不必要的切换。</p>
+<h2 id="44-选举哨兵-leaderraft">4.4 选举哨兵 Leader（Raft）</h2>
+<p>主节点被判定 ODOWN 后，<strong>不是所有哨兵都去做故障转移</strong>（那会乱套），而是先<strong>选出一个 Leader</strong>，由它独自执行整个故障转移流程。</p>
+<p>选举用的是 <strong>Raft 算法的领导者选举部分</strong>（简化版）：</p>
+<pre tabindex="0"><code>1. 每个发现 ODOWN 的哨兵都想成为 Leader，于是：
+   ├─ 把自己的 current_epoch + 1（epoch 就是 Raft 里的 term，任期）
+   └─ 向其他哨兵发送 is-master-down-by-addr 请求，
+      第 4 个参数带上【自己的 runid】= &#34;请投票给我&#34;
+
+2. 每个哨兵在【每个 epoch 里只能投一票】，遵循【先到先得】：
+   ├─ 收到第一个请求 → 投票给它，记录 leader_runid 和 leader_epoch
+   └─ 收到后续请求（同一 epoch）→ 拒绝（回复之前投给的那个 runid）
+
+3. 某个哨兵收到的票数 &gt;= max(quorum, majority) → 成为 Leader
+   ↑ 注意这里是【两者取最大】，即至少要 majority 票
+
+4. 如果本轮没人达到多数（票被分散了）：
+   ├─ 等待一个【随机时间】（避免再次同时发起，这是 Raft 的关键设计）
+   ├─ epoch + 1，进入下一轮选举
+   └─ 直到选出 Leader 或超过 failover-timeout
+</code></pre><p><strong>为什么需要 majority 而不只是 quorum</strong>：这是防止<strong>网络分区导致双主</strong>的关键。</p>
+<pre tabindex="0"><code>5 个哨兵，网络分区成 2 + 3：
+├─ 少数派（2 个）：即使 quorum=2 让它们判定了 ODOWN，
+│  也最多只能拿到 2 票 &lt; majority(3)，【无法成为 Leader】
+│  → 无法执行故障转移 ✅
+└─ 多数派（3 个）：能拿到 3 票 &gt;= majority(3)，
+   → 正常执行故障转移 ✅
+
+结果：只有多数派一侧会产生新主节点，避免了双主。
+</code></pre><h2 id="45-选择新主节点从节点选主">4.5 选择新主节点（从节点选主）</h2>
+<p>Leader 哨兵按以下顺序<strong>逐层过滤和排序</strong>候选从节点：</p>
+<h3 id="第一步过滤掉不健康的从节点">第一步：过滤掉不健康的从节点</h3>
+<p>排除以下从节点：</p>
+<ol>
+<li><strong>已经 SDOWN 或 ODOWN 的</strong>；</li>
+<li><strong><code>disconnected</code> 状态的</strong>（哨兵与它的连接断了）；</li>
+<li><strong>最近 5 秒内没有回复过哨兵 <code>INFO</code> 的</strong>；</li>
+<li><strong>与主节点断开连接太久的</strong>：断开时间 &gt; <code>down-after-milliseconds × 10</code>。这条是为了排除数据严重落后的从节点；</li>
+<li><strong><code>replica-priority</code> 为 0 的</strong>（明确声明永不做主节点）。</li>
+</ol>
+<h3 id="第二步按四个条件依次排序">第二步：按四个条件依次排序</h3>
+<pre tabindex="0"><code>1. 【replica-priority 更小的优先】
+   配置项，默认 100，数字越小优先级越高，0 表示永不被选
+   → 用途：让性能好的机器/同机房的节点优先成为主节点
+
+2. priority 相同 → 【复制偏移量 offset 更大的优先】
+   offset 越大说明它从主节点复制到的数据越多，数据最完整
+   → 这是【最重要】的实质性条件，决定了丢多少数据
+
+3. offset 也相同 → 【runid 字典序更小的优先】
+   纯粹为了让所有哨兵能做出【确定性的、一致的】选择
+   （避免不同哨兵选出不同的节点）
+</code></pre><p><strong>记忆口诀</strong>：<strong>优先级 → 偏移量 → runid</strong>。</p>
+<p><strong>注意 offset 最大 ≠ 数据完整</strong>。因为复制是异步的，即使选了 offset 最大的从节点，它仍可能落后于原主节点。<strong>故障转移必然可能丢数据</strong>（这也是为什么要配 <code>min-replicas-to-write</code>）。</p>
+<h2 id="46-执行故障转移">4.6 执行故障转移</h2>
+<p>Leader 哨兵选定新主节点后，执行以下步骤：</p>
+<pre tabindex="0"><code>1. 向选中的从节点 S 发送 REPLICAOF NO ONE
+   → S 从从节点变为主节点
+
+2. Leader 用【每秒一次的 INFO】确认 S 的 role 已变成 master
+   （确认切换真正生效，而不是命令发出去就认为成功）
+
+3. 更新自己维护的主节点配置（config-epoch + 1，指向 S），
+   并通过 __sentinel__:hello 频道广播新配置
+   → 其他哨兵收到后，因为 epoch 更大，会更新自己的认知
+
+4. 向其他所有从节点发送 REPLICAOF &lt;S的IP&gt; &lt;S的端口&gt;
+   ├─ 按 parallel-syncs 限制并发数（默认 1，逐个进行）
+   └─ 等每个从节点开始同步后再处理下一个
+
+5. 把【原主节点 M】也标记为从节点
+   ├─ 如果 M 此时还没恢复，先记下来
+   └─ 等 M 恢复上线后，哨兵立即向它发送 REPLICAOF &lt;S&gt;，
+      让它变成新主节点的从节点
+
+6. 通过 pub/sub 发布 +switch-master 事件，通知客户端
+   └─ 如果配了 client-reconfig-script，调用它
+</code></pre><p><strong>整个流程的耗时</strong>：<code>down-after-milliseconds</code>（发现故障，如 5~30 秒）+ 选举（通常 &lt; 1 秒）+ 切换（通常 1~2 秒）。所以<strong>典型的故障恢复时间是 10~35 秒</strong>，主要由 <code>down-after-milliseconds</code> 决定。</p>
+<hr>
+<h1 id="5-客户端如何感知主节点切换">5. 客户端如何感知主节点切换</h1>
+<p>这是<strong>实际使用中最容易出问题</strong>的部分。</p>
+<h2 id="51-客户端的正确工作流程">5.1 客户端的正确工作流程</h2>
+<p><strong>客户端不能把 Redis 地址写死，而必须通过哨兵获取。</strong></p>
+<pre tabindex="0"><code>1. 客户端启动时连接【任意一个哨兵】
+   （配置里给一组哨兵地址，逐个尝试直到连上一个）
+
+2. 执行 SENTINEL GET-MASTER-ADDR-BY-NAME mymaster
+   → 得到当前主节点的 IP 和端口
+
+3. 连接主节点，正常读写
+
+4. 【关键】同时 SUBSCRIBE 哨兵的 +switch-master 频道
+   → 主节点切换时会收到通知，重新执行步骤 2 并重建连接池
+
+5. 如果与主节点的连接失败，也要重新执行步骤 2
+   （因为可能刚发生了切换但通知还没到）
+</code></pre><h2 id="52-哨兵发布的关键事件">5.2 哨兵发布的关键事件</h2>
+<p>客户端可以订阅这些频道来感知集群状态变化：</p>
+<table>
+<thead>
+<tr>
+<th>频道</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong><code>+switch-master</code></strong></td>
+<td><strong>主节点已切换</strong>（最重要）。格式：<code>&lt;name&gt; &lt;旧IP&gt; &lt;旧端口&gt; &lt;新IP&gt; &lt;新端口&gt;</code></td>
+</tr>
+<tr>
+<td><code>+sdown</code></td>
+<td>某节点被判定主观下线</td>
+</tr>
+<tr>
+<td><code>-sdown</code></td>
+<td>某节点恢复（主观下线解除）</td>
+</tr>
+<tr>
+<td><code>+odown</code></td>
+<td>主节点被判定客观下线</td>
+</tr>
+<tr>
+<td><code>-odown</code></td>
+<td>客观下线解除</td>
+</tr>
+<tr>
+<td><code>+slave</code></td>
+<td>发现了一个新的从节点</td>
+</tr>
+<tr>
+<td><code>+sentinel</code></td>
+<td>发现了一个新的哨兵</td>
+</tr>
+<tr>
+<td><code>+try-failover</code></td>
+<td>开始尝试故障转移</td>
+</tr>
+<tr>
+<td><code>+elected-leader</code></td>
+<td>本哨兵被选为 Leader</td>
+</tr>
+<tr>
+<td><code>+failover-state-select-slave</code></td>
+<td>正在选择新主节点</td>
+</tr>
+<tr>
+<td><code>+selected-slave</code></td>
+<td>已选定新主节点</td>
+</tr>
+<tr>
+<td><code>+promoted-slave</code></td>
+<td>从节点已提升为主</td>
+</tr>
+<tr>
+<td><code>+failover-end</code></td>
+<td>故障转移完成</td>
+</tr>
+<tr>
+<td><code>-failover-abort-not-elected</code></td>
+<td>故障转移中止（没被选为 leader）</td>
+</tr>
+<tr>
+<td><code>+slave-reconf-sent</code> / <code>+slave-reconf-done</code></td>
+<td>从节点重配置进度</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 实时观察哨兵事件（排查故障转移问题的利器）</span>
+</span></span><span class="line"><span class="cl">redis-cli -p <span class="m">26379</span> PSUBSCRIBE <span class="s1">&#39;*&#39;</span>
+</span></span></code></pre></div><h2 id="53-各语言客户端的用法">5.3 各语言客户端的用法</h2>
+<p><strong>Go（go-redis）</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kn">import</span> <span class="s">&#34;github.com/redis/go-redis/v9&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="nx">rdb</span> <span class="o">:=</span> <span class="nx">redis</span><span class="p">.</span><span class="nf">NewFailoverClient</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">redis</span><span class="p">.</span><span class="nx">FailoverOptions</span><span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">MasterName</span><span class="p">:</span>    <span class="s">&#34;mymaster&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">SentinelAddrs</span><span class="p">:</span> <span class="p">[]</span><span class="kt">string</span><span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="s">&#34;192.168.1.21:26379&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">        <span class="s">&#34;192.168.1.22:26379&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">        <span class="s">&#34;192.168.1.23:26379&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="p">},</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">Password</span><span class="p">:</span>         <span class="s">&#34;mypassword&#34;</span><span class="p">,</span>        <span class="c1">// Redis 节点的密码
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">SentinelPassword</span><span class="p">:</span> <span class="s">&#34;sentinelpassword&#34;</span><span class="p">,</span>  <span class="c1">// 哨兵的密码（如果哨兵设了 requirepass）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">DB</span><span class="p">:</span>               <span class="mi">0</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">PoolSize</span><span class="p">:</span>         <span class="mi">50</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// 读写分离：把读请求发到从节点（谨慎使用，见第 10 篇）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="c1">// ReplicaOnly: true,
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="c1">// RouteByLatency: true,   // 按延迟路由到最快的节点
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="c1">// RouteRandomly: true,    // 随机路由到从节点
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">})</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// go-redis 内部会自动：
+</span></span></span><span class="line"><span class="cl"><span class="c1">// 1. 向哨兵查询主节点地址
+</span></span></span><span class="line"><span class="cl"><span class="c1">// 2. 订阅 +switch-master 事件
+</span></span></span><span class="line"><span class="cl"><span class="c1">// 3. 切换时自动重建连接
+</span></span></span></code></pre></div><p><strong>Java（Jedis）</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-java" data-lang="java"><span class="line"><span class="cl"><span class="n">Set</span><span class="o">&lt;</span><span class="n">String</span><span class="o">&gt;</span> <span class="n">sentinels</span> <span class="o">=</span> <span class="k">new</span> <span class="n">HashSet</span><span class="o">&lt;&gt;(</span><span class="n">Arrays</span><span class="o">.</span><span class="na">asList</span><span class="o">(</span>
+</span></span><span class="line"><span class="cl">    <span class="s">&#34;192.168.1.21:26379&#34;</span><span class="o">,</span> <span class="s">&#34;192.168.1.22:26379&#34;</span><span class="o">,</span> <span class="s">&#34;192.168.1.23:26379&#34;</span><span class="o">));</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="n">JedisSentinelPool</span> <span class="n">pool</span> <span class="o">=</span> <span class="k">new</span> <span class="n">JedisSentinelPool</span><span class="o">(</span>
+</span></span><span class="line"><span class="cl">    <span class="s">&#34;mymaster&#34;</span><span class="o">,</span> <span class="n">sentinels</span><span class="o">,</span> <span class="n">poolConfig</span><span class="o">,</span> <span class="n">2000</span><span class="o">,</span> <span class="s">&#34;mypassword&#34;</span><span class="o">);</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">try</span> <span class="o">(</span><span class="n">Jedis</span> <span class="n">jedis</span> <span class="o">=</span> <span class="n">pool</span><span class="o">.</span><span class="na">getResource</span><span class="o">())</span> <span class="o">{</span>
+</span></span><span class="line"><span class="cl">    <span class="n">jedis</span><span class="o">.</span><span class="na">set</span><span class="o">(</span><span class="s">&#34;k&#34;</span><span class="o">,</span> <span class="s">&#34;v&#34;</span><span class="o">);</span>
+</span></span><span class="line"><span class="cl"><span class="o">}</span>
+</span></span></code></pre></div><p><strong>Java（Lettuce / Spring Boot）</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-yaml" data-lang="yaml"><span class="line"><span class="cl"><span class="nt">spring</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="nt">redis</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">sentinel</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">      </span><span class="nt">master</span><span class="p">:</span><span class="w"> </span><span class="l">mymaster</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">      </span><span class="nt">nodes</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">        </span>- <span class="m">192.168.1.21</span><span class="p">:</span><span class="m">26379</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">        </span>- <span class="m">192.168.1.22</span><span class="p">:</span><span class="m">26379</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">        </span>- <span class="m">192.168.1.23</span><span class="p">:</span><span class="m">26379</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">      </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l">sentinelpassword</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l">mypassword</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">lettuce</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">      </span><span class="nt">pool</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">        </span><span class="nt">max-active</span><span class="p">:</span><span class="w"> </span><span class="m">50</span><span class="w">
+</span></span></span></code></pre></div><p><strong>Python（redis-py）</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">redis.sentinel</span> <span class="kn">import</span> <span class="n">Sentinel</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="n">sentinel</span> <span class="o">=</span> <span class="n">Sentinel</span><span class="p">([</span>
+</span></span><span class="line"><span class="cl">    <span class="p">(</span><span class="s1">&#39;192.168.1.21&#39;</span><span class="p">,</span> <span class="mi">26379</span><span class="p">),</span>
+</span></span><span class="line"><span class="cl">    <span class="p">(</span><span class="s1">&#39;192.168.1.22&#39;</span><span class="p">,</span> <span class="mi">26379</span><span class="p">),</span>
+</span></span><span class="line"><span class="cl">    <span class="p">(</span><span class="s1">&#39;192.168.1.23&#39;</span><span class="p">,</span> <span class="mi">26379</span><span class="p">),</span>
+</span></span><span class="line"><span class="cl"><span class="p">],</span> <span class="n">socket_timeout</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span> <span class="n">sentinel_kwargs</span><span class="o">=</span><span class="p">{</span><span class="s1">&#39;password&#39;</span><span class="p">:</span> <span class="s1">&#39;sentinelpassword&#39;</span><span class="p">})</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="n">master</span> <span class="o">=</span> <span class="n">sentinel</span><span class="o">.</span><span class="n">master_for</span><span class="p">(</span><span class="s1">&#39;mymaster&#39;</span><span class="p">,</span> <span class="n">socket_timeout</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span> <span class="n">password</span><span class="o">=</span><span class="s1">&#39;mypassword&#39;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="n">replica</span> <span class="o">=</span> <span class="n">sentinel</span><span class="o">.</span><span class="n">slave_for</span><span class="p">(</span><span class="s1">&#39;mymaster&#39;</span><span class="p">,</span> <span class="n">socket_timeout</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span> <span class="n">password</span><span class="o">=</span><span class="s1">&#39;mypassword&#39;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="n">master</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="s1">&#39;k&#39;</span><span class="p">,</span> <span class="s1">&#39;v&#39;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="nb">print</span><span class="p">(</span><span class="n">replica</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;k&#39;</span><span class="p">))</span>
+</span></span></code></pre></div><h2 id="54-客户端侧的注意点">5.4 客户端侧的注意点</h2>
+<p><strong>（1）必须配置多个哨兵地址</strong></p>
+<p>只配一个哨兵的话，那个哨兵挂了客户端就无法获取主节点地址（虽然已建立的连接还能用，但重连时会失败）。</p>
+<p><strong>（2）故障转移期间会有一段不可写的时间</strong></p>
+<p>从主节点故障到新主节点就绪，期间<strong>所有写请求都会失败</strong>（10~35 秒）。客户端必须：</p>
+<ul>
+<li><strong>有合理的重试机制</strong>（带退避，避免重试风暴）；</li>
+<li><strong>业务层要能容忍</strong>这段时间的写失败（降级、写队列、返回友好提示）。</li>
+</ul>
+<p><strong>（3)不要在代码里缓存主节点地址</strong></p>
+<p>有些实现为了&quot;性能&quot;把主节点地址缓存很久甚至写进配置。切换后这些客户端会一直连着<strong>旧主节点</strong>（如果旧主还活着，它已经被降级为从节点，写入会报 <code>READONLY</code>）。</p>
+<p><strong>（4）连接池要能感知切换</strong></p>
+<p>切换后<strong>连接池里所有指向旧主的连接都是无效的</strong>，必须全部丢弃重建。成熟客户端会自动处理，自己封装时容易漏掉这一点。</p>
+<p><strong>（5）注意 <code>READONLY</code> 错误的处理</strong></p>
+<p>如果客户端连到了一个已被降级的旧主节点，写命令会返回：</p>
+<pre tabindex="0"><code>-READONLY You can&#39;t write against a read only replica.
+</code></pre><p>客户端收到这个错误应该<strong>立即重新向哨兵查询主节点地址</strong>，而不是简单重试（重试还是会失败）。</p>
+<hr>
+<h1 id="6-脑裂问题">6. 脑裂问题</h1>
+<h2 id="61-什么是脑裂">6.1 什么是脑裂</h2>
+<p><strong>脑裂（split-brain）</strong>：网络分区导致<strong>同时存在两个主节点</strong>，客户端向不同的主节点写入，数据发生分叉。</p>
+<pre tabindex="0"><code>时刻 T0：正常状态
+   哨兵 S1,S2,S3  →  Master M  ←  Client A, Client B
+                        ↓
+                  Replica R1, R2
+
+时刻 T1：网络分区！M 与哨兵、从节点都断开，但 Client A 到 M 还通
+   ┌──── 分区 1 ───┐        ┌──────── 分区 2 ────────┐
+   │  Master M     │        │  哨兵 S1,S2,S3         │
+   │  ← Client A   │        │  Replica R1, R2        │
+   └───────────────┘        │  ← Client B            │
+                            └────────────────────────┘
+
+时刻 T2：哨兵判定 M 客观下线，把 R1 提升为新主节点 M&#39;
+   ┌──── 分区 1 ───┐        ┌──────── 分区 2 ────────┐
+   │  Master M     │        │  Master M&#39; (原 R1)     │
+   │  ← Client A   │        │  Replica R2            │
+   │ 【仍在写入!】 │        │ ← Client B 【也在写入】│
+   └───────────────┘        └────────────────────────┘
+                【两个主节点，数据分叉】
+
+时刻 T3：网络恢复
+   哨兵发现 M 又活了，但现在主节点是 M&#39;
+   → 哨兵向 M 发送 REPLICAOF M&#39;
+   → M 变成从节点，【清空自己的所有数据】，从 M&#39; 全量同步
+   → 【T1~T2 期间 Client A 写入 M 的所有数据永久丢失】
+</code></pre><h2 id="62-缓解手段">6.2 缓解手段</h2>
+<p><strong>（1）<code>min-replicas-to-write</code> + <code>min-replicas-max-lag</code></strong>（第 10 篇讲过）</p>
+<p>在 Redis 主节点上配置：</p>
+<pre tabindex="0"><code class="language-conf" data-lang="conf">min-replicas-to-write 1
+min-replicas-max-lag 10
+</code></pre><p><strong>效果</strong>：分区后，M 发现自己没有任何健康的从节点（超过 10 秒没收到 ACK），<strong>主动拒绝所有写入</strong>：</p>
+<pre tabindex="0"><code>(error) NOREPLICAS Not enough good replicas to write.
+</code></pre><p>这样 Client A 从 T1 之后就写不进去了，避免了数据丢失。</p>
+<p><strong>局限（必须知道）</strong>：</p>
+<ol>
+<li><strong>不能完全避免丢失</strong>——在 M 判定&quot;从节点不健康&quot;之前（即 <code>min-replicas-max-lag</code> 这个窗口，如 10 秒），写入仍然成功，这部分数据还是会丢；</li>
+<li><strong>牺牲了可用性</strong>——从节点真的全挂了（不是网络分区）时，主节点也不可写；</li>
+<li><strong>要正确设置 <code>min-replicas-max-lag</code></strong>：设太大（如 60 秒）保护窗口太长基本无效；设太小（如 3 秒）容易在正常的网络抖动时误拒写入。</li>
+</ol>
+<p><strong>（2）业务侧幂等与补偿</strong></p>
+<p>接受&quot;可能丢数据&quot;的现实，在业务层做保障：</p>
+<ul>
+<li><strong>重要数据双写</strong>（Redis + 数据库），以数据库为准；</li>
+<li><strong>关键操作可重试且幂等</strong>；</li>
+<li><strong>对账机制</strong>：定期比对 Redis 和数据源，修复不一致。</li>
+</ul>
+<p><strong>（3）合理的 <code>down-after-milliseconds</code></strong></p>
+<p>设太小会导致网络抖动时频繁误切换，每次切换都是一次潜在的数据丢失。同机房 5~10 秒是合理值。</p>
+<p><strong>（4)从架构上规避</strong></p>
+<ul>
+<li>如果对一致性要求极高，<strong>不要用 Redis 做主存储</strong>；</li>
+<li>或者用支持强一致的方案（如基于 Raft 的 Redis 变体，或 etcd/ZooKeeper 这类 CP 系统）。</li>
+</ul>
+<h2 id="63-redis-的-cap-定位">6.3 Redis 的 CAP 定位</h2>
+<p><strong>Redis（主从 + 哨兵）是 AP 系统，不是 CP 系统。</strong></p>
+<ul>
+<li><strong>A（可用性）</strong>：优先保证可用——主节点挂了快速切换继续服务；</li>
+<li><strong>P（分区容错）</strong>：网络分区时多数派继续工作；</li>
+<li><strong>C（一致性）</strong>：<strong>牺牲了强一致性</strong>——异步复制 + 故障转移必然可能丢数据。</li>
+</ul>
+<p>面试时如果被问&quot;Redis 是 CP 还是 AP&quot;，答案是 <strong>AP</strong>，并要能说出理由：<strong>异步复制</strong>（主节点写完就返回，不等从节点确认）+ <strong>故障转移选 offset 最大的从节点但不保证它数据完整</strong>。</p>
+<p>配了 <code>min-replicas-to-write</code> 后可以说是&quot;<strong>在一致性方向做了一些倾斜的 AP</strong>&quot;，但依然不是 CP（不像 Raft/Paxos 那样保证已提交的数据绝不丢失）。</p>
+<hr>
+<h1 id="7-常见问题排查">7. 常见问题排查</h1>
+<h2 id="71-故障转移不执行">7.1 故障转移不执行</h2>
+<p><strong>排查清单</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 1. 检查哨兵数量是否足够</span>
+</span></span><span class="line"><span class="cl">redis-cli -p <span class="m">26379</span> SENTINEL CKQUORUM mymaster
+</span></span><span class="line"><span class="cl"><span class="c1"># 应该返回 OK。返回错误说明哨兵不够，无法达到 majority</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 2. 检查哨兵之间是否互相发现</span>
+</span></span><span class="line"><span class="cl">redis-cli -p <span class="m">26379</span> SENTINEL SENTINELS mymaster
+</span></span><span class="line"><span class="cl"><span class="c1"># num-other-sentinels 应该等于（哨兵总数 - 1）</span>
+</span></span><span class="line"><span class="cl">redis-cli -p <span class="m">26379</span> SENTINEL MASTER mymaster <span class="p">|</span> grep -A1 num-other-sentinels
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 3. 检查是否所有哨兵的 myid 相同（容器化最经典的坑）</span>
+</span></span><span class="line"><span class="cl"><span class="k">for</span> p in <span class="m">26379</span> <span class="m">26380</span> 26381<span class="p">;</span> <span class="k">do</span>
+</span></span><span class="line"><span class="cl">  redis-cli -p <span class="nv">$p</span> SENTINEL MYID
+</span></span><span class="line"><span class="cl"><span class="k">done</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 三个值必须【不同】！相同说明配置文件被复制了</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 4. 检查哨兵能否发现从节点</span>
+</span></span><span class="line"><span class="cl">redis-cli -p <span class="m">26379</span> SENTINEL REPLICAS mymaster
+</span></span><span class="line"><span class="cl"><span class="c1"># 如果为空，检查主节点的 replica-announce-ip 配置</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 5. 看哨兵日志</span>
+</span></span><span class="line"><span class="cl">tail -100 /data/redis/sentinel/sentinel-26379.log
+</span></span><span class="line"><span class="cl">grep -E <span class="s1">&#39;\+sdown|\+odown|\+try-failover|\+elected-leader|-failover-abort&#39;</span> sentinel.log
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 6. 实时观察事件</span>
+</span></span><span class="line"><span class="cl">redis-cli -p <span class="m">26379</span> PSUBSCRIBE <span class="s1">&#39;*&#39;</span>
+</span></span></code></pre></div><p><strong>常见原因</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>原因</th>
+<th>表现</th>
+<th>解决</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>哨兵 myid 重复</strong></td>
+<td><code>num-other-sentinels</code> 为 0 或偏小</td>
+<td>删除配置文件里的 <code>sentinel myid</code> 行，重启</td>
+</tr>
+<tr>
+<td><strong>哨兵数量不足 majority</strong></td>
+<td><code>CKQUORUM</code> 报错</td>
+<td>增加哨兵数量到 3 个以上</td>
+</tr>
+<tr>
+<td><strong>哨兵之间网络不通</strong></td>
+<td>只发现部分哨兵</td>
+<td>检查 26379 端口的防火墙</td>
+</tr>
+<tr>
+<td><strong><code>sentinel auth-pass</code> 没配</strong></td>
+<td>哨兵日志报 NOAUTH</td>
+<td>配置密码</td>
+</tr>
+<tr>
+<td><strong>从节点全部不健康</strong></td>
+<td><code>+failover-abort-no-good-slave</code></td>
+<td>检查从节点状态和 <code>replica-priority</code></td>
+</tr>
+<tr>
+<td><strong>没有从节点</strong></td>
+<td>同上</td>
+<td>哨兵无法凭空造出主节点，必须有至少一个健康从节点</td>
+</tr>
+<tr>
+<td><strong><code>replica-priority</code> 全为 0</strong></td>
+<td>所有从节点被排除</td>
+<td>至少留一个非 0</td>
+</tr>
+</tbody>
+</table>
+<h2 id="72-频繁误切换">7.2 频繁误切换</h2>
+<p><strong>现象</strong>：明明主节点是好的，却频繁发生故障转移。</p>
+<p><strong>常见原因</strong>：</p>
+<ol>
+<li>
+<p><strong><code>down-after-milliseconds</code> 太小</strong>（如 1000~3000），网络抖动就触发；</p>
+</li>
+<li>
+<p><strong>主节点有阻塞操作</strong>：</p>
+<ul>
+<li><code>BGSAVE</code> 的 fork 阻塞（大实例可能 1 秒以上）；</li>
+<li>慢命令（<code>KEYS *</code>、大 key 的 <code>HGETALL</code>）；</li>
+<li>Lua 脚本执行时间长；</li>
+<li>AOF <code>fsync</code> 被慢磁盘阻塞；</li>
+<li>内存 swap；</li>
+</ul>
+<p>这些都会让主节点在一段时间内无法响应哨兵的 <code>PING</code>，被误判为下线；</p>
+</li>
+<li>
+<p><strong>哨兵所在机器负载过高</strong>，自己的定时任务都跑不准；</p>
+</li>
+<li>
+<p><strong>跨机房部署</strong>但 <code>down-after-milliseconds</code> 按同机房设置。</p>
+</li>
+</ol>
+<p><strong>排查与解决</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 看主节点是否有阻塞</span>
+</span></span><span class="line"><span class="cl">redis-cli INFO stats <span class="p">|</span> grep latest_fork_usec        <span class="c1"># fork 是否很慢</span>
+</span></span><span class="line"><span class="cl">redis-cli SLOWLOG GET <span class="m">20</span>                            <span class="c1"># 有没有慢命令</span>
+</span></span><span class="line"><span class="cl">redis-cli INFO persistence <span class="p">|</span> grep aof_delayed_fsync <span class="c1"># 磁盘是否慢</span>
+</span></span><span class="line"><span class="cl">redis-cli --latency -h master                       <span class="c1"># 实测延迟</span>
+</span></span><span class="line"><span class="cl">redis-cli --intrinsic-latency <span class="m">100</span>                   <span class="c1"># 机器固有延迟</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 解决</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 1. 调大 down-after-milliseconds（同机房 5000~10000）</span>
+</span></span><span class="line"><span class="cl">redis-cli -p <span class="m">26379</span> SENTINEL SET mymaster down-after-milliseconds <span class="m">10000</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 2. 消除主节点的阻塞源（控制实例大小、禁用慢命令、关 THP）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 3. 把持久化转移到从节点</span>
+</span></span></code></pre></div><h2 id="73-切换后旧主节点的数据没了">7.3 切换后旧主节点的数据没了</h2>
+<p>这是<strong>正常行为</strong>，不是 bug：旧主节点恢复后被降级为从节点，必须<strong>清空自己的数据</strong>从新主节点全量同步（否则主从数据不一致）。</p>
+<p><strong>如果旧主节点上有新主节点没有的数据（脑裂期间的写入），这些数据就永久丢失了。</strong></p>
+<p><strong>如果需要保留这些数据做分析</strong>：在把旧主接回集群之前，先手动导出：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 在旧主节点恢复后、接入集群前</span>
+</span></span><span class="line"><span class="cl">redis-cli -p <span class="m">6379</span> --rdb /tmp/old-master.rdb    <span class="c1"># 先备份数据</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 或者用 SCAN 导出关键 key</span>
+</span></span></code></pre></div><p>但要注意：哨兵会<strong>自动</strong>把恢复的旧主设为从节点（在 <code>INFO</code> 发现它上线后立即执行 <code>REPLICAOF</code>），所以留给你手动干预的时间只有几秒。要保数据必须<strong>先断开网络或改配置阻止它被哨兵管理</strong>。</p>
+<h2 id="74-哨兵配置文件的运维">7.4 哨兵配置文件的运维</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 运行时修改配置（会自动写入配置文件）</span>
+</span></span><span class="line"><span class="cl">redis-cli -p <span class="m">26379</span> SENTINEL SET mymaster down-after-milliseconds <span class="m">10000</span>
+</span></span><span class="line"><span class="cl">redis-cli -p <span class="m">26379</span> SENTINEL SET mymaster failover-timeout <span class="m">60000</span>
+</span></span><span class="line"><span class="cl">redis-cli -p <span class="m">26379</span> SENTINEL SET mymaster parallel-syncs <span class="m">1</span>
+</span></span><span class="line"><span class="cl">redis-cli -p <span class="m">26379</span> SENTINEL SET mymaster quorum <span class="m">2</span>
+</span></span><span class="line"><span class="cl">redis-cli -p <span class="m">26379</span> SENTINEL SET mymaster auth-pass newpassword
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 重要：SENTINEL SET 只改【当前这个】哨兵，必须对每个哨兵都执行！</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 重置状态（当拓扑信息混乱时）</span>
+</span></span><span class="line"><span class="cl">redis-cli -p <span class="m">26379</span> SENTINEL RESET mymaster
+</span></span><span class="line"><span class="cl"><span class="c1"># 会清空该哨兵记录的所有从节点和其他哨兵，重新从主节点的 INFO 发现</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 用途：从节点/哨兵的 IP 变了、有僵尸节点记录时</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 新增监控（不用重启）</span>
+</span></span><span class="line"><span class="cl">redis-cli -p <span class="m">26379</span> SENTINEL MONITOR othermaster 192.168.1.30 <span class="m">6379</span> <span class="m">2</span>
+</span></span><span class="line"><span class="cl">redis-cli -p <span class="m">26379</span> SENTINEL SET othermaster auth-pass xxx
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 取消监控</span>
+</span></span><span class="line"><span class="cl">redis-cli -p <span class="m">26379</span> SENTINEL REMOVE othermaster
+</span></span></code></pre></div><p><strong>注意 <code>SENTINEL SET</code> 只影响当前哨兵</strong>，必须对所有哨兵都执行一遍，否则会出现配置不一致（比如某个哨兵的 <code>down-after-milliseconds</code> 特别小，它总是第一个发起故障转移）。</p>
+<h2 id="75-监控指标">7.5 监控指标</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 哨兵侧</span>
+</span></span><span class="line"><span class="cl">SENTINEL CKQUORUM mymaster              <span class="c1"># 【最重要】能否执行故障转移</span>
+</span></span><span class="line"><span class="cl">SENTINEL MASTER mymaster                <span class="c1"># 主节点状态、num-slaves、num-other-sentinels</span>
+</span></span><span class="line"><span class="cl">INFO sentinel                           <span class="c1"># 监控的主节点数、状态</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 从 INFO sentinel 输出</span>
+</span></span><span class="line"><span class="cl">sentinel_masters:1
+</span></span><span class="line"><span class="cl">sentinel_tilt:0                         <span class="c1"># 【重要】TILT 模式标志，见下</span>
+</span></span><span class="line"><span class="cl">sentinel_running_scripts:0
+</span></span><span class="line"><span class="cl">sentinel_scripts_queue_length:0
+</span></span><span class="line"><span class="cl">sentinel_simulate_failure_flags:0
+</span></span><span class="line"><span class="cl">master0:name<span class="o">=</span>mymaster,status<span class="o">=</span>ok,address<span class="o">=</span>192.168.1.10:6379,slaves<span class="o">=</span>2,sentinels<span class="o">=</span><span class="m">3</span>
+</span></span></code></pre></div><p><strong>告警项</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>指标</th>
+<th>阈值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>SENTINEL CKQUORUM</code></td>
+<td>非 OK 立即告警（高可用已失效）</td>
+</tr>
+<tr>
+<td><code>num-other-sentinels</code></td>
+<td>&lt; 期望值-1 告警</td>
+</tr>
+<tr>
+<td><code>num-slaves</code></td>
+<td>&lt; 期望值 告警</td>
+</tr>
+<tr>
+<td><code>master0</code> 的 <code>status</code></td>
+<td>!= ok 告警</td>
+</tr>
+<tr>
+<td><code>sentinel_tilt</code></td>
+<td>== 1 告警</td>
+</tr>
+<tr>
+<td><code>+switch-master</code> 事件</td>
+<td>每次发生都要告警（记录切换历史）</td>
+</tr>
+<tr>
+<td><code>+sdown</code> / <code>+odown</code></td>
+<td>告警</td>
+</tr>
+</tbody>
+</table>
+<h2 id="76-tilt-模式">7.6 TILT 模式</h2>
+<p>哨兵有一个鲜为人知的自我保护机制：<strong>TILT 模式</strong>。</p>
+<p><strong>触发条件</strong>：哨兵发现&quot;两次定时任务执行的时间间隔&quot;异常（比如本该 100ms 却过了 2 秒，或者时间倒流了）。这说明：</p>
+<ul>
+<li>机器负载极高，进程被长时间调度不到；</li>
+<li>系统时钟被大幅调整；</li>
+<li>进程被 <code>SIGSTOP</code> 暂停过。</li>
+</ul>
+<p><strong>进入 TILT 模式后</strong>：哨兵<strong>仍然继续监控和收集信息，但不再执行任何故障转移动作</strong>（因为它认为自己的时间感知不可靠，做出的判断可能是错的）。</p>
+<p>30 秒后（<code>SENTINEL_TILT_PERIOD</code>）如果一切正常就自动退出 TILT 模式。</p>
+<p><strong>排查</strong>：<code>INFO sentinel</code> 里 <code>sentinel_tilt:1</code> 就是在 TILT 模式。这时要检查机器负载、时钟同步（NTP）配置。</p>
+<hr>
+<h1 id="8-哨兵的局限">8. 哨兵的局限</h1>
+<p>明确哨兵解决不了什么，才知道什么时候该上 Cluster。</p>
+<table>
+<thead>
+<tr>
+<th>局限</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>不能扩容写入/存储</strong></td>
+<td>所有写入还是集中在一个主节点，数据量受单机内存限制</td>
+</tr>
+<tr>
+<td><strong>故障转移期间不可写</strong></td>
+<td>10~35 秒的写不可用窗口</td>
+</tr>
+<tr>
+<td><strong>异步复制会丢数据</strong></td>
+<td>无法避免（AP 系统）</td>
+</tr>
+<tr>
+<td><strong>脑裂风险</strong></td>
+<td>只能缓解不能根除</td>
+</tr>
+<tr>
+<td><strong>客户端要支持哨兵协议</strong></td>
+<td>老客户端或自研客户端可能不支持</td>
+</tr>
+<tr>
+<td><strong>只有一个主节点承担写压力</strong></td>
+<td>单点性能瓶颈</td>
+</tr>
+<tr>
+<td><strong>运维组件更多</strong></td>
+<td>3 个哨兵 + N 个 Redis 节点，配置项多、坑多</td>
+</tr>
+</tbody>
+</table>
+<p><strong>什么时候该从哨兵升级到 Cluster</strong>：</p>
+<ol>
+<li><strong>单实例数据量超过 10GB</strong>（fork 慢、恢复慢、全量同步压力大）；</li>
+<li><strong>写 QPS 达到单实例瓶颈</strong>（几万以上）；</li>
+<li><strong>需要更快的故障恢复</strong>（Cluster 的故障检测通常更快）；</li>
+<li><strong>需要在线水平扩容</strong>。</li>
+</ol>
+<hr>
+<h1 id="9-高频面试题">9. 高频面试题</h1>
+<p><strong>Q1：哨兵的作用是什么？</strong></p>
+<p>四个核心能力：</p>
+<ol>
+<li><strong>监控</strong>：持续检查主节点、从节点是否正常（每秒 PING）；</li>
+<li><strong>通知</strong>：节点出问题时通过 pub/sub 事件或脚本通知管理员；</li>
+<li><strong>自动故障转移</strong>：主节点失效时自动选一个从节点提升为主，并让其他从节点跟随新主；</li>
+<li><strong>配置提供者（服务发现）</strong>：客户端向哨兵查询&quot;当前主节点是谁&quot;。</li>
+</ol>
+<p><strong>最容易被忽略的关键点</strong>：哨兵<strong>不是代理</strong>，客户端不通过哨兵转发数据，而是<strong>从哨兵获取主节点地址后直连主节点</strong>。哨兵只在控制面工作，不在数据面。</p>
+<p><strong>Q2：为什么哨兵至少要 3 个，且推荐奇数？</strong></p>
+<p><strong>至少 3 个的三个理由</strong>：</p>
+<ol>
+<li><strong>避免误判</strong>：单个哨兵可能因为自己的网络问题误判主节点下线，需要多个哨兵投票确认（quorum）；</li>
+<li><strong>哨兵自身高可用</strong>：只有 1 个哨兵它就是新的单点；</li>
+<li><strong>满足选举要求</strong>：故障转移需要<strong>超过半数</strong>哨兵授权。<strong>2 个哨兵时 majority = 2</strong>，一个挂了剩下 1 个永远无法达到 2，<strong>故障转移彻底失效</strong>。</li>
+</ol>
+<p><strong>为什么奇数</strong>：偶数在容错能力上没有提升但成本更高：</p>
+<table>
+<thead>
+<tr>
+<th>哨兵数</th>
+<th>majority</th>
+<th>最多容忍宕机</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>2</td>
+<td>2</td>
+<td>0</td>
+</tr>
+<tr>
+<td><strong>3</strong></td>
+<td><strong>2</strong></td>
+<td><strong>1</strong></td>
+</tr>
+<tr>
+<td>4</td>
+<td>3</td>
+<td>1（和 3 一样）</td>
+</tr>
+<tr>
+<td><strong>5</strong></td>
+<td><strong>3</strong></td>
+<td><strong>2</strong></td>
+</tr>
+<tr>
+<td>6</td>
+<td>4</td>
+<td>2（和 5 一样）</td>
+</tr>
+</tbody>
+</table>
+<p>标配 3 个，可用性要求极高用 5 个。</p>
+<p><strong>Q3：quorum 和 majority 有什么区别？</strong></p>
+<p>这是<strong>最容易混淆的概念</strong>：</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>quorum</th>
+<th>majority</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>来源</td>
+<td><strong>配置指定</strong>（<code>sentinel monitor</code> 的第 4 个参数）</td>
+<td><strong>自动计算</strong>：哨兵总数/2 + 1</td>
+</tr>
+<tr>
+<td>用途</td>
+<td>判定主节点**客观下线（ODOWN）**需要多少个哨兵认为它主观下线</td>
+<td><strong>实际执行故障转移</strong>需要多少个哨兵授权（选 Leader 的票数）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>关键点：即使 quorum 设得很小（如 1），故障转移仍然需要 majority 授权。</strong></p>
+<p>这是 Redis 的安全设计，用来<strong>防止网络分区的少数派一侧发生故障转移</strong>：</p>
+<pre tabindex="0"><code>5 个哨兵分区成 2 + 3，quorum = 2：
+├─ 少数派（2 个）：可以判定 ODOWN（满足 quorum=2），
+│  但最多拿 2 票 &lt; majority(3) → 【无法成为 Leader，无法故障转移】✅
+└─ 多数派（3 个）：拿到 3 票 &gt;= majority(3) → 正常故障转移 ✅
+→ 只有多数派产生新主节点，避免了双主
+</code></pre><p>选 Leader 需要的票数实际是 <strong><code>max(quorum, majority)</code></strong>。</p>
+<p><strong>推荐设置</strong>：<code>quorum = majority = 哨兵数/2 + 1</code>。</p>
+<p><strong>Q4：什么是主观下线和客观下线？</strong></p>
+<p><strong>主观下线（SDOWN，Subjectively Down）</strong>：<strong>单个哨兵</strong>在 <code>down-after-milliseconds</code> 内没收到某节点的有效 PING 回复，就在自己的视角里把它标记为 SDOWN。这只是<strong>个人判断</strong>，可能是误判。</p>
+<p><strong>客观下线（ODOWN，Objectively Down）</strong>：</p>
+<pre tabindex="0"><code>1. 哨兵 S1 判定主节点 M 为 SDOWN
+2. S1 向其他哨兵发 SENTINEL is-master-down-by-addr &lt;M的IP&gt; &lt;端口&gt; &lt;epoch&gt; &lt;runid或*&gt;
+3. 其他哨兵回复：down_state（我是否也认为它下线）、leader_runid、leader_epoch
+4. 认为 M 下线的哨兵数（含自己）&gt;= quorum → 标记为 ODOWN → 【开始故障转移】
+</code></pre><p><strong>两个重要细节</strong>：</p>
+<ol>
+<li><strong>只有主节点有 ODOWN 概念</strong>。从节点和其他哨兵只有 SDOWN——因为从节点下线不需要任何自动处理（只是标记为不可用、不作为候选），不需要投票确认；</li>
+<li><strong><code>is-master-down-by-addr</code> 有双重作用</strong>：既询问&quot;你觉得主节点挂了吗&quot;，又顺便<strong>拉票</strong>（第 4 个参数传自己的 runid 就是请求投票给自己当 Leader，传 <code>*</code> 则只是询问）。</li>
+</ol>
+<p><strong>Q5：哨兵是怎么互相发现的？</strong></p>
+<p><strong>不是通过配置文件写死，而是借道被监控的 Redis 节点的 pub/sub 频道</strong>：</p>
+<pre tabindex="0"><code>频道：__sentinel__:hello
+
+每个哨兵每 2 秒向所有被监控的主/从节点 PUBLISH 一条消息：
+&lt;哨兵IP&gt;,&lt;哨兵端口&gt;,&lt;哨兵runid&gt;,&lt;哨兵current_epoch&gt;,
+&lt;主节点名&gt;,&lt;主节点IP&gt;,&lt;主节点端口&gt;,&lt;主节点config_epoch&gt;
+
+同时每个哨兵都 SUBSCRIBE 这个频道
+</code></pre><p>这个设计实现了两件事：</p>
+<ol>
+<li><strong>哨兵自动发现</strong>：新哨兵只要监控同一个主节点，就能被其他哨兵发现，不用在配置里写死彼此的地址；</li>
+<li><strong>交换主节点的配置版本（config-epoch）</strong>：哨兵比较对方消息里的 epoch，如果对方更大就更新自己的认知。<strong>这是故障转移后所有哨兵能达成一致的关键机制</strong>。</li>
+</ol>
+<p><strong>从节点则是通过每 10 秒向主节点发 <code>INFO</code>，从 <code>INFO replication</code> 的输出里自动发现的</strong>。所以配置里只需要写主节点地址。</p>
+<p><strong>这也是容器环境必须配 <code>replica-announce-ip</code> 的原因</strong>——哨兵靠主节点 <code>INFO</code> 里的从节点地址去连接，地址不可达就发现不了从节点，故障转移时没有候选者。</p>
+<p><strong>Q6：哨兵的 Leader 是怎么选出来的？</strong></p>
+<p>用 <strong>Raft 算法的领导者选举部分</strong>：</p>
+<pre tabindex="0"><code>1. 每个发现 ODOWN 的哨兵都想当 Leader：
+   ├─ 自己的 current_epoch + 1（epoch 就是 Raft 的 term/任期）
+   └─ 向其他哨兵发 is-master-down-by-addr，第 4 个参数带【自己的 runid】= 拉票
+
+2. 每个哨兵在【每个 epoch 里只能投一票】，【先到先得】：
+   ├─ 第一个请求 → 投给它，记录 leader_runid 和 leader_epoch
+   └─ 后续请求（同一 epoch）→ 拒绝，回复之前投给的 runid
+
+3. 得票 &gt;= max(quorum, majority) → 成为 Leader
+
+4. 本轮无人达到多数（票被分散）：
+   ├─ 等待一个【随机时间】（Raft 的关键设计，避免再次同时发起）
+   ├─ epoch + 1，下一轮选举
+   └─ 直到选出 Leader 或超过 failover-timeout
+</code></pre><p><strong>只有 Leader 执行故障转移</strong>，避免多个哨兵同时操作造成混乱。</p>
+<p><strong>为什么要 majority 而不只是 quorum</strong>：见 Q3，这是防止网络分区导致双主的核心机制。</p>
+<p><strong>Q7：哨兵怎么选新的主节点？（从节点选主规则）</strong></p>
+<p><strong>第一步：过滤掉不健康的从节点</strong></p>
+<ol>
+<li>已 SDOWN/ODOWN 的；</li>
+<li><code>disconnected</code> 状态的；</li>
+<li>最近 5 秒没回复过 <code>INFO</code> 的；</li>
+<li><strong>与主节点断开时间 &gt; <code>down-after-milliseconds × 10</code></strong> 的（数据落后太多）；</li>
+<li><strong><code>replica-priority</code> 为 0</strong> 的（声明永不做主）。</li>
+</ol>
+<p><strong>第二步：按三个条件依次排序</strong></p>
+<pre tabindex="0"><code>1. 【replica-priority 更小的优先】（默认 100，越小越优先，0 = 永不）
+2. priority 相同 → 【复制偏移量 offset 更大的优先】（数据最完整，最重要的实质条件）
+3. offset 相同 → 【runid 字典序更小的优先】（纯粹为了让所有哨兵做出确定性一致的选择）
+</code></pre><p><strong>口诀：优先级 → 偏移量 → runid。</strong></p>
+<p><strong>重要补充：offset 最大 ≠ 数据完整。</strong> 因为复制是异步的，即使选了 offset 最大的从节点，它仍可能落后于原主节点。<strong>故障转移必然可能丢数据</strong>——这也是为什么要配 <code>min-replicas-to-write</code>。</p>
+<p><strong>Q8：故障转移的完整流程是什么？大概要多久？</strong></p>
+<pre tabindex="0"><code>1. Leader 哨兵向选中的从节点 S 发 REPLICAOF NO ONE → S 变成主节点
+2. Leader 用【每秒一次的 INFO】确认 S 的 role 真的变成了 master
+   （确认切换生效，而不是命令发出就认为成功）
+3. Leader 更新主节点配置（config-epoch + 1），通过 __sentinel__:hello 广播
+   → 其他哨兵因 epoch 更大而更新认知
+4. 向其他从节点发 REPLICAOF &lt;S&gt;，按 parallel-syncs（默认 1）限制并发
+5. 把原主节点 M 也标记为从节点；M 恢复上线后立即发 REPLICAOF &lt;S&gt; 让它降级
+6. 发布 +switch-master 事件通知客户端；调用 client-reconfig-script
+</code></pre><p><strong>耗时</strong>：<code>down-after-milliseconds</code>（发现故障，5~30 秒）+ 选举（通常 &lt; 1 秒）+ 切换（1~2 秒）。</p>
+<p><strong>典型故障恢复时间 10~35 秒，主要由 <code>down-after-milliseconds</code> 决定。</strong> 这期间<strong>所有写请求失败</strong>，客户端必须有重试机制、业务要能容忍。</p>
+<p><strong>Q9：客户端如何知道主节点切换了？</strong></p>
+<p><strong>客户端绝不能把 Redis 地址写死，必须通过哨兵获取</strong>：</p>
+<pre tabindex="0"><code>1. 连接【任意一个哨兵】（配置里给一组地址，逐个尝试）
+2. SENTINEL GET-MASTER-ADDR-BY-NAME mymaster → 得到主节点地址
+3. 直连主节点读写
+4. 【关键】同时 SUBSCRIBE +switch-master 频道
+   → 收到通知时重新执行步骤 2 并【重建整个连接池】
+5. 与主节点连接失败时也要重新执行步骤 2
+</code></pre><p><code>+switch-master</code> 消息格式：<code>&lt;主节点名&gt; &lt;旧IP&gt; &lt;旧端口&gt; &lt;新IP&gt; &lt;新端口&gt;</code>。</p>
+<p><strong>客户端侧的五个注意点</strong>：</p>
+<ol>
+<li><strong>必须配多个哨兵地址</strong>（单个哨兵挂了就拿不到地址）；</li>
+<li><strong>切换期间有 10~35 秒写不可用</strong>，要有带退避的重试；</li>
+<li><strong>不要缓存主节点地址</strong>（会一直连旧主）；</li>
+<li><strong>切换后连接池里所有旧连接都要丢弃重建</strong>；</li>
+<li><strong>收到 <code>READONLY You can't write against a read only replica</code> 错误时，要立即重新向哨兵查询地址</strong>而不是简单重试（说明连到了被降级的旧主）。</li>
+</ol>
+<p>用 <code>NewFailoverClient</code>（go-redis）、<code>JedisSentinelPool</code>（Jedis）、<code>Sentinel</code>（redis-py）这些封装，不要自己实现。</p>
+<p><strong>Q10：什么是脑裂？怎么解决？</strong></p>
+<p><strong>脑裂</strong>：网络分区导致同时存在两个主节点，客户端向不同主节点写入，数据分叉。</p>
+<pre tabindex="0"><code>1. 主节点 M 与哨兵、从节点网络断开，但部分客户端仍能连到 M
+2. 哨兵判定 M 客观下线，把从节点 R1 提升为新主 M&#39;
+3. 【两个主节点】：Client A 还在往 M 写，Client B 往 M&#39; 写
+4. 网络恢复，哨兵让 M 变成 M&#39; 的从节点
+5. M 作为从节点【清空自己所有数据】从 M&#39; 全量同步
+   → 【步骤 3 期间写入 M 的所有数据永久丢失】
+</code></pre><p><strong>缓解手段</strong>：</p>
+<p><strong>（1）<code>min-replicas-to-write 1</code> + <code>min-replicas-max-lag 10</code></strong>（配在 Redis 主节点上）</p>
+<p>分区后 M 发现没有健康从节点（10 秒没收到 ACK），<strong>主动拒绝写入</strong>（返回 <code>NOREPLICAS</code>），从而避免数据丢失。</p>
+<p><strong>局限</strong>：① 在判定&quot;从节点不健康&quot;之前（<code>min-replicas-max-lag</code> 窗口内）的写入仍会丢；② 牺牲可用性（从节点真挂了主节点也不可写）；③ 参数难设（太大无效、太小容易误拒）。</p>
+<p><strong>（2）业务侧</strong>：重要数据双写（以 DB 为准）、操作幂等可重试、定期对账修复。</p>
+<p><strong>（3）合理的 <code>down-after-milliseconds</code></strong>：太小会频繁误切换，每次切换都是潜在的数据丢失。</p>
+<p><strong>（4）架构上</strong>：一致性要求极高就不要用 Redis 做主存储。</p>
+<p><strong>Q11：Redis 主从 + 哨兵是 CP 还是 AP？</strong></p>
+<p><strong>AP 系统。</strong></p>
+<ul>
+<li><strong>A（可用性）</strong>：优先保证可用——主节点挂了快速自动切换继续服务；</li>
+<li><strong>P（分区容错）</strong>：网络分区时多数派继续工作；</li>
+<li><strong>C（一致性）牺牲了</strong>，两个原因：
+<ol>
+<li><strong>复制是异步的</strong>——主节点执行完立即返回客户端，不等从节点确认。主节点宕机时未同步的写入永久丢失；</li>
+<li><strong>故障转移选 offset 最大的从节点，但不保证它数据完整</strong>——它仍可能落后于原主节点。</li>
+</ol>
+</li>
+</ul>
+<p>配了 <code>min-replicas-to-write</code> 后可以说是&quot;<strong>在一致性方向做了倾斜的 AP</strong>&quot;，但依然不是 CP——它不像 Raft/Paxos 那样保证&quot;已向客户端确认的写入绝不丢失&quot;。</p>
+<p><strong>Q12：<code>down-after-milliseconds</code> 设太小或太大分别有什么问题？</strong></p>
+<p><strong>太小（如 1000~3000）→ 频繁误切换</strong>：</p>
+<p>主节点在以下情况会短暂无法响应 PING，被误判为下线：</p>
+<ul>
+<li><strong><code>BGSAVE</code> 的 fork 阻塞</strong>（大实例可能 1 秒以上）；</li>
+<li><strong>慢命令</strong>（<code>KEYS *</code>、大 key 的 <code>HGETALL</code>）；</li>
+<li><strong>Lua 脚本执行时间长</strong>；</li>
+<li><strong>AOF fsync 被慢磁盘阻塞</strong>；</li>
+<li><strong>内存 swap</strong>；</li>
+<li>网络抖动。</li>
+</ul>
+<p>每次误切换都是一次潜在的数据丢失 + 一段服务不可写，代价很高。</p>
+<p><strong>太大（如 60000）→ 故障恢复慢</strong>：真的宕机了也要等 1 分钟才发现。</p>
+<p><strong>建议</strong>：<strong>同机房 5000~10000ms</strong>，跨机房 15000~30000ms。默认 30000 偏保守。</p>
+<p>同时要<strong>消除主节点的阻塞源</strong>（控制实例大小 &lt;= 10GB、禁用慢命令、关闭 THP、把持久化转移到从节点、用 SSD）。</p>
+<p><strong>Q13：哨兵会修改配置文件吗？容器化部署要注意什么？</strong></p>
+<p><strong>会</strong>。哨兵把发现的拓扑信息自动写入自己的配置文件：</p>
+<pre tabindex="0"><code class="language-conf" data-lang="conf">sentinel myid 7f8b3c2a...              # 哨兵唯一标识
+sentinel config-epoch mymaster 3
+sentinel leader-epoch mymaster 3
+sentinel known-replica mymaster 192.168.1.11 6379
+sentinel known-sentinel mymaster 192.168.1.21 26379 a1b2c3d4...
+sentinel current-epoch 3
+</code></pre><p>同时 <strong><code>sentinel monitor</code> 那行的 IP 会被改成当前主节点</strong>（故障转移后自动更新）。所以配置文件里写的初始地址只是&quot;入口&quot;。</p>
+<p><strong>容器化最经典的坑：<code>sentinel myid</code> 重复。</strong></p>
+<p>如果把已经运行过的配置文件打进镜像（里面已有 <code>myid</code>），所有哨兵实例会有<strong>相同的 myid</strong>，导致它们<strong>互相认为是同一个哨兵</strong>，<code>num-other-sentinels</code> 为 0，<strong>永远无法达到 majority，故障转移彻底失效</strong>。</p>
+<p><strong>解决</strong>：镜像里的配置文件<strong>不能包含 <code>sentinel myid</code></strong>（用干净的模板），让每个实例启动时自己生成。</p>
+<p><strong>其他容器化注意点</strong>：</p>
+<ul>
+<li><strong>配置文件必须可写</strong>（挂载可写卷），否则哨兵启动失败；</li>
+<li><strong>不能用同一个配置文件启动多个哨兵</strong>；</li>
+<li>必配 <strong><code>sentinel announce-ip</code> / <code>sentinel announce-port</code></strong> 和 Redis 侧的 <code>replica-announce-ip</code>；</li>
+<li>用 <strong>StatefulSet</strong> 保证稳定的网络标识；</li>
+<li><strong>K8s 环境更推荐 Redis Cluster 或 Operator</strong>，哨兵在 K8s 的网络模型下坑很多（Pod IP 漂移、哨兵记录的是 IP 而非 hostname）。</li>
+</ul>
+<p><strong>Q14：<code>SENTINEL SET</code> 修改配置需要注意什么？</strong></p>
+<p><strong><code>SENTINEL SET</code> 只修改当前连接的那一个哨兵</strong>，必须<strong>对每个哨兵都执行一遍</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="k">for</span> p in <span class="m">26379</span> <span class="m">26380</span> 26381<span class="p">;</span> <span class="k">do</span>
+</span></span><span class="line"><span class="cl">  redis-cli -p <span class="nv">$p</span> SENTINEL SET mymaster down-after-milliseconds <span class="m">10000</span>
+</span></span><span class="line"><span class="cl"><span class="k">done</span>
+</span></span></code></pre></div><p><strong>如果只改了部分哨兵会怎样</strong>：出现配置不一致。比如某个哨兵的 <code>down-after-milliseconds</code> 特别小，它会<strong>总是第一个判定 SDOWN 并发起故障转移</strong>，导致切换行为难以预测，也更容易误切换。</p>
+<p>好消息是 <code>SENTINEL SET</code> 会自动触发配置文件重写，所以改完就是持久化的（不需要额外操作）。</p>
+<p>另外 <code>SENTINEL RESET mymaster</code> 会清空该哨兵记录的所有从节点和其他哨兵、重新发现——<strong>当拓扑信息混乱时</strong>（节点 IP 变了、有僵尸节点记录）很有用，但要注意它会短暂地让哨兵&quot;失忆&quot;。</p>
+<p><strong>Q15：哨兵解决不了什么问题？什么时候该上 Cluster？</strong></p>
+<p><strong>哨兵解决不了的</strong>：</p>
+<ol>
+<li><strong>不能扩容写入和存储</strong>——所有写还是集中在一个主节点，数据量受单机内存限制；</li>
+<li><strong>故障转移期间不可写</strong>（10~35 秒）；</li>
+<li><strong>异步复制丢数据</strong>（无法避免，AP 系统）；</li>
+<li><strong>脑裂</strong>（只能缓解）；</li>
+<li><strong>单主节点的性能瓶颈</strong>。</li>
+</ol>
+<p><strong>该升级到 Cluster 的信号</strong>：</p>
+<ol>
+<li><strong>单实例数据量超过 10GB</strong>（fork 慢、恢复慢、全量同步压力大——见第 7、10 篇）；</li>
+<li><strong>写 QPS 达到单实例瓶颈</strong>（几万以上）；</li>
+<li><strong>需要在线水平扩容</strong>（Cluster 支持 reshard）；</li>
+<li><strong>需要更快的故障恢复</strong>。</li>
+</ol>
+<p>注意 Cluster 也有自己的限制（不支持跨 slot 的多 key 操作、只能用 db0、客户端要支持重定向），见第 12 篇。</p>
+<hr>
+<h1 id="小结">小结</h1>
+<ul>
+<li>哨兵提供四个能力：<strong>监控、通知、自动故障转移、配置提供者（服务发现）</strong>。<strong>它不是代理</strong>——客户端从哨兵拿到主节点地址后<strong>直连主节点</strong>。</li>
+<li><strong>哨兵至少 3 个且为奇数</strong>：避免误判、哨兵自身高可用、<strong>2 个哨兵时 majority=2，一个挂了故障转移就彻底失效</strong>。偶数在容错上无提升但成本更高。</li>
+<li><strong>quorum（配置的，判定 ODOWN 用）≠ majority（自动算的，执行故障转移用）</strong>。<strong>即使 quorum 很小，故障转移仍需 majority 授权</strong>——这是防止分区少数派产生双主的核心设计。选 Leader 实际需要 <code>max(quorum, majority)</code> 票。</li>
+<li><strong>三个定时任务</strong>：每 <strong>10 秒</strong> <code>INFO</code>（发现拓扑，从主节点 <code>INFO replication</code> 自动发现从节点）、每 <strong>2 秒</strong>通过 <strong><code>__sentinel__:hello</code></strong> 频道交换信息（哨兵自动发现 + 交换 config-epoch）、每 <strong>1 秒</strong> <code>PING</code>（故障检测）。</li>
+<li><strong>SDOWN（单个哨兵的主观判断）→ 收集 &gt;= quorum 个哨兵的确认 → ODOWN → 触发故障转移</strong>。只有主节点有 ODOWN 概念。<code>is-master-down-by-addr</code> 兼具&quot;询问&quot;和&quot;拉票&quot;双重作用。</li>
+<li><strong>Leader 选举用 Raft</strong>：epoch+1 → 拉票 → 每个 epoch 每个哨兵只投一票且先到先得 → 得票 &gt;= <code>max(quorum, majority)</code> 当选 → 失败则<strong>随机等待后</strong>下一轮。</li>
+<li><strong>选新主的规则：过滤不健康的（断开 &gt; <code>down-after × 10</code>、priority=0 等）→ 按 <code>replica-priority</code> → <code>offset</code> → <code>runid</code> 排序</strong>。<strong>offset 最大 ≠ 数据完整</strong>，故障转移必然可能丢数据。</li>
+<li>故障转移流程：<code>REPLICAOF NO ONE</code> → <strong>用 INFO 确认 role 变化</strong> → 更新 config-epoch 并广播 → 让其他从节点跟随（按 <code>parallel-syncs</code> 限流，默认 1）→ 旧主恢复后自动降级 → 发布 <code>+switch-master</code>。<strong>典型耗时 10~35 秒，主要由 <code>down-after-milliseconds</code> 决定</strong>。</li>
+<li><strong>客户端必须通过哨兵获取地址 + 订阅 <code>+switch-master</code></strong>，不能写死地址、不能缓存地址、切换后要<strong>重建整个连接池</strong>、收到 <strong><code>READONLY</code> 错误要重新查询地址</strong>。用 <code>NewFailoverClient</code>/<code>JedisSentinelPool</code> 这类现成封装。</li>
+<li><strong>脑裂</strong>只能缓解不能根除：<code>min-replicas-to-write</code> + <code>min-replicas-max-lag</code> 让失去从节点的旧主主动拒写，但<strong>在判定窗口内的写入仍会丢</strong>。</li>
+<li><strong>Redis 主从+哨兵是 AP 系统</strong>：异步复制 + 故障转移不保证数据完整 → 牺牲了强一致性。</li>
+<li><strong><code>down-after-milliseconds</code> 同机房设 5000~10000</strong>；太小会因 fork 阻塞、慢命令、Lua、AOF fsync、swap 而<strong>误切换</strong>。</li>
+<li><strong>容器化两大坑</strong>：<strong><code>sentinel myid</code> 重复</strong>（配置文件打进镜像导致所有哨兵 ID 相同 → 互相认为是同一个 → 永远达不到 majority）、<strong>没配 <code>announce-ip</code></strong>（哨兵发现不了从节点）。</li>
+<li>巡检必备：<strong><code>SENTINEL CKQUORUM</code></strong>（非 OK 说明高可用已失效）、<code>num-other-sentinels</code>、<code>num-slaves</code>、<code>sentinel_tilt</code>、<code>+switch-master</code> 事件。<strong><code>SENTINEL SET</code> 只改当前哨兵，必须逐个执行</strong>。</li>
+<li>哨兵<strong>不能扩容写入和存储</strong>；单实例超 10GB 或写 QPS 到瓶颈时应升级到 <strong>Cluster</strong>。</li>
+</ul>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2025-11-01</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/redis/">redis</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/redis/redis_12_Cluster%E9%9B%86%E7%BE%A4/" class="prev" rel="prev" title="Redis-12 Cluster 集群"><i class="fas fa-angle-left fa-fw"></i>Redis-12 Cluster 集群</a>
+            <a href="/posts/redis/redis_10_%E4%B8%BB%E4%BB%8E%E5%A4%8D%E5%88%B6%E5%8E%9F%E7%90%86/" class="next" rel="next" title="Redis-10 主从复制原理">Redis-10 主从复制原理<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2025-11-01T11:30:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Redis-11 哨兵 Sentinel 高可用"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

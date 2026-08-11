@@ -1,0 +1,1420 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>Redis-05 单线程模型与网络IO - xingliuhua博客</title><meta name="Description" content="Reactor 事件驱动模型、IO 多路复用与 ae 事件库、事件循环完整流程、6.0 多线程 IO 原理、RESP 协议详解、客户端缓冲区与阻塞源分析"><meta property="og:title" content="Redis-05 单线程模型与网络IO" />
+<meta property="og:description" content="Reactor 事件驱动模型、IO 多路复用与 ae 事件库、事件循环完整流程、6.0 多线程 IO 原理、RESP 协议详解、客户端缓冲区与阻塞源分析" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/redis/redis_05_%E5%8D%95%E7%BA%BF%E7%A8%8B%E6%A8%A1%E5%9E%8B%E4%B8%8E%E7%BD%91%E7%BB%9CIO/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2025-11-01T14:30:00+08:00" />
+<meta property="article:modified_time" content="2025-11-01T14:30:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="Redis-05 单线程模型与网络IO"/>
+<meta name="twitter:description" content="Reactor 事件驱动模型、IO 多路复用与 ae 事件库、事件循环完整流程、6.0 多线程 IO 原理、RESP 协议详解、客户端缓冲区与阻塞源分析"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/redis/redis_05_%E5%8D%95%E7%BA%BF%E7%A8%8B%E6%A8%A1%E5%9E%8B%E4%B8%8E%E7%BD%91%E7%BB%9CIO/" /><link rel="prev" href="https://xingliuhua.github.io/posts/redis/redis_06_%E8%BF%87%E6%9C%9F%E5%88%A0%E9%99%A4%E4%B8%8E%E5%86%85%E5%AD%98%E6%B7%98%E6%B1%B0%E7%AD%96%E7%95%A5/" /><link rel="next" href="https://xingliuhua.github.io/posts/redis/redis_04_%E5%BA%95%E5%B1%82%E6%95%B0%E6%8D%AE%E7%BB%93%E6%9E%84%E8%AF%A6%E8%A7%A3/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Redis-05 单线程模型与网络IO",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/redis\/redis_05_%E5%8D%95%E7%BA%BF%E7%A8%8B%E6%A8%A1%E5%9E%8B%E4%B8%8E%E7%BD%91%E7%BB%9CIO\/"
+        },"genre": "posts","keywords": "redis","wordcount":  16776 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/redis\/redis_05_%E5%8D%95%E7%BA%BF%E7%A8%8B%E6%A8%A1%E5%9E%8B%E4%B8%8E%E7%BD%91%E7%BB%9CIO\/","datePublished": "2025-11-01T14:30:00+08:00","dateModified": "2025-11-01T14:30:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "Reactor 事件驱动模型、IO 多路复用与 ae 事件库、事件循环完整流程、6.0 多线程 IO 原理、RESP 协议详解、客户端缓冲区与阻塞源分析"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">Redis-05 单线程模型与网络IO</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2025-11-01">2025-11-01</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 16776 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 34 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-单线程模型的真相">1. 单线程模型的真相</a>
+      <ol>
+        <li><a href="#11-redis-是单线程到底指什么">1.1 「Redis 是单线程」到底指什么</a></li>
+        <li><a href="#12-为什么选择单线程">1.2 为什么选择单线程</a></li>
+        <li><a href="#13-单线程的代价">1.3 单线程的代价</a></li>
+      </ol>
+    </li>
+    <li><a href="#2-io-多路复用与-reactor-模型">2. IO 多路复用与 Reactor 模型</a>
+      <ol>
+        <li><a href="#21-从阻塞-io-说起">2.1 从阻塞 IO 说起</a></li>
+        <li><a href="#22-io-多路复用的本质">2.2 IO 多路复用的本质</a></li>
+        <li><a href="#23-select--poll--epoll-对比">2.3 select / poll / epoll 对比</a></li>
+        <li><a href="#24-redis-的-ae-事件库">2.4 Redis 的 ae 事件库</a></li>
+        <li><a href="#25-两类事件">2.5 两类事件</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-事件循环完整流程">3. 事件循环完整流程</a>
+      <ol>
+        <li><a href="#31-主循环代码">3.1 主循环代码</a></li>
+        <li><a href="#32-beforesleep-做了什么">3.2 beforeSleep 做了什么</a></li>
+        <li><a href="#33-一条命令的完整旅程">3.3 一条命令的完整旅程</a></li>
+      </ol>
+    </li>
+    <li><a href="#4-redis-60-多线程-io">4. Redis 6.0 多线程 IO</a>
+      <ol>
+        <li><a href="#41-为什么要引入多线程">4.1 为什么要引入多线程</a></li>
+        <li><a href="#42-实现原理">4.2 实现原理</a></li>
+        <li><a href="#43-配置">4.3 配置</a></li>
+        <li><a href="#44-多线程-io-的注意点">4.4 多线程 IO 的注意点</a></li>
+        <li><a href="#45-redis-与-memcached-线程模型的对比">4.5 Redis 与 Memcached 线程模型的对比</a></li>
+      </ol>
+    </li>
+    <li><a href="#5-resp-协议">5. RESP 协议</a>
+      <ol>
+        <li><a href="#51-设计目标">5.1 设计目标</a></li>
+        <li><a href="#52-resp2-数据类型">5.2 RESP2 数据类型</a></li>
+        <li><a href="#53-客户端发送的命令永远是数组">5.3 客户端发送的命令永远是数组</a></li>
+        <li><a href="#54-各类回复示例">5.4 各类回复示例</a></li>
+        <li><a href="#55-resp360">5.5 RESP3（6.0+）</a></li>
+      </ol>
+    </li>
+    <li><a href="#6-客户端与缓冲区">6. 客户端与缓冲区</a>
+      <ol>
+        <li><a href="#61-输入缓冲区querybuf">6.1 输入缓冲区（querybuf）</a></li>
+        <li><a href="#62-输出缓冲区">6.2 输出缓冲区</a></li>
+        <li><a href="#63-复制缓冲区与积压缓冲区">6.3 复制缓冲区与积压缓冲区</a></li>
+        <li><a href="#64-client-list-字段速查">6.4 CLIENT LIST 字段速查</a></li>
+      </ol>
+    </li>
+    <li><a href="#7-pipeline-为什么快">7. Pipeline 为什么快</a>
+      <ol>
+        <li><a href="#71-rtt-是主要开销">7.1 RTT 是主要开销</a></li>
+        <li><a href="#72-服务端也有收益">7.2 服务端也有收益</a></li>
+        <li><a href="#73-使用注意">7.3 使用注意</a></li>
+        <li><a href="#74-pipeline--事务--lua--批量命令-的区别">7.4 Pipeline / 事务 / Lua / 批量命令 的区别</a></li>
+      </ol>
+    </li>
+    <li><a href="#8-高频面试题">8. 高频面试题</a></li>
+    <li><a href="#小结">小结</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><h1 id="1-单线程模型的真相">1. 单线程模型的真相</h1>
+<h2 id="11-redis-是单线程到底指什么">1.1 「Redis 是单线程」到底指什么</h2>
+<p>这句话必须精确到&quot;<strong>命令执行</strong>&ldquo;这个层面：</p>
+<blockquote>
+<p><strong>Redis 用一个主线程串行地执行所有命令，但 Redis 进程从来不是只有一个线程。</strong></p>
+</blockquote>
+<p>Redis 进程里的线程/进程清单：</p>
+<table>
+<thead>
+<tr>
+<th>执行单元</th>
+<th>引入版本</th>
+<th>职责</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>主线程</strong></td>
+<td>1.0</td>
+<td>事件循环、<strong>执行所有命令</strong>、过期删除、复制、集群通信</td>
+</tr>
+<tr>
+<td><strong>bio 线程</strong>（3 个）</td>
+<td>2.4 / 4.0 扩展</td>
+<td>1) AOF 的 fsync；2) 关闭文件描述符；3) 惰性释放大对象内存（<code>UNLINK</code>）</td>
+</tr>
+<tr>
+<td><strong>IO 线程</strong>（可配）</td>
+<td>6.0</td>
+<td>并行地从 socket 读数据/解析协议、并行地把回复写回 socket</td>
+</tr>
+<tr>
+<td><strong>RDB/AOF 子进程</strong></td>
+<td>1.0</td>
+<td>fork 出的<strong>独立进程</strong>，负责生成 RDB 快照或重写 AOF</td>
+</tr>
+<tr>
+<td><strong>jemalloc 后台线程</strong></td>
+<td>-</td>
+<td>内存分配器自己的 purge 线程（归还内存给 OS）</td>
+</tr>
+</tbody>
+</table>
+<p>所以标准答案是：<strong>命令执行单线程，服务整体多线程</strong>。</p>
+<h2 id="12-为什么选择单线程">1.2 为什么选择单线程</h2>
+<p><strong>（1）瓶颈不在 CPU</strong></p>
+<p>Redis 操作的是内存里的数据结构，一次 <code>GET</code> 的核心工作只是「哈希查找 + 拷贝内存」，纳秒级完成。真正的耗时在<strong>网络 IO</strong> 和<strong>内存带宽</strong>上。</p>
+<p>既然 CPU 不是瓶颈，加线程能带来的吞吐提升就很有限，反而要付出巨大代价。</p>
+<p><strong>（2）避免锁的代价</strong></p>
+<p>多线程访问共享数据必须加锁。Redis 的核心数据是<strong>一个巨大的哈希表</strong>，几乎所有操作都要读写它。如果加全局锁，多线程等于退化成单线程还多了加锁开销；如果做细粒度锁（分段锁），会引入死锁风险、锁竞争、以及复杂到无法维护的代码。</p>
+<p>更麻烦的是：Redis 的很多操作是<strong>复合</strong>的（比如 <code>ZADD</code> 要同时改 dict 和 skiplist、rehash 要动两张表、过期删除要改主字典和过期字典），细粒度锁很难保证这些操作的一致性。</p>
+<p><strong>（3）单命令天然原子</strong></p>
+<p>单线程串行执行给了 Redis 一个极其宝贵的性质：<strong>每个命令都是原子的</strong>。<code>INCR</code>、<code>SETNX</code>、<code>LPUSH</code>、<code>GETSET</code> 全都不需要任何额外同步，这是分布式锁、原子计数器这些用法的基础。多线程模型下这些都要靠锁或 CAS 实现。</p>
+<p><strong>（4）代码简单可靠</strong></p>
+<p>单线程消除了整整一大类 bug（竞态、死锁、ABA、内存可见性）。Redis 能以一个很小的团队维护到今天的稳定性，单线程是重要原因。</p>
+<p><strong>（5）多核可以靠多实例利用</strong></p>
+<p>一台 32 核的机器，可以起 8 个 Redis 实例（每个绑不同 CPU 核心），用 Cluster 组成集群。这样既利用了多核，又保持了每个实例的简单性，还顺便获得了故障隔离（一个实例挂了只影响 1/8 的数据）。</p>
+<h2 id="13-单线程的代价">1.3 单线程的代价</h2>
+<p>单线程也带来了一个必须时刻警惕的问题：<strong>任何一个慢操作都会阻塞全部请求</strong>。</p>
+<pre tabindex="0"><code>时间轴 →
+主线程:  [cmd1][cmd2][----- KEYS * 耗时 2 秒 -----][cmd3][cmd4]...
+                                                    ↑
+                          cmd3、cmd4 以及这 2 秒内到达的所有请求都在排队
+</code></pre><p>这就是为什么第 2 篇要专门列一张&quot;危险命令表&rdquo;。<strong>在 Redis 里，慢查询不是&quot;这一个请求慢&quot;，而是&quot;整个实例卡住&quot;。</strong></p>
+<p>常见的阻塞源（第 15 篇会展开排查手法）：</p>
+<table>
+<thead>
+<tr>
+<th>阻塞源</th>
+<th>典型耗时</th>
+<th>应对</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>KEYS *</code> / <code>HGETALL</code> 大 hash / <code>SMEMBERS</code> 大 set</td>
+<td>数百 ms ~ 数秒</td>
+<td>用 SCAN 系列，控制 key 大小</td>
+</tr>
+<tr>
+<td><code>DEL</code> 一个千万级集合</td>
+<td>数百 ms ~ 数秒</td>
+<td>用 <code>UNLINK</code>，开 <code>lazyfree-*</code></td>
+</tr>
+<tr>
+<td><code>FLUSHALL</code> / <code>FLUSHDB</code></td>
+<td>秒级</td>
+<td>加 <code>ASYNC</code></td>
+</tr>
+<tr>
+<td><strong>fork</strong>（RDB/AOF 重写）</td>
+<td>内存每 GB 约 20~100ms</td>
+<td>控制实例大小，关 THP</td>
+</tr>
+<tr>
+<td>AOF <code>appendfsync always</code></td>
+<td>每次写都等磁盘</td>
+<td>用 <code>everysec</code></td>
+</tr>
+<tr>
+<td>磁盘 IO 打满时的 AOF 写入</td>
+<td>不确定</td>
+<td>独立磁盘、监控 IO</td>
+</tr>
+<tr>
+<td>大 value 的网络传输</td>
+<td>与带宽相关</td>
+<td>拆分大 key</td>
+</tr>
+<tr>
+<td><code>SINTERSTORE</code> 等集合运算</td>
+<td>O(N*M)</td>
+<td>控制规模或移到从库</td>
+</tr>
+<tr>
+<td>Lua 脚本里的死循环/大遍历</td>
+<td>直到 <code>busy-reply-threshold</code></td>
+<td>脚本必须简短</td>
+</tr>
+<tr>
+<td>内存交换（swap）</td>
+<td>毫秒 ~ 数十毫秒</td>
+<td>禁用 swap，设 maxmemory</td>
+</tr>
+<tr>
+<td>主从全量同步时从库加载 RDB</td>
+<td>秒级</td>
+<td>错峰、控制实例大小</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h1 id="2-io-多路复用与-reactor-模型">2. IO 多路复用与 Reactor 模型</h1>
+<h2 id="21-从阻塞-io-说起">2.1 从阻塞 IO 说起</h2>
+<p>如果用最朴素的方式写一个服务器：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="k">while</span> <span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="kt">int</span> <span class="n">fd</span> <span class="o">=</span> <span class="n">accept</span><span class="p">(</span><span class="n">listen_fd</span><span class="p">,</span> <span class="p">...);</span>   <span class="c1">// 阻塞等新连接
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">read</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span> <span class="n">buf</span><span class="p">,</span> <span class="n">size</span><span class="p">);</span>              <span class="c1">// 阻塞等这个客户端发数据
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">process</span><span class="p">(</span><span class="n">buf</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">    <span class="n">write</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span> <span class="n">reply</span><span class="p">,</span> <span class="n">len</span><span class="p">);</span>            <span class="c1">// 阻塞等写完
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span></code></pre></div><p>问题很明显：<code>read</code> 阻塞在客户端 A 上时，客户端 B 的请求完全无法处理。<strong>一个线程只能服务一个连接。</strong></p>
+<p>解决方案历史上有三条路：</p>
+<ol>
+<li><strong>多进程/多线程</strong>（每连接一个线程）：Apache 的 prefork 模式。问题是线程创建开销大、上下文切换多、内存占用高，上万连接就崩了（C10K 问题）；</li>
+<li><strong>IO 多路复用</strong>（一个线程管多个连接）：Nginx、Redis、Node.js 的选择；</li>
+<li><strong>异步 IO（AIO）</strong>：Linux 上 <code>io_uring</code> 之前一直不好用。</li>
+</ol>
+<h2 id="22-io-多路复用的本质">2.2 IO 多路复用的本质</h2>
+<p>核心思路：<strong>让内核帮我们同时监视一批文件描述符，只在有 fd &ldquo;就绪&quot;时才通知我们</strong>。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="c1">// 伪代码
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">while</span> <span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="n">ready_fds</span> <span class="o">=</span> <span class="n">epoll_wait</span><span class="p">(</span><span class="n">epfd</span><span class="p">,</span> <span class="n">events</span><span class="p">,</span> <span class="n">maxevents</span><span class="p">,</span> <span class="n">timeout</span><span class="p">);</span>  <span class="c1">// 阻塞在这一处
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">for</span> <span class="p">(</span><span class="n">fd</span> <span class="n">in</span> <span class="n">ready_fds</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="p">(</span><span class="n">fd</span> <span class="err">可读</span><span class="p">)</span> <span class="n">read</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span> <span class="p">...);</span>   <span class="c1">// 保证不会阻塞，因为已就绪
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="k">if</span> <span class="p">(</span><span class="n">fd</span> <span class="err">可写</span><span class="p">)</span> <span class="n">write</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span> <span class="p">...);</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>一个线程通过一次 <code>epoll_wait</code> 就能知道「这 10000 个连接里哪 5 个有数据了」，然后只处理那 5 个。<strong>&ldquo;多路&quot;指多个 socket，&ldquo;复用&quot;指复用同一个线程。</strong></p>
+<h2 id="23-select--poll--epoll-对比">2.3 select / poll / epoll 对比</h2>
+<p>这是操作系统层面的经典面试题，Redis 相关面试也常问。</p>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>select</th>
+<th>poll</th>
+<th>epoll</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>fd 上限</strong></td>
+<td>1024（<code>FD_SETSIZE</code> 编译期常量）</td>
+<td>无上限（链表/数组）</td>
+<td>无上限</td>
+</tr>
+<tr>
+<td><strong>数据结构</strong></td>
+<td>位图（fd_set）</td>
+<td><code>pollfd</code> 数组</td>
+<td>内核红黑树 + 就绪链表</td>
+</tr>
+<tr>
+<td><strong>每次调用是否要传全量 fd</strong></td>
+<td><strong>是</strong>（每次都要重新拷贝整个 fd_set 到内核）</td>
+<td><strong>是</strong></td>
+<td><strong>否</strong>（<code>epoll_ctl</code> 一次注册，长期有效）</td>
+</tr>
+<tr>
+<td><strong>查找就绪 fd 的复杂度</strong></td>
+<td><strong>O(N)</strong> 遍历所有 fd</td>
+<td><strong>O(N)</strong></td>
+<td><strong>O(1)</strong> 直接读就绪链表</td>
+</tr>
+<tr>
+<td><strong>返回后 fd_set 是否被修改</strong></td>
+<td>是（每次要重新设置，很坑）</td>
+<td>否</td>
+<td>否</td>
+</tr>
+<tr>
+<td><strong>触发模式</strong></td>
+<td>只有水平触发</td>
+<td>只有水平触发</td>
+<td>水平触发（LT）+ <strong>边缘触发（ET）</strong></td>
+</tr>
+<tr>
+<td><strong>可移植性</strong></td>
+<td>几乎所有平台</td>
+<td>POSIX</td>
+<td><strong>仅 Linux</strong></td>
+</tr>
+</tbody>
+</table>
+<p><strong>epoll 的三个系统调用</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="kt">int</span> <span class="nf">epoll_create1</span><span class="p">(</span><span class="kt">int</span> <span class="n">flags</span><span class="p">);</span>              <span class="c1">// 创建 epoll 实例，返回 epfd
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kt">int</span> <span class="nf">epoll_ctl</span><span class="p">(</span><span class="n">epfd</span><span class="p">,</span> <span class="n">op</span><span class="p">,</span> <span class="n">fd</span><span class="p">,</span> <span class="n">event</span><span class="p">);</span>        <span class="c1">// 增/删/改要监听的 fd（ADD/MOD/DEL）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kt">int</span> <span class="nf">epoll_wait</span><span class="p">(</span><span class="n">epfd</span><span class="p">,</span> <span class="n">events</span><span class="p">,</span> <span class="n">max</span><span class="p">,</span> <span class="n">timeout</span><span class="p">);</span><span class="c1">// 等待就绪，返回就绪的 fd 数组
+</span></span></span></code></pre></div><p><strong>epoll 为什么高效</strong>（关键点）：</p>
+<ol>
+<li><strong>fd 注册一次即可</strong>：<code>epoll_ctl</code> 把 fd 加到内核的<strong>红黑树</strong>里，之后每次 <code>epoll_wait</code> 不用再传 fd 列表，省掉了 select/poll 每次调用都要做的<strong>用户态到内核态的全量拷贝</strong>（10000 个 fd 就是每次拷 10000 个）；</li>
+<li><strong>回调机制而非轮询</strong>：内核给每个被监听的 fd 注册了回调函数（<code>ep_poll_callback</code>），当网卡数据到达、协议栈处理完后<strong>主动把该 fd 加入&quot;就绪链表&rdquo;</strong>。<code>epoll_wait</code> 只需要看这个链表是否为空，<strong>O(1)</strong>，不需要遍历所有 fd；</li>
+<li><strong>只返回就绪的 fd</strong>：select/poll 返回后你还得遍历所有 fd 逐个 <code>FD_ISSET</code> 判断谁就绪了（O(N)），epoll 直接给你一个只含就绪 fd 的数组。</li>
+</ol>
+<p><strong>水平触发（LT）vs 边缘触发（ET）</strong>：</p>
+<ul>
+<li><strong>LT（Level Triggered，默认）</strong>：只要 fd 上还有未读数据，每次 <code>epoll_wait</code> 都会<strong>持续通知</strong>。编程简单（可以一次只读一部分），不容易漏数据；</li>
+<li><strong>ET（Edge Triggered）</strong>：只在<strong>状态发生变化时</strong>通知一次（有数据到达的那一刻）。必须一次把数据读干（循环 read 到 <code>EAGAIN</code>），否则剩下的数据不会再被通知。效率略高但编程易错。</li>
+</ul>
+<p><strong>Redis 用的是水平触发（LT）</strong>。原因：Redis 的处理逻辑是&quot;读一次、处理、回复&rdquo;，LT 让代码简单可靠；即使一次没读完（比如超过读缓冲区大小），下次事件循环还会被通知，不会丢数据。而 ET 要求循环读到 EAGAIN，一个大请求可能让单次处理占用过长时间，反而伤害其他连接的公平性。</p>
+<h2 id="24-redis-的-ae-事件库">2.4 Redis 的 ae 事件库</h2>
+<p>Redis 没有用 libevent/libev 这类现成的事件库，而是自己写了一个只有约 1000 行的极简事件库 <strong>ae（A simple event-driven programming library）</strong>，理由是&quot;通用库为了跨平台做了太多抽象，代码量大、依赖多、还有我们不需要的功能&rdquo;。</p>
+<p><code>ae.c</code> 在编译时根据平台<strong>自动选择最优实现</strong>（<code>config.h</code> 里的宏判断）：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="cp">#ifdef HAVE_EVPORT
+</span></span></span><span class="line"><span class="cl"><span class="cp">#include</span> <span class="cpf">&#34;ae_evport.c&#34;        // Solaris</span><span class="cp">
+</span></span></span><span class="line"><span class="cl"><span class="cp">#else
+</span></span></span><span class="line"><span class="cl"><span class="cp"></span>    <span class="cp">#ifdef HAVE_EPOLL
+</span></span></span><span class="line"><span class="cl"><span class="cp"></span>    <span class="cp">#include</span> <span class="cpf">&#34;ae_epoll.c&#34;     // Linux ← 我们最关心的</span><span class="cp">
+</span></span></span><span class="line"><span class="cl"><span class="cp"></span>    <span class="cp">#else
+</span></span></span><span class="line"><span class="cl"><span class="cp"></span>        <span class="cp">#ifdef HAVE_KQUEUE
+</span></span></span><span class="line"><span class="cl"><span class="cp"></span>        <span class="cp">#include</span> <span class="cpf">&#34;ae_kqueue.c&#34; // macOS / FreeBSD</span><span class="cp">
+</span></span></span><span class="line"><span class="cl"><span class="cp"></span>        <span class="cp">#else
+</span></span></span><span class="line"><span class="cl"><span class="cp"></span>        <span class="cp">#include</span> <span class="cpf">&#34;ae_select.c&#34; // 兜底，任何平台都能编译</span><span class="cp">
+</span></span></span><span class="line"><span class="cl"><span class="cp"></span>        <span class="cp">#endif
+</span></span></span><span class="line"><span class="cl"><span class="cp"></span>    <span class="cp">#endif
+</span></span></span><span class="line"><span class="cl"><span class="cp">#endif
+</span></span></span></code></pre></div><p>可以用 <code>INFO server</code> 看当前用的是哪个：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">127.0.0.1:6379&gt; INFO server
+</span></span><span class="line"><span class="cl">...
+</span></span><span class="line"><span class="cl">multiplexing_api:epoll        <span class="c1"># Linux 上是 epoll，macOS 上是 kqueue</span>
+</span></span></code></pre></div><p><strong>ae 的核心结构</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="k">typedef</span> <span class="k">struct</span> <span class="n">aeEventLoop</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="kt">int</span> <span class="n">maxfd</span><span class="p">;</span>                          <span class="c1">// 当前最大 fd
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="kt">int</span> <span class="n">setsize</span><span class="p">;</span>                        <span class="c1">// 能容纳的 fd 数（= maxclients + 预留）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="kt">long</span> <span class="kt">long</span> <span class="n">timeEventNextId</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="n">aeFileEvent</span> <span class="o">*</span><span class="n">events</span><span class="p">;</span>                <span class="c1">// 已注册的文件事件数组，下标就是 fd
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">aeFiredEvent</span> <span class="o">*</span><span class="n">fired</span><span class="p">;</span>                <span class="c1">// 本轮就绪的事件
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">aeTimeEvent</span> <span class="o">*</span><span class="n">timeEventHead</span><span class="p">;</span>         <span class="c1">// 时间事件链表
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="kt">int</span> <span class="n">stop</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kt">void</span> <span class="o">*</span><span class="n">apidata</span><span class="p">;</span>                      <span class="c1">// 指向平台特定数据（如 epoll 的 epfd 和 events 数组）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">aeBeforeSleepProc</span> <span class="o">*</span><span class="n">beforesleep</span><span class="p">;</span>     <span class="c1">// 每轮阻塞前的钩子 ← 很重要
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">aeAfterSleepProc</span> <span class="o">*</span><span class="n">aftersleep</span><span class="p">;</span>       <span class="c1">// 每轮阻塞后的钩子
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="kt">int</span> <span class="n">flags</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span> <span class="n">aeEventLoop</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">typedef</span> <span class="k">struct</span> <span class="n">aeFileEvent</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="kt">int</span> <span class="n">mask</span><span class="p">;</span>                    <span class="c1">// AE_READABLE | AE_WRITABLE | AE_BARRIER
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">aeFileProc</span> <span class="o">*</span><span class="n">rfileProc</span><span class="p">;</span>       <span class="c1">// 读事件处理函数
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">aeFileProc</span> <span class="o">*</span><span class="n">wfileProc</span><span class="p">;</span>       <span class="c1">// 写事件处理函数
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="kt">void</span> <span class="o">*</span><span class="n">clientData</span><span class="p">;</span>            <span class="c1">// 通常指向对应的 client 结构
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span> <span class="n">aeFileEvent</span><span class="p">;</span>
+</span></span></code></pre></div><p>注意 <code>events</code> 是<strong>以 fd 为下标的数组</strong>，所以 <code>setsize</code> 要足够大（Redis 启动时会设为 <code>maxclients + 32</code>，如果系统的 <code>ulimit -n</code> 不够，Redis 会<strong>自动下调 maxclients</strong> 并在日志里警告）。</p>
+<h2 id="25-两类事件">2.5 两类事件</h2>
+<p><strong>文件事件（File Event）</strong> —— socket 上的可读/可写：</p>
+<table>
+<thead>
+<tr>
+<th>事件</th>
+<th>处理函数</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>监听 socket 可读</td>
+<td><code>acceptTcpHandler</code></td>
+<td>有新连接到达，<code>accept</code> 后创建 client 并注册其读事件</td>
+</tr>
+<tr>
+<td>客户端 socket 可读</td>
+<td><code>readQueryFromClient</code></td>
+<td>读取命令、解析 RESP、执行命令</td>
+</tr>
+<tr>
+<td>客户端 socket 可写</td>
+<td><code>sendReplyToClient</code></td>
+<td>把回复缓冲区的数据写回客户端</td>
+</tr>
+<tr>
+<td>Unix socket 可读</td>
+<td><code>acceptUnixHandler</code></td>
+<td>本机 unix domain socket 连接</td>
+</tr>
+</tbody>
+</table>
+<p><strong>时间事件（Time Event）</strong> —— 定时任务：</p>
+<p>最核心的是 <strong><code>serverCron</code></strong>，默认每秒执行 <code>hz</code> 次（<code>hz</code> 默认 <strong>10</strong>，即每 100ms 一次）。它负责：</p>
+<ol>
+<li><strong>更新服务器缓存的时间</strong>（<code>server.unixtime</code>、<code>server.mstime</code>，避免频繁系统调用）；</li>
+<li><strong>主动过期删除</strong>（<code>activeExpireCycle</code>，见第 6 篇）；</li>
+<li><strong>更新 LRU 时钟</strong>；</li>
+<li><strong>检查是否需要 RDB/AOF 重写</strong>，触发 <code>bgsave</code>/<code>bgrewriteaof</code>；</li>
+<li><strong>处理已结束的子进程</strong>（<code>wait3</code> 回收，更新持久化状态）；</li>
+<li><strong>清理超时/空闲的客户端连接</strong>；</li>
+<li><strong>渐进式 rehash 推进</strong>（<code>databasesCron</code> 里的 <code>incrementallyRehash</code>，每次最多 1ms）；</li>
+<li><strong>主从复制的定时任务</strong>（发心跳 <code>REPLCONF ACK</code>、检测超时）；</li>
+<li><strong>集群的定时任务</strong>（<code>clusterCron</code>，gossip 消息、故障检测）；</li>
+<li><strong>更新各种统计信息</strong>（QPS 采样等）。</li>
+</ol>
+<pre tabindex="0"><code class="language-conf" data-lang="conf"># hz 越大定时任务越精准（过期删除更及时），但 CPU 消耗越高
+hz 10
+# 4.0+ 动态 hz：客户端多时自动提高频率
+dynamic-hz yes
+</code></pre><hr>
+<h1 id="3-事件循环完整流程">3. 事件循环完整流程</h1>
+<h2 id="31-主循环代码">3.1 主循环代码</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="kt">void</span> <span class="nf">aeMain</span><span class="p">(</span><span class="n">aeEventLoop</span> <span class="o">*</span><span class="n">eventLoop</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="n">eventLoop</span><span class="o">-&gt;</span><span class="n">stop</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="k">while</span> <span class="p">(</span><span class="o">!</span><span class="n">eventLoop</span><span class="o">-&gt;</span><span class="n">stop</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="n">aeProcessEvents</span><span class="p">(</span><span class="n">eventLoop</span><span class="p">,</span> <span class="n">AE_ALL_EVENTS</span> <span class="o">|</span>
+</span></span><span class="line"><span class="cl">                                   <span class="n">AE_CALL_BEFORE_SLEEP</span> <span class="o">|</span>
+</span></span><span class="line"><span class="cl">                                   <span class="n">AE_CALL_AFTER_SLEEP</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><code>aeProcessEvents</code> 的核心逻辑：</p>
+<pre tabindex="0"><code>1. 计算最近的时间事件还有多久到期 → 作为 epoll_wait 的 timeout
+   （这样既不会错过定时任务，又能在没事时让线程休息）
+
+2. 调用 beforeSleep() 钩子     ← 关键！见下文
+
+3. aeApiPoll() → epoll_wait(epfd, events, setsize, timeout)
+   线程在此阻塞，等待 IO 就绪或超时
+
+4. 调用 afterSleep() 钩子
+
+5. 遍历就绪的文件事件，依次调用 rfileProc / wfileProc
+   （即 readQueryFromClient / sendReplyToClient / acceptTcpHandler）
+
+6. 处理到期的时间事件（processTimeEvents → serverCron）
+</code></pre><h2 id="32-beforesleep-做了什么">3.2 beforeSleep 做了什么</h2>
+<p><code>beforeSleep</code> 在每次进入 <code>epoll_wait</code> <strong>之前</strong>执行，是很多机制的挂载点，也是理解 Redis 行为的关键：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="kt">void</span> <span class="nf">beforeSleep</span><span class="p">(</span><span class="k">struct</span> <span class="n">aeEventLoop</span> <span class="o">*</span><span class="n">eventLoop</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// 1. 处理集群相关的前置工作
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">if</span> <span class="p">(</span><span class="n">server</span><span class="p">.</span><span class="n">cluster_enabled</span><span class="p">)</span> <span class="n">clusterBeforeSleep</span><span class="p">();</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// 2. 快速过期检查（ACTIVE_EXPIRE_CYCLE_FAST，最多 1ms）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">if</span> <span class="p">(</span><span class="n">server</span><span class="p">.</span><span class="n">active_expire_enabled</span> <span class="o">&amp;&amp;</span> <span class="n">iAmMaster</span><span class="p">())</span>
+</span></span><span class="line"><span class="cl">        <span class="n">activeExpireCycle</span><span class="p">(</span><span class="n">ACTIVE_EXPIRE_CYCLE_FAST</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// 3. 【重要】唤醒被 BLPOP/BRPOP/XREAD 等阻塞、现在数据已就绪的客户端
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">handleClientsBlockedOnKeys</span><span class="p">();</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// 4. 【重要】AOF 缓冲区刷盘（把 aof_buf 写入文件）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">flushAppendOnlyFile</span><span class="p">(</span><span class="mi">0</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// 5. 【重要】把所有客户端的回复缓冲区内容写回 socket
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">handleClientsWithPendingWritesUsingThreads</span><span class="p">();</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// 6. 释放待关闭的客户端
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">freeClientsInAsyncFreeQueue</span><span class="p">();</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// 7. 给从节点发送 ACK 请求、处理 WAIT 命令
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="p">...</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>两个最重要的点：</p>
+<p><strong>（1）阻塞客户端的唤醒在这里</strong></p>
+<p>第 2 篇讲过 <code>BLPOP</code> 阻塞不占主线程。具体机制是：</p>
+<pre tabindex="0"><code>1. BLPOP 发现 list 为空 → 把 client 加入 server.blocking_keys[key] 链表，
+   标记 CLIENT_BLOCKED，主线程立即返回去处理别的请求
+2. 另一个客户端执行 LPUSH → 命令执行后，signalKeyAsReady() 把该 key
+   加入 server.ready_keys 列表
+3. 本轮事件处理结束，进入下一轮 beforeSleep
+4. handleClientsBlockedOnKeys() 遍历 ready_keys，
+   按 FIFO 顺序唤醒阻塞在这些 key 上的客户端并给它们数据
+</code></pre><p>所以阻塞的粒度是「客户端连接」，主线程始终在跑。</p>
+<p><strong>（2）回复是&quot;攒起来批量写&quot;的</strong></p>
+<p>命令执行时，回复并不直接 <code>write</code> 到 socket，而是先放进 client 的输出缓冲区，并把这个 client 加入 <code>server.clients_pending_write</code> 队列。到 <code>beforeSleep</code> 时统一处理。</p>
+<p>这样做的好处：一次事件循环里如果同一个客户端发了多个命令（pipeline），回复可以<strong>合并成一次 <code>write</code> 系统调用</strong>，大幅减少系统调用次数。这也是 pipeline 性能好的服务端原因之一。</p>
+<h2 id="33-一条命令的完整旅程">3.3 一条命令的完整旅程</h2>
+<p>以客户端执行 <code>GET name</code> 为例，把整条链路串起来：</p>
+<pre tabindex="0"><code>【客户端侧】
+1. 客户端把命令编码成 RESP：*2\r\n$3\r\nGET\r\n$4\r\nname\r\n
+2. write() 到 socket
+
+【内核侧】
+3. 数据经网卡 → 协议栈 → 放入该 socket 的接收缓冲区
+4. epoll 的回调把该 fd 加入就绪链表
+
+【Redis 主线程】
+5. epoll_wait 返回，得知该 fd 可读
+6. 调用 readQueryFromClient：
+   a. read() 数据到 client-&gt;querybuf
+   b. processInputBuffer() 解析 RESP，填充 client-&gt;argv / argc
+7. processCommand()：
+   a. lookupCommand() 在命令表（一个 dict）里查 &#34;get&#34; 对应的 redisCommand
+   b. 各种检查：参数个数、认证状态、ACL 权限、内存是否超限（超限则先淘汰）、
+      是否是只读从节点收到写命令、集群是否需要重定向（MOVED/ASK）、
+      是否在 MULTI 事务中（是则入队直接返回 QUEUED）
+   c. call() 真正执行 → getCommand() → lookupKeyRead() 查字典
+      （顺便检查 key 是否过期、更新 LRU/LFU 信息、更新命中率统计）
+8. addReply() 把结果写入 client-&gt;buf（16KB 固定缓冲）
+   或 client-&gt;reply（链表，装不下时用）
+   同时把 client 加入 server.clients_pending_write
+9. 命令传播：写命令要写入 AOF 缓冲区、传播给从节点（GET 是读命令，跳过）
+10. 本轮就绪事件都处理完 → 进入下一轮循环的 beforeSleep
+11. handleClientsWithPendingWrites() → write() 把 buf 写回 socket
+    （如果一次没写完，注册 AE_WRITABLE 事件，下次可写时继续）
+
+【客户端侧】
+12. 收到 $3\r\ntom\r\n，解析后返回给应用
+</code></pre><hr>
+<h1 id="4-redis-60-多线程-io">4. Redis 6.0 多线程 IO</h1>
+<h2 id="41-为什么要引入多线程">4.1 为什么要引入多线程</h2>
+<p>到 6.0 之前，随着硬件发展，Redis 的瓶颈越来越明显地落在<strong>网络 IO</strong> 上：</p>
+<p>一条命令的耗时分布大致是：</p>
+<pre tabindex="0"><code>读 socket + 解析协议   ≈ 40%   ← 纯 CPU 密集的字符串处理 + 系统调用
+执行命令               ≈ 20%   ← 内存操作，很快
+组装回复 + 写 socket   ≈ 40%   ← 同样是 CPU + 系统调用
+</code></pre><p><strong>执行命令只占 20%</strong>，而读写 socket 和协议解析占了 80%。这部分工作是<strong>可以并行</strong>的（不同客户端的数据互不相干，不涉及共享数据结构），所以 6.0 把它拆给多个线程。</p>
+<p>注意这跟&quot;给命令执行加多线程&quot;完全是两回事——Redis 依然坚决不让多线程碰核心数据结构。</p>
+<h2 id="42-实现原理">4.2 实现原理</h2>
+<pre tabindex="0"><code>                    ┌──────────────────────────────┐
+                    │        主线程                │
+                    │  epoll_wait 拿到就绪连接     │
+                    └──────────┬───────────────────┘
+                               │ 轮询分配到各线程的待处理队列
+        ┌──────────────┬───────┴───────┬──────────────┐
+        ▼              ▼               ▼              ▼
+   ┌─────────┐   ┌─────────┐    ┌─────────┐   ┌─────────┐
+   │IO线程 0 │   │IO线程 1 │    │IO线程 2 │   │IO线程 3 │
+   │(主线程) │   │         │    │         │   │         │
+   │read+解析│   │read+解析│    │read+解析│   │read+解析│
+   └────┬────┘   └────┬────┘    └────┬────┘   └────┬────┘
+        └──────────────┴───────┬───────┴──────────────┘
+                               │ 主线程自旋等待所有 IO 线程完成
+                    ┌──────────▼───────────────────┐
+                    │  主线程【串行】执行所有命令  │  ← 关键！
+                    │  (数据结构操作完全无锁)      │
+                    └──────────┬───────────────────┘
+                               │ 再次分配
+        ┌──────────────┬───────┴───────┬──────────────┐
+        ▼              ▼               ▼              ▼
+   ┌─────────┐   ┌─────────┐    ┌─────────┐   ┌─────────┐
+   │IO线程 0 │   │IO线程 1 │    │IO线程 2 │   │IO线程 3 │
+   │write回复│   │write回复│    │write回复│   │write回复│
+   └─────────┘   └─────────┘    └─────────┘   └─────────┘
+</code></pre><p>具体流程（<code>handleClientsWithPendingWritesUsingThreads</code> 和 <code>postponeClientRead</code>）：</p>
+<p><strong>读阶段</strong>：</p>
+<ol>
+<li>主线程 <code>epoll_wait</code> 得到所有就绪的可读 fd；</li>
+<li>不立即读，而是把这些 client <strong>轮询（round-robin）分配</strong>到 <code>io_threads_list[0..N-1]</code> 这 N 个队列里。注意 <strong><code>io_threads_list[0]</code> 是主线程自己的队列</strong>（主线程也参与干活，不闲着）；</li>
+<li>主线程设置原子变量 <code>io_threads_pending[i]</code>，各 IO 线程<strong>自旋检测</strong>到有活就开始干（用自旋而不是条件变量，是为了避免线程唤醒的延迟，代价是空转时耗 CPU）；</li>
+<li>各线程并行执行 <code>readQueryFromClient</code>：<code>read()</code> 数据 + <code>processInputBuffer</code> 解析 RESP，<strong>但解析出命令后不执行</strong>，只是填好 <code>client-&gt;argv</code>；</li>
+<li>主线程<strong>自旋等待</strong>所有线程的 <code>pending</code> 归零；</li>
+</ol>
+<p><strong>执行阶段</strong>：</p>
+<ol start="6">
+<li>主线程<strong>串行</strong>遍历所有 client，逐个调用 <code>processCommand</code> 执行命令。<strong>这一步是单线程的，所以所有原子性保证不变</strong>；</li>
+</ol>
+<p><strong>写阶段</strong>：</p>
+<ol start="7">
+<li>回复照样被分配给 N 个线程并行 <code>write()</code> 回 socket。</li>
+</ol>
+<h2 id="43-配置">4.3 配置</h2>
+<pre tabindex="0"><code class="language-conf" data-lang="conf"># IO 线程数（包含主线程）。1 = 关闭多线程（默认）
+io-threads 4
+
+# 是否也用多线程处理&#34;读+协议解析&#34;（默认 no，只多线程处理写回）
+io-threads-do-reads yes
+</code></pre><p><strong>官方建议</strong>：</p>
+<ul>
+<li><code>io-threads</code> 设为 <strong>CPU 核心数的 1/2 到 3/4</strong>，比如 4 核机器设 2~3，8 核设 4~6；</li>
+<li><strong>不要超过 8</strong>，官方明确说超过 8 个线程收益极小（因为主线程的串行执行部分成了新瓶颈，符合阿姆达尔定律）；</li>
+<li><code>io-threads 1</code> 时多线程完全关闭，走原来的单线程路径；</li>
+<li>只有在<strong>网络带宽和 CPU 都不是瓶颈之前</strong>（即 QPS 很高、value 较大）才有明显收益。如果你的 QPS 只有几千，开多线程纯属浪费。</li>
+</ul>
+<p>官方压测数据：<code>GET</code>/<code>SET</code> 场景下开 4 个 IO 线程，吞吐大约能提升到 <strong>2 倍</strong>左右。</p>
+<h2 id="44-多线程-io-的注意点">4.4 多线程 IO 的注意点</h2>
+<ol>
+<li><strong>不改变原子性语义</strong>：命令执行仍然单线程串行，所以 <code>INCR</code>、<code>SETNX</code>、Lua 脚本的原子性全部不变；</li>
+<li><strong>不解决大 key 阻塞</strong>：<code>HGETALL</code> 一个巨大的 hash，慢在&quot;命令执行&quot;阶段（遍历所有字段），而这仍是主线程串行做的，多线程一点帮助都没有。<strong>大 key 问题只能靠改数据模型解决</strong>；</li>
+<li><strong>自旋等待消耗 CPU</strong>：IO 线程在没活时会自旋一段时间（<code>io_threads_pending</code> 的忙等），所以开启后 CPU 使用率的&quot;基线&quot;会上升。低负载时看起来会觉得&quot;更耗 CPU 了&quot;；</li>
+<li><strong>6.0 的初版只多线程写，读需要显式开启</strong>：<code>io-threads-do-reads</code> 默认 <code>no</code>。官方认为读的多线程收益不如写明显（且更容易有 bug），所以保守设计；</li>
+<li><strong>不要跟 CPU 绑核冲突</strong>：如果用 <code>taskset</code> 把 Redis 绑到单个核心上，开多线程反而会因为线程争抢一个核而变慢；</li>
+<li><strong>7.0+ 有进一步优化</strong>：把部分命令的回复组装也移到了 IO 线程。8.0 对整个 IO 路径做了更大幅度的重构（异步 IO 线程模型），吞吐提升更明显。</li>
+</ol>
+<h2 id="45-redis-与-memcached-线程模型的对比">4.5 Redis 与 Memcached 线程模型的对比</h2>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Redis 6.0+</th>
+<th>Memcached</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>网络 IO</td>
+<td>多线程（可配）</td>
+<td>多线程</td>
+</tr>
+<tr>
+<td>协议解析</td>
+<td>多线程（需开 <code>io-threads-do-reads</code>）</td>
+<td>多线程</td>
+</tr>
+<tr>
+<td><strong>数据操作</strong></td>
+<td><strong>单线程串行</strong></td>
+<td><strong>多线程 + 分段锁</strong></td>
+</tr>
+<tr>
+<td>原子性</td>
+<td>天然原子</td>
+<td>需要锁或 CAS</td>
+</tr>
+<tr>
+<td>复杂数据结构</td>
+<td>支持（因为单线程好实现）</td>
+<td>不支持</td>
+</tr>
+</tbody>
+</table>
+<p>这张表说明了两者的根本设计分歧：Memcached 选择&quot;多线程 + 锁&quot;换取多核利用率，代价是只能支持简单的 KV；Redis 选择&quot;单线程执行&quot;换取实现复杂数据结构的自由和天然原子性，代价是单实例吃不满多核（用多实例弥补）。</p>
+<hr>
+<h1 id="5-resp-协议">5. RESP 协议</h1>
+<p>理解 RESP（<strong>RE</strong>dis <strong>S</strong>erialization <strong>P</strong>rotocol）对排查问题、写客户端、看抓包都很有用。</p>
+<h2 id="51-设计目标">5.1 设计目标</h2>
+<p>RESP 的三个设计目标（官方文档原话）：实现简单、解析快、人类可读。</p>
+<p>它是<strong>基于文本行</strong>的协议，每部分以 <code>\r\n</code>（CRLF）结尾，第一个字节标识类型。</p>
+<h2 id="52-resp2-数据类型">5.2 RESP2 数据类型</h2>
+<table>
+<thead>
+<tr>
+<th>首字节</th>
+<th>类型</th>
+<th>示例</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>+</code></td>
+<td>简单字符串</td>
+<td><code>+OK\r\n</code></td>
+<td>不含 CRLF 的短字符串，用于状态回复</td>
+</tr>
+<tr>
+<td><code>-</code></td>
+<td>错误</td>
+<td><code>-ERR unknown command\r\n</code></td>
+<td>错误信息，客户端应抛异常</td>
+</tr>
+<tr>
+<td><code>:</code></td>
+<td>整数</td>
+<td><code>:1000\r\n</code></td>
+<td>64 位有符号整数</td>
+</tr>
+<tr>
+<td><code>$</code></td>
+<td>批量字符串</td>
+<td><code>$5\r\nhello\r\n</code></td>
+<td>先给长度再给内容，<strong>二进制安全</strong></td>
+</tr>
+<tr>
+<td><code>*</code></td>
+<td>数组</td>
+<td><code>*2\r\n:1\r\n:2\r\n</code></td>
+<td>先给元素个数，再给各元素</td>
+</tr>
+</tbody>
+</table>
+<p>两个特殊值：</p>
+<pre tabindex="0"><code>$-1\r\n        Null Bulk String（key 不存在时 GET 的返回）
+*-1\r\n        Null Array（BLPOP 超时的返回）
+$0\r\n\r\n     空字符串（注意这不是 null）
+</code></pre><h2 id="53-客户端发送的命令永远是数组">5.3 客户端发送的命令永远是数组</h2>
+<p><strong>所有命令都编码成&quot;批量字符串数组&quot;</strong>（这叫 unified request protocol）：</p>
+<pre tabindex="0"><code>SET name tom
+↓
+*3\r\n$3\r\nSET\r\n$4\r\nname\r\n$3\r\ntom\r\n
+</code></pre><p>拆解：</p>
+<pre tabindex="0"><code>*3\r\n         ← 数组有 3 个元素
+$3\r\n         ← 第 1 个元素长度 3
+SET\r\n        ← 内容
+$4\r\n         ← 第 2 个元素长度 4
+name\r\n
+$3\r\n         ← 第 3 个元素长度 3
+tom\r\n
+</code></pre><p>因为用 <code>$</code> 显式给出长度，所以<strong>参数可以包含任何字节</strong>（空格、换行、<code>\0</code>、二进制数据），这就是 Redis 二进制安全的协议基础。</p>
+<p><strong>用 telnet/nc 手动发命令</strong>（Redis 也支持简化的 inline 命令格式）：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">$ nc 127.0.0.1 <span class="m">6379</span>
+</span></span><span class="line"><span class="cl">PING
+</span></span><span class="line"><span class="cl">+PONG
+</span></span><span class="line"><span class="cl">SET name tom
+</span></span><span class="line"><span class="cl">+OK
+</span></span><span class="line"><span class="cl">GET name
+</span></span><span class="line"><span class="cl"><span class="nv">$3</span>
+</span></span><span class="line"><span class="cl">tom
+</span></span></code></pre></div><p><code>nc</code> 里直接敲的是 <strong>inline 命令</strong>（空格分隔的纯文本），Redis 为了方便调试保留了对它的支持。但 inline 命令不能包含二进制数据，正式客户端都用数组格式。</p>
+<h2 id="54-各类回复示例">5.4 各类回复示例</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 简单字符串</span>
+</span></span><span class="line"><span class="cl">SET k v          →  +OK<span class="se">\r\n</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 错误</span>
+</span></span><span class="line"><span class="cl">GET              →  -ERR wrong number of arguments <span class="k">for</span> <span class="s1">&#39;get&#39;</span> command<span class="se">\r\n</span>
+</span></span><span class="line"><span class="cl">LPUSH k v<span class="p">;</span> GET k →  -WRONGTYPE Operation against a key holding the wrong kind of value<span class="se">\r\n</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 整数</span>
+</span></span><span class="line"><span class="cl">INCR counter     →  :1<span class="se">\r\n</span>
+</span></span><span class="line"><span class="cl">EXISTS k         →  :1<span class="se">\r\n</span>
+</span></span><span class="line"><span class="cl">SISMEMBER s m    →  :0<span class="se">\r\n</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 批量字符串</span>
+</span></span><span class="line"><span class="cl">GET name         →  <span class="nv">$3</span><span class="se">\r\n</span>tom<span class="se">\r\n</span>
+</span></span><span class="line"><span class="cl">GET nothing      →  <span class="nv">$-</span>1<span class="se">\r\n</span>           ← nil
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 数组</span>
+</span></span><span class="line"><span class="cl">LRANGE l <span class="m">0</span> <span class="m">2</span>     →  *3<span class="se">\r\n</span><span class="nv">$1</span><span class="se">\r\n</span>a<span class="se">\r\n</span><span class="nv">$1</span><span class="se">\r\n</span>b<span class="se">\r\n</span><span class="nv">$1</span><span class="se">\r\n</span>c<span class="se">\r\n</span>
+</span></span><span class="line"><span class="cl">HGETALL h        →  *4<span class="se">\r\n</span><span class="nv">$2</span><span class="se">\r\n</span>f1<span class="se">\r\n</span><span class="nv">$2</span><span class="se">\r\n</span>v1<span class="se">\r\n</span><span class="nv">$2</span><span class="se">\r\n</span>f2<span class="se">\r\n</span><span class="nv">$2</span><span class="se">\r\n</span>v2<span class="se">\r\n</span>
+</span></span><span class="line"><span class="cl">                     ↑ 注意 RESP2 里 HGETALL 返回的是<span class="s2">&#34;扁平数组&#34;</span>，客户端要自己配对
+</span></span><span class="line"><span class="cl">BLPOP q <span class="m">1</span> <span class="o">(</span>超时<span class="o">)</span>  →  *-1<span class="se">\r\n</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 嵌套数组（如 XRANGE、CONFIG GET 的复杂结构）</span>
+</span></span><span class="line"><span class="cl">*2<span class="se">\r\n</span>*2<span class="se">\r\n</span><span class="nv">$2</span><span class="se">\r\n</span>id<span class="se">\r\n</span><span class="nv">$1</span><span class="se">\r\n</span>1<span class="se">\r\n</span>*2<span class="se">\r\n</span>...
+</span></span></code></pre></div><h2 id="55-resp360">5.5 RESP3（6.0+）</h2>
+<p>RESP2 有个明显的缺陷：<strong>类型信息不足</strong>。比如 <code>HGETALL</code> 返回一个扁平数组，客户端必须<strong>知道这个命令的语义</strong>才能把它还原成 map；<code>ZSCORE</code> 返回的浮点数被编码成字符串；<code>EXISTS</code> 的 1/0 到底是数字还是布尔也分不清。</p>
+<p>这导致每个客户端库都要为几百个命令硬编码&quot;返回值该怎么转换&quot;，非常笨重。</p>
+<p><strong>RESP3 引入了更丰富的类型</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>首字节</th>
+<th>类型</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>_</code></td>
+<td>Null</td>
+<td>统一的 null（<code>_\r\n</code>），不再有 <code>$-1</code> 和 <code>*-1</code> 两种</td>
+</tr>
+<tr>
+<td><code>#</code></td>
+<td>Boolean</td>
+<td><code>#t\r\n</code> / <code>#f\r\n</code></td>
+</tr>
+<tr>
+<td><code>,</code></td>
+<td>Double</td>
+<td><code>,3.14\r\n</code>（还支持 <code>,inf</code>、<code>,-inf</code>、<code>,nan</code>）</td>
+</tr>
+<tr>
+<td><code>(</code></td>
+<td>Big Number</td>
+<td>超过 64 位的大整数</td>
+</tr>
+<tr>
+<td><code>%</code></td>
+<td><strong>Map</strong></td>
+<td><code>%1\r\n$1\r\na\r\n:1\r\n</code> ← 明确是键值对</td>
+</tr>
+<tr>
+<td><code>~</code></td>
+<td><strong>Set</strong></td>
+<td>明确是无序集合</td>
+</tr>
+<tr>
+<td><code>=</code></td>
+<td>Verbatim String</td>
+<td>带格式提示的字符串（如 <code>txt:</code>、<code>mkd:</code>）</td>
+</tr>
+<tr>
+<td><code>!</code></td>
+<td>Blob Error</td>
+<td>长错误信息</td>
+</tr>
+<tr>
+<td>`</td>
+<td>`</td>
+<td>Attribute</td>
+</tr>
+<tr>
+<td><code>&gt;</code></td>
+<td><strong>Push</strong></td>
+<td><strong>服务端主动推送</strong>（pub/sub 消息、客户端缓存失效通知）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>协商方式</strong>：连接建立后发 <code>HELLO 3</code>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">127.0.0.1:6379&gt; HELLO <span class="m">3</span>
+</span></span><span class="line"><span class="cl">1# <span class="s2">&#34;server&#34;</span> <span class="o">=</span>&gt; <span class="s2">&#34;redis&#34;</span>
+</span></span><span class="line"><span class="cl">2# <span class="s2">&#34;version&#34;</span> <span class="o">=</span>&gt; <span class="s2">&#34;7.2.5&#34;</span>
+</span></span><span class="line"><span class="cl">3# <span class="s2">&#34;proto&#34;</span> <span class="o">=</span>&gt; <span class="o">(</span>integer<span class="o">)</span> <span class="m">3</span>
+</span></span><span class="line"><span class="cl">4# <span class="s2">&#34;id&#34;</span> <span class="o">=</span>&gt; <span class="o">(</span>integer<span class="o">)</span> <span class="m">5</span>
+</span></span><span class="line"><span class="cl">5# <span class="s2">&#34;mode&#34;</span> <span class="o">=</span>&gt; <span class="s2">&#34;standalone&#34;</span>
+</span></span><span class="line"><span class="cl">6# <span class="s2">&#34;role&#34;</span> <span class="o">=</span>&gt; <span class="s2">&#34;master&#34;</span>
+</span></span><span class="line"><span class="cl">7# <span class="s2">&#34;modules&#34;</span> <span class="o">=</span>&gt; <span class="o">(</span>empty array<span class="o">)</span>
+</span></span></code></pre></div><p>不发 <code>HELLO 3</code> 就默认用 RESP2，<strong>保证了完全的向后兼容</strong>。</p>
+<p><strong>RESP3 最重要的实际价值——<code>&gt;</code> Push 类型</strong>：</p>
+<p>RESP2 里订阅了 pub/sub 的连接会进入&quot;订阅模式&quot;，<strong>不能再发普通命令</strong>（因为客户端无法区分&quot;服务端主动推的消息&quot;和&quot;我上一个命令的回复&quot;）。RESP3 用 <code>&gt;</code> 明确标识推送类型，客户端能区分开，所以：</p>
+<ol>
+<li><strong>一个连接可以同时订阅和执行普通命令</strong>；</li>
+<li>使 <strong>客户端缓存（Client-side caching / Tracking）</strong> 成为可能——服务端可以在 key 被修改时主动推 invalidate 消息给客户端，让客户端的本地缓存失效。这是 6.0 一个很重要的新能力：</li>
+</ol>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">CLIENT TRACKING ON             <span class="c1"># 开启键追踪</span>
+</span></span><span class="line"><span class="cl">GET foo                        <span class="c1"># 客户端本地缓存 foo</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 别人修改了 foo 后，服务端主动推送：</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># &gt;2\r\n$10\r\ninvalidate\r\n*1\r\n$3\r\nfoo\r\n</span>
+</span></span></code></pre></div><hr>
+<h1 id="6-客户端与缓冲区">6. 客户端与缓冲区</h1>
+<p>每个连接在 Redis 内部对应一个 <code>client</code> 结构。理解它的几个缓冲区对排查内存问题至关重要。</p>
+<h2 id="61-输入缓冲区querybuf">6.1 输入缓冲区（querybuf）</h2>
+<p>客户端发来的命令先存到 <code>client-&gt;querybuf</code>（一个 SDS）。</p>
+<ul>
+<li><strong>单个客户端的输入缓冲区硬上限 1GB</strong>，超过 Redis 会直接<strong>关闭该连接</strong>并记录日志 <code>Closing client that reached max query buffer length</code>；</li>
+<li>但 1GB 已经太大了，实际风险在于「很多客户端同时占用较大的输入缓冲」会耗尽内存；</li>
+<li><code>client-query-buffer-limit</code>（默认 1gb）可配置；</li>
+<li><strong>输入缓冲区的内存不计入 <code>maxmemory</code> 的淘汰判断</strong>（这是个坑：它属于&quot;额外开销&quot;，所以 <code>maxmemory</code> 要留余量）。</li>
+</ul>
+<p>什么情况会让 querybuf 变大？</p>
+<ol>
+<li>客户端发了一个巨大的命令（如 <code>MSET</code> 几万个 key、<code>SET</code> 一个 100MB 的 value）；</li>
+<li><strong>pipeline 一次性发了海量命令</strong>而没读回复；</li>
+<li>客户端有 bug，不停发数据但不读。</li>
+</ol>
+<p>排查：<code>CLIENT LIST</code> 里看 <code>qbuf</code>（已用）和 <code>qbuf-free</code>（剩余）字段。</p>
+<h2 id="62-输出缓冲区">6.2 输出缓冲区</h2>
+<p>输出分两级：</p>
+<p><strong>（1）固定缓冲区 <code>client-&gt;buf</code></strong>：默认 <strong>16KB</strong>，用于装小回复。这块是 client 结构里直接分配的数组，不用额外 malloc；</p>
+<p><strong>（2）回复链表 <code>client-&gt;reply</code></strong>：16KB 装不下时，后续内容挂到一个链表上（每个节点是一块动态分配的内存）。这部分<strong>可以无限增长</strong>，是内存爆炸的主要风险点。</p>
+<p>所以有了 <code>client-output-buffer-limit</code>：</p>
+<pre tabindex="0"><code class="language-conf" data-lang="conf"># 格式：&lt;class&gt; &lt;hard limit&gt; &lt;soft limit&gt; &lt;soft seconds&gt;
+client-output-buffer-limit normal 0 0 0
+client-output-buffer-limit replica 256mb 64mb 60
+client-output-buffer-limit pubsub 32mb 8mb 60
+</code></pre><p>三种 class：</p>
+<ul>
+<li><strong>normal</strong>：普通客户端。默认 <strong>不限制（0 0 0）</strong>，因为普通客户端通常是&quot;请求-响应&quot;模式，来不及堆积；</li>
+<li><strong>replica</strong>：从节点。主节点要把命令流发给从节点，如果从节点慢/网络差就会堆积。默认 hard 256MB；</li>
+<li><strong>pubsub</strong>：订阅者。发布速度大于订阅者消费速度时会堆积。默认 hard 32MB。</li>
+</ul>
+<p>两种限制：</p>
+<ul>
+<li><strong>hard limit</strong>：一旦超过，<strong>立即关闭连接</strong>；</li>
+<li><strong>soft limit + soft seconds</strong>：<strong>持续超过</strong> soft limit 达到 soft seconds 秒，才关闭连接。</li>
+</ul>
+<p><strong>经典事故</strong>：主从复制时，从节点因为在加载 RDB 或网络慢，导致主节点上该 replica 的输出缓冲区超过 256MB → 主节点断开连接 → 从节点重连 → 触发<strong>全量同步</strong> → 又产生大量输出 → 再次超限 → <strong>无限循环的复制风暴</strong>。这时要调大 <code>client-output-buffer-limit replica</code> 或者排查根本原因（见第 10 篇）。</p>
+<p>排查：<code>CLIENT LIST</code> 里的 <code>omem</code>（output buffer memory）字段，或 <code>INFO clients</code> 的 <code>client_recent_max_output_buffer</code>。</p>
+<h2 id="63-复制缓冲区与积压缓冲区">6.3 复制缓冲区与积压缓冲区</h2>
+<p>主节点上还有两块专门用于复制的内存（第 10 篇详讲）：</p>
+<ul>
+<li><strong>replication buffer</strong>：<strong>每个</strong>从节点一个（就是上面的 replica class 输出缓冲区），主节点把写命令分别放进每个从节点的这个 buffer；</li>
+<li><strong>repl_backlog（复制积压缓冲区）</strong>：<strong>全局只有一个</strong>的环形缓冲区（<code>repl-backlog-size</code> 默认 1MB），保存最近传播的命令。从节点短暂断线重连时，如果它需要的数据还在 backlog 里，就能做<strong>部分重同步</strong>（只补发缺失的部分）而不用全量同步。</li>
+</ul>
+<h2 id="64-client-list-字段速查">6.4 CLIENT LIST 字段速查</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">127.0.0.1:6379&gt; CLIENT LIST
+</span></span><span class="line"><span class="cl"><span class="nv">id</span><span class="o">=</span><span class="m">5</span> <span class="nv">addr</span><span class="o">=</span>127.0.0.1:52133 <span class="nv">laddr</span><span class="o">=</span>127.0.0.1:6379 <span class="nv">fd</span><span class="o">=</span><span class="m">8</span> <span class="nv">name</span><span class="o">=</span>worker-1
+</span></span><span class="line"><span class="cl"><span class="nv">age</span><span class="o">=</span><span class="m">1234</span> <span class="nv">idle</span><span class="o">=</span><span class="m">0</span> <span class="nv">flags</span><span class="o">=</span>N <span class="nv">db</span><span class="o">=</span><span class="m">0</span> <span class="nv">sub</span><span class="o">=</span><span class="m">0</span> <span class="nv">psub</span><span class="o">=</span><span class="m">0</span> <span class="nv">ssub</span><span class="o">=</span><span class="m">0</span> <span class="nv">multi</span><span class="o">=</span>-1 <span class="nv">watch</span><span class="o">=</span><span class="m">0</span>
+</span></span><span class="line"><span class="cl"><span class="nv">qbuf</span><span class="o">=</span><span class="m">26</span> qbuf-free<span class="o">=</span><span class="m">20448</span> argv-mem<span class="o">=</span><span class="m">10</span> multi-mem<span class="o">=</span><span class="m">0</span> tot-net-in<span class="o">=</span><span class="m">100</span> tot-net-out<span class="o">=</span><span class="m">200</span>
+</span></span><span class="line"><span class="cl"><span class="nv">rbs</span><span class="o">=</span><span class="m">1024</span> <span class="nv">rbp</span><span class="o">=</span><span class="m">0</span> <span class="nv">obl</span><span class="o">=</span><span class="m">0</span> <span class="nv">oll</span><span class="o">=</span><span class="m">0</span> <span class="nv">omem</span><span class="o">=</span><span class="m">0</span> tot-mem<span class="o">=</span><span class="m">22298</span>
+</span></span><span class="line"><span class="cl"><span class="nv">events</span><span class="o">=</span>r <span class="nv">cmd</span><span class="o">=</span>client<span class="p">|</span>list <span class="nv">user</span><span class="o">=</span>default <span class="nv">redir</span><span class="o">=</span>-1 <span class="nv">resp</span><span class="o">=</span><span class="m">2</span>
+</span></span></code></pre></div><table>
+<thead>
+<tr>
+<th>字段</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>id</code></td>
+<td>连接 ID（<code>CLIENT KILL ID</code> 用）</td>
+</tr>
+<tr>
+<td><code>addr</code> / <code>laddr</code></td>
+<td>客户端地址 / 本地地址</td>
+</tr>
+<tr>
+<td><code>name</code></td>
+<td><code>CLIENT SETNAME</code> 设的名字（<strong>强烈建议应用都设置</strong>，排查时能一眼定位是哪个服务）</td>
+</tr>
+<tr>
+<td><code>age</code></td>
+<td>连接已存活秒数</td>
+</tr>
+<tr>
+<td><code>idle</code></td>
+<td>空闲秒数（<code>idle</code> 很大说明连接闲着，可能是连接池过大）</td>
+</tr>
+<tr>
+<td><code>flags</code></td>
+<td>N=普通, M=主节点, S=从节点, O=monitor, x=在事务中, b=阻塞中</td>
+</tr>
+<tr>
+<td><code>sub</code>/<code>psub</code></td>
+<td>订阅的频道数 / 模式数</td>
+</tr>
+<tr>
+<td><code>multi</code></td>
+<td>事务中已入队的命令数，-1 表示不在事务中</td>
+</tr>
+<tr>
+<td><code>qbuf</code>/<code>qbuf-free</code></td>
+<td><strong>输入缓冲区</strong>已用/剩余</td>
+</tr>
+<tr>
+<td><code>obl</code></td>
+<td>固定输出缓冲区（buf）已用字节</td>
+</tr>
+<tr>
+<td><code>oll</code></td>
+<td><strong>输出缓冲区链表的节点数</strong>（大于 0 说明 16KB 不够用了）</td>
+</tr>
+<tr>
+<td><code>omem</code></td>
+<td><strong>输出缓冲区占用的内存</strong>（排查大 key / 慢消费者的关键指标）</td>
+</tr>
+<tr>
+<td><code>tot-mem</code></td>
+<td>该连接总共占用的内存</td>
+</tr>
+<tr>
+<td><code>cmd</code></td>
+<td><strong>最后执行的命令</strong>（排查&quot;谁在跑 KEYS&quot;的利器）</td>
+</tr>
+<tr>
+<td><code>resp</code></td>
+<td>协议版本（2 或 3）</td>
+</tr>
+</tbody>
+</table>
+<p>排查内存异常的常用组合：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 找出输出缓冲区最大的客户端</span>
+</span></span><span class="line"><span class="cl">redis-cli CLIENT LIST <span class="p">|</span> awk <span class="s1">&#39;{for(i=1;i&lt;=NF;i++) if($i ~ /^omem=/) print $i, $0}&#39;</span> <span class="p">|</span> sort -t<span class="o">=</span> -k2 -rn <span class="p">|</span> head
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 找出输入缓冲区最大的</span>
+</span></span><span class="line"><span class="cl">redis-cli CLIENT LIST <span class="p">|</span> grep -o <span class="s1">&#39;qbuf=[0-9]*&#39;</span> <span class="p">|</span> sort -t<span class="o">=</span> -k2 -rn <span class="p">|</span> head
+</span></span></code></pre></div><hr>
+<h1 id="7-pipeline-为什么快">7. Pipeline 为什么快</h1>
+<p>Pipeline（管道）不是 Redis 的服务端特性，而是<strong>客户端的批量发送技巧</strong>，但它的收益来自上面讲的事件循环机制。</p>
+<h2 id="71-rtt-是主要开销">7.1 RTT 是主要开销</h2>
+<pre tabindex="0"><code>普通模式（N 个命令）：
+客户端  --SET k1 v1--&gt;  服务端     |
+        &lt;--   +OK   --            | 1 个 RTT
+        --SET k2 v2--&gt;            |
+        &lt;--   +OK   --            | 1 个 RTT
+        ...                        N 个 RTT
+
+Pipeline 模式：
+客户端  --SET k1 v1 SET k2 v2 ... SET kN vN--&gt;  服务端
+        &lt;--  +OK +OK ... +OK  --                 1 个 RTT
+</code></pre><p>假设 RTT = 1ms、单命令执行 = 0.01ms：</p>
+<ul>
+<li>普通模式 1000 个命令：<code>1000 × (1 + 0.01) = 1010ms</code>；</li>
+<li>Pipeline：<code>1 + 1000 × 0.01 = 11ms</code>；</li>
+</ul>
+<p><strong>快了约 90 倍</strong>。同机房 RTT 通常是 0.1~0.5ms，跨机房可能 2~30ms，RTT 越大 pipeline 收益越大。</p>
+<h2 id="72-服务端也有收益">7.2 服务端也有收益</h2>
+<p>除了省 RTT，pipeline 在服务端还省了：</p>
+<ol>
+<li><strong>系统调用次数</strong>：N 个命令原本要 N 次 <code>read</code> + N 次 <code>write</code>，pipeline 后可能只要 1~2 次 <code>read</code> 和 1 次 <code>write</code>。系统调用要陷入内核（用户态/内核态切换约 1~2μs），省下来也很可观；</li>
+<li><strong>事件循环轮次</strong>：N 个命令原本要 N 轮 <code>epoll_wait</code> → 处理 → <code>beforeSleep</code> 写回，pipeline 后一轮就处理完，回复合并成一次写。</li>
+</ol>
+<p>这就是第 3 节说的&quot;回复攒起来批量写&quot;的直接受益者。</p>
+<h2 id="73-使用注意">7.3 使用注意</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># redis-cli 的 --pipe 是最快的批量导入方式</span>
+</span></span><span class="line"><span class="cl">cat commands.txt <span class="p">|</span> redis-cli --pipe
+</span></span></code></pre></div><ol>
+<li><strong>不要一次塞太多命令</strong>：客户端要等所有回复，回复全部堆在服务端的输出缓冲区和客户端的接收缓冲区里。一次 10 万条命令、每条回复 1KB，就是 100MB 内存。<strong>建议每批 100~1000 条</strong>；</li>
+<li><strong>Pipeline 不是事务</strong>：命令之间不保证原子性，中间可能插入其他客户端的命令（Redis 只保证每条命令自身原子）。要原子性用 <code>MULTI/EXEC</code> 或 Lua；</li>
+<li><strong>Pipeline 里的命令不能有依赖</strong>：因为所有命令一次发出，无法根据前一条的结果决定下一条。有依赖就用 Lua；</li>
+<li><strong>集群模式下要按节点分组</strong>：跨节点的命令不能放在同一个 pipeline 里，成熟客户端（go-redis、Lettuce）会自动按 slot 分组并行发送；</li>
+<li><strong>不要在 pipeline 里放阻塞命令</strong>（<code>BLPOP</code> 等），会把整个 pipeline 卡住。</li>
+</ol>
+<h2 id="74-pipeline--事务--lua--批量命令-的区别">7.4 Pipeline / 事务 / Lua / 批量命令 的区别</h2>
+<table>
+<thead>
+<tr>
+<th>方式</th>
+<th>网络往返</th>
+<th>原子性</th>
+<th>命令间可依赖</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>逐条命令</td>
+<td>N 次</td>
+<td>单命令原子</td>
+<td>是</td>
+<td>最慢</td>
+</tr>
+<tr>
+<td><code>MGET</code>/<code>MSET</code></td>
+<td>1 次</td>
+<td><strong>是</strong></td>
+<td>否</td>
+<td>只适用于同类操作，集群需 hash tag</td>
+</tr>
+<tr>
+<td><strong>Pipeline</strong></td>
+<td>1 次</td>
+<td><strong>否</strong></td>
+<td>否</td>
+<td>纯性能优化</td>
+</tr>
+<tr>
+<td><strong>MULTI/EXEC</strong></td>
+<td>1~2 次</td>
+<td><strong>是</strong>（不隔离失败）</td>
+<td>否（WATCH 除外）</td>
+<td>见第 8 篇</td>
+</tr>
+<tr>
+<td><strong>Lua 脚本</strong></td>
+<td>1 次</td>
+<td><strong>是</strong></td>
+<td><strong>是</strong></td>
+<td>最灵活，可含逻辑判断</td>
+</tr>
+<tr>
+<td>Pipeline + MULTI</td>
+<td>1 次</td>
+<td>是</td>
+<td>否</td>
+<td>常见组合</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h1 id="8-高频面试题">8. 高频面试题</h1>
+<p><strong>Q1：Redis 是单线程还是多线程？</strong></p>
+<p>必须分层回答：</p>
+<p><strong>命令执行是单线程的</strong>——一个主线程串行执行所有命令，这保证了单命令的原子性和无锁访问数据结构。</p>
+<p><strong>但 Redis 进程是多线程的</strong>：</p>
+<ul>
+<li><strong>2.4/4.0</strong> 起有 3 个 <strong>bio 后台线程</strong>：AOF 的 <code>fsync</code>、关闭文件描述符、<strong>惰性释放大对象内存</strong>（<code>UNLINK</code>、<code>FLUSHALL ASYNC</code>、lazyfree 系列配置）；</li>
+<li><strong>6.0</strong> 引入<strong>多线程 IO</strong>：多个线程并行做「读 socket + 解析 RESP」和「写回 socket」，但<strong>解析出的命令仍然交回主线程串行执行</strong>；</li>
+<li><strong>RDB/AOF 重写</strong>是 <code>fork</code> 出的<strong>子进程</strong>（不是线程）；</li>
+<li>jemalloc 还有自己的后台 purge 线程。</li>
+</ul>
+<p>一句话总结：<strong>IO 可以多线程，命令执行永远单线程。</strong></p>
+<p><strong>Q2：Redis 6.0 的多线程解决了什么问题？没解决什么问题？</strong></p>
+<p><strong>解决的</strong>：网络 IO 和协议解析的 CPU 开销。这部分占单个命令总耗时的约 80%（读+解析 40%，组装+写 40%，执行只占 20%），且天然可并行（不同连接的数据互不相干）。官方压测 <code>GET</code>/<code>SET</code> 场景开 4 线程吞吐约提升 2 倍。</p>
+<p><strong>没解决的</strong>：</p>
+<ol>
+<li><strong>大 key 阻塞</strong>：<code>HGETALL</code> 一个百万字段的 hash，慢在&quot;执行&quot;阶段，仍是主线程串行做，多线程毫无帮助；</li>
+<li><strong>慢命令阻塞</strong>：<code>KEYS *</code>、<code>SINTERSTORE</code> 大集合、Lua 死循环，同理；</li>
+<li><strong>fork 阻塞</strong>：RDB/AOF 重写的 fork 依然会卡住主线程；</li>
+<li><strong>原子性没有变化</strong>（这其实是好事，保持了兼容）。</li>
+</ol>
+<p><strong>配置注意</strong>：<code>io-threads</code> 建议设为核心数的 1/2~3/4 且<strong>不超过 8</strong>（超过 8 收益极小，因为主线程的串行部分成为瓶颈）；<code>io-threads-do-reads</code> 默认 <code>no</code> 需要显式开启；开启后因为 IO 线程有自旋等待，<strong>低负载时 CPU 使用率基线会上升</strong>。</p>
+<p><strong>Q3：什么是 IO 多路复用？select、poll、epoll 的区别？</strong></p>
+<p><strong>IO 多路复用</strong>：用一个线程同时监视多个文件描述符，由内核告知哪些 fd &ldquo;就绪&rdquo;，线程只处理就绪的那些。&ldquo;多路&quot;指多个 socket，&ldquo;复用&quot;指复用一个线程。它是单线程能服务上万连接的基础。</p>
+<p><strong>三者区别</strong>：</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>select</th>
+<th>poll</th>
+<th>epoll</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>fd 上限</td>
+<td>1024（编译期常量）</td>
+<td>无</td>
+<td>无</td>
+</tr>
+<tr>
+<td>每次调用传全量 fd</td>
+<td>是（用户态↔内核态全量拷贝）</td>
+<td>是</td>
+<td><strong>否</strong>（<code>epoll_ctl</code> 注册一次）</td>
+</tr>
+<tr>
+<td>找就绪 fd</td>
+<td>O(N) 遍历</td>
+<td>O(N)</td>
+<td><strong>O(1)</strong> 读就绪链表</td>
+</tr>
+<tr>
+<td>内核数据结构</td>
+<td>位图</td>
+<td>数组</td>
+<td><strong>红黑树 + 就绪链表</strong></td>
+</tr>
+<tr>
+<td>触发模式</td>
+<td>LT</td>
+<td>LT</td>
+<td><strong>LT + ET</strong></td>
+</tr>
+<tr>
+<td>平台</td>
+<td>全平台</td>
+<td>POSIX</td>
+<td>仅 Linux</td>
+</tr>
+</tbody>
+</table>
+<p><strong>epoll 快的两个根本原因</strong>：</p>
+<ol>
+<li><strong>fd 只注册一次</strong>，避免了 select/poll 每次调用都要把全部 fd 从用户态拷到内核态（1 万个 fd 每次都拷，开销巨大）；</li>
+<li><strong>回调而非轮询</strong>：内核给每个 fd 注册回调，数据到达时<strong>主动把 fd 加入就绪链表</strong>，<code>epoll_wait</code> 只看链表，不遍历所有 fd。</li>
+</ol>
+<p><strong>Q4：Redis 用的是水平触发还是边缘触发？为什么？</strong></p>
+<p><strong>水平触发（LT）</strong>。</p>
+<ul>
+<li><strong>LT</strong>：只要 fd 上还有未读数据就<strong>持续通知</strong>，可以一次只读一部分；</li>
+<li><strong>ET</strong>：只在状态变化时通知<strong>一次</strong>，必须循环 <code>read</code> 到 <code>EAGAIN</code>，否则剩余数据永远收不到通知。</li>
+</ul>
+<p>Redis 选 LT 的原因：</p>
+<ol>
+<li><strong>代码简单可靠</strong>：<code>readQueryFromClient</code> 每次读固定大小（16KB），读不完下轮再读，不用写循环读逻辑，也不会因为漏读导致连接&quot;假死&rdquo;；</li>
+<li><strong>公平性更好</strong>：ET 模式必须一次把某个连接的数据读干，如果某客户端发了个 100MB 的请求，主线程就要一直服务它，其他连接被饿死。LT 天然把大请求切成多轮处理，各连接更公平；</li>
+<li>ET 的性能优势在 Redis 场景下并不明显（Redis 的请求通常很小，一次 read 就读完了）。</li>
+</ol>
+<p><strong>Q5：为什么 Redis 单线程还这么快？</strong></p>
+<p>（第 1 篇讲过，这里给面向本篇的深化版）</p>
+<ol>
+<li><strong>纯内存操作</strong>：一次哈希查找几十纳秒，比磁盘快 3~5 个数量级；</li>
+<li><strong>IO 多路复用（epoll）+ Reactor 事件模型</strong>：单线程高效管理上万连接，事件驱动无空转；</li>
+<li><strong>单线程免去锁和上下文切换</strong>：没有加锁开销、没有线程切换（一次切换几微秒）、没有 CPU 缓存失效；</li>
+<li><strong>高效的数据结构与多编码</strong>：小集合用连续内存的 listpack/intset（<strong>CPU 缓存友好</strong>，这点常被忽略），大集合用 hashtable/skiplist 保复杂度；</li>
+<li><strong>精细的工程优化</strong>：SDS 预分配减少 realloc、共享整数对象、回复批量写回减少系统调用、渐进式 rehash 避免长阻塞、<code>server.unixtime</code> 缓存时间避免频繁系统调用。</li>
+</ol>
+<p>前提：<strong>瓶颈是内存和网络带宽，不是 CPU</strong>。</p>
+<p><strong>Q6：<code>BLPOP</code> 阻塞时，Redis 主线程在干什么？</strong></p>
+<p>主线程在<strong>正常服务其他客户端</strong>，完全不受影响。机制是：</p>
+<ol>
+<li><code>BLPOP</code> 发现 list 为空，Redis 把该 client 标记为 <code>CLIENT_BLOCKED</code>，加入 <code>server.blocking_keys[key]</code> 这个字典对应的链表里，然后<strong>主线程立即返回事件循环</strong>；</li>
+<li>另一个客户端 <code>LPUSH</code> 该 key，命令执行完后调用 <code>signalKeyAsReady()</code>，把 key 加入 <code>server.ready_keys</code>；</li>
+<li>本轮事件处理完毕，进入下一轮循环的 <strong><code>beforeSleep</code></strong>；</li>
+<li><code>handleClientsBlockedOnKeys()</code> 遍历 <code>ready_keys</code>，<strong>按客户端阻塞的先后顺序（FIFO）</strong> 唤醒并发送数据。</li>
+</ol>
+<p>所以阻塞的是<strong>客户端连接</strong>，不是服务端线程。</p>
+<p><strong>但要注意两个实际影响</strong>：</p>
+<ol>
+<li><strong>阻塞的连接不能复用</strong>——连接池里的连接被长期占用会耗尽池，客户端必须为阻塞消费开独立连接；</li>
+<li><strong>事务里的 <code>BLPOP</code> 不阻塞</strong>——<code>MULTI/EXEC</code> 中执行 <code>BLPOP</code>，列表为空时直接返回 nil（因为事务必须原子快速完成，不能挂起）。</li>
+</ol>
+<p><strong>Q7：<code>beforeSleep</code> 做了哪些事？为什么重要？</strong></p>
+<p><code>beforeSleep</code> 是每轮事件循环进入 <code>epoll_wait</code> <strong>之前</strong>执行的钩子，挂载了多个关键机制：</p>
+<ol>
+<li><strong>唤醒阻塞客户端</strong>（<code>handleClientsBlockedOnKeys</code>）：处理 <code>BLPOP</code>/<code>BRPOP</code>/<code>BLMOVE</code>/<code>XREAD BLOCK</code>/<code>WAIT</code> 等；</li>
+<li><strong>AOF 缓冲区刷盘</strong>（<code>flushAppendOnlyFile</code>）：把 <code>aof_buf</code> 的内容 <code>write</code> 到 AOF 文件。这就是为什么 <code>appendfsync everysec</code> 的&quot;每秒&quot;是靠事件循环驱动的；</li>
+<li><strong>把回复写回 socket</strong>（<code>handleClientsWithPendingWritesUsingThreads</code>）：命令执行时回复只放进 client 的缓冲区，到这里才统一 <code>write</code>。这让同一轮里的多个回复能<strong>合并成一次系统调用</strong>，是 pipeline 高效的服务端原因；</li>
+<li><strong>快速过期检查</strong>（<code>activeExpireCycle(FAST)</code>，最多 1ms）；</li>
+<li>释放待关闭的客户端、处理集群前置任务、给从节点发 ACK 请求等。</li>
+</ol>
+<p>理解它的重要性在于：很多&quot;Redis 什么时候做 X&quot;的问题，答案都是&quot;在 beforeSleep 里&rdquo;。</p>
+<p><strong>Q8：RESP 协议是什么样的？为什么说它二进制安全？</strong></p>
+<p>RESP 是基于<strong>文本行</strong>的协议，每部分以 <code>\r\n</code> 结尾，<strong>首字节表示类型</strong>：<code>+</code> 简单字符串、<code>-</code> 错误、<code>:</code> 整数、<code>$</code> 批量字符串、<code>*</code> 数组。</p>
+<p><strong>客户端发的命令统一编码成&quot;批量字符串数组&quot;</strong>：</p>
+<pre tabindex="0"><code>SET name tom  →  *3\r\n$3\r\nSET\r\n$4\r\nname\r\n$3\r\ntom\r\n
+</code></pre><p><strong>二进制安全的原因</strong>：<code>$</code> 类型<strong>先显式声明长度再给内容</strong>（<code>$4\r\nname\r\n</code>），解析器按长度精确读取字节，不依赖任何分隔符或结束符。所以参数里可以包含空格、换行、<code>\0</code>、任意二进制数据（图片、protobuf），都不会破坏协议解析。</p>
+<p>对比：如果协议是&quot;空格分隔的纯文本&quot;（inline 命令那样），value 里有空格就歧义了。</p>
+<p><strong>Q9：RESP3 相比 RESP2 有什么改进？</strong></p>
+<p>RESP2 的核心问题是<strong>类型信息不足</strong>：<code>HGETALL</code> 返回扁平数组（客户端必须硬编码知道要两两配对成 map）、浮点数用字符串表示、布尔和整数分不清。每个客户端库都要为几百个命令硬编码返回值转换逻辑。</p>
+<p>RESP3（6.0+）新增：<code>_</code> Null（统一，不再有 <code>$-1</code>/<code>*-1</code> 两种）、<code>#</code> Boolean、<code>,</code> Double、<code>(</code> Big Number、<code>%</code> <strong>Map</strong>、<code>~</code> <strong>Set</strong>、<code>=</code> Verbatim String、<code>!</code> Blob Error、<code>|</code> Attribute、<code>&gt;</code> <strong>Push</strong>。</p>
+<p><strong>最重要的实际价值是 <code>&gt;</code> Push 类型</strong>：</p>
+<ol>
+<li><strong>RESP2 里订阅了 pub/sub 的连接不能再发普通命令</strong>（客户端无法区分&quot;服务端主动推的消息&quot;和&quot;命令的回复&quot;）。RESP3 明确标识推送，所以一个连接可以既订阅又执行命令；</li>
+<li><strong>让「客户端缓存（Client-side Caching / Tracking）」成为可能</strong>：<code>CLIENT TRACKING ON</code> 后，服务端能在 key 被修改时主动推 <code>invalidate</code> 通知，客户端据此失效本地缓存。这是 6.0 的重要新能力，能把热点 key 的读请求彻底挡在应用本地。</li>
+</ol>
+<p>协商方式：连接后发 <code>HELLO 3</code>；不发就默认 RESP2，<strong>完全向后兼容</strong>。</p>
+<p><strong>Q10：客户端输出缓冲区溢出会怎样？怎么排查？</strong></p>
+<p>Redis 用 <code>client-output-buffer-limit &lt;class&gt; &lt;hard&gt; &lt;soft&gt; &lt;soft-seconds&gt;</code> 控制：</p>
+<ul>
+<li><strong>hard limit</strong>：一超过立即<strong>关闭连接</strong>；</li>
+<li><strong>soft limit + seconds</strong>：持续超过 soft 达到指定秒数才关闭。</li>
+</ul>
+<p>三种 class 的默认值：<code>normal 0 0 0</code>（不限）、<code>replica 256mb 64mb 60</code>、<code>pubsub 32mb 8mb 60</code>。</p>
+<p><strong>经典事故：复制风暴</strong>。从节点因为网络慢或正在加载 RDB，导致主节点上它的输出缓冲区堆积超过 256MB → 主节点断开它 → 从节点重连 → 因为 offset 已经不在 backlog 里，触发<strong>全量同步</strong> → 主节点又产生大量输出 → 再次超限 → <strong>无限循环</strong>，主节点 CPU 和内存被反复的 bgsave 拖垮。</p>
+<p><strong>排查手段</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">CLIENT LIST                                     <span class="c1"># 看 omem（输出缓冲内存）、oll（链表节点数）</span>
+</span></span><span class="line"><span class="cl">INFO clients                                    <span class="c1"># client_recent_max_output_buffer</span>
+</span></span><span class="line"><span class="cl">INFO stats                                       <span class="c1"># client_output_buffer_limit_disconnections（被踢的次数）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 日志里搜 &#34;scheduled to be closed ASAP for overcoming of output buffer limits&#34;</span>
+</span></span></code></pre></div><p><strong>根因通常是</strong>：大 key 的全量读取（<code>HGETALL</code>/<code>LRANGE 0 -1</code>）、<code>MONITOR</code> 长期开着、pub/sub 消费者太慢、从节点同步慢。</p>
+<p><strong>Q11：Redis 的哪些操作会阻塞主线程？</strong></p>
+<p>按类别记：</p>
+<p><strong>（1）O(N) 命令</strong>：<code>KEYS *</code>、<code>HGETALL</code>/<code>SMEMBERS</code>/<code>LRANGE 0 -1</code> 大集合、<code>SINTERSTORE</code> 等集合运算（O(N*M)）、<code>SORT</code> 大集合、<code>FLUSHALL</code>/<code>FLUSHDB</code>（不带 ASYNC）、<code>ZUNIONSTORE</code>。</p>
+<p><strong>（2）删除大 key</strong>：<code>DEL</code> 一个千万级集合要同步释放大量内存，可能阻塞数秒。用 <code>UNLINK</code> + <code>lazyfree-*</code> 配置。</p>
+<p><strong>（3）持久化相关</strong>：</p>
+<ul>
+<li><strong>fork</strong>：内存每 GB 约 20~100ms（复制页表），开了 THP 会更糟；</li>
+<li><code>appendfsync always</code>：每条写命令都等磁盘 fsync；</li>
+<li>磁盘 IO 打满时 AOF 的 <code>write</code> 也会阻塞（Redis 有个专门的检测：<code>aof_delayed_fsync</code> 计数器）；</li>
+<li>AOF 重写期间如果 <code>no-appendfsync-on-rewrite no</code>，主线程的 fsync 会和重写抢 IO。</li>
+</ul>
+<p><strong>（4）Lua 脚本</strong>：脚本执行期间 Redis 完全不响应其他命令（脚本是原子的）。超过 <code>busy-reply-threshold</code>（默认 5 秒）后其他客户端会收到 <code>BUSY</code> 错误，此时只能 <code>SCRIPT KILL</code>（如果脚本没写操作）或 <code>SHUTDOWN NOSAVE</code>。</p>
+<p><strong>（5）系统层面</strong>：内存 swap（延迟从 μs 恶化到 ms）、CPU 竞争、numa 跨节点内存访问。</p>
+<p><strong>（6）复制相关</strong>：从节点加载 RDB 期间不响应请求（<code>replica-serve-stale-data no</code> 时会直接报错）；主节点 <code>bgsave</code> 时的 COW 内存压力。</p>
+<p><strong>Q12：Pipeline 和 MULTI/EXEC 有什么区别？</strong></p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Pipeline</th>
+<th>MULTI/EXEC</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>本质</td>
+<td><strong>客户端</strong>的批量发送技巧</td>
+<td><strong>服务端</strong>的事务机制</td>
+</tr>
+<tr>
+<td>原子性</td>
+<td><strong>无</strong>，中间可能插入其他客户端的命令</td>
+<td><strong>有</strong>，<code>EXEC</code> 时所有命令连续执行不被打断</td>
+</tr>
+<tr>
+<td>命令何时执行</td>
+<td>服务端收到就逐条执行</td>
+<td>先入队，<code>EXEC</code> 时才执行</td>
+</tr>
+<tr>
+<td>服务端内存</td>
+<td>只占输入/输出缓冲区</td>
+<td>命令要在服务端队列里暂存</td>
+</tr>
+<tr>
+<td>失败处理</td>
+<td>各命令独立，互不影响</td>
+<td>语法错误整个事务不执行；运行时错误其他命令继续执行（<strong>不回滚</strong>）</td>
+</tr>
+<tr>
+<td>网络往返</td>
+<td>1 次</td>
+<td>1~2 次（可以放进 pipeline 一起发）</td>
+</tr>
+<tr>
+<td>目的</td>
+<td><strong>性能</strong>（省 RTT）</td>
+<td><strong>原子性</strong></td>
+</tr>
+</tbody>
+</table>
+<p>两者常组合使用：把 <code>MULTI ... EXEC</code> 整个塞进一个 pipeline 里发送，既原子又只用一次 RTT。</p>
+<p><strong>Q13：为什么说&quot;Redis 用多实例利用多核&quot;比&quot;给 Redis 加多线程&quot;更好？</strong></p>
+<p>多实例的优势：</p>
+<ol>
+<li><strong>保持单线程的所有好处</strong>：无锁、天然原子、代码简单、无并发 bug；</li>
+<li><strong>故障隔离</strong>：一个实例挂了只影响 1/N 的数据，而多线程单实例挂了全挂；</li>
+<li><strong>可以绑核</strong>：用 <code>taskset</code> 把每个实例绑到独立 CPU 核心，避免线程迁移和 NUMA 跨节点访问；</li>
+<li><strong>持久化压力分散</strong>：每个实例的数据量小，fork 更快、RDB 更小、AOF 重写更轻；</li>
+<li><strong>天然的扩展路径</strong>：多实例 + Cluster 可以横向扩到多机，多线程只能纵向扩到单机核数上限。</li>
+</ol>
+<p>代价：运维复杂度上升（要管理 N 个实例、N 份配置）、跨实例操作受限（不能跨 slot 事务）、客户端要支持集群。</p>
+<p>这也解释了 Redis 6.0 为什么只把<strong>网络 IO</strong> 多线程化而坚决不动命令执行——它想要 IO 并行的收益，但不愿意放弃单线程执行的任何一条好处。</p>
+<hr>
+<h1 id="小结">小结</h1>
+<ul>
+<li><strong>&ldquo;Redis 单线程&quot;精确指命令执行单线程</strong>；进程里还有 3 个 bio 线程（AOF fsync、关 fd、惰性释放内存）、6.0 的 IO 线程、fork 出的 RDB/AOF 子进程。</li>
+<li>选单线程的理由：<strong>瓶颈在内存和网络不在 CPU</strong>、避免锁的开销与复杂度、<strong>单命令天然原子</strong>、代码简单可靠、多核可用多实例弥补。</li>
+<li>代价是<strong>任何慢操作都阻塞全部请求</strong>——这是&quot;危险命令表&quot;存在的根本原因。</li>
+<li><strong>IO 多路复用</strong>让一个线程管上万连接；<strong>epoll 快在&quot;fd 注册一次不用重复拷贝&quot;和&quot;回调机制维护就绪链表（O(1)）&rdquo;</strong>；Redis 用<strong>水平触发（LT）</strong>，因为代码简单且各连接更公平。</li>
+<li>Redis 自研 <strong>ae 事件库</strong>（约 1000 行），编译期按平台选 <code>epoll</code>/<code>kqueue</code>/<code>evport</code>/<code>select</code>；<code>INFO server</code> 的 <code>multiplexing_api</code> 可查。</li>
+<li>事件分<strong>文件事件</strong>（accept/read/write）和<strong>时间事件</strong>（<code>serverCron</code>，默认 <code>hz 10</code> 即每 100ms 一次，负责过期删除、rehash 推进、持久化检查、复制与集群定时任务）。</li>
+<li><strong><code>beforeSleep</code> 是关键挂载点</strong>：唤醒阻塞客户端、AOF 刷盘、<strong>批量写回所有回复</strong>、快速过期检查。回复&quot;攒起来批量写&quot;是 pipeline 快的服务端原因。</li>
+<li><strong>6.0 多线程 IO</strong>：主线程 epoll → 轮询分配给 N 个线程并行 read+解析 → <strong>主线程串行执行命令</strong> → 再分配给 N 个线程并行 write。<code>io-threads</code> 建议核数的 1/2~3/4 且不超过 8；<strong>不解决大 key 阻塞</strong>。</li>
+<li><strong>RESP 协议</strong>：首字节标类型（<code>+-:$*</code>），命令统一编码为批量字符串数组；<code>$</code> 先声明长度所以<strong>二进制安全</strong>。<strong>RESP3</strong>（<code>HELLO 3</code>）新增 Map/Set/Double/Boolean 和最重要的 <code>&gt;</code> <strong>Push</strong> 类型，使订阅连接可执行普通命令、并支撑<strong>客户端缓存（CLIENT TRACKING）</strong>。</li>
+<li>客户端缓冲区：<strong>输入 querybuf</strong>（上限 1GB，超了断连）、<strong>输出 buf（16KB 固定）+ reply 链表（可无限增长）</strong>；<code>client-output-buffer-limit</code> 的 hard/soft 限制；<code>CLIENT LIST</code> 的 <strong><code>omem</code>/<code>oll</code>/<code>qbuf</code>/<code>cmd</code>/<code>name</code></strong> 是排查利器。</li>
+<li><strong>Pipeline</strong> 省的是 RTT（N 次变 1 次）+ 系统调用 + 事件循环轮次，但<strong>不是事务、命令间不能有依赖、每批建议 100~1000 条</strong>；要原子性用 MULTI 或 Lua。</li>
+</ul>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2025-11-01</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/redis/">redis</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/redis/redis_06_%E8%BF%87%E6%9C%9F%E5%88%A0%E9%99%A4%E4%B8%8E%E5%86%85%E5%AD%98%E6%B7%98%E6%B1%B0%E7%AD%96%E7%95%A5/" class="prev" rel="prev" title="Redis-06 过期删除与内存淘汰策略"><i class="fas fa-angle-left fa-fw"></i>Redis-06 过期删除与内存淘汰策略</a>
+            <a href="/posts/redis/redis_04_%E5%BA%95%E5%B1%82%E6%95%B0%E6%8D%AE%E7%BB%93%E6%9E%84%E8%AF%A6%E8%A7%A3/" class="next" rel="next" title="Redis-04 底层数据结构详解">Redis-04 底层数据结构详解<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2025-11-01T14:30:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Redis-05 单线程模型与网络IO"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

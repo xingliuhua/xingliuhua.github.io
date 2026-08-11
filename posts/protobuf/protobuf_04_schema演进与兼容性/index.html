@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>Protobuf-04 schema 演进与兼容性：哪些改动会炸 - xingliuhua博客</title><meta name="Description" content="Protobuf schema 演进指南：wire/JSON/生成代码三层兼容性、安全与危险改动完整清单、删除字段与 reserved 的正确流程、滚动升级的部署顺序、未知字段透传的陷阱，以及用 buf breaking 在 CI 里机器化拦截破坏性变更"><meta property="og:title" content="Protobuf-04 schema 演进与兼容性：哪些改动会炸" />
+<meta property="og:description" content="Protobuf schema 演进指南：wire/JSON/生成代码三层兼容性、安全与危险改动完整清单、删除字段与 reserved 的正确流程、滚动升级的部署顺序、未知字段透传的陷阱，以及用 buf breaking 在 CI 里机器化拦截破坏性变更" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/protobuf/protobuf_04_schema%E6%BC%94%E8%BF%9B%E4%B8%8E%E5%85%BC%E5%AE%B9%E6%80%A7/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2026-07-29T14:30:00+08:00" />
+<meta property="article:modified_time" content="2026-07-29T14:30:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="Protobuf-04 schema 演进与兼容性：哪些改动会炸"/>
+<meta name="twitter:description" content="Protobuf schema 演进指南：wire/JSON/生成代码三层兼容性、安全与危险改动完整清单、删除字段与 reserved 的正确流程、滚动升级的部署顺序、未知字段透传的陷阱，以及用 buf breaking 在 CI 里机器化拦截破坏性变更"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/protobuf/protobuf_04_schema%E6%BC%94%E8%BF%9B%E4%B8%8E%E5%85%BC%E5%AE%B9%E6%80%A7/" /><link rel="prev" href="https://xingliuhua.github.io/posts/protobuf/protobuf_05_WellKnownTypes%E4%B8%8EJSON%E6%98%A0%E5%B0%84/" /><link rel="next" href="https://xingliuhua.github.io/posts/protobuf/protobuf_03_%E5%AD%98%E5%9C%A8%E6%80%A7presence%E8%AF%A6%E8%A7%A3/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Protobuf-04 schema 演进与兼容性：哪些改动会炸",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/protobuf\/protobuf_04_schema%E6%BC%94%E8%BF%9B%E4%B8%8E%E5%85%BC%E5%AE%B9%E6%80%A7\/"
+        },"genre": "posts","keywords": "protobuf","wordcount":  4271 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/protobuf\/protobuf_04_schema%E6%BC%94%E8%BF%9B%E4%B8%8E%E5%85%BC%E5%AE%B9%E6%80%A7\/","datePublished": "2026-07-29T14:30:00+08:00","dateModified": "2026-07-29T14:30:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "Protobuf schema 演进指南：wire/JSON/生成代码三层兼容性、安全与危险改动完整清单、删除字段与 reserved 的正确流程、滚动升级的部署顺序、未知字段透传的陷阱，以及用 buf breaking 在 CI 里机器化拦截破坏性变更"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">Protobuf-04 schema 演进与兼容性：哪些改动会炸</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2026-07-29">2026-07-29</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 4271 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 9 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-两个方向的兼容性">1. 两个方向的兼容性</a></li>
+    <li><a href="#2-兼容性有三层别只看-wire">2. 兼容性有三层，别只看 wire</a></li>
+    <li><a href="#3-安全改动清单">3. 安全改动清单</a>
+      <ol>
+        <li><a href="#31-加字段">3.1 加字段</a></li>
+        <li><a href="#32-删字段必须配-reserved">3.2 删字段（必须配 reserved）</a></li>
+        <li><a href="#33-改字段名">3.3 改字段名</a></li>
+        <li><a href="#34-同-wire-type-内的类型互换">3.4 同 wire type 内的类型互换</a></li>
+        <li><a href="#35-singular--repeated">3.5 singular ↔ repeated</a></li>
+        <li><a href="#36-map--repeated-entry-message">3.6 map ↔ repeated entry message</a></li>
+        <li><a href="#37-optional-字段--单成员-oneof">3.7 optional 字段 ↔ 单成员 oneof</a></li>
+        <li><a href="#38-packed--unpacked">3.8 packed ↔ unpacked</a></li>
+        <li><a href="#39-加枚举值">3.9 加枚举值</a></li>
+      </ol>
+    </li>
+    <li><a href="#4-危险改动清单">4. 危险改动清单</a></li>
+    <li><a href="#5-未知字段透传一个容易漏的陷阱">5. 未知字段透传：一个容易漏的陷阱</a></li>
+    <li><a href="#6-滚动升级的部署顺序">6. 滚动升级的部署顺序</a></li>
+    <li><a href="#7-什么时候该开-v2">7. 什么时候该开 v2</a></li>
+    <li><a href="#8-用-buf-breaking-机器化拦截">8. 用 buf breaking 机器化拦截</a></li>
+    <li><a href="#9-检查清单">9. 检查清单</a></li>
+    <li><a href="#10-小结">10. 小结</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><blockquote>
+<p>本文是 Protobuf 系列的第 4 篇，也是我认为<strong>最值得读</strong>的一篇。</p>
+<p>语法写错了编译器会拦你；但 schema 改错了，编译器和测试都不会报警——它会在半年后的某个滚动发布窗口里，以「某个字段莫名变成 0」的形式爆出来。这一篇就是那份清单。</p>
+</blockquote>
+<h1 id="1-两个方向的兼容性">1. 两个方向的兼容性</h1>
+<p>先把术语对齐，很多讨论是被这两个词搞乱的：</p>
+<ul>
+<li><strong>向后兼容（backward compatible）</strong>：<strong>新</strong>代码能读<strong>旧</strong>数据。</li>
+<li><strong>向前兼容（forward compatible）</strong>：<strong>旧</strong>代码能读<strong>新</strong>数据。</li>
+</ul>
+<p>Protobuf 难得的地方在于<strong>默认同时提供两者</strong>，而这个能力完全来自<a href="https://xingliuhua.github.io/posts/protobuf/protobuf_01_wire_format%E7%BC%96%E7%A0%81%E5%8E%9F%E7%90%86/" rel="">第 1 篇</a>讲的一个机制：<strong>tag 里带着 wire type，所以解析器遇到不认识的字段号也知道该跳过多少字节</strong>。</p>
+<ul>
+<li>旧代码读新数据 → 新字段被当作未知字段跳过（proto3 从 3.5 起还会<strong>保留</strong>它们并在重新序列化时带回）。</li>
+<li>新代码读旧数据 → 缺失的字段取默认值。</li>
+</ul>
+<p><strong>所以「加字段」几乎总是安全的，这是 Protobuf 演进的基本手法：能通过加字段解决的问题，就不要去改老字段。</strong></p>
+<h1 id="2-兼容性有三层别只看-wire">2. 兼容性有三层，别只看 wire</h1>
+<p>这是最容易被忽略的一点。一个改动可能在二进制层面完全安全，却把下游打得编译不过。<strong>兼容性至少要分三层看</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>层</th>
+<th>依赖什么</th>
+<th>什么会破坏它</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>wire format</strong></td>
+<td>字段号 + wire type</td>
+<td>改字段号、跨 wire type 改类型</td>
+</tr>
+<tr>
+<td><strong>JSON / text format</strong></td>
+<td><strong>字段名</strong></td>
+<td>改字段名、改 message 名（影响 <code>Any</code>）、改 package</td>
+</tr>
+<tr>
+<td><strong>生成代码 API</strong></td>
+<td>字段名、类型名、包名</td>
+<td>改任何名字、改字段类型（Go 类型跟着变）</td>
+</tr>
+<tr>
+<td><strong>gRPC 路由</strong></td>
+<td><code>/package.Service/Method</code> 字符串</td>
+<td>改 package / service / rpc 名</td>
+</tr>
+</tbody>
+</table>
+<p>最典型的例子就是<strong>改字段名</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-protobuf" data-lang="protobuf"><span class="line"><span class="cl"><span class="c1">// 改动前
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kt">string</span> <span class="n">user_name</span> <span class="o">=</span> <span class="mi">1</span><span class="p">;</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span><span class="c1">// 改动后
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kt">string</span> <span class="n">username</span> <span class="o">=</span> <span class="mi">1</span><span class="p">;</span><span class="err">
+</span></span></span></code></pre></div><ul>
+<li>wire format：<strong>完全安全</strong>，名字根本不在字节流里。</li>
+<li>JSON：<strong>破坏</strong>。<code>userName</code> 变成 <code>username</code>，所有 JSON 客户端读不到值了（可以用 <code>[json_name = &quot;userName&quot;]</code> 锁住老名字来补救）。</li>
+<li>生成代码：<strong>破坏</strong>。Go 里 <code>msg.UserName</code> 编译失败，下游全部要改。</li>
+</ul>
+<p>第四行也值得单独强调：<strong>gRPC 的方法路径是 <code>/包名.服务名/方法名</code> 这样的字符串</strong>。所以改 package、改 service 名、改 rpc 名，都会让老客户端收到 <code>Unimplemented</code> 错误——即使消息定义一个字节都没动。</p>
+<h1 id="3-安全改动清单">3. 安全改动清单</h1>
+<p>以下改动在 wire format 层面安全（是否影响 JSON / 生成代码另行标注）。</p>
+<h2 id="31-加字段">3.1 加字段</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-protobuf" data-lang="protobuf"><span class="line"><span class="cl"><span class="kd">message</span> <span class="nc">User</span> <span class="p">{</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span>  <span class="kt">string</span> <span class="n">name</span> <span class="o">=</span> <span class="mi">1</span><span class="p">;</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span>  <span class="kt">int32</span> <span class="n">age</span> <span class="o">=</span> <span class="mi">2</span><span class="p">;</span>      <span class="c1">// 新增
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span><span class="err">
+</span></span></span></code></pre></div><p><strong>总是安全</strong>。旧读端跳过它，新读端读旧数据时该字段是默认值。</p>
+<p>⚠️ 但注意：新字段对旧数据来说<strong>永远是零值</strong>，所以不要让新字段承担「必须有值」的语义。另外，如果新字段的零值恰好是个合法业务值，考虑用 <code>optional</code>（见<a href="https://xingliuhua.github.io/posts/protobuf/protobuf_03_%E5%AD%98%E5%9C%A8%E6%80%A7presence%E8%AF%A6%E8%A7%A3/" rel="">第 3 篇</a>）。</p>
+<h2 id="32-删字段必须配-reserved">3.2 删字段（必须配 reserved）</h2>
+<p>安全，<strong>但必须三步走</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-protobuf" data-lang="protobuf"><span class="line"><span class="cl"><span class="kd">message</span> <span class="nc">User</span> <span class="p">{</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span>  <span class="kt">string</span> <span class="n">name</span> <span class="o">=</span> <span class="mi">1</span><span class="p">;</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span>  <span class="c1">// 2 号原本是 int32 age，已删除
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>  <span class="n">reserved</span> <span class="mi">2</span><span class="p">;</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span>  <span class="n">reserved</span> <span class="s">&#34;age&#34;</span><span class="p">;</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span><span class="p">}</span><span class="err">
+</span></span></span></code></pre></div><p>漏掉 <code>reserved</code> 的后果：半年后有人加了 <code>bool age = 2;</code>，旧数据里 2 号的 varint 整数会被读成 bool，或者更糟——<strong>读到别人的数据当成自己的字段</strong>。这类事故排查起来极其痛苦。</p>
+<p>更保守的做法是<strong>先弃用、不删除</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-protobuf" data-lang="protobuf"><span class="line"><span class="cl"><span class="kd">message</span> <span class="nc">User</span> <span class="p">{</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span>  <span class="kt">string</span> <span class="n">name</span> <span class="o">=</span> <span class="mi">1</span><span class="p">;</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span>  <span class="kt">int32</span> <span class="n">age</span> <span class="o">=</span> <span class="mi">2</span> <span class="p">[</span><span class="n">deprecated</span> <span class="o">=</span> <span class="kc">true</span><span class="p">];</span>   <span class="c1">// 生成代码会带弃用标记
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span><span class="err">
+</span></span></span></code></pre></div><p>下游编译时会看到弃用警告，等所有调用方都迁移完了再真正删除。<strong>对外 API 建议一律先 deprecated 一个大版本周期。</strong></p>
+<h2 id="33-改字段名">3.3 改字段名</h2>
+<p>wire 安全，<strong>但破坏 JSON 和生成代码</strong>。见第 2 节。</p>
+<p>如果必须改，且要保住 JSON 契约：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-protobuf" data-lang="protobuf"><span class="line"><span class="cl"><span class="kt">string</span> <span class="n">username</span> <span class="o">=</span> <span class="mi">1</span> <span class="p">[</span><span class="n">json_name</span> <span class="o">=</span> <span class="s">&#34;userName&#34;</span><span class="p">];</span><span class="err">
+</span></span></span></code></pre></div><h2 id="34-同-wire-type-内的类型互换">3.4 同 wire type 内的类型互换</h2>
+<p>这一组的依据就是第 1 篇那张 wire type 表：</p>
+<table>
+<thead>
+<tr>
+<th>可互换的组</th>
+<th>wire type</th>
+<th>注意事项</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>int32</code> <code>int64</code> <code>uint32</code> <code>uint64</code> <code>bool</code> <code>enum</code></td>
+<td>0</td>
+<td><strong>值域截断</strong>：<code>int64</code> 的大值读成 <code>int32</code> 会被砍掉高位，行为等同 C++ 强转</td>
+</tr>
+<tr>
+<td><code>sint32</code> <code>sint64</code></td>
+<td>0</td>
+<td>只能互换，<strong>不能与 <code>int32</code>/<code>int64</code> 换</strong>（ZigZag 层）</td>
+</tr>
+<tr>
+<td><code>fixed32</code> <code>sfixed32</code></td>
+<td>5</td>
+<td></td>
+</tr>
+<tr>
+<td><code>fixed64</code> <code>sfixed64</code></td>
+<td>1</td>
+<td></td>
+</tr>
+<tr>
+<td><code>string</code> <code>bytes</code></td>
+<td>2</td>
+<td><code>bytes</code> → <code>string</code> 要求内容是合法 UTF-8</td>
+</tr>
+<tr>
+<td>嵌套 message ↔ <code>bytes</code></td>
+<td>2</td>
+<td><code>bytes</code> 内容就是该 message 的序列化结果</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>sint32</code> 与 <code>int32</code> 不兼容是最阴的一条</strong>：wire type 相同，解析不报错，但因为多了一层 ZigZag，会<strong>静默读出完全错误的数值</strong>（同样的字节，<code>int32</code> 读到 2，<code>sint32</code> 读到 1）。</p>
+<h2 id="35-singular--repeated">3.5 singular ↔ repeated</h2>
+<ul>
+<li><strong><code>string</code> / <code>bytes</code> / message：安全</strong>。旧读端读到多个值时取最后一个（message 则递归合并）。</li>
+<li><strong>数值类型（含 <code>bool</code>、<code>enum</code>）：不安全</strong>。proto3 的数值型 repeated 默认 packed（wire type 2），而 singular 数值是 wire type 0，两者对不上，解析直接失败。</li>
+</ul>
+<h2 id="36-map--repeated-entry-message">3.6 map ↔ repeated entry message</h2>
+<p>安全，因为 map 本来就是这个的语法糖：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-protobuf" data-lang="protobuf"><span class="line"><span class="cl"><span class="n">map</span><span class="p">&lt;</span><span class="kt">string</span><span class="p">,</span> <span class="n">Project</span><span class="p">&gt;</span> <span class="n">projects</span> <span class="o">=</span> <span class="mi">3</span><span class="p">;</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span><span class="c1">// 等价于
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kd">message</span> <span class="nc">ProjectsEntry</span> <span class="p">{</span> <span class="kt">string</span> <span class="n">key</span> <span class="o">=</span> <span class="mi">1</span><span class="p">;</span> <span class="n">Project</span> <span class="n">value</span> <span class="o">=</span> <span class="mi">2</span><span class="p">;</span> <span class="p">}</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span><span class="k">repeated</span> <span class="n">ProjectsEntry</span> <span class="n">projects</span> <span class="o">=</span> <span class="mi">3</span><span class="p">;</span><span class="err">
+</span></span></span></code></pre></div><h2 id="37-optional-字段--单成员-oneof">3.7 optional 字段 ↔ 单成员 oneof</h2>
+<p>安全。因为 proto3 的 <code>optional</code> <strong>本身就是用合成 oneof 实现的</strong>（第 3 篇第 4 节），wire 层面二者完全一致。</p>
+<h2 id="38-packed--unpacked">3.8 packed ↔ unpacked</h2>
+<p>对 repeated 数值字段切换 <code>[packed = true]</code>，在 <strong>protobuf 2.3.0 及以后是安全的</strong>——解析器对可打包字段两种格式都接受。这一条经常被误传成不安全，注意它和 3.5 节的 singular↔repeated 是两件事。</p>
+<h2 id="39-加枚举值">3.9 加枚举值</h2>
+<ul>
+<li><strong>proto3（open enum）：安全</strong>。旧读端会把不认识的值原样保留在字段里。</li>
+<li><strong>proto2（closed enum）：有陷阱</strong>。未知值会落进 unknown fields，读出来是默认值，中间节点转发时可能丢失。详见<a href="https://xingliuhua.github.io/posts/protobuf/protobuf_07_proto2%E4%B8%8Eeditions/" rel="">第 7 篇</a>。</li>
+</ul>
+<p>无论哪种，<strong>消费端都必须写 default 分支</strong>。</p>
+<h1 id="4-危险改动清单">4. 危险改动清单</h1>
+<p>以下改动会破坏兼容性。如果你必须做，跳到第 7 节看版本化策略。</p>
+<table>
+<thead>
+<tr>
+<th>改动</th>
+<th>后果</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>改字段号</strong></td>
+<td>致命。旧数据的该字段变成未知字段（静默丢失），新数据在旧端也读不到</td>
+</tr>
+<tr>
+<td><strong>复用已删除的字段号</strong></td>
+<td>致命且危险。旧数据的残留值会被解读成新字段的值</td>
+</tr>
+<tr>
+<td><strong>跨 wire type 改类型</strong>（如 <code>int32</code> → <code>string</code>、<code>int32</code> → <code>fixed32</code>）</td>
+<td>解析失败或读出垃圾值</td>
+</tr>
+<tr>
+<td><strong><code>int32</code> ↔ <code>sint32</code></strong></td>
+<td>不报错，<strong>静默读出错误数值</strong></td>
+</tr>
+<tr>
+<td><strong>数值字段 singular ↔ repeated</strong></td>
+<td>解析失败（packed 差异）</td>
+</tr>
+<tr>
+<td><strong>改枚举值的数字</strong></td>
+<td>等同于改字段号，语义完全错位</td>
+</tr>
+<tr>
+<td><strong>把多个已有字段合并进一个 oneof</strong></td>
+<td>运行时互相清除；旧写端可能同时设置多个，行为未定义</td>
+</tr>
+<tr>
+<td><strong>把 oneof 拆开成独立字段</strong></td>
+<td>同上，反向也不安全</td>
+</tr>
+<tr>
+<td><strong><code>required</code> ↔ <code>optional</code></strong>（proto2）</td>
+<td>一改就有一端拒绝解析整条消息</td>
+</tr>
+<tr>
+<td><strong>加/去 <code>optional</code></strong></td>
+<td>wire 层可解析，但<strong>改变了「零值是否上线」的行为</strong>，语义会漂移</td>
+</tr>
+<tr>
+<td><strong>改 package / service / rpc 名</strong></td>
+<td>gRPC 路由路径变了，老客户端收到 <code>Unimplemented</code></td>
+</tr>
+<tr>
+<td><strong>改 message 名</strong></td>
+<td>wire 安全，但破坏 <code>Any</code> 的 type_url、text format 和生成代码</td>
+</tr>
+<tr>
+<td><strong>把字段移进/移出嵌套 message</strong></td>
+<td>字段号所属的 message 变了，等同于删了再加</td>
+</tr>
+</tbody>
+</table>
+<h1 id="5-未知字段透传一个容易漏的陷阱">5. 未知字段透传：一个容易漏的陷阱</h1>
+<p>proto3 自 3.5 起会保留未知字段，这让「旧版本中间节点透传新字段」成为可能：</p>
+<pre tabindex="0"><code>新版 A ──▶ 旧版 B（不认识 new_field，但原样保留）──▶ 新版 C（读到 new_field）✅
+</code></pre><p><strong>但这个保证会在两个地方失效：</strong></p>
+<p><strong>① 经过 JSON 转换的链路。</strong> JSON 里没有「未知字段」的容身之处：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// proto → JSON：未知字段无法输出，直接丢
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">b</span><span class="p">,</span> <span class="nx">_</span> <span class="o">:=</span> <span class="nx">protojson</span><span class="p">.</span><span class="nf">Marshal</span><span class="p">(</span><span class="nx">msg</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// JSON → proto：默认遇到未知字段直接报错
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">err</span> <span class="o">:=</span> <span class="nx">protojson</span><span class="p">.</span><span class="nf">Unmarshal</span><span class="p">(</span><span class="nx">b</span><span class="p">,</span> <span class="nx">msg</span><span class="p">)</span>                          <span class="c1">// 报错
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">err</span> <span class="p">=</span> <span class="nx">protojson</span><span class="p">.</span><span class="nx">UnmarshalOptions</span><span class="p">{</span><span class="nx">DiscardUnknown</span><span class="p">:</span> <span class="kc">true</span><span class="p">}.</span><span class="nf">Unmarshal</span><span class="p">(</span><span class="nx">b</span><span class="p">,</span> <span class="nx">msg</span><span class="p">)</span>  <span class="c1">// 丢弃
+</span></span></span></code></pre></div><p>所以<strong>任何做 <code>proto → JSON → proto</code> 转码的中间层（包括某些 grpc-gateway 用法、消息总线、审计日志回放）都会静默丢掉未知字段</strong>。如果你的架构里有这类节点，「透传」这个假设就不成立了。</p>
+<p><strong>② 显式丢弃的场景。</strong> 有些库或代码路径会主动 <code>DiscardUnknown</code>，或者手工重建消息（<code>&amp;pb.T{Field: old.Field}</code> 这种逐字段拷贝，未知字段自然没了）。转发消息时<strong>用 <code>proto.Clone</code> 而不是手工重建字段</strong>。</p>
+<h1 id="6-滚动升级的部署顺序">6. 滚动升级的部署顺序</h1>
+<p>改 schema 从来不只是改文件，还包括「按什么顺序发布」。核心原则一句话：</p>
+<blockquote>
+<p><strong>总是先部署读端（消费者），再部署写端（生产者）。</strong></p>
+</blockquote>
+<p>因为「旧读端 + 新数据」这个组合虽然大多安全，但它只保证「不崩」，不保证「行为正确」——旧读端不会处理新字段的业务逻辑。</p>
+<p>具体到几种改动：</p>
+<table>
+<thead>
+<tr>
+<th>改动</th>
+<th>顺序</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>加字段</td>
+<td>① 读端全量升级 → ② 写端开始写新字段</td>
+</tr>
+<tr>
+<td>加枚举值</td>
+<td>① 所有读端确认有 default 分支 → ② 写端开始发新值</td>
+</tr>
+<tr>
+<td>删字段</td>
+<td>① 写端停止写 → ② 等旧数据过期/迁移完 → ③ 读端删除依赖 → ④ schema 里 <code>reserved</code></td>
+</tr>
+<tr>
+<td>改语义（如单位从秒变毫秒）</td>
+<td><strong>别改</strong>。加一个新字段，双写一段时间，再废弃老字段</td>
+</tr>
+</tbody>
+</table>
+<p>最后一条值得展开：<strong>改语义是最危险的一类变更，因为它在所有三层兼容性检查里都是「安全」的</strong>——字段号没变、类型没变、名字没变，任何工具都拦不住你，只有线上数据会错。遇到这种需求，标准做法是：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-protobuf" data-lang="protobuf"><span class="line"><span class="cl"><span class="kd">message</span> <span class="nc">Task</span> <span class="p">{</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span>  <span class="kt">int32</span> <span class="n">timeout</span> <span class="o">=</span> <span class="mi">1</span> <span class="p">[</span><span class="n">deprecated</span> <span class="o">=</span> <span class="kc">true</span><span class="p">];</span>   <span class="c1">// 老字段：秒
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>  <span class="kt">int64</span> <span class="n">timeout_ms</span> <span class="o">=</span> <span class="mi">2</span><span class="p">;</span>                    <span class="c1">// 新字段：毫秒
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span><span class="err">
+</span></span></span></code></pre></div><p>双写一段时间，读端优先读新字段、回退到老字段，等老字段确认没人写了再删。</p>
+<h1 id="7-什么时候该开-v2">7. 什么时候该开 v2</h1>
+<p>如果需求确实要求做破坏性变更，正确答案不是「小心地改」，而是<strong>并行一个新版本</strong>。这就是<a href="https://xingliuhua.github.io/posts/protobuf/protobuf_02_proto3%E8%AF%AD%E6%B3%95%E5%AE%8C%E5%85%A8%E6%8C%87%E5%8D%97/" rel="">第 2 篇</a>建议把版本写进 package 的原因：</p>
+<pre tabindex="0"><code>proto/
+  example/search/v1/search.proto     ← 冻结，继续服务老客户端
+  example/search/v2/search.proto     ← 新语义
+</code></pre><p>因为 package 不同，两套 message 和 service 是完全独立的类型和路由，可以在同一个进程里同时注册、同时提供服务，让客户端自己按节奏迁移。</p>
+<p><strong>判断标准</strong>：如果一个改动会让「某个现存客户端在不改代码的情况下行为出错」，那它就该进 v2，而不是原地改 v1。</p>
+<h1 id="8-用-buf-breaking-机器化拦截">8. 用 buf breaking 机器化拦截</h1>
+<p>上面这些清单，靠 code review 记住是不现实的。<strong>这件事应该交给工具，在 CI 里挡住。</strong></p>
+<p><code>buf</code> 提供 <code>buf breaking</code>，把当前 schema 和一个基线（git 分支、tag、远程仓库）对比，自动报出破坏性变更。</p>
+<p>配置 <code>buf.yaml</code>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-yaml" data-lang="yaml"><span class="line"><span class="cl"><span class="nt">version</span><span class="p">:</span><span class="w"> </span><span class="l">v2</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="nt">modules</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span>- <span class="nt">path</span><span class="p">:</span><span class="w"> </span><span class="l">proto</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="nt">lint</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="nt">use</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span>- <span class="l">STANDARD</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="nt">breaking</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="nt">use</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span>- <span class="l">FILE</span><span class="w">
+</span></span></span></code></pre></div><p>本地检查：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 与 main 分支对比</span>
+</span></span><span class="line"><span class="cl">buf breaking --against <span class="s1">&#39;.git#branch=main&#39;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 与远程仓库对比（proto 在 proto/ 子目录）</span>
+</span></span><span class="line"><span class="cl">buf breaking --against <span class="s1">&#39;https://github.com/org/repo.git#branch=main,subdir=proto&#39;</span>
+</span></span></code></pre></div><p><code>breaking.use</code> 有四个由严到宽的档位，<strong>选哪个取决于你的消费者是谁</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>类别</th>
+<th>检查范围</th>
+<th>适用场景</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>FILE</code></td>
+<td>最严，连生成代码的兼容性都管（改名、挪文件都算破坏）</td>
+<td><strong>默认推荐</strong>。消费者会直接依赖生成代码（同一 monorepo、SDK 分发）</td>
+</tr>
+<tr>
+<td><code>PACKAGE</code></td>
+<td>同上但允许文件间移动定义</td>
+<td>按 package 组织、文件布局常调整</td>
+</tr>
+<tr>
+<td><code>WIRE_JSON</code></td>
+<td>只管 wire + JSON 兼容（允许改 Go 类型名等）</td>
+<td>消费者只通过网络交互，不共享生成代码</td>
+</tr>
+<tr>
+<td><code>WIRE</code></td>
+<td>只管二进制兼容</td>
+<td>纯内部二进制通信，不用 JSON</td>
+</tr>
+</tbody>
+</table>
+<p>CI 里加一步就行（GitHub Actions 示例）：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-yaml" data-lang="yaml"><span class="line"><span class="cl">- <span class="nt">uses</span><span class="p">:</span><span class="w"> </span><span class="l">bufbuild/buf-action@v1</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="nt">with</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">breaking_against</span><span class="p">:</span><span class="w"> </span><span class="s1">&#39;https://github.com/${{ github.repository }}.git#branch=main&#39;</span><span class="w">
+</span></span></span></code></pre></div><p>顺带把 <code>buf lint</code> 也开上——它会强制第 2 篇讲的命名风格、要求 enum 首值是 <code>_UNSPECIFIED</code>、要求 package 带版本号，这些规则本身就在防止后面出现无法演进的设计。</p>
+<blockquote>
+<p>注意 <code>buf breaking</code> 拦不住<strong>语义变更</strong>（第 6 节那个秒变毫秒的例子）。工具能守住结构，语义只能靠人和文档。</p>
+</blockquote>
+<h1 id="9-检查清单">9. 检查清单</h1>
+<p>改 <code>.proto</code> 前问自己五个问题：</p>
+<ol>
+<li>这个需求能不能<strong>只靠加字段</strong>解决？（能就别改老字段）</li>
+<li>我改的是<strong>字段号</strong>吗？（是 → 停）</li>
+<li>我改的东西<strong>出现在字节流里</strong>吗？字段名不在，字段号在。<strong>但字段名出现在 JSON、生成代码和 gRPC 路由里。</strong></li>
+<li>消费者是<strong>跨团队/跨版本</strong>的吗？是则按 <code>FILE</code> 档要求自己，并走 deprecated 流程。</li>
+<li>语义变了吗？（变了 → 加新字段或开 v2，别原地改）</li>
+</ol>
+<h1 id="10-小结">10. 小结</h1>
+<ul>
+<li>Protobuf 的双向兼容能力来自「tag 带 wire type，未知字段可跳过并保留」，因此<strong>加字段是万能手法</strong>。</li>
+<li>兼容性有四层：wire format（看字段号 + wire type）、JSON/text（看字段名）、生成代码 API（看所有名字）、gRPC 路由（看 <code>包.服务/方法</code>）。<strong>改名 wire 安全但会打断另外三层。</strong></li>
+<li>同 wire type 内的类型大多可换，但 <strong><code>sint</code> 与 <code>int</code> 不能换</strong>（静默错值），<strong>数值的 singular ↔ repeated 不能换</strong>（packed）。</li>
+<li>删字段必须 <code>reserved</code> 编号和名字；对外 API 先 <code>deprecated</code> 一个周期。</li>
+<li>未知字段透传会被 <strong>JSON 转码环节</strong>和<strong>手工重建消息</strong>破坏，转发用 <code>proto.Clone</code>。</li>
+<li>发布顺序永远是<strong>先读端后写端</strong>；语义变更不要原地改，加新字段或开 v2。</li>
+<li>把上述规则交给 <code>buf breaking</code> 在 CI 里拦，人只负责工具拦不住的语义部分。</li>
+</ul>
+<p>下一篇讲 Well-Known Types 和官方 JSON 映射规则。</p>
+<hr>
+<p><strong>系列目录</strong></p>
+<ol>
+<li><a href="https://xingliuhua.github.io/posts/protobuf/protobuf_01_wire_format%E7%BC%96%E7%A0%81%E5%8E%9F%E7%90%86/" rel="">从 wire format 开始：一个字节一个字节读懂编码</a></li>
+<li><a href="https://xingliuhua.github.io/posts/protobuf/protobuf_02_proto3%E8%AF%AD%E6%B3%95%E5%AE%8C%E5%85%A8%E6%8C%87%E5%8D%97/" rel="">proto3 语法完全指南</a></li>
+<li><a href="https://xingliuhua.github.io/posts/protobuf/protobuf_03_%E5%AD%98%E5%9C%A8%E6%80%A7presence%E8%AF%A6%E8%A7%A3/" rel="">存在性 presence：Protobuf 最难的一章</a></li>
+<li><strong>schema 演进与兼容性：哪些改动会炸</strong>（本篇）</li>
+<li><a href="https://xingliuhua.github.io/posts/protobuf/protobuf_05_WellKnownTypes%E4%B8%8EJSON%E6%98%A0%E5%B0%84/" rel="">Well-Known Types 与 JSON 映射</a></li>
+<li><a href="https://xingliuhua.github.io/posts/protobuf/protobuf_06_Go%E5%B7%A5%E7%A8%8B%E5%8C%96%E5%AE%9E%E8%B7%B5/" rel="">Go 工程化实践：buf 工具链与 API 用法</a></li>
+<li><a href="https://xingliuhua.github.io/posts/protobuf/protobuf_07_proto2%E4%B8%8Eeditions/" rel="">proto2 与 Protobuf Editions</a></li>
+</ol>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2026-07-29</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/protobuf/">protobuf</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/protobuf/protobuf_05_WellKnownTypes%E4%B8%8EJSON%E6%98%A0%E5%B0%84/" class="prev" rel="prev" title="Protobuf-05 Well-Known Types 与 JSON 映射"><i class="fas fa-angle-left fa-fw"></i>Protobuf-05 Well-Known Types 与 JSON 映射</a>
+            <a href="/posts/protobuf/protobuf_03_%E5%AD%98%E5%9C%A8%E6%80%A7presence%E8%AF%A6%E8%A7%A3/" class="next" rel="next" title="Protobuf-03 存在性 presence：Protobuf 最难的一章">Protobuf-03 存在性 presence：Protobuf 最难的一章<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2026-07-29T14:30:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Protobuf-04 schema 演进与兼容性：哪些改动会炸"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

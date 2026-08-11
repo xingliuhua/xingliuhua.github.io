@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>Protobuf-03 存在性 presence：Protobuf 最难的一章 - xingliuhua博客</title><meta name="Description" content="深入 Protobuf 的字段存在性：隐式存在性与显式存在性的区别、哪些字段天然有 presence、optional 的 synthetic oneof 实现、wrapper types 与 FieldMask、部分更新场景的正确做法与常见踩坑"><meta property="og:title" content="Protobuf-03 存在性 presence：Protobuf 最难的一章" />
+<meta property="og:description" content="深入 Protobuf 的字段存在性：隐式存在性与显式存在性的区别、哪些字段天然有 presence、optional 的 synthetic oneof 实现、wrapper types 与 FieldMask、部分更新场景的正确做法与常见踩坑" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/protobuf/protobuf_03_%E5%AD%98%E5%9C%A8%E6%80%A7presence%E8%AF%A6%E8%A7%A3/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2026-07-29T15:00:00+08:00" />
+<meta property="article:modified_time" content="2026-07-29T15:00:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="Protobuf-03 存在性 presence：Protobuf 最难的一章"/>
+<meta name="twitter:description" content="深入 Protobuf 的字段存在性：隐式存在性与显式存在性的区别、哪些字段天然有 presence、optional 的 synthetic oneof 实现、wrapper types 与 FieldMask、部分更新场景的正确做法与常见踩坑"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/protobuf/protobuf_03_%E5%AD%98%E5%9C%A8%E6%80%A7presence%E8%AF%A6%E8%A7%A3/" /><link rel="prev" href="https://xingliuhua.github.io/posts/protobuf/protobuf_04_schema%E6%BC%94%E8%BF%9B%E4%B8%8E%E5%85%BC%E5%AE%B9%E6%80%A7/" /><link rel="next" href="https://xingliuhua.github.io/posts/protobuf/protobuf_02_proto3%E8%AF%AD%E6%B3%95%E5%AE%8C%E5%85%A8%E6%8C%87%E5%8D%97/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Protobuf-03 存在性 presence：Protobuf 最难的一章",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/protobuf\/protobuf_03_%E5%AD%98%E5%9C%A8%E6%80%A7presence%E8%AF%A6%E8%A7%A3\/"
+        },"genre": "posts","keywords": "protobuf","wordcount":  3966 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/protobuf\/protobuf_03_%E5%AD%98%E5%9C%A8%E6%80%A7presence%E8%AF%A6%E8%A7%A3\/","datePublished": "2026-07-29T15:00:00+08:00","dateModified": "2026-07-29T15:00:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "深入 Protobuf 的字段存在性：隐式存在性与显式存在性的区别、哪些字段天然有 presence、optional 的 synthetic oneof 实现、wrapper types 与 FieldMask、部分更新场景的正确做法与常见踩坑"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">Protobuf-03 存在性 presence：Protobuf 最难的一章</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2026-07-29">2026-07-29</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 3966 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 8 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-从一个真实的-bug-说起">1. 从一个真实的 bug 说起</a></li>
+    <li><a href="#2-两种存在性模型">2. 两种存在性模型</a></li>
+    <li><a href="#3-proto3-里哪些字段有显式存在性">3. proto3 里哪些字段有显式存在性</a></li>
+    <li><a href="#4-optional-是怎么实现的synthetic-oneof">4. optional 是怎么实现的：synthetic oneof</a></li>
+    <li><a href="#5-go-里怎么用">5. Go 里怎么用</a>
+      <ol>
+        <li><a href="#51-getter-对-nil-是安全的">5.1 getter 对 nil 是安全的</a></li>
+        <li><a href="#52-关于-opaque-api-的演进">5.2 关于 Opaque API 的演进</a></li>
+      </ol>
+    </li>
+    <li><a href="#6-repeated--map-的存在性问题fieldmask">6. repeated / map 的存在性问题：FieldMask</a></li>
+    <li><a href="#7-wrapper-types315-之前的老办法">7. wrapper types：3.15 之前的老办法</a></li>
+    <li><a href="#8-常见踩坑清单">8. 常见踩坑清单</a></li>
+    <li><a href="#9-什么时候该用显式存在性">9. 什么时候该用显式存在性</a></li>
+    <li><a href="#10-小结">10. 小结</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><blockquote>
+<p>本文是 Protobuf 系列的第 3 篇。</p>
+<p>语法看完就能写 <code>.proto</code> 了，但真正在生产上写出 bug 的地方，八成集中在这一章：<strong>「这个字段到底是没传，还是传了个 0？」</strong></p>
+</blockquote>
+<h1 id="1-从一个真实的-bug-说起">1. 从一个真实的 bug 说起</h1>
+<p>有个用户设置接口，proto 长这样：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-protobuf" data-lang="protobuf"><span class="line"><span class="cl"><span class="kd">message</span> <span class="nc">UpdateUserRequest</span> <span class="p">{</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span>  <span class="kt">int64</span> <span class="n">user_id</span> <span class="o">=</span> <span class="mi">1</span><span class="p">;</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span>  <span class="kt">string</span> <span class="n">nickname</span> <span class="o">=</span> <span class="mi">2</span><span class="p">;</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span>  <span class="kt">bool</span> <span class="n">email_notify</span> <span class="o">=</span> <span class="mi">3</span><span class="p">;</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span>  <span class="kt">int32</span> <span class="n">daily_limit</span> <span class="o">=</span> <span class="mi">4</span><span class="p">;</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span><span class="p">}</span><span class="err">
+</span></span></span></code></pre></div><p>服务端实现得很自然：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="p">(</span><span class="nx">s</span> <span class="o">*</span><span class="nx">Server</span><span class="p">)</span> <span class="nf">UpdateUser</span><span class="p">(</span><span class="nx">ctx</span> <span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span> <span class="nx">req</span> <span class="o">*</span><span class="nx">pb</span><span class="p">.</span><span class="nx">UpdateUserRequest</span><span class="p">)</span> <span class="p">(</span><span class="o">*</span><span class="nx">pb</span><span class="p">.</span><span class="nx">User</span><span class="p">,</span> <span class="kt">error</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">u</span><span class="p">,</span> <span class="nx">_</span> <span class="o">:=</span> <span class="nx">s</span><span class="p">.</span><span class="nx">store</span><span class="p">.</span><span class="nf">Get</span><span class="p">(</span><span class="nx">req</span><span class="p">.</span><span class="nx">UserId</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">req</span><span class="p">.</span><span class="nx">Nickname</span> <span class="o">!=</span> <span class="s">&#34;&#34;</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">u</span><span class="p">.</span><span class="nx">Nickname</span> <span class="p">=</span> <span class="nx">req</span><span class="p">.</span><span class="nx">Nickname</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">req</span><span class="p">.</span><span class="nx">EmailNotify</span> <span class="p">{</span>                <span class="c1">// ← 炸弹在这里
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="nx">u</span><span class="p">.</span><span class="nx">EmailNotify</span> <span class="p">=</span> <span class="nx">req</span><span class="p">.</span><span class="nx">EmailNotify</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">req</span><span class="p">.</span><span class="nx">DailyLimit</span> <span class="o">!=</span> <span class="mi">0</span> <span class="p">{</span>            <span class="c1">// ← 还有这里
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="nx">u</span><span class="p">.</span><span class="nx">DailyLimit</span> <span class="p">=</span> <span class="nx">req</span><span class="p">.</span><span class="nx">DailyLimit</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="nx">s</span><span class="p">.</span><span class="nx">store</span><span class="p">.</span><span class="nf">Save</span><span class="p">(</span><span class="nx">u</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>上线后收到两个 bug：</p>
+<ol>
+<li><strong>用户关不掉邮件通知</strong>。客户端传 <code>email_notify = false</code>，服务端的 <code>if req.EmailNotify</code> 判断为假，直接跳过，通知永远关不掉。</li>
+<li><strong>用户没法把每日额度设成 0</strong>（0 表示不限制）。同理，<code>daily_limit = 0</code> 被当成「没传」。</li>
+</ol>
+<p>问题的根源不是代码写得糙，而是<strong>这个 proto 定义根本没有能力表达「没传」</strong>。<code>bool</code> 字段没设置和设成 <code>false</code>，在 proto3 的 singular 语义下、在序列化后的字节流里，<strong>是完全一样的东西</strong>——两者都不出现在字节流中。服务端不可能区分，写多少 <code>if</code> 都没用。</p>
+<p>这就是 presence（存在性）问题。</p>
+<h1 id="2-两种存在性模型">2. 两种存在性模型</h1>
+<p>Protobuf 里字段有两种存在性语义：</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>隐式存在性 <br>implicit presence</th>
+<th>显式存在性 <br>explicit presence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>能否区分「未设置」和「零值」</td>
+<td><strong>不能</strong></td>
+<td><strong>能</strong></td>
+</tr>
+<tr>
+<td>零值时是否序列化</td>
+<td>不序列化</td>
+<td><strong>序列化</strong>（只要被赋过值）</td>
+</tr>
+<tr>
+<td>有无 <code>has</code> 语义</td>
+<td>无</td>
+<td>有</td>
+</tr>
+<tr>
+<td>Go 生成的类型</td>
+<td><code>string</code> / <code>int32</code></td>
+<td><code>*string</code> / <code>*int32</code></td>
+</tr>
+</tbody>
+</table>
+<p>关键在第二行：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// 隐式存在性字段
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">m1</span> <span class="o">:=</span> <span class="o">&amp;</span><span class="nx">pb</span><span class="p">.</span><span class="nx">T</span><span class="p">{</span><span class="nx">Count</span><span class="p">:</span> <span class="mi">0</span><span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="nx">b1</span><span class="p">,</span> <span class="nx">_</span> <span class="o">:=</span> <span class="nx">proto</span><span class="p">.</span><span class="nf">Marshal</span><span class="p">(</span><span class="nx">m1</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="nx">fmt</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="nx">b1</span><span class="p">))</span>   <span class="c1">// 0 —— 空字节流！赋值 0 和没赋值，序列化结果一模一样
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl"><span class="c1">// 显式存在性字段（optional）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">m2</span> <span class="o">:=</span> <span class="o">&amp;</span><span class="nx">pb</span><span class="p">.</span><span class="nx">T</span><span class="p">{</span><span class="nx">OptCount</span><span class="p">:</span> <span class="nx">proto</span><span class="p">.</span><span class="nf">Int32</span><span class="p">(</span><span class="mi">0</span><span class="p">)}</span>
+</span></span><span class="line"><span class="cl"><span class="nx">b2</span><span class="p">,</span> <span class="nx">_</span> <span class="o">:=</span> <span class="nx">proto</span><span class="p">.</span><span class="nf">Marshal</span><span class="p">(</span><span class="nx">m2</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="nx">fmt</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="nx">b2</span><span class="p">))</span>   <span class="c1">// 2 —— tag + value，明确表达「我设置了，值是 0」
+</span></span></span></code></pre></div><p><strong>「零值不上线」是隐式存在性的定义性特征</strong>，也是它省空间的原因（一个全默认值的消息序列化后是 0 字节）。代价就是丢失了「设置过」这个信息。</p>
+<h1 id="3-proto3-里哪些字段有显式存在性">3. proto3 里哪些字段有显式存在性</h1>
+<p>这张表建议记住，它比什么都实用：</p>
+<table>
+<thead>
+<tr>
+<th>字段形态</th>
+<th>存在性</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>int32 a = 1;</code>（singular 标量）</td>
+<td><strong>隐式</strong></td>
+<td>数值、<code>bool</code>、<code>string</code>、<code>bytes</code>、<code>enum</code> 都是</td>
+</tr>
+<tr>
+<td><code>optional int32 a = 1;</code></td>
+<td><strong>显式</strong></td>
+<td>3.15+ 可用</td>
+</tr>
+<tr>
+<td><code>Foo a = 1;</code>（message 类型）</td>
+<td><strong>显式</strong></td>
+<td><strong>不写 optional 也有</strong>，因为它天然可以是 nil</td>
+</tr>
+<tr>
+<td><code>oneof</code> 的成员</td>
+<td><strong>显式</strong></td>
+<td>oneof 本身就带「哪个被设置了」的信息</td>
+</tr>
+<tr>
+<td><code>repeated int32 a = 1;</code></td>
+<td><strong>无此概念</strong></td>
+<td>空列表 == 未设置，无法区分</td>
+</tr>
+<tr>
+<td><code>map&lt;string, int32&gt; a = 1;</code></td>
+<td><strong>无此概念</strong></td>
+<td>空 map == 未设置</td>
+</tr>
+</tbody>
+</table>
+<p>三个容易记错的点：</p>
+<p><strong>① message 类型字段本来就有显式存在性。</strong> 这是很多人没意识到的：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-protobuf" data-lang="protobuf"><span class="line"><span class="cl"><span class="kd">message</span> <span class="nc">Profile</span> <span class="p">{</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span>  <span class="kt">string</span> <span class="n">bio</span> <span class="o">=</span> <span class="mi">1</span><span class="p">;</span>        <span class="c1">// 隐式：分不清「没填」和「填了空串」
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>  <span class="n">Address</span> <span class="n">address</span> <span class="o">=</span> <span class="mi">2</span><span class="p">;</span>   <span class="c1">// 显式：nil 就是没填，&amp;Address{} 是填了个空地址
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span><span class="err">
+</span></span></span></code></pre></div><p>所以早年（3.15 之前）想给标量拿到 presence，标准套路就是<strong>把它包进一个 message</strong>——这正是下面 wrapper types 的原理。</p>
+<p><strong>② repeated 和 map 没有存在性概念。</strong> 这不是缺陷，是设计：wire format 里 repeated 字段就是「若干条同号记录」，零条记录和不存在没有任何区别。<strong>后果是「清空列表」和「不修改列表」无法区分</strong>，这个问题只能靠 FieldMask 解决（见第 6 节）。</p>
+<p><strong>③ <code>optional</code> 加在 message 字段上是合法但无意义的</strong>，它本来就有 presence，加了不会有任何变化。</p>
+<h1 id="4-optional-是怎么实现的synthetic-oneof">4. optional 是怎么实现的：synthetic oneof</h1>
+<p>proto3 加回 <code>optional</code> 时有个约束：不能破坏已有的反射代码。因为 proto3 的描述符里，singular 字段本来就被标成了 <code>LABEL_OPTIONAL</code>，而大量存量代码依赖「proto3 里 <code>LABEL_OPTIONAL</code> 意味着没有 presence」这个假设。如果直接改语义，老代码会<strong>静默丢弃</strong>新的存在性信息——这是数据丢失级别的 bug。</p>
+<p>官方的解法很巧：<strong>把每个 <code>optional</code> 字段包装成一个只有一个成员的合成 oneof（synthetic oneof）</strong>。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-protobuf" data-lang="protobuf"><span class="line"><span class="cl"><span class="kd">message</span> <span class="nc">Profile</span> <span class="p">{</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span>  <span class="k">optional</span> <span class="kt">string</span> <span class="n">bio</span> <span class="o">=</span> <span class="mi">2</span><span class="p">;</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span><span class="p">}</span><span class="err">
+</span></span></span></code></pre></div><p>在描述符层面，它等价于：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-protobuf" data-lang="protobuf"><span class="line"><span class="cl"><span class="kd">message</span> <span class="nc">Profile</span> <span class="p">{</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span>  <span class="k">oneof</span> <span class="n">_bio</span> <span class="p">{</span>          <span class="c1">// 合成的，你看不见
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="kt">string</span> <span class="n">bio</span> <span class="o">=</span> <span class="mi">2</span><span class="p">;</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span>  <span class="p">}</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span><span class="p">}</span><span class="err">
+</span></span></span></code></pre></div><p>因为 oneof 本来就有明确的存在性语义，<strong>所有存量的反射、JSON、text format 实现都不用改一行代码就能正确处理 proto3 optional</strong>。</p>
+<p>这也解释了 Go 生成代码的样子：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">type</span> <span class="nx">Profile</span> <span class="kd">struct</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">Bio</span> <span class="o">*</span><span class="kt">string</span> <span class="s">`protobuf:&#34;bytes,2,opt,name=bio,proto3,oneof&#34;`</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">//                                                  ↑ 注意这个 oneof 标记
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span></code></pre></div><p><strong>为什么是指针？</strong> 因为需要一个额外的状态表达「未设置」，而指针的 nil 天然可用。各语言选择不同：Go 用指针，Java 用 <code>hasBio()</code> 方法，Python 用 <code>HasField()</code>。</p>
+<h1 id="5-go-里怎么用">5. Go 里怎么用</h1>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-protobuf" data-lang="protobuf"><span class="line"><span class="cl"><span class="kd">message</span> <span class="nc">UpdateUserRequest</span> <span class="p">{</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span>  <span class="kt">int64</span> <span class="n">user_id</span> <span class="o">=</span> <span class="mi">1</span><span class="p">;</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span>  <span class="k">optional</span> <span class="kt">string</span> <span class="n">nickname</span> <span class="o">=</span> <span class="mi">2</span><span class="p">;</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span>  <span class="k">optional</span> <span class="kt">bool</span> <span class="n">email_notify</span> <span class="o">=</span> <span class="mi">3</span><span class="p">;</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span>  <span class="k">optional</span> <span class="kt">int32</span> <span class="n">daily_limit</span> <span class="o">=</span> <span class="mi">4</span><span class="p">;</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span><span class="p">}</span><span class="err">
+</span></span></span></code></pre></div><p>开头那个 bug 现在可以正确修掉了：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="p">(</span><span class="nx">s</span> <span class="o">*</span><span class="nx">Server</span><span class="p">)</span> <span class="nf">UpdateUser</span><span class="p">(</span><span class="nx">ctx</span> <span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span> <span class="nx">req</span> <span class="o">*</span><span class="nx">pb</span><span class="p">.</span><span class="nx">UpdateUserRequest</span><span class="p">)</span> <span class="p">(</span><span class="o">*</span><span class="nx">pb</span><span class="p">.</span><span class="nx">User</span><span class="p">,</span> <span class="kt">error</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">u</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">s</span><span class="p">.</span><span class="nx">store</span><span class="p">.</span><span class="nf">Get</span><span class="p">(</span><span class="nx">req</span><span class="p">.</span><span class="nf">GetUserId</span><span class="p">())</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="kc">nil</span><span class="p">,</span> <span class="nx">err</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// 判断「是否设置」而不是「是否非零」
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">if</span> <span class="nx">req</span><span class="p">.</span><span class="nx">Nickname</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">u</span><span class="p">.</span><span class="nx">Nickname</span> <span class="p">=</span> <span class="nx">req</span><span class="p">.</span><span class="nf">GetNickname</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">req</span><span class="p">.</span><span class="nx">EmailNotify</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">u</span><span class="p">.</span><span class="nx">EmailNotify</span> <span class="p">=</span> <span class="nx">req</span><span class="p">.</span><span class="nf">GetEmailNotify</span><span class="p">()</span>   <span class="c1">// false 也能正确写入
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">req</span><span class="p">.</span><span class="nx">DailyLimit</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">u</span><span class="p">.</span><span class="nx">DailyLimit</span> <span class="p">=</span> <span class="nx">req</span><span class="p">.</span><span class="nf">GetDailyLimit</span><span class="p">()</span>     <span class="c1">// 0 也能正确写入
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="nx">s</span><span class="p">.</span><span class="nx">store</span><span class="p">.</span><span class="nf">Save</span><span class="p">(</span><span class="nx">u</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>构造侧用 <code>proto</code> 包提供的辅助函数取指针，别自己搞临时变量：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="nx">req</span> <span class="o">:=</span> <span class="o">&amp;</span><span class="nx">pb</span><span class="p">.</span><span class="nx">UpdateUserRequest</span><span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">UserId</span><span class="p">:</span>      <span class="nx">proto</span><span class="p">.</span><span class="nf">Int64</span><span class="p">(</span><span class="mi">1001</span><span class="p">),</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">EmailNotify</span><span class="p">:</span> <span class="nx">proto</span><span class="p">.</span><span class="nf">Bool</span><span class="p">(</span><span class="kc">false</span><span class="p">),</span>    <span class="c1">// 明确表达「关闭」
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">DailyLimit</span><span class="p">:</span>  <span class="nx">proto</span><span class="p">.</span><span class="nf">Int32</span><span class="p">(</span><span class="mi">0</span><span class="p">),</span>       <span class="c1">// 明确表达「设为 0」
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="c1">// Nickname 不设置 → nil → 表示「不修改昵称」
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span></code></pre></div><p><code>proto</code> 包对每个标量类型都有对应的构造函数：<code>proto.Bool</code>、<code>proto.Int32</code>、<code>proto.Int64</code>、<code>proto.Uint32</code>、<code>proto.Uint64</code>、<code>proto.Float32</code>、<code>proto.Float64</code>、<code>proto.String</code>。</p>
+<h2 id="51-getter-对-nil-是安全的">5.1 getter 对 nil 是安全的</h2>
+<p>这是 Go 生成代码里一个非常实用的性质：<strong>生成的 <code>GetXxx()</code> 方法内部带 nil 检查，对 nil receiver 也能安全调用</strong>。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">var</span> <span class="nx">req</span> <span class="o">*</span><span class="nx">pb</span><span class="p">.</span><span class="nx">UpdateUserRequest</span>      <span class="c1">// nil
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">fmt</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="nx">req</span><span class="p">.</span><span class="nf">GetUserId</span><span class="p">())</span>       <span class="c1">// 0，不 panic
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl"><span class="kd">var</span> <span class="nx">p</span> <span class="o">*</span><span class="nx">pb</span><span class="p">.</span><span class="nx">Profile</span>                  <span class="c1">// nil
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">fmt</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="nx">p</span><span class="p">.</span><span class="nf">GetAddress</span><span class="p">().</span><span class="nf">GetCity</span><span class="p">())</span>   <span class="c1">// &#34;&#34; —— 整条链路都安全
+</span></span></span></code></pre></div><p>所以<strong>读字段时一律用 <code>GetXxx()</code></strong>，可以省掉大量 nil 判断；只在需要判断存在性时才直接访问字段并比较 nil。</p>
+<h2 id="52-关于-opaque-api-的演进">5.2 关于 Opaque API 的演进</h2>
+<p>Go Protobuf 后来引入了 <strong>Opaque API</strong>（把结构体字段隐藏起来，改用 <code>HasXxx()</code> / <code>SetXxx()</code> / <code>ClearXxx()</code> 方法访问），存在性判断会变成：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="k">if</span> <span class="nx">req</span><span class="p">.</span><span class="nf">HasEmailNotify</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">u</span><span class="p">.</span><span class="nx">EmailNotify</span> <span class="p">=</span> <span class="nx">req</span><span class="p">.</span><span class="nf">GetEmailNotify</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>它同时提供 Open（传统）、Hybrid、Opaque 三种模式，便于渐进迁移。如果你的项目还在用传统的直接字段访问（绝大多数项目都是），本文的 <code>!= nil</code> 写法继续有效；新项目值得了解一下 Opaque API 的存在。</p>
+<h1 id="6-repeated--map-的存在性问题fieldmask">6. repeated / map 的存在性问题：FieldMask</h1>
+<p><code>optional</code> 解决不了 repeated。看这个需求：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-protobuf" data-lang="protobuf"><span class="line"><span class="cl"><span class="kd">message</span> <span class="nc">UpdateUserRequest</span> <span class="p">{</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span>  <span class="kt">int64</span> <span class="n">user_id</span> <span class="o">=</span> <span class="mi">1</span><span class="p">;</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span>  <span class="k">repeated</span> <span class="kt">string</span> <span class="n">tags</span> <span class="o">=</span> <span class="mi">2</span><span class="p">;</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span><span class="p">}</span><span class="err">
+</span></span></span></code></pre></div><p>客户端传了空的 <code>tags</code>，服务端应该理解为「清空所有标签」还是「不修改标签」？<strong>从消息本身无法判断</strong>，因为 repeated 没有存在性概念。</p>
+<p>标准解法是 <code>google.protobuf.FieldMask</code>——把「要更新哪些字段」显式列出来：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-protobuf" data-lang="protobuf"><span class="line"><span class="cl"><span class="k">import</span> <span class="s">&#34;google/protobuf/field_mask.proto&#34;</span><span class="p">;</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span><span class="kd">message</span> <span class="nc">UpdateUserRequest</span> <span class="p">{</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span>  <span class="n">User</span> <span class="n">user</span> <span class="o">=</span> <span class="mi">1</span><span class="p">;</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span>  <span class="n">google.protobuf.FieldMask</span> <span class="n">update_mask</span> <span class="o">=</span> <span class="mi">2</span><span class="p">;</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span><span class="p">}</span><span class="err">
+</span></span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// 客户端：明确说「我要更新 tags，且值是空列表」
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">req</span> <span class="o">:=</span> <span class="o">&amp;</span><span class="nx">pb</span><span class="p">.</span><span class="nx">UpdateUserRequest</span><span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">User</span><span class="p">:</span>       <span class="o">&amp;</span><span class="nx">pb</span><span class="p">.</span><span class="nx">User</span><span class="p">{</span><span class="nx">Id</span><span class="p">:</span> <span class="mi">1001</span><span class="p">,</span> <span class="nx">Tags</span><span class="p">:</span> <span class="kc">nil</span><span class="p">},</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">UpdateMask</span><span class="p">:</span> <span class="o">&amp;</span><span class="nx">fieldmaskpb</span><span class="p">.</span><span class="nx">FieldMask</span><span class="p">{</span><span class="nx">Paths</span><span class="p">:</span> <span class="p">[]</span><span class="kt">string</span><span class="p">{</span><span class="s">&#34;tags&#34;</span><span class="p">}},</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>服务端遍历 <code>update_mask.Paths</code> 决定改哪些字段——<strong>在 mask 里就改（哪怕值是零值/空列表），不在 mask 里就不动</strong>。这也是 Google API 设计指南里 PATCH 语义的官方做法。FieldMask 的完整用法见<a href="https://xingliuhua.github.io/posts/protobuf/protobuf_05_WellKnownTypes%E4%B8%8EJSON%E6%98%A0%E5%B0%84/" rel="">第 5 篇</a>。</p>
+<h1 id="7-wrapper-types315-之前的老办法">7. wrapper types：3.15 之前的老办法</h1>
+<p>在 <code>optional</code> 可用之前，想给标量拿到存在性，办法是<strong>把它包进 message</strong>（因为 message 字段天然有 presence）。官方为此提供了一组包装类型：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-protobuf" data-lang="protobuf"><span class="line"><span class="cl"><span class="k">import</span> <span class="s">&#34;google/protobuf/wrappers.proto&#34;</span><span class="p">;</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span><span class="kd">message</span> <span class="nc">UpdateUserRequest</span> <span class="p">{</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span>  <span class="n">google.protobuf.BoolValue</span> <span class="n">email_notify</span> <span class="o">=</span> <span class="mi">3</span><span class="p">;</span>    <span class="c1">// nil = 未设置
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>  <span class="n">google.protobuf.Int32Value</span> <span class="n">daily_limit</span> <span class="o">=</span> <span class="mi">4</span><span class="p">;</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span><span class="p">}</span><span class="err">
+</span></span></span></code></pre></div><p>完整列表：<code>DoubleValue</code>、<code>FloatValue</code>、<code>Int64Value</code>、<code>UInt64Value</code>、<code>Int32Value</code>、<code>UInt32Value</code>、<code>BoolValue</code>、<code>StringValue</code>、<code>BytesValue</code>。</p>
+<p><strong>现在还需要用吗？大多数情况不需要了</strong>，<code>optional</code> 更轻、更直观（wrapper 每个值都要多一层 message 的编码开销）。但有两个场景它仍然有价值：</p>
+<ol>
+<li><strong>需要在 JSON 里表达 <code>null</code></strong>。wrapper 类型在 protojson 里映射为「裸值或 <code>null</code>」，而 <code>optional</code> 字段未设置时是<strong>整个 key 消失</strong>。如果你的 API 契约要求出现 <code>&quot;daily_limit&quot;: null</code>，wrapper 才能做到。</li>
+<li><strong>兼容还在用 3.15 以下 protoc 的下游</strong>。</li>
+</ol>
+<h1 id="8-常见踩坑清单">8. 常见踩坑清单</h1>
+<p><strong>① 用零值当哨兵值。</strong> 就是开头那个 bug。凡是「0 / 空串 / false 是合法业务值」的字段，一律需要显式存在性。</p>
+<p><strong>② 数据库层把零值写进去。</strong> 即使 proto 侧正确了，ORM 那层也常犯同样的错——用结构体零值判断「是否更新」。两层都要用 presence 判断。</p>
+<p><strong>③ 忘记 repeated 不能靠 optional 救。</strong> <code>optional repeated</code> 是<strong>非法语法</strong>，编译报错。需要区分就上 FieldMask。</p>
+<p><strong>④ <code>proto.Equal</code> 会区分「未设置」和「设为零值」。</strong> 这是正确行为，但容易让测试断言意外失败：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="nx">a</span> <span class="o">:=</span> <span class="o">&amp;</span><span class="nx">pb</span><span class="p">.</span><span class="nx">T</span><span class="p">{}</span>                          <span class="c1">// OptCount 未设置
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">b</span> <span class="o">:=</span> <span class="o">&amp;</span><span class="nx">pb</span><span class="p">.</span><span class="nx">T</span><span class="p">{</span><span class="nx">OptCount</span><span class="p">:</span> <span class="nx">proto</span><span class="p">.</span><span class="nf">Int32</span><span class="p">(</span><span class="mi">0</span><span class="p">)}</span>  <span class="c1">// OptCount = 0
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">proto</span><span class="p">.</span><span class="nf">Equal</span><span class="p">(</span><span class="nx">a</span><span class="p">,</span> <span class="nx">b</span><span class="p">)</span>                     <span class="c1">// false
+</span></span></span></code></pre></div><p><strong>⑤ 显式存在性字段的零值会占字节。</strong> 大量高频小消息全用 <code>optional</code> 会有可观的体积和内存开销（每个字段多一次堆分配）。不要无脑全加。</p>
+<p><strong>⑥ 别把 <code>optional</code> 当校验用。</strong> 它只表达「有没有设置」，不表达「必须设置」。必填校验请放业务层或用 <code>buf.validate</code> 这类声明式校验。</p>
+<p><strong>⑦ 存在性信息在 JSON 转换中可能丢失。</strong> <code>protojson</code> 默认省略未设置和零值字段；开了 <code>EmitUnpopulated</code> 后，未设置的 <code>optional</code> 字段会被输出成零值——<strong>一次 JSON 往返就可能把「未设置」变成「设为 0」</strong>。跨 JSON 边界传递部分更新语义时要特别小心。</p>
+<h1 id="9-什么时候该用显式存在性">9. 什么时候该用显式存在性</h1>
+<p><strong>该用：</strong></p>
+<ul>
+<li><strong>部分更新（PATCH）语义</strong>的请求体——这是最主要的场景。</li>
+<li><strong>布尔开关</strong>：<code>false</code> 几乎总是有意义的值。</li>
+<li><strong>数值 0 有业务含义</strong>：额度 0、评分 0、库存 0、价格 0。</li>
+<li><strong>映射外部可空数据</strong>：数据库的 <code>NULL</code> 列、可选的第三方字段。</li>
+<li>需要**区分「查询过但没有」和「没查过」**的场景。</li>
+</ul>
+<p><strong>不必用：</strong></p>
+<ul>
+<li>只读的响应体、事件/日志消息——它们描述的是「事实」，零值就是零值，没有「未设置」的概念。</li>
+<li>内部高频消息、超大批量数据——省下的指针和分配是实打实的。</li>
+<li>零值本身就代表「无」的字段，比如一个必然大于 0 的 ID。</li>
+</ul>
+<p>一句话原则：<strong>如果「未设置」和「零值」在业务上会导致不同的行为，就必须用显式存在性；否则不要用。</strong></p>
+<h1 id="10-小结">10. 小结</h1>
+<ul>
+<li>隐式存在性（singular 标量）的定义性特征是<strong>零值不序列化</strong>，因此「未设置」和「零值」在字节流层面就是同一件事，服务端不可能区分。</li>
+<li>proto3 里天然有显式存在性的是：<strong>message 类型字段、oneof 成员、标了 <code>optional</code> 的字段</strong>；<code>repeated</code> 和 <code>map</code> <strong>没有存在性概念</strong>。</li>
+<li><code>optional</code> 通过 synthetic oneof 实现，这既保证了对存量反射代码的兼容，也解释了 Go 为什么生成指针。</li>
+<li>读字段用 <code>GetXxx()</code>（nil 安全），判断存在性用 <code>字段 != nil</code>，构造用 <code>proto.Int32</code> 这类辅助函数。</li>
+<li>repeated / map 的「清空 vs 不改」只能靠 <strong>FieldMask</strong> 表达。</li>
+<li>wrapper types 是 3.15 之前的老办法，现在基本被 <code>optional</code> 取代，只在需要 JSON <code>null</code> 时仍有价值。</li>
+<li>判断标准：<strong>「未设置」和「零值」是否导致不同行为</strong>。是则用 presence，否则别加。</li>
+</ul>
+<p>下一篇讲 schema 演进——哪些改动是安全的，哪些会在线上静默炸掉。</p>
+<hr>
+<p><strong>系列目录</strong></p>
+<ol>
+<li><a href="https://xingliuhua.github.io/posts/protobuf/protobuf_01_wire_format%E7%BC%96%E7%A0%81%E5%8E%9F%E7%90%86/" rel="">从 wire format 开始：一个字节一个字节读懂编码</a></li>
+<li><a href="https://xingliuhua.github.io/posts/protobuf/protobuf_02_proto3%E8%AF%AD%E6%B3%95%E5%AE%8C%E5%85%A8%E6%8C%87%E5%8D%97/" rel="">proto3 语法完全指南</a></li>
+<li><strong>存在性 presence：Protobuf 最难的一章</strong>（本篇）</li>
+<li><a href="https://xingliuhua.github.io/posts/protobuf/protobuf_04_schema%E6%BC%94%E8%BF%9B%E4%B8%8E%E5%85%BC%E5%AE%B9%E6%80%A7/" rel="">schema 演进与兼容性：哪些改动会炸</a></li>
+<li><a href="https://xingliuhua.github.io/posts/protobuf/protobuf_05_WellKnownTypes%E4%B8%8EJSON%E6%98%A0%E5%B0%84/" rel="">Well-Known Types 与 JSON 映射</a></li>
+<li><a href="https://xingliuhua.github.io/posts/protobuf/protobuf_06_Go%E5%B7%A5%E7%A8%8B%E5%8C%96%E5%AE%9E%E8%B7%B5/" rel="">Go 工程化实践：buf 工具链与 API 用法</a></li>
+<li><a href="https://xingliuhua.github.io/posts/protobuf/protobuf_07_proto2%E4%B8%8Eeditions/" rel="">proto2 与 Protobuf Editions</a></li>
+</ol>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2026-07-29</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/protobuf/">protobuf</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/protobuf/protobuf_04_schema%E6%BC%94%E8%BF%9B%E4%B8%8E%E5%85%BC%E5%AE%B9%E6%80%A7/" class="prev" rel="prev" title="Protobuf-04 schema 演进与兼容性：哪些改动会炸"><i class="fas fa-angle-left fa-fw"></i>Protobuf-04 schema 演进与兼容性：哪些改动会炸</a>
+            <a href="/posts/protobuf/protobuf_02_proto3%E8%AF%AD%E6%B3%95%E5%AE%8C%E5%85%A8%E6%8C%87%E5%8D%97/" class="next" rel="next" title="Protobuf-02 proto3 语法完全指南">Protobuf-02 proto3 语法完全指南<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2026-07-29T15:00:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Protobuf-03 存在性 presence：Protobuf 最难的一章"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

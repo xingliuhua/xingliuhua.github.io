@@ -1,0 +1,1394 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>Redis-07 持久化：RDB 与 AOF - xingliuhua博客</title><meta name="Description" content="RDB 快照原理与 fork/COW 机制、AOF 三种刷盘策略与重写流程、7.0 多部分 AOF、混合持久化、数据丢失分析与恢复实战"><meta property="og:title" content="Redis-07 持久化：RDB 与 AOF" />
+<meta property="og:description" content="RDB 快照原理与 fork/COW 机制、AOF 三种刷盘策略与重写流程、7.0 多部分 AOF、混合持久化、数据丢失分析与恢复实战" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/redis/redis_07_%E6%8C%81%E4%B9%85%E5%8C%96RDB%E4%B8%8EAOF/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2025-11-01T13:30:00+08:00" />
+<meta property="article:modified_time" content="2025-11-01T13:30:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="Redis-07 持久化：RDB 与 AOF"/>
+<meta name="twitter:description" content="RDB 快照原理与 fork/COW 机制、AOF 三种刷盘策略与重写流程、7.0 多部分 AOF、混合持久化、数据丢失分析与恢复实战"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/redis/redis_07_%E6%8C%81%E4%B9%85%E5%8C%96RDB%E4%B8%8EAOF/" /><link rel="prev" href="https://xingliuhua.github.io/posts/redis/redis_08_%E4%BA%8B%E5%8A%A1_Lua%E8%84%9A%E6%9C%AC%E4%B8%8EPipeline/" /><link rel="next" href="https://xingliuhua.github.io/posts/redis/redis_06_%E8%BF%87%E6%9C%9F%E5%88%A0%E9%99%A4%E4%B8%8E%E5%86%85%E5%AD%98%E6%B7%98%E6%B1%B0%E7%AD%96%E7%95%A5/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Redis-07 持久化：RDB 与 AOF",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/redis\/redis_07_%E6%8C%81%E4%B9%85%E5%8C%96RDB%E4%B8%8EAOF\/"
+        },"genre": "posts","keywords": "redis","wordcount":  17456 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/redis\/redis_07_%E6%8C%81%E4%B9%85%E5%8C%96RDB%E4%B8%8EAOF\/","datePublished": "2025-11-01T13:30:00+08:00","dateModified": "2025-11-01T13:30:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "RDB 快照原理与 fork/COW 机制、AOF 三种刷盘策略与重写流程、7.0 多部分 AOF、混合持久化、数据丢失分析与恢复实战"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">Redis-07 持久化：RDB 与 AOF</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2025-11-01">2025-11-01</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 17456 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 35 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-为什么需要持久化">1. 为什么需要持久化</a></li>
+    <li><a href="#2-rdb-快照">2. RDB 快照</a>
+      <ol>
+        <li><a href="#21-触发方式">2.1 触发方式</a>
+          <ol>
+            <li><a href="#手动触发">手动触发</a></li>
+            <li><a href="#自动触发">自动触发</a></li>
+            <li><a href="#其他自动触发时机">其他自动触发时机</a></li>
+          </ol>
+        </li>
+        <li><a href="#22-相关配置">2.2 相关配置</a></li>
+        <li><a href="#23-fork-与写时复制cow">2.3 fork 与写时复制（COW）</a>
+          <ol>
+            <li><a href="#问题">问题</a></li>
+            <li><a href="#解决方案fork--cow">解决方案：fork + COW</a></li>
+            <li><a href="#fork-到底阻塞多久">fork 到底阻塞多久</a></li>
+            <li><a href="#优化-fork-耗时">优化 fork 耗时</a></li>
+            <li><a href="#cow-期间的内存开销">COW 期间的内存开销</a></li>
+          </ol>
+        </li>
+        <li><a href="#24-rdb-文件格式">2.4 RDB 文件格式</a></li>
+        <li><a href="#25-rdb-的优缺点">2.5 RDB 的优缺点</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-aof-追加日志">3. AOF 追加日志</a>
+      <ol>
+        <li><a href="#31-基本原理">3.1 基本原理</a></li>
+        <li><a href="#32-三个关键点">3.2 三个关键点</a></li>
+        <li><a href="#33-三种刷盘策略">3.3 三种刷盘策略</a>
+          <ol>
+            <li><a href="#everysec-的实现细节">everysec 的实现细节</a></li>
+            <li><a href="#always-真的不丢数据吗">always 真的不丢数据吗</a></li>
+          </ol>
+        </li>
+        <li><a href="#34-aof-重写">3.4 AOF 重写</a>
+          <ol>
+            <li><a href="#为什么需要重写">为什么需要重写</a></li>
+            <li><a href="#触发方式">触发方式</a></li>
+            <li><a href="#重写流程70-之前">重写流程（7.0 之前）</a></li>
+            <li><a href="#70-的多部分-aofmulti-part-aof">7.0 的多部分 AOF（Multi-Part AOF）</a></li>
+            <li><a href="#重写期间的注意事项">重写期间的注意事项</a></li>
+          </ol>
+        </li>
+        <li><a href="#35-混合持久化40">3.5 混合持久化（4.0+）</a></li>
+      </ol>
+    </li>
+    <li><a href="#4-数据恢复">4. 数据恢复</a>
+      <ol>
+        <li><a href="#41-加载优先级">4.1 加载优先级</a></li>
+        <li><a href="#42-文件损坏的修复">4.2 文件损坏的修复</a></li>
+        <li><a href="#43-从备份恢复">4.3 从备份恢复</a></li>
+        <li><a href="#44-用主从做在线恢复">4.4 用主从做在线恢复</a></li>
+        <li><a href="#45-无损迁移数据">4.5 无损迁移数据</a></li>
+      </ol>
+    </li>
+    <li><a href="#5-rdb-与-aof-的选择">5. RDB 与 AOF 的选择</a>
+      <ol>
+        <li><a href="#51-对比总表">5.1 对比总表</a></li>
+        <li><a href="#52-四种配置方案">5.2 四种配置方案</a></li>
+        <li><a href="#53-什么都不如主从--哨兵">5.3 什么都不如主从 + 哨兵</a></li>
+      </ol>
+    </li>
+    <li><a href="#6-数据丢失窗口分析">6. 数据丢失窗口分析</a>
+      <ol>
+        <li><a href="#61-单机层面">6.1 单机层面</a></li>
+        <li><a href="#62-主从层面更重要的丢失来源">6.2 主从层面（更重要的丢失来源）</a></li>
+        <li><a href="#63-wait-命令半同步复制">6.3 <code>WAIT</code> 命令：半同步复制</a></li>
+      </ol>
+    </li>
+    <li><a href="#7-监控与排查">7. 监控与排查</a>
+      <ol>
+        <li><a href="#71-关键指标">7.1 关键指标</a></li>
+        <li><a href="#72-必须告警的指标">7.2 必须告警的指标</a></li>
+        <li><a href="#73-常见问题排查">7.3 常见问题排查</a></li>
+        <li><a href="#74-备份策略">7.4 备份策略</a></li>
+      </ol>
+    </li>
+    <li><a href="#8-高频面试题">8. 高频面试题</a></li>
+    <li><a href="#小结">小结</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><h1 id="1-为什么需要持久化">1. 为什么需要持久化</h1>
+<p>Redis 把数据放在内存里，进程一退出数据就全没了。持久化就是把内存数据写到磁盘，让重启后能恢复。</p>
+<p>Redis 提供两种机制，思路完全不同：</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>RDB</th>
+<th>AOF</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>本质</strong></td>
+<td><strong>数据快照</strong>（某一时刻的全量数据）</td>
+<td><strong>命令日志</strong>（所有写操作的记录）</td>
+</tr>
+<tr>
+<td><strong>文件内容</strong></td>
+<td>二进制紧凑格式</td>
+<td>RESP 协议文本</td>
+</tr>
+<tr>
+<td><strong>文件大小</strong></td>
+<td>小（有压缩）</td>
+<td>大（但重写后会缩小）</td>
+</tr>
+<tr>
+<td><strong>恢复速度</strong></td>
+<td><strong>快</strong>（直接加载数据）</td>
+<td>慢（要重放所有命令）</td>
+</tr>
+<tr>
+<td><strong>数据安全性</strong></td>
+<td>差（可能丢几分钟）</td>
+<td><strong>好</strong>（最多丢 1 秒）</td>
+</tr>
+<tr>
+<td><strong>对性能的影响</strong></td>
+<td>fork 时有毛刺</td>
+<td>每次写都要 append</td>
+</tr>
+<tr>
+<td><strong>类比</strong></td>
+<td>全量备份 / 虚拟机快照</td>
+<td>MySQL 的 binlog</td>
+</tr>
+</tbody>
+</table>
+<p>理解这两者的关键区别：<strong>RDB 记录&quot;数据是什么样&quot;，AOF 记录&quot;数据是怎么变成这样的&quot;。</strong></p>
+<hr>
+<h1 id="2-rdb-快照">2. RDB 快照</h1>
+<h2 id="21-触发方式">2.1 触发方式</h2>
+<h3 id="手动触发">手动触发</h3>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">SAVE       <span class="c1"># ⚠️ 在主线程里同步生成 RDB，期间【完全阻塞】所有请求。生产禁用</span>
+</span></span><span class="line"><span class="cl">BGSAVE     <span class="c1"># fork 子进程在后台生成，主线程只在 fork 的瞬间阻塞</span>
+</span></span></code></pre></div><p><code>SAVE</code> 存在的唯一理由是极端情况下的兜底（比如内存不足无法 fork 时）。<strong>任何时候都不要在生产环境执行 <code>SAVE</code>。</strong></p>
+<h3 id="自动触发">自动触发</h3>
+<pre tabindex="0"><code class="language-conf" data-lang="conf"># 格式：save &lt;秒&gt; &lt;变更 key 数&gt;
+# 含义：在 &lt;秒&gt; 内如果至少有 &lt;变更 key 数&gt; 个 key 发生变化，就触发 BGSAVE
+save 3600 1        # 1 小时内有 1 个变更
+save 300 100       # 5 分钟内有 100 个变更
+save 60 10000      # 1 分钟内有 10000 个变更
+
+# 完全关闭 RDB
+save &#34;&#34;
+</code></pre><p>三条规则是 <strong>OR 关系</strong>，满足任意一条就触发。这个设计很聪明：写入越频繁，快照越频繁（丢的数据更少）；写入很少时也能保证至少每小时存一次。</p>
+<p>检查在 <code>serverCron</code> 里做（每 100ms 一次），条件是「距上次成功保存的时间 &gt; 秒数」且「<code>server.dirty</code>（变更计数器）&gt;= 变更数」。</p>
+<h3 id="其他自动触发时机">其他自动触发时机</h3>
+<ol>
+<li><strong>主从复制的全量同步</strong>：主节点会执行 <code>BGSAVE</code> 生成 RDB 发给从节点（或用无盘复制 <code>repl-diskless-sync</code> 直接走 socket）；</li>
+<li><strong>执行 <code>SHUTDOWN</code></strong>（且配置了 <code>save</code> 规则）：会先生成 RDB 再退出，保证数据不丢；</li>
+<li><strong>执行 <code>DEBUG RELOAD</code></strong>：生成 RDB 并重新加载（用于测试）；</li>
+<li><strong><code>FLUSHALL</code></strong>：会生成一个空的 RDB（覆盖旧文件）；</li>
+<li><strong>AOF 重写</strong>（<code>aof-use-rdb-preamble yes</code> 时）：重写的前半段就是一个 RDB。</li>
+</ol>
+<h2 id="22-相关配置">2.2 相关配置</h2>
+<pre tabindex="0"><code class="language-conf" data-lang="conf">dbfilename dump.rdb
+dir /usr/local/redis/data          # 工作目录，RDB 和 AOF 都放这
+
+# bgsave 失败后是否拒绝写入（默认 yes）
+stop-writes-on-bgsave-error yes
+
+# 用 LZF 压缩字符串对象（默认 yes）
+rdbcompression yes
+
+# 文件末尾加 CRC64 校验和（默认 yes，约 10% 性能开销）
+rdbchecksum yes
+
+# 7.0+ RDB 文件的删除是否同步（默认 no，即异步删除避免阻塞）
+rdb-del-sync-files no
+</code></pre><p><strong><code>stop-writes-on-bgsave-error yes</code> 的双刃剑</strong>：</p>
+<p>它的本意是保护——如果快照持续失败（磁盘满、权限错误），说明数据无法落盘，此时继续接受写入等于在积累&quot;注定会丢的数据&quot;，所以干脆拒绝写入让你及时发现。</p>
+<p>但副作用是：<strong>磁盘一满，Redis 立刻变成只读</strong>，业务大面积报 <code>MISCONF Redis is configured to save RDB snapshots, but it is currently not able to persist on disk</code>。</p>
+<p>如果你的 Redis 是<strong>纯缓存</strong>（数据丢了能重建），建议设为 <code>no</code>，避免磁盘问题导致业务不可写。如果是数据存储用途，保持 <code>yes</code> 并做好磁盘监控。</p>
+<h2 id="23-fork-与写时复制cow">2.3 fork 与写时复制（COW）</h2>
+<p>这是 RDB 的核心机制，也是<strong>面试必考点</strong>。</p>
+<h3 id="问题">问题</h3>
+<p>生成快照需要遍历所有数据写入文件，这可能耗时几秒到几十秒。如果在主线程做（<code>SAVE</code>），服务就停摆了。但如果一边写文件一边继续接受写请求，快照的数据就&quot;不一致&quot;了（前半段是旧数据，后半段是新数据）。</p>
+<h3 id="解决方案fork--cow">解决方案：fork + COW</h3>
+<pre tabindex="0"><code>1. 主线程调用 fork() 创建子进程
+   ├─ 子进程获得父进程内存的一份【逻辑副本】
+   └─ 但物理上【不复制任何数据页】，父子进程共享同一批物理内存页，
+      只是内核把这些页都标记为【只读】
+
+2. 子进程遍历这份&#34;冻结在 fork 时刻&#34;的数据，写入临时 RDB 文件
+   （子进程看到的数据永远是 fork 那一瞬间的状态，天然一致）
+
+3. 主线程继续处理请求。当它要【修改】某个内存页时：
+   ├─ CPU 检测到写只读页 → 触发【缺页异常】(page fault)
+   ├─ 内核复制这一页（4KB）到新的物理页
+   ├─ 把父进程的页表指向新页，并恢复可写
+   └─ 主线程在新页上完成修改
+   ↑ 这就是【写时复制 Copy-On-Write】
+
+4. 子进程写完，把临时文件 rename 成 dump.rdb（原子替换），退出
+5. 主线程通过 wait3 回收子进程，更新 dirty 计数和 lastsave 时间
+</code></pre><h3 id="fork-到底阻塞多久">fork 到底阻塞多久</h3>
+<p><strong>fork 本身是阻塞的</strong>，但它不复制数据，只复制<strong>页表</strong>（page table）。</p>
+<ul>
+<li>Linux 的页表是多级结构，一个进程的页表大小大约是 <code>内存大小 / 4096 * 8 字节</code>；</li>
+<li>经验值：<strong>每 1GB 内存的 fork 耗时约 20~100ms</strong>（取决于 CPU 和是否用了大页）；</li>
+<li>所以一个 <strong>10GB 的实例，fork 可能阻塞 200ms~1 秒</strong>——这是单线程 Redis 最大的单点延迟来源之一。</li>
+</ul>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">127.0.0.1:6379&gt; INFO stats
+</span></span><span class="line"><span class="cl">latest_fork_usec:183021        <span class="c1"># 最近一次 fork 耗时（微秒）= 183ms</span>
+</span></span><span class="line"><span class="cl">total_forks:127                <span class="c1"># 累计 fork 次数</span>
+</span></span></code></pre></div><p><strong><code>latest_fork_usec</code> 是最重要的持久化监控指标</strong>。超过 100ms（100000）就要警惕，超过 1 秒必须优化。</p>
+<h3 id="优化-fork-耗时">优化 fork 耗时</h3>
+<ol>
+<li><strong>控制单实例内存</strong>：建议 <strong>不超过 10GB</strong>（更保守的建议是 4~8GB）。用 Cluster 分片而不是堆单实例；</li>
+<li><strong>关闭 THP（透明大页）</strong>：这是<strong>必须做的</strong>。开启 THP 后内存页从 4KB 变 2MB，虽然页表变小了（fork 更快），但<strong>COW 的复制粒度也变成 2MB</strong>——改一个 key 要复制 2MB 内存，放大 512 倍。实测会导致重写期间内存暴涨和明显延迟毛刺：</li>
+</ol>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="nb">echo</span> never &gt; /sys/kernel/mm/transparent_hugepage/enabled
+</span></span></code></pre></div><ol start="3">
+<li><strong>设置 <code>vm.overcommit_memory = 1</code></strong>：否则内核按最坏情况估算（认为 fork 需要和父进程一样多的内存），当已用内存超过物理内存一半时 fork 直接失败；</li>
+<li><strong>避免虚拟化环境的 fork 惩罚</strong>：Xen 等虚拟化平台的 fork 比物理机慢很多（官方文档明确提到）。用 KVM 或物理机；</li>
+<li><strong>降低 fork 频率</strong>：调整 <code>save</code> 规则、<code>auto-aof-rewrite-percentage</code>，避免频繁触发。</li>
+</ol>
+<h3 id="cow-期间的内存开销">COW 期间的内存开销</h3>
+<p>理论最坏情况：如果 fork 期间父进程把<strong>所有</strong>内存页都改了一遍，内存会<strong>翻倍</strong>。</p>
+<p>实际情况：写入通常集中在少部分热数据上，<strong>典型的额外开销是 10%~30%</strong>。但要注意几个会加剧 COW 的因素：</p>
+<ol>
+<li><strong>写入量大</strong>（高 QPS 的写场景）；</li>
+<li><strong><code>hz</code> 高导致过期删除频繁</strong>（删除也是写）；</li>
+<li><strong>渐进式 rehash</strong>（会写大量页）——这就是为什么第 4 篇提到&quot;有子进程时 dict 扩容的阈值从 1 提到 5&quot;；</li>
+<li><strong>LRU/LFU 字段更新</strong>——<strong>读操作也会写 <code>robj.lru</code> 字段</strong>！所以纯读也会触发 COW（这是一个很多人不知道的点）。</li>
+</ol>
+<p>所以 <code>maxmemory</code> 必须留足余量（物理内存的 60%~70%）。</p>
+<h2 id="24-rdb-文件格式">2.4 RDB 文件格式</h2>
+<pre tabindex="0"><code>+-------+-------------+-----------+------------------+-----+-----+-------+
+| REDIS | RDB版本(4B) | 辅助字段  | DB 0 的数据      | ... | EOF | CRC64 |
++-------+-------------+-----------+------------------+-----+-----+-------+
+  魔数    &#34;0011&#34;       redis-ver等   SELECTDB + RESIZEDB + 键值对
+</code></pre><p>每个键值对的编码：</p>
+<pre tabindex="0"><code>[过期时间(可选)] [类型标识 1字节] [key(长度编码的字符串)] [value]
+</code></pre><p>几个值得知道的细节：</p>
+<ul>
+<li><strong>辅助字段（AUX）</strong>：存 <code>redis-ver</code>（生成它的 Redis 版本）、<code>redis-bits</code>（32/64 位）、<code>ctime</code>、<code>used-mem</code>、<code>repl-id</code>、<code>repl-offset</code> 等元信息。这让 RDB 能自描述；</li>
+<li><strong>长度编码</strong>：用最少的字节表示长度（6bit/14bit/32bit/64bit 四档）；</li>
+<li><strong>整数编码</strong>：如果字符串其实是整数，直接存 int8/int16/int32，省空间；</li>
+<li><strong>LZF 压缩</strong>：长度 &gt; 20 字节的字符串会尝试用 LZF 压缩（<code>rdbcompression yes</code>）；</li>
+<li><strong>CRC64 校验</strong>：文件末尾 8 字节校验和。设为 0 表示不校验。<code>rdbchecksum no</code> 能省约 10% CPU，但就失去了损坏检测能力；</li>
+<li><strong>RDB 版本号</strong>：Redis 只能加载版本号 <strong>不高于</strong>自己支持的 RDB 文件。所以<strong>高版本 Redis 能读低版本的 RDB，反过来不行</strong>——这是版本降级时的大坑。</li>
+</ul>
+<p>检查 RDB 文件：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">redis-check-rdb /data/dump.rdb
+</span></span><span class="line"><span class="cl"><span class="c1"># [offset 0] Checking RDB file dump.rdb</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># [offset 26] AUX FIELD redis-ver = &#39;7.2.5&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ...</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># [offset 12345] Checksum OK</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># \o/ RDB looks OK! \o/</span>
+</span></span></code></pre></div><h2 id="25-rdb-的优缺点">2.5 RDB 的优缺点</h2>
+<p><strong>优点</strong>：</p>
+<ol>
+<li><strong>文件紧凑</strong>，体积远小于 AOF，适合做<strong>冷备份和灾备</strong>（直接 scp 到异地）；</li>
+<li><strong>恢复速度快</strong>：直接把二进制数据加载进内存，比 AOF 逐条重放命令快<strong>几个数量级</strong>（10GB 数据 RDB 可能几十秒，AOF 可能十几分钟）；</li>
+<li><strong>对性能影响小</strong>（除了 fork 那一下）：子进程负责写文件，主线程照常服务；</li>
+<li><strong>快照点数据一致</strong>：fork 保证了子进程看到的是一个精确时刻的完整状态。</li>
+</ol>
+<p><strong>缺点</strong>：</p>
+<ol>
+<li><strong>会丢数据</strong>：两次快照之间的写入全部丢失。极端情况下可能丢几分钟到一小时；</li>
+<li><strong>fork 有延迟毛刺</strong>：大实例的 fork 可能阻塞几百毫秒到秒级；</li>
+<li><strong>COW 有内存开销</strong>：需要预留内存余量；</li>
+<li><strong>不适合高频执行</strong>：每次都是全量，数据量大时 CPU 和磁盘 IO 开销都不小。</li>
+</ol>
+<hr>
+<h1 id="3-aof-追加日志">3. AOF 追加日志</h1>
+<h2 id="31-基本原理">3.1 基本原理</h2>
+<p>AOF（Append Only File）记录<strong>每一条修改数据的写命令</strong>，恢复时重新执行一遍。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">127.0.0.1:6379&gt; SET name tom
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; INCR counter
+</span></span></code></pre></div><p>AOF 文件内容（就是 RESP 协议格式）：</p>
+<pre tabindex="0"><code>*2\r\n$6\r\nSELECT\r\n$1\r\n0\r\n
+*3\r\n$3\r\nSET\r\n$4\r\nname\r\n$3\r\ntom\r\n
+*2\r\n$4\r\nINCR\r\n$7\r\ncounter\r\n
+</code></pre><p>用 RESP 格式而不是自定义格式的好处：<strong>恢复时可以直接复用现成的命令解析器和执行路径</strong>（Redis 启动时创建一个&quot;伪客户端&quot;，把 AOF 内容当作命令输入喂进去），实现极其简洁。</p>
+<h2 id="32-三个关键点">3.2 三个关键点</h2>
+<p><strong>（1）AOF 是&quot;先执行命令，后写日志&quot;</strong></p>
+<p>这跟 MySQL 的 WAL（Write-Ahead Log，先写日志后改数据）<strong>正好相反</strong>。</p>
+<pre tabindex="0"><code>Redis：命令执行成功 → 写入 aof_buf → (稍后) 刷盘
+MySQL：写 redo log（prepare）→ 改数据 → 写 binlog → 提交 redo log
+</code></pre><p><strong>为什么 Redis 选择后写日志</strong>：</p>
+<ul>
+<li><strong>优点一：不用做命令语法检查</strong>。因为记录的是&quot;已经成功执行&quot;的命令，一定是合法的，恢复时不会因为记录了错误命令而失败；</li>
+<li><strong>优点二：不阻塞当前命令</strong>。命令执行完就能返回客户端，写盘可以延后。</li>
+</ul>
+<p><strong>代价（很重要）</strong>：</p>
+<ul>
+<li><strong>可能丢数据</strong>：命令执行完、还没写盘（或写盘还没 fsync）时进程崩溃，这条命令就丢了。客户端已经收到成功响应，但数据没了；</li>
+<li><strong>无法做事务回滚</strong>：因为日志是事后记的，没有&quot;undo&quot;信息。这也是 Redis 事务不支持回滚的底层原因之一（第 8 篇）。</li>
+</ul>
+<p><strong>（2）写入的是&quot;实际执行的效果&quot;而非原始命令</strong></p>
+<p>某些命令有不确定性，直接记录原始命令会导致恢复后数据不一致，Redis 会做转换：</p>
+<table>
+<thead>
+<tr>
+<th>原始命令</th>
+<th>AOF 里记录的</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>EXPIRE key 100</code></td>
+<td><code>PEXPIREAT key &lt;绝对毫秒时间戳&gt;</code></td>
+</tr>
+<tr>
+<td><code>SETEX key 100 v</code></td>
+<td><code>SET key v PXAT &lt;绝对时间戳&gt;</code></td>
+</tr>
+<tr>
+<td><code>SPOP key</code>（随机弹出）</td>
+<td><code>SREM key &lt;实际弹出的成员&gt;</code></td>
+</tr>
+<tr>
+<td><code>INCRBYFLOAT key 1.1</code></td>
+<td><code>SET key &lt;计算后的结果&gt;</code>（避免浮点精度累积误差）</td>
+</tr>
+<tr>
+<td><code>HINCRBYFLOAT</code></td>
+<td><code>HSET key field &lt;结果&gt;</code></td>
+</tr>
+<tr>
+<td>过期删除</td>
+<td>显式的 <code>DEL</code>/<code>UNLINK</code></td>
+</tr>
+<tr>
+<td>Lua 脚本（7.0+ 默认）</td>
+<td><strong>脚本产生的实际写命令</strong>（effects replication），而不是 <code>EVAL</code> 本身</td>
+</tr>
+<tr>
+<td><code>GETEX key EX 100</code></td>
+<td><code>PEXPIREAT key &lt;ts&gt;</code></td>
+</tr>
+</tbody>
+</table>
+<p>这套机制叫**「效果复制」（effects replication）**，同样用于主从复制。5.0 之前 Lua 脚本是按脚本本身复制的（verbatim），如果脚本里用了 <code>math.random</code> 或 <code>TIME</code>，主从节点执行结果就会不一致——所以那时 Redis 强制要求脚本必须是确定性的（禁用了随机函数和时间函数）。改成效果复制后，脚本可以随便用随机数了。</p>
+<p><strong>（3）AOF 缓冲区与刷盘时机</strong></p>
+<p>写入不是直接 <code>write</code> 到文件，而是两级：</p>
+<pre tabindex="0"><code>命令执行 → 写入 server.aof_buf（内存缓冲区，一个 SDS）
+             ↓ 在事件循环的 beforeSleep 里
+          write() 到操作系统的【page cache】（内核缓冲区）
+             ↓ 按 appendfsync 策略
+          fsync() 真正落到物理磁盘
+</code></pre><p><strong>关键区分 <code>write</code> 和 <code>fsync</code></strong>：</p>
+<ul>
+<li><code>write()</code> 只是把数据交给内核的 page cache，<strong>很快</strong>（微秒级），但数据还在内存里，<strong>机器断电就丢</strong>；</li>
+<li><code>fsync()</code> 要求内核把 page cache 的数据真正刷到磁盘介质，<strong>很慢</strong>（机械盘几毫秒，SSD 几百微秒），但数据才算安全。</li>
+</ul>
+<h2 id="33-三种刷盘策略">3.3 三种刷盘策略</h2>
+<pre tabindex="0"><code class="language-conf" data-lang="conf">appendfsync everysec    # always | everysec | no
+</code></pre><table>
+<thead>
+<tr>
+<th>策略</th>
+<th>fsync 时机</th>
+<th>性能</th>
+<th>最多丢多少数据</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>always</strong></td>
+<td><strong>每条写命令都 fsync</strong></td>
+<td>最差（QPS 可能降到几千）</td>
+<td><strong>理论上不丢</strong>（但仍有极小窗口）</td>
+<td>金融级要求才用</td>
+</tr>
+<tr>
+<td><strong>everysec</strong></td>
+<td><strong>每秒 fsync 一次</strong>（后台线程）</td>
+<td><strong>好（默认）</strong></td>
+<td><strong>约 1 秒</strong>（实际可能 2 秒，见下）</td>
+<td><strong>推荐</strong></td>
+</tr>
+<tr>
+<td><strong>no</strong></td>
+<td>完全交给操作系统</td>
+<td>最好</td>
+<td>由 OS 决定（Linux 默认 30 秒脏页回写）</td>
+<td>基本等于没有持久化保证</td>
+</tr>
+</tbody>
+</table>
+<h3 id="everysec-的实现细节">everysec 的实现细节</h3>
+<p><code>everysec</code> 的 fsync 是<strong>由 bio 后台线程执行</strong>的（这就是第 5 篇提到的 bio 线程之一），主线程不等它完成。</p>
+<p>但有个微妙的地方（<code>flushAppendOnlyFile</code> 里）：</p>
+<pre tabindex="0"><code>主线程要 write() 时，先检查上一次的 fsync 是否还在进行：
+├─ 如果后台 fsync 已完成 → 正常 write
+├─ 如果后台 fsync 仍在进行中：
+│  ├─ 记下推迟开始的时间，本次 write 【推迟】（先不写，等下一轮）
+│  └─ 如果推迟已超过 2 秒 → 【强制阻塞地 write】，主线程在此等待
+</code></pre><p>所以：</p>
+<ol>
+<li><strong><code>everysec</code> 实际最多可能丢 2 秒数据</strong>（不是 1 秒）——因为 write 本身可能被推迟；</li>
+<li><strong>磁盘 IO 打满时，主线程会被 AOF 阻塞</strong>。这时 <code>INFO persistence</code> 的 <code>aof_delayed_fsync</code> 计数器会增长：</li>
+</ol>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">127.0.0.1:6379&gt; INFO persistence
+</span></span><span class="line"><span class="cl">aof_delayed_fsync:12        <span class="c1"># 因等待 fsync 而延迟 write 的次数，持续增长说明磁盘慢</span>
+</span></span></code></pre></div><p><code>aof_delayed_fsync</code> 持续增长是<strong>磁盘性能不足</strong>的明确信号。</p>
+<h3 id="always-真的不丢数据吗">always 真的不丢数据吗</h3>
+<p>不完全。<code>always</code> 的语义是&quot;每次事件循环结束前 fsync&quot;，但：</p>
+<ul>
+<li>如果一次事件循环处理了多条命令（pipeline），它们会被一起 fsync；</li>
+<li>极端情况下，命令执行成功、返回给客户端、但在 <code>beforeSleep</code> 的 fsync 之前进程被 <code>kill -9</code>，这条命令仍会丢失。</li>
+</ul>
+<p>所以准确说法是：<strong><code>always</code> 把丢失窗口缩小到&quot;单次事件循环&quot;级别，而不是绝对不丢</strong>。真正的零丢失需要配合主从同步复制（<code>WAIT</code> 命令）或者接受更慢的方案。</p>
+<h2 id="34-aof-重写">3.4 AOF 重写</h2>
+<h3 id="为什么需要重写">为什么需要重写</h3>
+<p>AOF 记录所有写命令，会无限增长。而且很多命令是&quot;冗余&quot;的：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">SET counter <span class="m">1</span>
+</span></span><span class="line"><span class="cl">INCR counter      <span class="c1"># 2</span>
+</span></span><span class="line"><span class="cl">INCR counter      <span class="c1"># 3</span>
+</span></span><span class="line"><span class="cl">...
+</span></span><span class="line"><span class="cl">INCR counter      <span class="c1"># 1000000</span>
+</span></span></code></pre></div><p>这 100 万条命令的最终效果，等于一条 <code>SET counter 1000000</code>。</p>
+<p>再比如：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">LPUSH list a
+</span></span><span class="line"><span class="cl">LPUSH list b
+</span></span><span class="line"><span class="cl">RPOP list         <span class="c1"># a 被弹出</span>
+</span></span><span class="line"><span class="cl">DEL list          <span class="c1"># 前面所有操作都白做了</span>
+</span></span></code></pre></div><p><strong>AOF 重写就是：读取当前内存里的数据状态，生成一份&quot;能构造出这个状态的最小命令集&quot;</strong>，替换掉旧的臃肿文件。</p>
+<p><strong>注意重写不是&quot;分析压缩旧 AOF 文件&quot;，而是&quot;遍历当前内存数据重新生成&quot;</strong>。这是个常见误解。</p>
+<h3 id="触发方式">触发方式</h3>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">BGREWRITEAOF      <span class="c1"># 手动触发</span>
+</span></span></code></pre></div><pre tabindex="0"><code class="language-conf" data-lang="conf"># 自动触发条件（两个条件同时满足）：
+auto-aof-rewrite-percentage 100    # 当前 AOF 大小比上次重写后大了 100%（即翻倍）
+auto-aof-rewrite-min-size 64mb     # 且当前 AOF 大小超过 64MB
+</code></pre><p>第二个条件的作用是避免文件很小时（比如 1MB 涨到 2MB）频繁重写。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">127.0.0.1:6379&gt; INFO persistence
+</span></span><span class="line"><span class="cl">aof_base_size:52428800          <span class="c1"># 上次重写后的大小</span>
+</span></span><span class="line"><span class="cl">aof_current_size:104857600      <span class="c1"># 当前大小</span>
+</span></span><span class="line"><span class="cl">aof_pending_rewrite:0           <span class="c1"># 是否有重写在排队（比如 RDB 正在跑，重写要等）</span>
+</span></span><span class="line"><span class="cl">aof_rewrite_in_progress:0       <span class="c1"># 是否正在重写</span>
+</span></span><span class="line"><span class="cl">aof_rewrite_scheduled:0         <span class="c1"># 是否已调度但未开始</span>
+</span></span><span class="line"><span class="cl">aof_last_bgrewrite_status:ok    <span class="c1"># 上次重写结果</span>
+</span></span><span class="line"><span class="cl">aof_rewrite_time_sec:-1         <span class="c1"># 上次重写耗时</span>
+</span></span></code></pre></div><h3 id="重写流程70-之前">重写流程（7.0 之前）</h3>
+<p>7.0 之前的重写有个棘手问题：<strong>重写期间的新写入怎么办？</strong></p>
+<pre tabindex="0"><code>1. 主线程 fork 出子进程（同样是 COW）
+2. 子进程遍历自己看到的数据快照，把每个 key 转成&#34;最少的命令&#34;写入临时 AOF 文件
+   （对集合类型还会拆成多条命令，避免单条命令参数过多：
+     一个 100 万元素的 set 会被拆成多条 SADD，每条最多 64 个元素）
+3. 【关键】重写期间主线程收到的新写命令，要同时写入两个地方：
+   ├─ 原来的 aof_buf（保证旧 AOF 文件仍然完整可用）
+   └─ 【AOF 重写缓冲区 aof_rewrite_buf】（记录重写期间的增量）
+4. 子进程写完临时文件，向父进程发信号
+5. 主线程把 aof_rewrite_buf 的内容【追加】到临时文件末尾
+   ↑ 这一步是【阻塞】的！如果重写期间写入量很大，缓冲区可能有几百 MB，
+     追加会造成明显阻塞
+6. 原子 rename 替换旧 AOF 文件
+</code></pre><p><strong>7.0 之前的三个痛点</strong>：</p>
+<ol>
+<li><strong>重写缓冲区占用额外内存</strong>（可能几百 MB 到 GB）；</li>
+<li><strong>第 5 步追加缓冲区时阻塞主线程</strong>；</li>
+<li><strong>数据被写了两次</strong>（旧 AOF + 重写缓冲区），磁盘 IO 翻倍。</li>
+</ol>
+<h3 id="70-的多部分-aofmulti-part-aof">7.0 的多部分 AOF（Multi-Part AOF）</h3>
+<p>7.0 用一个漂亮的设计彻底解决了上述问题：<strong>把 AOF 拆成多个文件</strong>。</p>
+<pre tabindex="0"><code>appendonlydir/                         ← appenddirname 配置
+├── appendonly.aof.1.base.rdb          ← BASE 文件：全量快照（RDB 格式）
+├── appendonly.aof.1.incr.aof          ← INCR 文件：增量命令
+└── appendonly.aof.manifest            ← 清单文件：记录有哪些文件、什么类型、序号
+</code></pre><p>manifest 文件内容示例：</p>
+<pre tabindex="0"><code>file appendonly.aof.1.base.rdb seq 1 type b
+file appendonly.aof.1.incr.aof seq 1 type i
+</code></pre><p><strong>新的重写流程</strong>：</p>
+<pre tabindex="0"><code>1. 打开一个【新的 INCR 文件】，此后的新写入直接写进它
+2. fork 子进程，把内存数据写成【新的 BASE 文件】
+3. 子进程完成后，更新 manifest：指向新的 BASE + 新的 INCR
+4. 删除旧的 BASE 和旧的 INCR 文件
+</code></pre><p><strong>改进点</strong>：</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>7.0 之前</th>
+<th>7.0+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>重写缓冲区</td>
+<td>需要（占内存）</td>
+<td><strong>不需要</strong>（新写入直接进新 INCR 文件）</td>
+</tr>
+<tr>
+<td>追加缓冲区的阻塞</td>
+<td>有</td>
+<td><strong>无</strong></td>
+</tr>
+<tr>
+<td>写放大</td>
+<td>数据写两遍</td>
+<td><strong>只写一遍</strong></td>
+</tr>
+<tr>
+<td>文件结构</td>
+<td>单个大文件</td>
+<td>BASE + INCR + manifest</td>
+</tr>
+</tbody>
+</table>
+<p>这是 7.0 一个非常实在的改进，大幅降低了重写期间的内存和延迟风险。</p>
+<h3 id="重写期间的注意事项">重写期间的注意事项</h3>
+<pre tabindex="0"><code class="language-conf" data-lang="conf"># 重写期间是否禁止主进程的 fsync（默认 no）
+no-appendfsync-on-rewrite no
+</code></pre><ul>
+<li><strong><code>no</code>（默认）</strong>：重写期间主线程照常 fsync。数据最安全，但主线程的 fsync 和子进程的大量磁盘写入会<strong>抢 IO</strong>，可能造成延迟升高；</li>
+<li><strong><code>yes</code></strong>：重写期间主线程不做 fsync（相当于临时降级成 <code>appendfsync no</code>）。避免了 IO 争抢，但<strong>如果这期间宕机，可能丢失整个重写期间的数据</strong>（可能是几十秒的量）。</li>
+</ul>
+<p><strong>建议</strong>：机械盘或 IO 紧张时可以设 <code>yes</code> 换取稳定延迟；SSD 且 IO 有余量时保持 <code>no</code>。</p>
+<p><strong>另外：RDB 和 AOF 重写不会同时进行</strong>。如果 <code>BGSAVE</code> 正在跑，<code>BGREWRITEAOF</code> 会被标记为 <code>aof_rewrite_scheduled</code>，等 RDB 完成后再执行。因为两个 fork 同时存在会让内存开销和 IO 压力翻倍。</p>
+<h2 id="35-混合持久化40">3.5 混合持久化（4.0+）</h2>
+<pre tabindex="0"><code class="language-conf" data-lang="conf">aof-use-rdb-preamble yes      # 默认 yes，强烈建议保持
+</code></pre><p>开启后，<strong>AOF 重写生成的 BASE 部分用 RDB 格式而不是命令格式</strong>：</p>
+<pre tabindex="0"><code>7.0 之前的单文件形态：
++--------------------------+--------------------------+
+|   RDB 格式的全量数据     |  重写后新增的 AOF 命令   |
++--------------------------+--------------------------+
+
+7.0+ 的多部分形态：
+appendonly.aof.1.base.rdb   ← RDB 格式（这就是混合持久化）
+appendonly.aof.1.incr.aof   ← 命令格式
+</code></pre><p><strong>好处</strong>：</p>
+<ol>
+<li><strong>文件更小</strong>：RDB 是压缩的二进制格式，比等价的 AOF 命令小很多；</li>
+<li><strong>恢复快得多</strong>：加载 RDB 部分是直接反序列化数据（快），只有增量的命令部分需要逐条重放。10GB 的数据可能从&quot;AOF 重放 15 分钟&quot;变成&quot;RDB 加载 30 秒 + 少量命令重放&quot;。</li>
+</ol>
+<p><strong>代价</strong>：BASE 部分不再是人类可读的文本，无法直接用编辑器查看或手工修改（但 7.0 的多部分设计下，增量 INCR 文件仍然是可读的文本）。</p>
+<p><code>aof-use-rdb-preamble no</code> 时 BASE 部分仍用命令格式，只有在特殊需求（比如需要审计所有历史命令）时才这么设。</p>
+<hr>
+<h1 id="4-数据恢复">4. 数据恢复</h1>
+<h2 id="41-加载优先级">4.1 加载优先级</h2>
+<p>Redis 启动时的加载逻辑：</p>
+<pre tabindex="0"><code>if (appendonly == yes):
+    加载 AOF（7.0+ 读 manifest → 加载 BASE → 依次加载各 INCR）
+    ← 【完全忽略 RDB 文件】
+else:
+    加载 RDB
+</code></pre><p><strong>关键点：只要开启了 AOF，就只加载 AOF，RDB 文件会被完全忽略。</strong></p>
+<p>原因：AOF 通常比 RDB 更新（记录了最近的写入），所以更可靠。</p>
+<p><strong>这是一个经典的运维事故来源</strong>：</p>
+<pre tabindex="0"><code>场景：实例原本只开 RDB，数据 10GB。运维想加上 AOF 更安全，于是：
+1. 修改配置 appendonly yes
+2. 重启 Redis
+3. 【数据全部丢失！】
+
+原因：重启时因为 appendonly=yes，Redis 去加载 AOF 文件，
+     但 AOF 文件还不存在（从没生成过），于是加载了一个空数据集，
+     然后立刻创建一个空的 AOF 文件。RDB 里的 10GB 数据被彻底忽略。
+     更糟的是如果这时触发了 bgsave，空数据还会把 RDB 覆盖掉。
+</code></pre><p><strong>正确的开启 AOF 方式（不重启，动态开启）</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 4.0+ 支持动态开启，会立即触发一次 AOF 重写（从当前内存生成完整 AOF）</span>
+</span></span><span class="line"><span class="cl">redis-cli CONFIG SET appendonly yes
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 确认重写完成</span>
+</span></span><span class="line"><span class="cl">redis-cli INFO persistence <span class="p">|</span> grep -E <span class="s1">&#39;aof_enabled|aof_rewrite_in_progress|aof_last_bgrewrite_status&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># aof_enabled:1</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># aof_rewrite_in_progress:0</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># aof_last_bgrewrite_status:ok</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 确认 AOF 文件已生成且大小合理</span>
+</span></span><span class="line"><span class="cl">ls -la /data/appendonlydir/
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 最后把配置写回文件，避免下次重启回退</span>
+</span></span><span class="line"><span class="cl">redis-cli CONFIG REWRITE
+</span></span></code></pre></div><h2 id="42-文件损坏的修复">4.2 文件损坏的修复</h2>
+<p>如果 Redis 在写 AOF 的过程中被 <code>kill -9</code> 或断电，AOF 文件末尾可能只有半条命令。</p>
+<pre tabindex="0"><code class="language-conf" data-lang="conf"># 是否容忍 AOF 文件末尾被截断（默认 yes）
+aof-load-truncated yes
+</code></pre><ul>
+<li><strong><code>yes</code></strong>：加载到截断处就停止，<strong>记录一条 warning 日志继续启动</strong>。这是合理的默认值——丢掉最后一条不完整的命令，其他数据都能用；</li>
+<li><strong><code>no</code></strong>：直接拒绝启动，报错要求人工处理。</li>
+</ul>
+<p>如果是<strong>文件中间</strong>损坏（不是末尾截断），Redis 会拒绝启动，需要手动修复：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 1. 先备份！（redis-check-aof --fix 会直接修改原文件）</span>
+</span></span><span class="line"><span class="cl">cp -r /data/appendonlydir /data/appendonlydir.bak
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 2. 检查</span>
+</span></span><span class="line"><span class="cl">redis-check-aof /data/appendonlydir/appendonly.aof.1.incr.aof
+</span></span><span class="line"><span class="cl"><span class="c1"># AOF analyzed: filename=..., size=1024, ok_up_to=1000, ok_up_to_line=50, diff=24</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># AOF is not valid. Use the --fix option to try fixing it.</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 3. 修复（会截断掉从第一个错误处开始的所有内容）</span>
+</span></span><span class="line"><span class="cl">redis-check-aof --fix /data/appendonlydir/appendonly.aof.1.incr.aof
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 7.0+ 也可以直接检查整个 manifest</span>
+</span></span><span class="line"><span class="cl">redis-check-aof --fix /data/appendonlydir/appendonly.aof.manifest
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 4. RDB 的检查（注意：redis-check-rdb 只能检查，不能修复）</span>
+</span></span><span class="line"><span class="cl">redis-check-rdb /data/dump.rdb
+</span></span></code></pre></div><p><strong>注意 <code>--fix</code> 的做法是&quot;从第一个错误处开始截断掉后面所有内容&quot;</strong>，所以如果错误在文件前半部分，会丢失大量数据。这也是为什么修复前必须备份。</p>
+<h2 id="43-从备份恢复">4.3 从备份恢复</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># RDB 恢复</span>
+</span></span><span class="line"><span class="cl">systemctl stop redis
+</span></span><span class="line"><span class="cl">cp /backup/dump-20260729.rdb /data/dump.rdb
+</span></span><span class="line"><span class="cl">chown redis:redis /data/dump.rdb
+</span></span><span class="line"><span class="cl"><span class="c1"># ⚠️ 如果配置里 appendonly yes，必须先临时改成 no，否则 RDB 不会被加载！</span>
+</span></span><span class="line"><span class="cl">systemctl start redis
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># AOF 恢复（7.0+）</span>
+</span></span><span class="line"><span class="cl">systemctl stop redis
+</span></span><span class="line"><span class="cl">rm -rf /data/appendonlydir
+</span></span><span class="line"><span class="cl">cp -r /backup/appendonlydir-20260729 /data/appendonlydir
+</span></span><span class="line"><span class="cl">chown -R redis:redis /data/appendonlydir
+</span></span><span class="line"><span class="cl">systemctl start redis
+</span></span></code></pre></div><p><strong>用 RDB 恢复但配置开了 AOF 的正确流程</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 1. 停止 Redis</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 2. 把 RDB 放到 dir 目录</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 3. 临时禁用 AOF：修改配置 appendonly no</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 4. 启动（此时加载 RDB）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 5. 验证数据正确：DBSIZE、抽查关键 key</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 6. 动态开启 AOF（会从内存生成新的 AOF）</span>
+</span></span><span class="line"><span class="cl">redis-cli CONFIG SET appendonly yes
+</span></span><span class="line"><span class="cl"><span class="c1"># 7. 等重写完成后写回配置</span>
+</span></span><span class="line"><span class="cl">redis-cli CONFIG REWRITE
+</span></span></code></pre></div><h2 id="44-用主从做在线恢复">4.4 用主从做在线恢复</h2>
+<p>如果实例数据损坏但还有正常的副本，最快的恢复方式是<strong>用主从复制</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 在损坏的实例上（或新起一个干净实例）</span>
+</span></span><span class="line"><span class="cl">redis-cli -p <span class="m">6380</span> REPLICAOF &lt;正常节点IP&gt; <span class="m">6379</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 等待同步完成</span>
+</span></span><span class="line"><span class="cl">redis-cli -p <span class="m">6380</span> INFO replication <span class="p">|</span> grep master_link_status
+</span></span><span class="line"><span class="cl"><span class="c1"># master_link_status:up</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 同步完成后断开，变成独立实例</span>
+</span></span><span class="line"><span class="cl">redis-cli -p <span class="m">6380</span> REPLICAOF NO ONE
+</span></span></code></pre></div><p>这比从磁盘备份恢复快得多，而且数据是最新的。</p>
+<h2 id="45-无损迁移数据">4.5 无损迁移数据</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 方式一：redis-cli --rdb 从运行中的实例拉一份 RDB（走复制协议）</span>
+</span></span><span class="line"><span class="cl">redis-cli -h source_host --rdb /tmp/dump.rdb
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 方式二：单个 key 的迁移</span>
+</span></span><span class="line"><span class="cl">redis-cli -h src DUMP mykey                      <span class="c1"># 序列化</span>
+</span></span><span class="line"><span class="cl">redis-cli -h dst RESTORE mykey <span class="m">0</span> <span class="s2">&#34;&lt;序列化数据&gt;&#34;</span>    <span class="c1"># 反序列化</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 或者一步到位（原子）</span>
+</span></span><span class="line"><span class="cl">redis-cli -h src MIGRATE dst_host <span class="m">6379</span> mykey <span class="m">0</span> <span class="m">5000</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 方式三：全量在线迁移工具</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># redis-shake（阿里开源，支持全量+增量）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># redis-port、redis-migrate-tool</span>
+</span></span></code></pre></div><hr>
+<h1 id="5-rdb-与-aof-的选择">5. RDB 与 AOF 的选择</h1>
+<h2 id="51-对比总表">5.1 对比总表</h2>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>RDB</th>
+<th>AOF</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>数据完整性</td>
+<td>差（丢两次快照之间的数据）</td>
+<td><strong>好</strong>（everysec 最多丢 1~2 秒）</td>
+</tr>
+<tr>
+<td>文件体积</td>
+<td><strong>小</strong></td>
+<td>大（重写后改善，混合持久化后接近 RDB）</td>
+</tr>
+<tr>
+<td>恢复速度</td>
+<td><strong>快</strong></td>
+<td>慢（除非开混合持久化）</td>
+</tr>
+<tr>
+<td>对写性能的影响</td>
+<td>fork 时毛刺</td>
+<td>每次写要 append + 定期 fsync</td>
+</tr>
+<tr>
+<td>磁盘 IO</td>
+<td>周期性的大量写</td>
+<td><strong>持续的小量写</strong></td>
+</tr>
+<tr>
+<td>内存开销</td>
+<td>fork 的 COW</td>
+<td>7.0 前有重写缓冲区；重写时也有 COW</td>
+</tr>
+<tr>
+<td>适合场景</td>
+<td>冷备、灾备、快速重启、主从全量同步</td>
+<td>需要低数据丢失的场景</td>
+</tr>
+<tr>
+<td>可读性</td>
+<td>二进制，不可读</td>
+<td>文本可读（可人工修复/审计）</td>
+</tr>
+<tr>
+<td>版本兼容</td>
+<td>高版本能读低版本，<strong>反之不行</strong></td>
+<td>兼容性好（就是命令）</td>
+</tr>
+</tbody>
+</table>
+<h2 id="52-四种配置方案">5.2 四种配置方案</h2>
+<p><strong>方案一：都不开（纯缓存）</strong></p>
+<pre tabindex="0"><code class="language-conf" data-lang="conf">save &#34;&#34;
+appendonly no
+</code></pre><p>适合：<strong>纯缓存场景</strong>，数据全部能从 DB 重建，追求极致性能。</p>
+<p>注意：这种配置下重启会丢失全部数据，要考虑<strong>缓存预热</strong>（否则重启后大量请求穿透到 DB，可能把 DB 打挂）。另外<strong>主从复制的全量同步仍然需要生成 RDB</strong>（除非用无盘复制）。</p>
+<p><strong>方案二：只开 RDB</strong></p>
+<pre tabindex="0"><code class="language-conf" data-lang="conf">save 3600 1
+save 300 100
+save 60 10000
+appendonly no
+</code></pre><p>适合：能容忍丢失几分钟数据、追求快速重启和小体积备份的场景。</p>
+<p><strong>方案三：只开 AOF</strong></p>
+<pre tabindex="0"><code class="language-conf" data-lang="conf">save &#34;&#34;
+appendonly yes
+appendfsync everysec
+aof-use-rdb-preamble yes
+</code></pre><p>适合：数据比较重要、但不想承担 RDB 的 fork 频率。</p>
+<p>注意：即使 <code>save &quot;&quot;</code>，<strong>主从全量同步和 <code>SHUTDOWN</code> 时 Redis 仍会用到 RDB 机制</strong>。</p>
+<p><strong>方案四：两个都开（推荐）</strong></p>
+<pre tabindex="0"><code class="language-conf" data-lang="conf"># RDB：低频快照，主要用于灾备和快速恢复
+save 3600 1
+save 300 100
+
+# AOF：保证数据完整性
+appendonly yes
+appendfsync everysec
+aof-use-rdb-preamble yes
+auto-aof-rewrite-percentage 100
+auto-aof-rewrite-min-size 64mb
+no-appendfsync-on-rewrite no
+</code></pre><p><strong>这是生产环境最常见的配置</strong>。逻辑是：</p>
+<ul>
+<li><strong>平时靠 AOF 保证数据不丢</strong>（最多 1 秒）；</li>
+<li><strong>RDB 作为定期的全量冷备</strong>，可以直接拷到异地做灾备，也是最后的兜底（如果 AOF 出了问题，还有 RDB 可用）；</li>
+<li>重启时加载 AOF（因为开了 AOF），有混合持久化所以速度也不慢。</li>
+</ul>
+<p>代价是两个都开会有更多的磁盘 IO 和 fork，需要监控。</p>
+<h2 id="53-什么都不如主从--哨兵">5.3 什么都不如主从 + 哨兵</h2>
+<p>必须强调：<strong>持久化解决的是&quot;单机重启后能恢复&quot;，不解决&quot;单机挂了服务不可用&quot;</strong>。</p>
+<p>真正的高可用架构是：</p>
+<pre tabindex="0"><code>持久化（AOF + RDB）  →  保证单机数据不丢
+主从复制             →  保证有实时副本
+哨兵 / Cluster       →  保证故障自动转移
+定期备份到异地        →  保证机房级灾难可恢复
+</code></pre><p>只有持久化没有主从，机器宕机后要等重启 + 加载数据（10GB 可能几分钟），期间服务完全不可用。</p>
+<hr>
+<h1 id="6-数据丢失窗口分析">6. 数据丢失窗口分析</h1>
+<p>面试常问&quot;Redis 会丢多少数据&quot;，需要<strong>分层分析</strong>：</p>
+<h2 id="61-单机层面">6.1 单机层面</h2>
+<table>
+<thead>
+<tr>
+<th>配置</th>
+<th>崩溃时最多丢失</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>无持久化</td>
+<td><strong>全部</strong></td>
+</tr>
+<tr>
+<td>只有 RDB（save 60 10000）</td>
+<td>最多 60 秒的写入（如果没达到 10000 变更，可能丢更多，最坏一小时）</td>
+</tr>
+<tr>
+<td>AOF <code>appendfsync no</code></td>
+<td>由 OS 决定，Linux 默认脏页回写间隔 30 秒 → <strong>最多约 30 秒</strong></td>
+</tr>
+<tr>
+<td>AOF <code>appendfsync everysec</code></td>
+<td><strong>约 1~2 秒</strong>（write 可能被推迟 2 秒）</td>
+</tr>
+<tr>
+<td>AOF <code>appendfsync always</code></td>
+<td>单次事件循环的量（接近 0，但非绝对零）</td>
+</tr>
+</tbody>
+</table>
+<h2 id="62-主从层面更重要的丢失来源">6.2 主从层面（更重要的丢失来源）</h2>
+<p><strong>Redis 的主从复制是异步的</strong>：主节点执行完命令<strong>立即返回客户端成功</strong>，然后才异步地把命令发给从节点。</p>
+<pre tabindex="0"><code>客户端 --SET k v--&gt; 主节点
+                    ├─ 执行命令
+                    ├─ 【立即返回 +OK 给客户端】
+                    └─ 异步发送给从节点  ← 如果这时主节点宕机，这条数据就丢了
+</code></pre><p>所以：<strong>即使 <code>appendfsync always</code>，主从切换仍然可能丢数据</strong>——因为从节点可能还没收到最后那批命令，而它被提升为新主节点了。</p>
+<p><strong>这是分布式层面的丢失，比单机持久化的丢失窗口通常更大</strong>（取决于主从延迟，正常几毫秒，网络抖动时可能几秒）。</p>
+<h2 id="63-wait-命令半同步复制">6.3 <code>WAIT</code> 命令：半同步复制</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">WAIT numreplicas timeout
+</span></span></code></pre></div><p><code>WAIT 1 1000</code> 表示&quot;阻塞等待至少 1 个从节点确认收到了之前的所有写命令，最多等 1000 毫秒&quot;，返回实际确认的从节点数。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">127.0.0.1:6379&gt; SET important-data value
+</span></span><span class="line"><span class="cl">OK
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; WAIT <span class="m">1</span> <span class="m">1000</span>
+</span></span><span class="line"><span class="cl"><span class="o">(</span>integer<span class="o">)</span> <span class="m">1</span>        <span class="c1"># 有 1 个从节点确认收到了</span>
+</span></span></code></pre></div><p>用法：对关键写操作，写完立刻 <code>WAIT</code>，如果返回值小于期望值就说明复制没跟上，业务可以选择报错或重试。</p>
+<p><strong>但要清楚 <code>WAIT</code> 的局限</strong>：</p>
+<ol>
+<li><strong>不是真正的同步复制</strong>：它只保证从节点&quot;收到了并写入了自己的复制缓冲区/内存&quot;，<strong>不保证从节点已经 fsync 到磁盘</strong>；</li>
+<li><strong>不提供一致性保证</strong>：即使 <code>WAIT</code> 返回成功，主节点宕机后如果哨兵选了另一个更落后的从节点做主，数据仍然会丢；</li>
+<li><strong>性能代价大</strong>：每次写都要等一个 RTT，吞吐会明显下降；</li>
+<li><strong>超时也返回</strong>：<code>WAIT</code> 超时后返回实际确认数，不会报错，业务必须检查返回值。</li>
+</ol>
+<p>7.0 还引入了 <code>WAITAOF numlocal numreplicas timeout</code>，可以等待&quot;本地 AOF fsync 完成&quot;和&quot;从节点 AOF fsync 完成&quot;，比 <code>WAIT</code> 的保证更强：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">WAITAOF <span class="m">1</span> <span class="m">1</span> <span class="m">1000</span>    <span class="c1"># 等本地 AOF 落盘 + 1 个从节点 AOF 落盘</span>
+</span></span></code></pre></div><p><strong>结论</strong>：如果业务真的一条数据都不能丢，<strong>不应该用 Redis 做主存储</strong>——应该写数据库（MySQL 的组提交 + 双 1 配置），Redis 只做缓存和加速。</p>
+<hr>
+<h1 id="7-监控与排查">7. 监控与排查</h1>
+<h2 id="71-关键指标">7.1 关键指标</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">127.0.0.1:6379&gt; INFO persistence
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ---------- RDB ----------</span>
+</span></span><span class="line"><span class="cl">rdb_changes_since_last_save:1234      <span class="c1"># 距上次保存的变更数（越大说明丢的越多）</span>
+</span></span><span class="line"><span class="cl">rdb_bgsave_in_progress:0              <span class="c1"># 是否正在 bgsave</span>
+</span></span><span class="line"><span class="cl">rdb_last_save_time:1785657600         <span class="c1"># 上次成功保存的时间戳</span>
+</span></span><span class="line"><span class="cl">rdb_last_bgsave_status:ok             <span class="c1"># 上次结果，err 要立刻排查！</span>
+</span></span><span class="line"><span class="cl">rdb_last_bgsave_time_sec:3            <span class="c1"># 上次耗时（秒）</span>
+</span></span><span class="line"><span class="cl">rdb_current_bgsave_time_sec:-1        <span class="c1"># 当前已耗时</span>
+</span></span><span class="line"><span class="cl">rdb_last_cow_size:16777216            <span class="c1"># 【重要】上次 bgsave 的 COW 内存量</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ---------- AOF ----------</span>
+</span></span><span class="line"><span class="cl">aof_enabled:1
+</span></span><span class="line"><span class="cl">aof_rewrite_in_progress:0
+</span></span><span class="line"><span class="cl">aof_rewrite_scheduled:0               <span class="c1"># 因 RDB 正在跑而排队等待</span>
+</span></span><span class="line"><span class="cl">aof_last_bgrewrite_status:ok
+</span></span><span class="line"><span class="cl">aof_last_write_status:ok              <span class="c1"># 【重要】最近一次写 AOF 的结果</span>
+</span></span><span class="line"><span class="cl">aof_rewrite_time_sec:-1
+</span></span><span class="line"><span class="cl">aof_last_cow_size:8388608             <span class="c1"># 上次重写的 COW 内存量</span>
+</span></span><span class="line"><span class="cl">aof_base_size:52428800
+</span></span><span class="line"><span class="cl">aof_current_size:104857600
+</span></span><span class="line"><span class="cl">aof_pending_rewrite:0
+</span></span><span class="line"><span class="cl">aof_buffer_length:0                   <span class="c1"># AOF 缓冲区当前长度（持续增长说明磁盘写不过来）</span>
+</span></span><span class="line"><span class="cl">aof_delayed_fsync:0                   <span class="c1"># 【重要】因等待 fsync 而推迟 write 的次数</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ---------- fork ----------</span>
+</span></span><span class="line"><span class="cl">127.0.0.1:6379&gt; INFO stats
+</span></span><span class="line"><span class="cl">latest_fork_usec:183021               <span class="c1"># 【最重要】最近一次 fork 耗时（微秒）</span>
+</span></span><span class="line"><span class="cl">total_forks:127
+</span></span></code></pre></div><h2 id="72-必须告警的指标">7.2 必须告警的指标</h2>
+<table>
+<thead>
+<tr>
+<th>指标</th>
+<th>阈值</th>
+<th>含义与处理</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>rdb_last_bgsave_status</code></td>
+<td>!= ok</td>
+<td>快照失败！检查磁盘空间、权限、<code>vm.overcommit_memory</code></td>
+</tr>
+<tr>
+<td><code>aof_last_bgrewrite_status</code></td>
+<td>!= ok</td>
+<td>重写失败，同上</td>
+</tr>
+<tr>
+<td><code>aof_last_write_status</code></td>
+<td>!= ok</td>
+<td><strong>AOF 写入失败，数据正在丢失</strong>，最高优先级</td>
+</tr>
+<tr>
+<td><code>latest_fork_usec</code></td>
+<td>&gt; 100000（100ms）</td>
+<td>fork 慢，检查实例大小、THP、虚拟化</td>
+</tr>
+<tr>
+<td><code>aof_delayed_fsync</code></td>
+<td>持续增长</td>
+<td><strong>磁盘性能不足</strong>，考虑换 SSD 或调整策略</td>
+</tr>
+<tr>
+<td><code>rdb_changes_since_last_save</code></td>
+<td>异常大</td>
+<td>快照太久没成功，丢失风险高</td>
+</tr>
+<tr>
+<td><code>aof_current_size</code></td>
+<td>异常大</td>
+<td>重写没触发（检查配置）或重写一直失败</td>
+</tr>
+</tbody>
+</table>
+<h2 id="73-常见问题排查">7.3 常见问题排查</h2>
+<p><strong>问题一：<code>bgsave</code> 失败，日志报 <code>Cannot allocate memory</code></strong></p>
+<pre tabindex="0"><code>原因：fork 时内核认为内存不足
+解决：
+1. echo 1 &gt; /proc/sys/vm/overcommit_memory  （最常见的原因）
+2. 检查是否真的内存不足（free -m）
+3. 降低 maxmemory
+</code></pre><p><strong>问题二：磁盘满导致 Redis 变成只读</strong></p>
+<pre tabindex="0"><code>日志：MISCONF Redis is configured to save RDB snapshots, but it is
+     currently not able to persist on disk.
+原因：stop-writes-on-bgsave-error yes + bgsave 持续失败
+应急：
+1. 清理磁盘空间（这是根本）
+2. 紧急恢复写入：CONFIG SET stop-writes-on-bgsave-error no
+   ⚠️ 这只是让业务先跑起来，数据依然没有落盘保护
+</code></pre><p><strong>问题三：重写期间延迟飙升</strong></p>
+<pre tabindex="0"><code>原因：子进程的大量磁盘写入和主线程的 fsync 抢 IO
+解决：
+1. CONFIG SET no-appendfsync-on-rewrite yes  （牺牲重写期间的安全性）
+2. 把 AOF 和 RDB 放到独立的磁盘
+3. 用 SSD
+4. 错峰：把自动重写关掉，用 crontab 在低峰期手动 BGREWRITEAOF
+</code></pre><p><strong>问题四：从节点内存比主节点高很多</strong></p>
+<pre tabindex="0"><code>可能原因：
+1. 主节点有大量过期 key 还没传播 DEL（第 6 篇）
+2. 从节点的 client-output-buffer 或复制缓冲区占用
+3. 主从的编码不同：主节点某个 hash 是 hashtable 编码，
+   从节点全量同步时按 RDB 重建，可能变成 listpack（反之亦然）
+   实际上更常见的是相反情况：从节点重建后编码更省，内存更低
+4. 内存碎片率不同
+</code></pre><p><strong>问题五：重启后数据没了</strong></p>
+<pre tabindex="0"><code>排查顺序：
+1. 确认 appendonly 配置：如果是 yes，Redis 只看 AOF 不看 RDB！
+2. 确认 dir 配置是否正确（Redis 用相对路径时，工作目录变了会找不到文件）
+   redis-cli CONFIG GET dir
+3. 确认文件权限（redis 用户能否读）
+4. 看启动日志：是否有 &#34;DB loaded from disk&#34; 或 &#34;DB loaded from append only file&#34;
+5. 确认是否被 FLUSHALL（查 AOF 文件里是否有 FLUSHALL 命令）
+</code></pre><h2 id="74-备份策略">7.4 备份策略</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="cp">#!/bin/bash
+</span></span></span><span class="line"><span class="cl"><span class="cp"></span><span class="c1"># 生产级 RDB 备份脚本示例</span>
+</span></span><span class="line"><span class="cl"><span class="nv">BACKUP_DIR</span><span class="o">=</span>/backup/redis
+</span></span><span class="line"><span class="cl"><span class="nv">DATE</span><span class="o">=</span><span class="k">$(</span>date +%Y%m%d_%H%M%S<span class="k">)</span>
+</span></span><span class="line"><span class="cl"><span class="nv">REDIS_CLI</span><span class="o">=</span><span class="s2">&#34;redis-cli -h 127.0.0.1 -p 6379&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 1. 触发快照并等待完成</span>
+</span></span><span class="line"><span class="cl"><span class="nv">LAST_SAVE</span><span class="o">=</span><span class="k">$(</span><span class="nv">$REDIS_CLI</span> LASTSAVE<span class="k">)</span>
+</span></span><span class="line"><span class="cl"><span class="nv">$REDIS_CLI</span> BGSAVE
+</span></span><span class="line"><span class="cl"><span class="k">while</span> <span class="o">[</span> <span class="s2">&#34;</span><span class="k">$(</span><span class="nv">$REDIS_CLI</span> LASTSAVE<span class="k">)</span><span class="s2">&#34;</span> <span class="o">==</span> <span class="s2">&#34;</span><span class="nv">$LAST_SAVE</span><span class="s2">&#34;</span> <span class="o">]</span><span class="p">;</span> <span class="k">do</span>
+</span></span><span class="line"><span class="cl">    sleep <span class="m">1</span>
+</span></span><span class="line"><span class="cl"><span class="k">done</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 2. 确认成功</span>
+</span></span><span class="line"><span class="cl"><span class="nv">STATUS</span><span class="o">=</span><span class="k">$(</span><span class="nv">$REDIS_CLI</span> INFO persistence <span class="p">|</span> grep rdb_last_bgsave_status <span class="p">|</span> cut -d: -f2 <span class="p">|</span> tr -d <span class="s1">&#39;\r&#39;</span><span class="k">)</span>
+</span></span><span class="line"><span class="cl"><span class="k">if</span> <span class="o">[</span> <span class="s2">&#34;</span><span class="nv">$STATUS</span><span class="s2">&#34;</span> !<span class="o">=</span> <span class="s2">&#34;ok&#34;</span> <span class="o">]</span><span class="p">;</span> <span class="k">then</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">echo</span> <span class="s2">&#34;BGSAVE failed!&#34;</span> <span class="o">&amp;&amp;</span> <span class="nb">exit</span> <span class="m">1</span>
+</span></span><span class="line"><span class="cl"><span class="k">fi</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 3. 拷贝（RDB 是原子 rename 生成的，拷贝时不会读到半个文件）</span>
+</span></span><span class="line"><span class="cl"><span class="nv">DIR</span><span class="o">=</span><span class="k">$(</span><span class="nv">$REDIS_CLI</span> CONFIG GET dir <span class="p">|</span> tail -1<span class="k">)</span>
+</span></span><span class="line"><span class="cl">cp <span class="s2">&#34;</span><span class="nv">$DIR</span><span class="s2">/dump.rdb&#34;</span> <span class="s2">&#34;</span><span class="nv">$BACKUP_DIR</span><span class="s2">/dump_</span><span class="nv">$DATE</span><span class="s2">.rdb&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 4. 压缩并清理 7 天前的备份</span>
+</span></span><span class="line"><span class="cl">gzip <span class="s2">&#34;</span><span class="nv">$BACKUP_DIR</span><span class="s2">/dump_</span><span class="nv">$DATE</span><span class="s2">.rdb&#34;</span>
+</span></span><span class="line"><span class="cl">find <span class="nv">$BACKUP_DIR</span> -name <span class="s1">&#39;dump_*.rdb.gz&#39;</span> -mtime +7 -delete
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 5. 同步到异地（对象存储 / 另一个机房）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># aws s3 cp ... / ossutil cp ...</span>
+</span></span></code></pre></div><p><strong>备份要点</strong>：</p>
+<ol>
+<li><strong>在从节点上做备份</strong>，避免影响主节点（fork 开销转移到从节点）；</li>
+<li><strong>RDB 文件可以直接拷贝</strong>——因为它是通过&quot;写临时文件 + 原子 rename&quot;生成的，不会拷到半成品；</li>
+<li><strong>备份要异地存储</strong>，同机房的备份挡不住机房级故障；</li>
+<li><strong>定期做恢复演练</strong>——没验证过的备份等于没有备份。</li>
+</ol>
+<hr>
+<h1 id="8-高频面试题">8. 高频面试题</h1>
+<p><strong>Q1：RDB 和 AOF 的区别？各自的优缺点？</strong></p>
+<p><strong>本质区别</strong>：<strong>RDB 记录&quot;数据是什么样&quot;（快照），AOF 记录&quot;数据是怎么变成这样的&quot;（命令日志）</strong>。可以类比为&quot;全量备份&quot;和&quot;binlog&quot;。</p>
+<p><strong>RDB</strong>：</p>
+<ul>
+<li>优点：文件紧凑体积小、<strong>恢复速度快</strong>（直接反序列化）、适合冷备灾备、对性能影响小（除 fork）；</li>
+<li>缺点：<strong>会丢数据</strong>（两次快照之间的写入）、fork 有延迟毛刺、COW 有内存开销、不适合高频执行。</li>
+</ul>
+<p><strong>AOF</strong>：</p>
+<ul>
+<li>优点：<strong>数据完整性好</strong>（everysec 最多丢 1~2 秒）、文本可读可人工修复、写入是持续小量 IO；</li>
+<li>缺点：文件体积大（重写后改善）、<strong>恢复慢</strong>（要重放命令，除非开混合持久化）、每次写有额外开销。</li>
+</ul>
+<p><strong>生产推荐两个都开</strong>：AOF 保证数据不丢，RDB 作定期全量冷备和最后兜底。</p>
+<p><strong>Q2：为什么 <code>BGSAVE</code> 用 fork 而不用线程？COW 是怎么工作的？</strong></p>
+<p><strong>用 fork 而不是线程的原因</strong>：需要一个<strong>数据的一致性快照</strong>。如果用线程，它和主线程共享同一份内存，主线程边写它边读，会得到一个&quot;半新半旧&quot;的不一致快照。而 fork 出的子进程有独立的地址空间（逻辑上的数据副本），看到的永远是 fork 那一瞬间的状态。</p>
+<p><strong>COW（写时复制）流程</strong>：</p>
+<ol>
+<li><code>fork()</code> 时<strong>不复制任何数据页</strong>，只复制<strong>页表</strong>，并把父子进程的所有共享页都标记为<strong>只读</strong>；</li>
+<li>子进程遍历这份&quot;冻结的&quot;数据写 RDB 文件；</li>
+<li>父进程要<strong>修改</strong>某页时，CPU 因写只读页触发<strong>缺页异常</strong>，内核**复制这一页（4KB）**到新物理页，把父进程页表指向新页并恢复可写，父进程在新页上修改；</li>
+<li>子进程始终看着老页，数据一致。</li>
+</ol>
+<p><strong>关键补充</strong>：</p>
+<ul>
+<li><strong>fork 本身是阻塞的</strong>（要复制页表），经验值<strong>每 GB 内存约 20~100ms</strong>，10GB 实例可能阻塞 200ms~1s。用 <code>INFO stats</code> 的 <strong><code>latest_fork_usec</code></strong> 监控；</li>
+<li><strong>COW 的额外内存开销典型是 10%~30%</strong>，最坏理论翻倍。所以 <code>maxmemory</code> 要设为物理内存的 60%~70%；</li>
+<li><strong>读操作也会触发 COW</strong>！因为 LRU/LFU 要更新 <code>robj.lru</code> 字段——这是很多人不知道的点。</li>
+</ul>
+<p><strong>Q3：为什么必须关闭 THP（透明大页）？</strong></p>
+<p>THP 把内存页从 <strong>4KB 变成 2MB</strong>，本意是减少 TLB miss 提升性能。</p>
+<p>但对 Redis 有害：<strong>COW 的复制粒度是&quot;页&quot;</strong>。4KB 页时改一个 key 只复制 4KB；2MB 页时要复制整个 2MB——<strong>复制量放大 512 倍</strong>。</p>
+<p>后果：</p>
+<ol>
+<li>RDB/AOF 重写期间<strong>内存暴涨</strong>（可能几倍于预期）；</li>
+<li>每次缺页异常要复制 2MB，造成<strong>明显的延迟毛刺</strong>（可达几十毫秒）；</li>
+<li>极端情况下 fork 后内存不足被 OOM Killer 杀掉。</li>
+</ol>
+<p>Redis 启动时会检测并打印警告。必须：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="nb">echo</span> never &gt; /sys/kernel/mm/transparent_hugepage/enabled
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> never &gt; /sys/kernel/mm/transparent_hugepage/defrag
+</span></span></code></pre></div><p><strong>Q4：AOF 为什么是&quot;先执行命令后写日志&quot;？和 MySQL 的 WAL 有什么区别？</strong></p>
+<p>MySQL 是 <strong>WAL（Write-Ahead Log）</strong>：先写日志再改数据，目的是崩溃后能靠日志恢复或回滚。</p>
+<p>Redis 是 <strong>&ldquo;后写日志&rdquo;</strong>：命令执行成功后才写 AOF。</p>
+<p><strong>Redis 这样做的好处</strong>：</p>
+<ol>
+<li><strong>不需要做命令合法性检查</strong>：记录的是已成功执行的命令，一定合法，恢复时不会因为记录了错误命令而失败（如果先写日志，就得先校验命令，还得处理&quot;日志写了但执行失败&quot;的情况）；</li>
+<li><strong>不阻塞当前命令</strong>：执行完就能返回客户端，刷盘可以延后到 <code>beforeSleep</code>。</li>
+</ol>
+<p><strong>代价（重点）</strong>：</p>
+<ol>
+<li><strong>可能丢数据</strong>：命令执行完、客户端已收到成功响应、但 AOF 还没 fsync 时崩溃，这条数据就丢了；</li>
+<li><strong>无法回滚</strong>：日志是事后记的，没有 undo 信息。<strong>这是 Redis 事务不支持回滚的底层原因之一</strong>。</li>
+</ol>
+<p><strong>Q5：AOF 的三种刷盘策略？<code>everysec</code> 真的只丢 1 秒吗？</strong></p>
+<p>首先要区分 <strong><code>write</code></strong>（写到内核 page cache，微秒级，断电就丢）和 <strong><code>fsync</code></strong>（真正刷到磁盘介质，毫秒级）。</p>
+<table>
+<thead>
+<tr>
+<th>策略</th>
+<th>fsync 时机</th>
+<th>最多丢失</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>always</code></td>
+<td>每次事件循环结束前</td>
+<td>单次事件循环的量（接近 0 但非绝对）</td>
+</tr>
+<tr>
+<td><code>everysec</code></td>
+<td>每秒一次（<strong>bio 后台线程</strong>执行）</td>
+<td><strong>约 1~2 秒</strong></td>
+</tr>
+<tr>
+<td><code>no</code></td>
+<td>交给 OS（Linux 默认脏页回写 30 秒）</td>
+<td>约 30 秒</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>everysec</code> 为什么可能丢 2 秒而不是 1 秒</strong>：</p>
+<p><code>flushAppendOnlyFile</code> 在 write 之前会检查&quot;上一次的后台 fsync 是否还在进行&quot;：</p>
+<ul>
+<li>如果还在进行中，本次 write 会被<strong>推迟</strong>（先不写，等下一轮事件循环）；</li>
+<li>但如果推迟已经超过 <strong>2 秒</strong>，就强制<strong>阻塞地 write</strong>（主线程在此等待）。</li>
+</ul>
+<p>所以磁盘慢的时候，实际丢失窗口可能接近 2 秒，而且<strong>主线程会被 AOF 阻塞</strong>。监控指标是 <code>INFO persistence</code> 的 <strong><code>aof_delayed_fsync</code></strong>——持续增长说明磁盘性能不足。</p>
+<p><strong>Q6：AOF 重写是怎么做的？7.0 的多部分 AOF 解决了什么问题？</strong></p>
+<p><strong>重写的本质</strong>：不是&quot;压缩分析旧 AOF 文件&quot;，而是<strong>遍历当前内存里的数据，生成能重建这个状态的最小命令集</strong>。所以 100 万次 <code>INCR</code> 会变成一条 <code>SET counter 1000000</code>。</p>
+<p><strong>7.0 之前的流程与痛点</strong>：</p>
+<pre tabindex="0"><code>1. fork 子进程，遍历数据快照写临时 AOF
+2. 重写期间主线程的新写命令要【写两份】：
+   ├─ 原 aof_buf（保证旧文件仍完整可用）
+   └─ AOF 重写缓冲区 aof_rewrite_buf（记录增量）
+3. 子进程完成后，主线程把 aof_rewrite_buf 【追加】到临时文件 ← 阻塞！
+4. rename 替换
+</code></pre><p>三个痛点：<strong>重写缓冲区占额外内存</strong>（可能几百 MB~GB）、<strong>第 3 步追加时阻塞主线程</strong>、<strong>数据写两遍导致 IO 翻倍</strong>。</p>
+<p><strong>7.0 的多部分 AOF（Multi-Part AOF）</strong>：把 AOF 拆成多个文件放在 <code>appendonlydir/</code> 目录里：</p>
+<ul>
+<li><strong>BASE 文件</strong>：全量快照（开混合持久化时是 RDB 格式）；</li>
+<li><strong>INCR 文件</strong>：增量命令；</li>
+<li><strong>manifest 文件</strong>：记录有哪些文件、类型和序号。</li>
+</ul>
+<p>新流程：<strong>先打开一个新的 INCR 文件让新写入直接进去</strong> → fork 子进程写新 BASE → 完成后更新 manifest → 删旧文件。</p>
+<p>结果：<strong>不需要重写缓冲区、没有追加阻塞、数据只写一遍</strong>。这是 7.0 一个非常实在的改进。</p>
+<p><strong>Q7：什么是混合持久化？为什么推荐开启？</strong></p>
+<p><code>aof-use-rdb-preamble yes</code>（4.0+，默认开启）。</p>
+<p>开启后，<strong>AOF 重写生成的 BASE 部分用 RDB 二进制格式而非命令格式</strong>（7.0 前是单文件的&quot;前半段 RDB + 后半段 AOF 命令&quot;，7.0+ 是 <code>appendonly.aof.N.base.rdb</code> + <code>appendonly.aof.N.incr.aof</code>）。</p>
+<p><strong>好处</strong>：</p>
+<ol>
+<li><strong>文件体积小得多</strong>（RDB 是压缩的二进制）；</li>
+<li><strong>恢复速度快几个数量级</strong>：加载 BASE 是直接反序列化（快），只有增量部分需要逐条重放命令。10GB 数据可能从&quot;AOF 重放 15 分钟&quot;变成&quot;RDB 加载 30 秒 + 少量命令&quot;。</li>
+</ol>
+<p><strong>代价</strong>：BASE 部分不再人类可读。但 7.0 的设计下增量 INCR 文件仍是可读文本，兼顾了可观测性。</p>
+<p><strong>Q8：Redis 重启时先加载 RDB 还是 AOF？有什么坑？</strong></p>
+<p><strong>只要 <code>appendonly yes</code>，就只加载 AOF，RDB 文件被完全忽略</strong>（因为 AOF 通常更新更可靠）。</p>
+<p><strong>经典事故</strong>：</p>
+<pre tabindex="0"><code>实例原本只开 RDB，有 10GB 数据。运维想加 AOF 更安全：
+1. 改配置 appendonly yes
+2. 重启
+3. 数据全丢！
+
+因为重启时 Redis 去加载 AOF，但 AOF 文件不存在（从没生成过），
+于是加载了空数据集，然后创建一个空 AOF。RDB 里的 10GB 被忽略。
+如果这时触发 bgsave，空数据还会把 RDB 覆盖掉。
+</code></pre><p><strong>正确做法：动态开启，不要重启</strong>（4.0+）：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">redis-cli CONFIG SET appendonly yes     <span class="c1"># 会立即触发一次重写，从当前内存生成完整 AOF</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 确认 aof_last_bgrewrite_status:ok 且文件已生成</span>
+</span></span><span class="line"><span class="cl">redis-cli CONFIG REWRITE                <span class="c1"># 写回配置文件，避免下次重启回退</span>
+</span></span></code></pre></div><p>同理，<strong>用 RDB 备份恢复时如果配置开了 AOF，必须先临时把 <code>appendonly</code> 改成 <code>no</code></strong>，加载完验证数据后再动态开启 AOF。</p>
+<p><strong>Q9：Redis 最多会丢多少数据？</strong></p>
+<p>必须<strong>分两层</strong>回答：</p>
+<p><strong>单机层面（持久化）</strong>：</p>
+<ul>
+<li>无持久化：全部；</li>
+<li>RDB：两次快照之间（可能几分钟到一小时）；</li>
+<li>AOF <code>no</code>：约 30 秒（OS 脏页回写间隔）；</li>
+<li>AOF <code>everysec</code>：<strong>约 1~2 秒</strong>；</li>
+<li>AOF <code>always</code>：接近 0（但非绝对零）。</li>
+</ul>
+<p><strong>分布式层面（主从复制，这个更容易被忽略且通常影响更大）</strong>：</p>
+<p><strong>Redis 的主从复制是异步的</strong>——主节点执行完命令<strong>立即返回客户端成功</strong>，然后才异步发给从节点。如果主节点在发送前宕机，这批数据就永久丢失（新主节点上没有）。</p>
+<p>所以<strong>即使 <code>appendfsync always</code>，主从切换仍可能丢数据</strong>。</p>
+<p><strong>缓解手段</strong>：</p>
+<ul>
+<li><strong><code>WAIT numreplicas timeout</code></strong>：阻塞等待 N 个从节点确认。但它<strong>只保证从节点收到并写入内存，不保证 fsync</strong>，而且性能代价大；</li>
+<li><strong><code>WAITAOF numlocal numreplicas timeout</code></strong>（7.0+）：保证更强，能等待本地和从节点的 AOF 落盘。</li>
+</ul>
+<p><strong>最终结论</strong>：<strong>如果业务一条数据都不能丢，就不该用 Redis 做主存储</strong>。应该写数据库（MySQL 双 1 配置 + 组提交），Redis 只做缓存和加速。</p>
+<p><strong>Q10：<code>SAVE</code> 和 <code>BGSAVE</code> 的区别？什么时候会自动触发 <code>BGSAVE</code>？</strong></p>
+<p><strong><code>SAVE</code></strong>：在<strong>主线程</strong>同步生成 RDB，期间<strong>完全阻塞</strong>所有客户端请求。10GB 数据可能阻塞几十秒。<strong>生产环境绝对禁用</strong>（应该 rename 掉）。</p>
+<p><strong><code>BGSAVE</code></strong>：fork 子进程在后台生成，主线程只在 <strong>fork 那一瞬间</strong>阻塞。</p>
+<p><strong>自动触发 <code>BGSAVE</code> 的时机</strong>：</p>
+<ol>
+<li><strong>满足 <code>save &lt;秒&gt; &lt;变更数&gt;</code> 规则</strong>（多条是 OR 关系，<code>serverCron</code> 每 100ms 检查）；</li>
+<li><strong>主从全量同步</strong>：主节点为从节点生成 RDB（或用 <code>repl-diskless-sync</code> 无盘复制直接走 socket）；</li>
+<li><strong><code>SHUTDOWN</code></strong>（且配置了 save 规则）：先存盘再退出；</li>
+<li><strong><code>DEBUG RELOAD</code></strong>；</li>
+<li><strong><code>FLUSHALL</code></strong>（生成空 RDB）；</li>
+<li><strong>AOF 重写</strong>（开混合持久化时，BASE 部分就是 RDB）。</li>
+</ol>
+<p><strong>注意</strong>：<code>BGSAVE</code> 和 <code>BGREWRITEAOF</code> <strong>不会同时执行</strong>。如果一个在跑，另一个会被排队（<code>aof_rewrite_scheduled</code>），因为两个 fork 并存会让内存和 IO 压力翻倍。</p>
+<p><strong>Q11：<code>stop-writes-on-bgsave-error yes</code> 有什么风险？</strong></p>
+<p>它的本意是保护：如果快照持续失败（磁盘满、权限错误），说明数据无法落盘，继续接受写入等于积累&quot;注定会丢的数据&quot;，所以干脆拒绝写入让你及时发现问题。</p>
+<p><strong>风险</strong>：<strong>磁盘一满，Redis 立刻变成只读</strong>，业务大面积报错：</p>
+<pre tabindex="0"><code>MISCONF Redis is configured to save RDB snapshots, but it is currently
+not able to persist on disk.
+</code></pre><p><strong>建议</strong>：</p>
+<ul>
+<li><strong>纯缓存场景</strong>（数据能从 DB 重建）→ 设为 <strong><code>no</code></strong>，避免磁盘问题引发业务不可写；</li>
+<li><strong>数据存储场景</strong> → 保持 <code>yes</code>，但必须做<strong>磁盘空间监控告警</strong>（这才是根本解法）。</li>
+</ul>
+<p>应急恢复：<code>CONFIG SET stop-writes-on-bgsave-error no</code> 让业务先跑起来，同时立刻清理磁盘。</p>
+<p><strong>Q12：为什么建议单个 Redis 实例不超过 10GB？</strong></p>
+<p>四个原因，都和持久化相关：</p>
+<ol>
+<li><strong>fork 耗时线性增长</strong>：每 GB 约 20~100ms，10GB 就是 200ms~1s 的阻塞。20GB 实例的 fork 可能卡住 2 秒，客户端大面积超时；</li>
+<li><strong>COW 内存开销</strong>：10GB 实例在重写期间可能额外用 1~3GB（甚至更多），要求机器有足够余量；</li>
+<li><strong>恢复时间长</strong>：10GB 的 RDB 加载要几十秒，AOF 重放可能十几分钟。这段时间实例不可用（主从切换时更要命）；</li>
+<li><strong>全量同步压力大</strong>：新从节点接入要传输 10GB 数据，占满网络带宽，且主节点要 fork + 生成 RDB。</li>
+</ol>
+<p><strong>正确做法</strong>：用 <strong>Cluster 分片</strong>把数据分散到多个小实例（每个 4~8GB），既降低单点风险又能利用多核。</p>
+<p><strong>Q13：<code>no-appendfsync-on-rewrite</code> 设成 yes 有什么影响？</strong></p>
+<p>它控制&quot;AOF 重写期间，主线程是否还做 fsync&quot;。</p>
+<ul>
+<li><strong><code>no</code>（默认）</strong>：重写期间主线程照常 fsync。<strong>数据最安全</strong>，但子进程的大量磁盘写入和主线程 fsync 会<strong>抢 IO</strong>，可能造成延迟明显升高（尤其机械盘）；</li>
+<li><strong><code>yes</code></strong>：重写期间主线程<strong>不做 fsync</strong>（临时降级成 <code>appendfsync no</code>）。避免 IO 争抢，延迟稳定，但<strong>如果这期间宕机，可能丢失整个重写期间的数据</strong>（可能是几十秒的量，远超正常的 1 秒）。</li>
+</ul>
+<p><strong>建议</strong>：机械盘或 IO 紧张时设 <code>yes</code> 换稳定延迟；SSD 且 IO 有余量时保持 <code>no</code>。更好的办法是把 AOF 放到独立磁盘、或者关掉自动重写改用 crontab 在低峰期手动 <code>BGREWRITEAOF</code>。</p>
+<p><strong>Q14：AOF 里为什么记录的是 <code>PEXPIREAT</code> 而不是 <code>EXPIRE</code>？</strong></p>
+<p>因为 <code>EXPIRE key 100</code> 是<strong>相对时间</strong>，含义依赖于&quot;执行的时刻&quot;。如果 AOF 里原样记录 <code>EXPIRE key 100</code>，那么恢复时（可能是 3 小时后）重放这条命令，这个 key 会<strong>从恢复时刻起再活 100 秒</strong>——本该已经过期的 key 又活过来了。</p>
+<p>所以 Redis 统一把过期相关命令转成 <strong><code>PEXPIREAT key &lt;绝对毫秒时间戳&gt;</code></strong> 再写入 AOF 和传播给从节点。恢复时如果这个时间戳已经过去，key 会被直接判定为过期。</p>
+<p>这属于一套更普遍的机制——<strong>「效果复制」（effects replication）</strong>，把&quot;有不确定性的命令&quot;转换成&quot;确定的实际效果&quot;：</p>
+<table>
+<thead>
+<tr>
+<th>原始命令</th>
+<th>记录的</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>EXPIRE key 100</code></td>
+<td><code>PEXPIREAT key &lt;ts&gt;</code></td>
+</tr>
+<tr>
+<td><code>SPOP key</code>（随机）</td>
+<td><code>SREM key &lt;实际弹出的成员&gt;</code></td>
+</tr>
+<tr>
+<td><code>INCRBYFLOAT key 1.1</code></td>
+<td><code>SET key &lt;计算结果&gt;</code>（避免浮点误差累积）</td>
+</tr>
+<tr>
+<td>过期删除</td>
+<td>显式的 <code>DEL</code>/<code>UNLINK</code></td>
+</tr>
+<tr>
+<td>Lua 脚本（7.0+ 默认）</td>
+<td>脚本产生的<strong>实际写命令</strong>而非 <code>EVAL</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Q15：能只在从节点上开持久化吗？</strong></p>
+<p>可以，而且是一种常见的优化：<strong>主节点关闭持久化（或只保留低频 RDB），从节点开启 AOF + RDB</strong>。</p>
+<p><strong>好处</strong>：把 fork、COW、磁盘 IO 的开销全部转移到从节点，主节点专心处理请求，延迟更稳定。</p>
+<p><strong>风险（必须知道）</strong>：</p>
+<ol>
+<li>
+<p><strong>主节点重启会导致数据全部丢失</strong>——它自己没有持久化文件。更糟的是：如果主节点重启后变成一个<strong>空实例</strong>，而从节点还在从它复制，从节点的数据会被<strong>清空</strong>（全量同步一个空数据集）！</p>
+<p><strong>防范</strong>：主节点重启后<strong>绝不能让它自动作为主节点</strong>恢复服务。必须由哨兵/人工确认拓扑，或者先让它作为从节点从有数据的节点同步。</p>
+</li>
+<li>
+<p><strong>必须关闭主节点的自动重启</strong>（<code>Restart=always</code> 要改掉），避免它悄悄重启后清空整个集群的数据。</p>
+</li>
+</ol>
+<p>因为这个风险很大，<strong>Redis 官方文档明确不推荐&quot;主节点完全关闭持久化&quot;</strong>。折中方案是：主节点保留 RDB（低频，如 <code>save 3600 1</code>）作为兜底，AOF 只在从节点开。</p>
+<hr>
+<h1 id="小结">小结</h1>
+<ul>
+<li><strong>RDB 是数据快照（&ldquo;数据长什么样&rdquo;），AOF 是命令日志（&ldquo;怎么变成这样的&rdquo;）</strong>；生产推荐<strong>两个都开</strong>——AOF 保数据完整性，RDB 作定期冷备和兜底。</li>
+<li><strong><code>SAVE</code> 阻塞主线程，生产禁用；<code>BGSAVE</code> 用 fork</strong>。fork 需要的是<strong>一致性快照</strong>，这是不能用线程的原因。</li>
+<li><strong>COW</strong>：fork 只复制页表并把页标记只读，父进程写时触发缺页异常复制该页。<strong>fork 本身阻塞，每 GB 约 20~100ms</strong>（监控 <strong><code>latest_fork_usec</code></strong>）；COW 额外内存典型 10%~30%；<strong>读操作也会触发 COW</strong>（更新 <code>robj.lru</code>）。</li>
+<li><strong>必须做的系统配置</strong>：<code>vm.overcommit_memory = 1</code>（否则 fork 失败）、<strong>关闭 THP</strong>（否则 COW 粒度从 4KB 变 2MB，放大 512 倍）。</li>
+<li><strong>AOF 是&quot;先执行后写日志&quot;</strong>（与 MySQL WAL 相反），好处是不用校验命令、不阻塞执行；代价是<strong>可能丢数据</strong>且<strong>无法回滚</strong>（这是 Redis 事务不支持回滚的底层原因之一）。</li>
+<li>区分 <strong><code>write</code>（进 page cache，微秒级）</strong> 和 <strong><code>fsync</code>（真落盘，毫秒级）</strong>；三种策略 <code>always</code>/<code>everysec</code>/<code>no</code>，<strong><code>everysec</code> 实际可能丢 2 秒</strong>（write 被推迟），监控 <strong><code>aof_delayed_fsync</code></strong>。</li>
+<li><strong>AOF 重写是&quot;遍历当前内存重新生成最小命令集&quot;</strong>，不是压缩旧文件。<strong>7.0 的多部分 AOF</strong>（BASE + INCR + manifest）消除了重写缓冲区的内存开销、追加时的阻塞和双写放大。</li>
+<li><strong>混合持久化 <code>aof-use-rdb-preamble yes</code></strong>：BASE 用 RDB 格式，恢复速度快几个数量级。</li>
+<li><strong>只要 <code>appendonly yes</code> 就只加载 AOF、完全忽略 RDB</strong>——这是&quot;改配置重启后数据全丢&quot;事故的根源。正确做法是 <strong><code>CONFIG SET appendonly yes</code> 动态开启 + <code>CONFIG REWRITE</code></strong>。</li>
+<li><strong>效果复制</strong>：<code>EXPIRE</code>→<code>PEXPIREAT</code>、<code>SPOP</code>→<code>SREM</code>、<code>INCRBYFLOAT</code>→<code>SET</code>、Lua→实际写命令，保证恢复和主从的确定性。</li>
+<li>数据丢失要<strong>分两层</strong>看：单机持久化窗口（everysec 约 1~2 秒）+ <strong>异步主从复制的丢失</strong>（主节点写完就返回，没传到从节点就宕机则永久丢失）。<code>WAIT</code>/<code>WAITAOF</code> 能缓解但代价大。<strong>真正不能丢数据就别把 Redis 当主存储。</strong></li>
+<li>单实例建议 <strong>不超过 10GB</strong>：fork 耗时、COW 开销、恢复时间、全量同步压力全都随内存线性恶化。用 Cluster 分片。</li>
+<li>必须告警的指标：<code>rdb_last_bgsave_status</code>、<code>aof_last_bgrewrite_status</code>、<strong><code>aof_last_write_status</code></strong>、<code>latest_fork_usec &gt; 100ms</code>、<code>aof_delayed_fsync</code> 持续增长。</li>
+<li><strong>持久化只解决&quot;重启能恢复&quot;，不解决&quot;宕机不可用&quot;</strong>——高可用要靠主从 + 哨兵/Cluster + 异地备份，且备份必须做恢复演练。</li>
+</ul>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2025-11-01</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/redis/">redis</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/redis/redis_08_%E4%BA%8B%E5%8A%A1_Lua%E8%84%9A%E6%9C%AC%E4%B8%8EPipeline/" class="prev" rel="prev" title="Redis-08 事务、Lua 脚本与 Pipeline"><i class="fas fa-angle-left fa-fw"></i>Redis-08 事务、Lua 脚本与 Pipeline</a>
+            <a href="/posts/redis/redis_06_%E8%BF%87%E6%9C%9F%E5%88%A0%E9%99%A4%E4%B8%8E%E5%86%85%E5%AD%98%E6%B7%98%E6%B1%B0%E7%AD%96%E7%95%A5/" class="next" rel="next" title="Redis-06 过期删除与内存淘汰策略">Redis-06 过期删除与内存淘汰策略<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2025-11-01T13:30:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Redis-07 持久化：RDB 与 AOF"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

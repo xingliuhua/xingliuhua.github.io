@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>网络-08 TCP 可靠传输 - xingliuhua博客</title><meta name="Description" content="TCP 序号确认、RTO、SACK、粘包拆包与 Go 字节流处理"><meta property="og:title" content="网络-08 TCP 可靠传输" />
+<meta property="og:description" content="TCP 序号确认、RTO、SACK、粘包拆包与 Go 字节流处理" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/network/network_08_TCP%E5%8F%AF%E9%9D%A0%E4%BC%A0%E8%BE%93/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2020-03-02T16:00:00+08:00" />
+<meta property="article:modified_time" content="2026-07-31T00:00:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="网络-08 TCP 可靠传输"/>
+<meta name="twitter:description" content="TCP 序号确认、RTO、SACK、粘包拆包与 Go 字节流处理"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/network/network_08_TCP%E5%8F%AF%E9%9D%A0%E4%BC%A0%E8%BE%93/" /><link rel="prev" href="https://xingliuhua.github.io/posts/network/network_09_TCP%E6%B5%81%E9%87%8F%E6%8E%A7%E5%88%B6%E4%B8%8E%E6%8B%A5%E5%A1%9E%E6%8E%A7%E5%88%B6/" /><link rel="next" href="https://xingliuhua.github.io/posts/network/network_07_TCP%E8%BF%9E%E6%8E%A5%E7%AE%A1%E7%90%86/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "网络-08 TCP 可靠传输",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/network\/network_08_TCP%E5%8F%AF%E9%9D%A0%E4%BC%A0%E8%BE%93\/"
+        },"genre": "posts","keywords": "网络","wordcount":  6888 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/network\/network_08_TCP%E5%8F%AF%E9%9D%A0%E4%BC%A0%E8%BE%93\/","datePublished": "2020-03-02T16:00:00+08:00","dateModified": "2026-07-31T00:00:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "TCP 序号确认、RTO、SACK、粘包拆包与 Go 字节流处理"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">网络-08 TCP 可靠传输</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2020-03-02">2020-03-02</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 6888 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 14 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-tcp-首部">1. TCP 首部</a></li>
+    <li><a href="#2-重传机制停止等待与滑动窗口">2. 重传机制：停止等待与滑动窗口</a></li>
+    <li><a href="#3-tcp-怎么保证可靠传输">3. TCP 怎么保证可靠传输</a></li>
+    <li><a href="#4-超时重传">4. 超时重传</a>
+      <ol>
+        <li><a href="#41-rto-为什么不能简单等于-rtt">4.1 RTO 为什么不能简单等于 RTT</a></li>
+      </ol>
+    </li>
+    <li><a href="#5-确认丢失">5. 确认丢失</a></li>
+    <li><a href="#6-确认迟到">6. 确认迟到</a></li>
+    <li><a href="#7-粘包与拆包">7. 粘包与拆包</a></li>
+    <li><a href="#8-go-中怎样正确使用-tcp-字节流">8. Go 中怎样正确使用 TCP 字节流</a></li>
+    <li><a href="#9-本章面试题">9. 本章面试题</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><blockquote>
+<p>前置阅读：<a href="../network_07_TCP%e8%bf%9e%e6%8e%a5%e7%ae%a1%e7%90%86/" rel="">网络-07 TCP 连接管理</a></p>
+</blockquote>
+<h1 id="1-tcp-首部">1. TCP 首部</h1>
+<p><img
+        class="lazyload"
+        src="/svg/loading.min.svg"
+        data-src="./tcp%e9%a6%96%e9%83%a8%e6%a0%bc%e5%bc%8f.png"
+        data-srcset="./tcp%e9%a6%96%e9%83%a8%e6%a0%bc%e5%bc%8f.png, ./tcp%e9%a6%96%e9%83%a8%e6%a0%bc%e5%bc%8f.png 1.5x, ./tcp%e9%a6%96%e9%83%a8%e6%a0%bc%e5%bc%8f.png 2x"
+        data-sizes="auto"
+        alt="./tcp首部格式.png"
+        title="./tcp首部格式.png" /></p>
+<p>主要字段的作用：</p>
+<ul>
+<li>Source Port和Destination Port:分别占用16位，表示源端口号和目的端口号；用于区别主机中的不同进程，而IP地址是用来区分不同的主机的，源端口号和目的端口号配合上IP首部中的源IP地址和目的IP地址就能唯一的确定一个TCP连接；</li>
+<li>Sequence Number:用来标识从TCP发端向TCP收端发送的数据字节流，它表示在这个报文段中的的第一个数据字节在数据流中的序号；主要用来解决网络报乱序的问题；</li>
+<li>Acknowledgment Number:32位确认序列号包含发送确认的一端所期望收到的下一个序号，比如收到了12345这5个字节的数据，序列号是1，那确认序列号就是6，因为下次需要从第6个字节发了。因此，确认序号应当是上次已成功收到数据字节序号加1。不过，只有当标志位中的ACK标志（下面介绍）为1时该确认序列号的字段才有效。主要用来解决不丢包的问题；</li>
+<li>Offset:首部长度，或者理解为数据部分距离整个tcp报文开始的偏移量，需要这个值是因为任选字段的长度是可变的。这个字段占4bit（最大能表示15，但这里1代表4个字节，即首部长度为4*15=60个字节），因此TCP最多有60字节的首部。然而，没有任选字段，正常的长度是20字节；</li>
+<li>TCP Flags:TCP首部中有6个标志比特，它们中的多个可同时被设置为1，主要是用于操控TCP的状态机的，依次为URG，ACK，PSH，RST，SYN，FIN。每个标志位的意思如下：</li>
+<li>URG：发送端的缓存窗口中的数据是顺序发送，如果想插队先发送这段数据，可设置该标志位1。配合紧急指针使用。</li>
+<li>ACK：此标志表示应答域有效，就是说前面所说的TCP应答号将会包含在TCP数据包中；有两个取值：0和1，为1的时候表示应答域有效，反之为0；连接建立后ACK都要是1。</li>
+<li>PUSH：这个标志位表示Push操作。所谓Push操作就是指在数据包到达接收端以后，立即传送给应用程序，而不是在缓冲区中排队,意思就是在接收端进行插队，可以和URG类比记忆。</li>
+<li>RST：发生了异常，需要重新建立链接。</li>
+<li>SYN：表示同步序号，用来建立连接。SYN标志位和ACK标志位搭配使用，当连接请求的时候，SYN=1，ACK=0；连接被响应的时候，SYN=1，ACK=1；这个标志的数据包经常被用来进行端口扫描。扫描者发送一个只有SYN的数据包，如果对方主机响应了一个数据包回来 ，就表明这台主机存在这个端口；但是由于这种扫描方式只是进行TCP三次握手的第一次握手，因此这种扫描的成功表示被扫描的机器不很安全，一台安全的主机将会强制要求一个连接严格的进行TCP的三次握手；</li>
+<li>FIN： 表示发送端已经达到数据末尾，也就是说双方的数据传送完成，没有数据可以传送了，发送FIN标志位的TCP数据包后，连接将被断开。这个标志的数据包也经常被用于进行端口扫描。</li>
+<li>窗口：表示我本地的接收缓存窗口还能接收多少数据。</li>
+<li>可选项：最大报文段长度MSS等。</li>
+</ul>
+<h1 id="2-重传机制停止等待与滑动窗口">2. 重传机制：停止等待与滑动窗口</h1>
+<p>停止等待协议和滑动窗口协议。
+停止等待就是A发给B，B收到后回复确认，A收到后再发。A收到确认之前是要停止等待的，所以效率比较低，早期链路层就是这样的。
+第二种方案是滑动窗口，连续发多个，如果有丢失的怎么办？理论上有两种方案：1. 选择重传（SR）；2. 回退N帧（GBN）。</p>
+<p><strong>TCP 实际用的是哪种？</strong> 严格来说两者都不完全是。TCP 的基础机制是<strong>累积确认 + 快速重传</strong>：ACK 只能表达&quot;我已经连续收到了 N 之前的所有字节&quot;，无法表达&quot;我收到了 N，但没收到 N-1&quot;。所以在只有基础机制时，发送方对丢失之后的数据其实是不知情的，行为更接近 GBN。</p>
+<p>要做到真正的选择重传，需要 **SACK（Selective Acknowledgment，RFC 2018）**这个可选扩展——它在 TCP 首部选项里额外携带&quot;我已收到的不连续区间&quot;，发送方据此只重传真正缺失的段。<strong>SACK 需要双方在三次握手时通过 <code>SACK-Permitted</code> 选项协商，它不是 TCP 的默认行为，而是一个可选项</strong>（不过现代操作系统基本都默认开启，Linux 下由 <code>net.ipv4.tcp_sack</code> 控制）。</p>
+<p><img
+        class="lazyload"
+        src="/svg/loading.min.svg"
+        data-src="./%e5%9b%9e%e9%80%80N%e5%b8%a7.png"
+        data-srcset="./%e5%9b%9e%e9%80%80N%e5%b8%a7.png, ./%e5%9b%9e%e9%80%80N%e5%b8%a7.png 1.5x, ./%e5%9b%9e%e9%80%80N%e5%b8%a7.png 2x"
+        data-sizes="auto"
+        alt="./回退N帧.png"
+        title="./回退N帧.png" /></p>
+<p><img
+        class="lazyload"
+        src="/svg/loading.min.svg"
+        data-src="./%e9%80%89%e6%8b%a9%e9%87%8d%e4%bc%a0.png"
+        data-srcset="./%e9%80%89%e6%8b%a9%e9%87%8d%e4%bc%a0.png, ./%e9%80%89%e6%8b%a9%e9%87%8d%e4%bc%a0.png 1.5x, ./%e9%80%89%e6%8b%a9%e9%87%8d%e4%bc%a0.png 2x"
+        data-sizes="auto"
+        alt="./选择重传.png"
+        title="./选择重传.png" /></p>
+<p>另外tcp还有个优化就是快重传，不用等到超时到期就能知道丢失了。</p>
+<h1 id="3-tcp-怎么保证可靠传输">3. TCP 怎么保证可靠传输</h1>
+<p>校验、序号、确认、重传。</p>
+<p>TCP 默认采用<strong>累积确认</strong>（cumulative ACK）。即接收方回复的 ack 号是 n，说明 n 号之前的数据都已经接收成功了。</p>
+<p>完整来看，可靠性来自这些机制共同作用：</p>
+<ul>
+<li><strong>校验和</strong>：覆盖 TCP 首部、数据以及由 IP 地址等构造的伪首部，既检查内容，也防止报文被交付给错误的端点；</li>
+<li><strong>字节序号</strong>：TCP 给字节编号，不是给“应用消息”编号，用于重排乱序数据和识别重复数据；</li>
+<li><strong>累积 ACK</strong>：<code>ACK=n</code> 表示 <code>n</code> 之前的连续字节都已收到；</li>
+<li><strong>重传</strong>：包括超时重传和三个重复 ACK 触发的快速重传；</li>
+<li><strong>SACK</strong>：告知发送方已经收到的不连续区间，避免重复发送完整窗口；</li>
+<li><strong>流量控制与拥塞控制</strong>：分别避免压垮接收方和网络。</li>
+</ul>
+<p>收到乱序报文时，接收方通常先把它放进乱序队列，并继续回复当前期待的 ACK。缺失段补齐后，连续数据才交给应用。收到重复报文时，序号能让内核识别并丢弃重复内容，所以应用不会读到两份相同字节。</p>
+<h1 id="4-超时重传">4. 超时重传</h1>
+<p><img
+        class="lazyload"
+        src="/svg/loading.min.svg"
+        data-src="./1538277874498.png"
+        data-srcset="./1538277874498.png, ./1538277874498.png 1.5x, ./1538277874498.png 2x"
+        data-sizes="auto"
+        alt="./1538277874498.png"
+        title="./1538277874498.png" /></p>
+<p>如图所示，接收方接收到数据后要给客户端响应，来告诉别人自己收到了数据。
+如果压根就没发到服务端，肯定不会收到服务端的响应，客户端等，等到超时后重传上个丢失的数据。
+超时时间不是固定值，而是根据每条连接的 RTT 动态计算。</p>
+<h2 id="41-rto-为什么不能简单等于-rtt">4.1 RTO 为什么不能简单等于 RTT</h2>
+<p>网络时延会波动。RTO（Retransmission Timeout）太短，会把只是迟到的包误判为丢失，制造无谓重传；太长，真正丢包后恢复又很慢。</p>
+<p>TCP 会维护：</p>
+<ul>
+<li><strong>SRTT</strong>：平滑后的往返时间；</li>
+<li><strong>RTTVAR</strong>：RTT 的波动程度；</li>
+<li><strong>RTO</strong>：大致按 <code>SRTT + 4 × RTTVAR</code> 计算，并受最小/最大值约束。</li>
+</ul>
+<p>重传后收到 ACK 时，无法判断它确认的是原包还是重传包，所以不能直接用这次样本更新 RTT，这就是 <strong>Karn 算法</strong>要解决的歧义。</p>
+<p>一次超时往往意味着链路状况较差。每次连续超时后 RTO 会做<strong>指数退避</strong>（例如 1s、2s、4s、8s），避免重传进一步加剧拥塞。这解释了线上现象：连接失败有时不是均匀等待，而是越等越久。</p>
+<p>Linux 可通过 <code>ss -ti</code> 查看连接的 <code>rtt</code>、<code>rto</code>、<code>cwnd</code> 和重传统计：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">ss -ti dst &lt;目标IP&gt;
+</span></span></code></pre></div><h1 id="5-确认丢失">5. 确认丢失</h1>
+<p>客户端成功发M1到服务端，服务端响应确认，但是确认包丢失了，客户端一样还会等，重传M1，这时候服务端收到了重复的数据，就会舍弃第二次收到的包，并再发对M1的响应。</p>
+<h1 id="6-确认迟到">6. 确认迟到</h1>
+<p>客户端在发送数据M1后，服务端发送响应，但是迟到了，客户端没有及时收到响应，超时后重发，服务端舍弃重复收到的数据并响应M1,此时客户端收到迟到的响应，并舍弃响应。</p>
+<h1 id="7-粘包与拆包">7. 粘包与拆包</h1>
+<p>粘包、拆包问题的产生原因笔者归纳为以下3种：</p>
+<ol>
+<li>socket缓冲区与滑动窗口</li>
+<li>MSS/MTU限制</li>
+<li>Nagle算法</li>
+</ol>
+<p><strong>socket缓冲区与滑动窗口</strong></p>
+<p>每个TCP socket在内核中都有一个发送缓冲区(SO_SNDBUF )和一个接收缓冲区(SO_RCVBUF)，TCP的全双工的工作模式以及TCP的滑动窗口便是依赖于这两个独立的buffer的填充状态。</p>
+<p>SO_SNDBUF：</p>
+<p>进程发送的数据的时候假设调用了一个send方法，最简单情况(也是一般情况)，将数据拷贝进入socket的内核发送缓冲区之中，然后send便会在上层返回。换句话说，send返回之时，数据不一定会发送到对端去(和write写文件有点类似)，send仅仅是把应用层buffer的数据拷贝进socket的内核发送buffer中。</p>
+<p>SO_RCVBUF：</p>
+<p>把接受到的数据缓存入内核，应用进程一直没有调用read进行读取的话，此数据会一直缓存在相应socket的接收缓冲区内。再啰嗦一点，不管进程是否读取socket，对端发来的数据都会经由内核接收并且缓存到socket的内核接收缓冲区之中。read所做的工作，就是把内核缓冲区中的数据拷贝到应用层用户的buffer里面，仅此而已。</p>
+<p>滑动窗口：</p>
+<p>TCP连接在三次握手的时候，会将自己的窗口大小(window size)发送给对方，其实就是SO_RCVBUF指定的值。之后在发送数据的时，发送方必须要先确认接收方的窗口没有被填充满，如果没有填满，则可以发送。</p>
+<p>每次发送数据后，发送方将自己维护的对方的window size减小，表示对方的SO_RCVBUF可用空间变小。</p>
+<p>当接收方处理开始处理SO_RCVBUF 中的数据时，会将数据从socket 在内核中的接受缓冲区读出，此时接收方的SO_RCVBUF可用空间变大，即window size变大，接受方会以ack消息的方式将自己最新的window size返回给发送方，此时发送方将自己的维护的接受的方的window size设置为ack消息返回的window size。</p>
+<p>此外，发送方可以连续的给接受方发送消息，只要保证对方的SO_RCVBUF空间可以缓存数据即可，即window size&gt;0。当接收方的SO_RCVBUF被填充满时，此时window size=0，发送方不能再继续发送数据，要等待接收方ack消息，以获得最新可用的window size。</p>
+<p><strong>MSS/MTU分片</strong></p>
+<p>MTU (Maximum Transmission Unit,最大传输单元)是链路层对一次可以发送的最大数据的限制。MSS(Maximum Segment Size,最大分段大小)是TCP报文中data部分的最大长度，是传输层对一次可以发送的最大数据的限制。</p>
+<p>以太网下 MSS 通常为 1460 字节（1500 - 20 IP首部 - 20 TCP首部）。应用层一次 <code>send()</code> 的数据如果超过 MSS，TCP 就必须把它<strong>拆成多个报文段</strong>发送——接收方读到的自然就不是一个完整的应用层消息，这就是&quot;拆包&quot;。详见 <a href="../network_04_MTU%e4%b8%8eMSS/" rel="">MSS和MTU</a>。</p>
+<p><strong>Nagle 算法</strong></p>
+<p>Nagle 算法要解决的是&quot;小包泛滥&quot;问题：如果应用层每次只发 1 个字节（比如 telnet 敲键盘），加上 20 字节 TCP 首部和 20 字节 IP 首部，有效载荷只占 1/41，网络利用率极低。</p>
+<p>它的规则很简单——满足以下任一条件才真正把数据发出去：</p>
+<ol>
+<li>积累的数据达到了 MSS 大小；</li>
+<li>之前发出的数据<strong>全部收到了 ACK</strong>（即链路上没有未确认的数据在飞）。</li>
+</ol>
+<p>否则就把小块数据先攒在缓冲区里等。效果就是<strong>多次 <code>send()</code> 的小数据会被合并成一个 TCP 报文段发出</strong>，这正是&quot;粘包&quot;最主要的来源。</p>
+<p>接收端还有一个配套机制叫<strong>延迟确认（Delayed ACK）</strong>：收到数据后不立即回 ACK，而是等一小会儿（Linux 下最多 40ms），期望能和自己要发的数据合并，或者等到多个报文段一起确认。</p>
+<p>Nagle 和延迟确认<strong>同时开启时会互相拖累</strong>：发送方在等 ACK 才肯发下一批小数据，接收方却在故意延迟这个 ACK，一来一回凭空多出几十毫秒延迟。这对交互式应用和 RPC 是不能接受的。</p>
+<p>所以对延迟敏感的场景要关掉 Nagle，即设置 <code>TCP_NODELAY</code>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// Go 中 TCPConn 默认就已经关闭了 Nagle（等价于 TCP_NODELAY = true）
+</span></span></span><span class="line"><span class="cl"><span class="c1">// 如果确实需要开启 Nagle 攒包，要显式设置：
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">conn</span><span class="p">.(</span><span class="o">*</span><span class="nx">net</span><span class="p">.</span><span class="nx">TCPConn</span><span class="p">).</span><span class="nf">SetNoDelay</span><span class="p">(</span><span class="kc">false</span><span class="p">)</span>
+</span></span></code></pre></div><p>值得一提的是，<strong>Go 的 <code>net.TCPConn</code> 默认就设置了 <code>TCP_NODELAY</code></strong>，也就是默认关闭 Nagle 算法，这和 C 语言里默认开启的行为相反，写网络程序时要注意这个差异。</p>
+<p><strong>小结：粘包/拆包的根源</strong></p>
+<p>说到底，<strong>&ldquo;粘包&quot;这个说法本身就带有误导性</strong>——TCP 是<strong>面向字节流</strong>的协议，它从设计上就不承诺保留应用层的消息边界。它眼里只有一串连续的字节，&ldquo;包&quot;的概念是应用层自己想象出来的。</p>
+<p>所以正确的做法不是&quot;解决粘包&rdquo;，而是<strong>在应用层自己定义消息边界</strong>，常见三种方案：</p>
+<ol>
+<li><strong>固定长度</strong>：每条消息定长，简单但浪费；</li>
+<li><strong>分隔符</strong>：用特殊字符标记结尾（如 HTTP 头部用 <code>\r\n\r\n</code>），需要处理转义；</li>
+<li><strong>长度前缀</strong>：消息头里带上 body 长度（如 gRPC、Protobuf 的常见做法），最通用，推荐。</li>
+</ol>
+<p>UDP 则不存在这个问题——它面向报文，保留边界，一次 <code>sendto</code> 对应一次 <code>recvfrom</code>。</p>
+<h1 id="8-go-中怎样正确使用-tcp-字节流">8. Go 中怎样正确使用 TCP 字节流</h1>
+<p><code>Read</code> 和 <code>Write</code> 的返回值只表示<strong>本次调用处理了多少字节</strong>：</p>
+<ul>
+<li>一次 <code>Write</code> 的内容可能被拆成多次 <code>Read</code>；</li>
+<li>多次 <code>Write</code> 的内容也可能被一次 <code>Read</code> 读到；</li>
+<li><code>Write</code> 可能出现短写，<code>n &lt; len(p)</code> 时剩余内容仍要继续写；</li>
+<li><code>Read</code> 返回 <code>n &gt; 0</code> 和非空 <code>err</code> 时，应先处理这 <code>n</code> 个字节，再处理错误。</li>
+</ul>
+<p>发送完整缓冲区要循环：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">writeAll</span><span class="p">(</span><span class="nx">w</span> <span class="nx">io</span><span class="p">.</span><span class="nx">Writer</span><span class="p">,</span> <span class="nx">p</span> <span class="p">[]</span><span class="kt">byte</span><span class="p">)</span> <span class="kt">error</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">for</span> <span class="nb">len</span><span class="p">(</span><span class="nx">p</span><span class="p">)</span> <span class="p">&gt;</span> <span class="mi">0</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">n</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">w</span><span class="p">.</span><span class="nf">Write</span><span class="p">(</span><span class="nx">p</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="k">return</span> <span class="nx">err</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="nx">n</span> <span class="o">==</span> <span class="mi">0</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="k">return</span> <span class="nx">io</span><span class="p">.</span><span class="nx">ErrUnexpectedEOF</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">p</span> <span class="p">=</span> <span class="nx">p</span><span class="p">[</span><span class="nx">n</span><span class="p">:]</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="kc">nil</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>读取定长消息可用 <code>io.ReadFull</code>；变长协议则使用长度前缀或明确分隔符。永远不要把“一次 <code>Read</code>”当成“一条完整消息”。</p>
+<p>网络超时也不能只依赖最外层 goroutine 的 <code>context</code>。裸 <code>net.Conn</code> 应设置 <code>SetReadDeadline</code>/<code>SetWriteDeadline</code>；取消 context 时，需要通过关闭连接或更新 deadline 唤醒正在阻塞的 IO。</p>
+<h1 id="9-本章面试题">9. 本章面试题</h1>
+<details>
+<summary>TCP 如何保证可靠传输？</summary>
+<p>六个机制配合：</p>
+<ol>
+<li><strong>校验和</strong>——检测传输过程中的数据错误；</li>
+<li><strong>序号</strong>——标识每个字节，解决乱序和重复；</li>
+<li><strong>确认（ACK）</strong>——采用<strong>累积确认</strong>，ack=n 表示 n 之前的数据都已收到；</li>
+<li><strong>超时重传</strong>——定时器到期未收到 ACK 就重传，超时时间<strong>动态计算</strong>；</li>
+<li><strong>快重传</strong>——收到<strong>三个重复 ACK</strong> 立即重传，不等超时；</li>
+<li><strong>流量控制与拥塞控制</strong>——避免因过载导致的丢包（见 <a href="../network_09_TCP%e6%b5%81%e9%87%8f%e6%8e%a7%e5%88%b6%e4%b8%8e%e6%8b%a5%e5%a1%9e%e6%8e%a7%e5%88%b6/" rel="">网络-09</a>）。</li>
+</ol>
+</details>
+<details>
+<summary>TCP 用的是选择重传（SR）还是回退 N 帧（GBN）？</summary>
+<p><strong>严格来说两者都不完全是。</strong></p>
+<p>TCP 的基础机制是<strong>累积确认 + 快速重传</strong>。ACK 只能表达&quot;我连续收到了 N 之前的所有字节&rdquo;，<strong>无法表达&quot;我收到了 N 但没收到 N-1&quot;</strong>，所以仅有基础机制时行为更接近 GBN。</p>
+<p>要做到真正的选择重传，需要 <strong>SACK（RFC 2018）<strong>这个</strong>可选扩展</strong>——它在 TCP 选项里携带已收到的不连续区间，发送方据此只重传真正缺失的段。</p>
+<p><strong>SACK 需要双方在三次握手时通过 <code>SACK-Permitted</code> 选项协商，不是 TCP 的默认行为</strong>（虽然现代系统基本默认开启，Linux 下由 <code>net.ipv4.tcp_sack</code> 控制）。</p>
+</details>
+<details>
+<summary>快重传的机制是什么？判断和重传发生在哪一方？</summary>
+<p>接收方每收到一个<strong>失序</strong>报文段，就立刻<strong>重复发送</strong>它当前期望的 ack 号。<strong>发送方连续收到三个重复 ACK 即判定该段丢失并立即重传</strong>，不必等重传定时器超时。</p>
+<p><strong>注意方向</strong>：判断和重传的动作都在<strong>发送方</strong>。接收方只是通过重复 ACK 传递&quot;我这里缺了东西&quot;的信号，并没有&quot;通知对方重发&quot;的专门报文。</p>
+<p>为什么是三个而不是一个？因为<strong>少量的重复 ACK 可能只是乱序</strong>（包走了不同路径），三个才足以判定为丢包。</p>
+</details>
+<details>
+<summary>什么是粘包和拆包？为什么会发生？怎么解决？</summary>
+<p><strong>首先，&ldquo;粘包&quot;这个说法本身带有误导性。</strong> TCP 是<strong>面向字节流</strong>的，它从设计上就不承诺保留应用层的消息边界——它眼里只有连续的字节，&ldquo;包&quot;是应用层想象出来的概念。</p>
+<p><strong>成因</strong>：</p>
+<ul>
+<li><strong>拆包</strong>：一次发送的数据超过 MSS，被拆成多个报文段；</li>
+<li><strong>粘包</strong>：<strong>Nagle 算法</strong>把多次小的 <code>write()</code> 合并成一个段发出；发送/接收缓冲区也会让数据连成一片。</li>
+</ul>
+<p><strong>正确做法不是&quot;解决粘包&rdquo;，而是在应用层自己定义消息边界</strong>：</p>
+<ol>
+<li><strong>固定长度</strong>——简单但浪费；</li>
+<li><strong>分隔符</strong>——如 HTTP 头部用 <code>\r\n\r\n</code>，需处理转义；</li>
+<li><strong>长度前缀</strong>——消息头带 body 长度，<strong>最通用，推荐</strong>（gRPC、Protobuf 的做法）。</li>
+</ol>
+<p>UDP 不存在这个问题——它面向报文、保留边界，一次 <code>sendto</code> 对应一次 <code>recvfrom</code>。</p>
+</details>
+<details>
+<summary>Nagle 算法解决什么问题？为什么常要关掉它？</summary>
+<p><strong>解决小包泛滥</strong>：应用每次只发 1 字节（如 telnet 敲键盘）时，加上 40 字节的 TCP+IP 首部，有效载荷仅占 1/41，网络利用率极低。</p>
+<p><strong>规则</strong>：满足任一条件才真正发送——① 积累数据达到 MSS；② 之前发出的数据<strong>全部收到 ACK</strong>。否则先攒着。</p>
+<p><strong>为什么要关</strong>：接收端还有<strong>延迟确认（Delayed ACK）<strong>机制，收到数据后不立即回 ACK（Linux 下最多 40ms）。两者同时开启会</strong>互相拖累</strong>——发送方等 ACK 才发下一批，接收方却故意延迟这个 ACK，凭空多出几十毫秒延迟。这对交互式应用和 RPC 不可接受。</p>
+<p>关闭方式是设置 <strong><code>TCP_NODELAY</code></strong>。注意 <strong>Go 的 <code>net.TCPConn</code> 默认已关闭 Nagle</strong>，与 C 语言默认开启的行为相反。</p>
+</details>
+<details>
+<summary>累积确认是什么意思？确认丢失和确认迟到分别会怎样？</summary>
+<p><strong>累积确认</strong>：接收方回的 ack=n 表示&quot;n 之前的所有数据我都收到了&rdquo;，而不是&quot;我只收到了第 n 个&quot;。</p>
+<ul>
+<li><strong>确认丢失</strong>：发送方收不到 ACK，超时后重传。接收方发现是重复数据，<strong>丢弃重复的那份并重新发送 ACK</strong>。</li>
+<li><strong>确认迟到</strong>：发送方超时重传，接收方丢弃重复数据并再发 ACK；此时迟到的原 ACK 抵达，<strong>发送方直接丢弃它</strong>（已经处理过了）。</li>
+</ul>
+<p>两种情况都能正确收敛，代价只是一次多余的传输。</p>
+</details>
+<details>
+<summary>TCP 的重传超时 RTO 是怎么确定的？为什么会指数退避？</summary>
+<p>TCP 根据 RTT 样本维护平滑值 <code>SRTT</code> 和波动值 <code>RTTVAR</code>，RTO 大致按 <code>SRTT + 4×RTTVAR</code> 计算。重传后的 ACK 无法判断确认的是原包还是重传包，Karn 算法会避开这种有歧义的 RTT 样本。</p>
+<p>连续超时通常意味着网络状况很差，因此 RTO 按 1、2、4、8 秒一类方式指数退避，避免重传进一步加剧拥塞。</p>
+</details>
+<details>
+<summary>Go 中一次 Write 是否对应对端一次 Read？短读短写怎么处理？</summary>
+<p>不对应。TCP 只提供字节流，一次 Write 可能被拆成多次 Read，多次 Write 也可能被一次 Read 合并。</p>
+<p>定长数据使用 <code>io.ReadFull</code>；变长协议使用长度前缀或分隔符。Write 后检查 <code>n</code>，未写完的部分继续写；Read 返回 <code>n &gt; 0</code> 和错误时先处理这 <code>n</code> 个字节。</p>
+</details>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2026-07-31</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/%E7%BD%91%E7%BB%9C/">网络</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/network/network_09_TCP%E6%B5%81%E9%87%8F%E6%8E%A7%E5%88%B6%E4%B8%8E%E6%8B%A5%E5%A1%9E%E6%8E%A7%E5%88%B6/" class="prev" rel="prev" title="网络-09 TCP 流量控制与拥塞控制"><i class="fas fa-angle-left fa-fw"></i>网络-09 TCP 流量控制与拥塞控制</a>
+            <a href="/posts/network/network_07_TCP%E8%BF%9E%E6%8E%A5%E7%AE%A1%E7%90%86/" class="next" rel="next" title="网络-07 TCP 连接管理">网络-07 TCP 连接管理<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2020-03-02T16:00:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"网络-08 TCP 可靠传输"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>
