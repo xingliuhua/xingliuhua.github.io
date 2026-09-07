@@ -1,0 +1,1191 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>Linux-37 init 之争：systemd 为什么赢也被骂 - xingliuhua博客</title><meta name="Description" content="SysV init 的串行脚本为何难以表达现代依赖、systemd 如何用 unit 事务、socket activation、cgroup 和 journal 管理服务，为什么 After 不等于 Requires、daemon fork 与 Type 容易配错，以及 Go 服务如何正确通知 ready、处理 SIGTERM、限流重启并排查启动失败。"><meta property="og:title" content="Linux-37 init 之争：systemd 为什么赢也被骂" />
+<meta property="og:description" content="SysV init 的串行脚本为何难以表达现代依赖、systemd 如何用 unit 事务、socket activation、cgroup 和 journal 管理服务，为什么 After 不等于 Requires、daemon fork 与 Type 容易配错，以及 Go 服务如何正确通知 ready、处理 SIGTERM、限流重启并排查启动失败。" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/linux/linux_37_init%E4%B9%8B%E4%BA%89systemd%E4%B8%BA%E4%BB%80%E4%B9%88%E8%B5%A2%E4%B9%9F%E8%A2%AB%E9%AA%82/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2026-08-12T05:30:00+08:00" />
+<meta property="article:modified_time" content="2026-08-12T05:30:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="Linux-37 init 之争：systemd 为什么赢也被骂"/>
+<meta name="twitter:description" content="SysV init 的串行脚本为何难以表达现代依赖、systemd 如何用 unit 事务、socket activation、cgroup 和 journal 管理服务，为什么 After 不等于 Requires、daemon fork 与 Type 容易配错，以及 Go 服务如何正确通知 ready、处理 SIGTERM、限流重启并排查启动失败。"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/linux/linux_37_init%E4%B9%8B%E4%BA%89systemd%E4%B8%BA%E4%BB%80%E4%B9%88%E8%B5%A2%E4%B9%9F%E8%A2%AB%E9%AA%82/" /><link rel="prev" href="https://xingliuhua.github.io/posts/linux/linux_38_%E8%A7%82%E6%B5%8B%E4%BD%93%E7%B3%BB%E7%9A%84%E8%AE%BE%E8%AE%A1%E4%B8%8EeBPF/" /><link rel="next" href="https://xingliuhua.github.io/posts/linux/linux_36_namespace%E4%B8%8Ecgroup%E5%AE%B9%E5%99%A8%E5%88%B0%E5%BA%95%E9%9A%94%E7%A6%BB%E4%BA%86%E4%BB%80%E4%B9%88/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Linux-37 init 之争：systemd 为什么赢也被骂",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_37_init%E4%B9%8B%E4%BA%89systemd%E4%B8%BA%E4%BB%80%E4%B9%88%E8%B5%A2%E4%B9%9F%E8%A2%AB%E9%AA%82\/"
+        },"genre": "posts","keywords": "linux","wordcount":  14687 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_37_init%E4%B9%8B%E4%BA%89systemd%E4%B8%BA%E4%BB%80%E4%B9%88%E8%B5%A2%E4%B9%9F%E8%A2%AB%E9%AA%82\/","datePublished": "2026-08-12T05:30:00+08:00","dateModified": "2026-08-12T05:30:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "SysV init 的串行脚本为何难以表达现代依赖、systemd 如何用 unit 事务、socket activation、cgroup 和 journal 管理服务，为什么 After 不等于 Requires、daemon fork 与 Type 容易配错，以及 Go 服务如何正确通知 ready、处理 SIGTERM、限流重启并排查启动失败。"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">Linux-37 init 之争：systemd 为什么赢也被骂</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2026-08-12">2026-08-12</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 14687 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 30 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-pid-1-为什么特殊">1. PID 1 为什么特殊</a>
+      <ol>
+        <li><a href="#11-内核只启动第一个用户态管理者">1.1 内核只启动第一个用户态管理者</a></li>
+        <li><a href="#12-pid-1-要回收孤儿">1.2 PID 1 要回收孤儿</a></li>
+        <li><a href="#13-pid-1-的信号语义不同">1.3 PID 1 的信号语义不同</a></li>
+        <li><a href="#14-init-不只是启动脚本">1.4 init 不只是“启动脚本”</a></li>
+      </ol>
+    </li>
+    <li><a href="#2-从-rc-脚本到-sysv-init">2. 从 rc 脚本到 SysV init</a>
+      <ol>
+        <li><a href="#21-最简单的启动流程是顺序执行">2.1 最简单的启动流程是顺序执行</a></li>
+        <li><a href="#22-sysv-runlevel-把脚本模块化">2.2 SysV runlevel 把脚本模块化</a></li>
+        <li><a href="#23-顺序编号不是依赖图">2.3 顺序编号不是依赖图</a></li>
+        <li><a href="#24-shell-脚本状态不可验证">2.4 shell 脚本状态不可验证</a></li>
+        <li><a href="#25-并行启动很难靠脚本安全推导">2.5 并行启动很难靠脚本安全推导</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-systemd-的核心把系统对象建模为-unit">3. systemd 的核心：把系统对象建模为 unit</a>
+      <ol>
+        <li><a href="#31-unit-不只有-service">3.1 unit 不只有 service</a></li>
+        <li><a href="#32-unit-文件是声明不是完整程序">3.2 unit 文件是声明，不是完整程序</a></li>
+        <li><a href="#33-system-与-user-manager">3.3 system 与 user manager</a></li>
+      </ol>
+    </li>
+    <li><a href="#4-依赖与顺序最容易配错的两个维度">4. 依赖与顺序：最容易配错的两个维度</a>
+      <ol>
+        <li><a href="#41-requireswants-是拉入关系">4.1 Requires/Wants 是拉入关系</a></li>
+        <li><a href="#42-beforeafter-只表达排序">4.2 Before/After 只表达排序</a></li>
+        <li><a href="#43-停止顺序通常反向">4.3 停止顺序通常反向</a></li>
+        <li><a href="#44-network-onlinetarget-也不是互联网承诺">4.4 network-online.target 也不是互联网承诺</a></li>
+        <li><a href="#45-condition-与-assert">4.5 Condition 与 Assert</a></li>
+      </ol>
+    </li>
+    <li><a href="#5-enablestart-与-preset-不是同一动作">5. enable、start 与 preset 不是同一动作</a>
+      <ol>
+        <li><a href="#51-start-改变当前运行状态">5.1 start 改变当前运行状态</a></li>
+        <li><a href="#52-enable-创建启动关系">5.2 enable 创建启动关系</a></li>
+        <li><a href="#53-mask-比-disable-更强">5.3 mask 比 disable 更强</a></li>
+        <li><a href="#54-daemon-reload-重新读取定义">5.4 daemon-reload 重新读取定义</a></li>
+      </ol>
+    </li>
+    <li><a href="#6-service-type何时算启动完成">6. Service Type：何时算“启动完成”</a>
+      <ol>
+        <li><a href="#61-typesimple">6.1 Type=simple</a></li>
+        <li><a href="#62-typeexec">6.2 Type=exec</a></li>
+        <li><a href="#63-typeforking-与-pidfile-历史">6.3 Type=forking 与 pidfile 历史</a></li>
+        <li><a href="#64-typeoneshot">6.4 Type=oneshot</a></li>
+        <li><a href="#65-typenotify">6.5 Type=notify</a></li>
+        <li><a href="#66-readiness-不是健康永恒保证">6.6 readiness 不是健康永恒保证</a></li>
+      </ol>
+    </li>
+    <li><a href="#7-socket-activation先拥有入口再启动服务">7. Socket activation：先拥有入口，再启动服务</a>
+      <ol>
+        <li><a href="#71-解决-bind-race">7.1 解决 bind race</a></li>
+        <li><a href="#72-socket-unit-与-service-unit">7.2 socket unit 与 service unit</a></li>
+        <li><a href="#73-acceptno-与-acceptyes">7.3 Accept=no 与 Accept=yes</a></li>
+        <li><a href="#74-activation-不是无限缓冲">7.4 activation 不是无限缓冲</a></li>
+      </ol>
+    </li>
+    <li><a href="#8-cgroup-supervision为什么不再追一个-pidfile">8. cgroup supervision：为什么不再追一个 pidfile</a>
+      <ol>
+        <li><a href="#81-每个-service-有自己的-cgroup">8.1 每个 service 有自己的 cgroup</a></li>
+        <li><a href="#82-killmode-决定停止范围">8.2 KillMode 决定停止范围</a></li>
+        <li><a href="#83-资源限制直接映射-cgroup">8.3 资源限制直接映射 cgroup</a></li>
+        <li><a href="#84-scope-与-transient-unit">8.4 scope 与 transient unit</a></li>
+      </ol>
+    </li>
+    <li><a href="#9-restart监督不是无限重试">9. Restart：监督不是无限重试</a>
+      <ol>
+        <li><a href="#91-restart-策略">9.1 Restart 策略</a></li>
+        <li><a href="#92-startlimit-防重启风暴">9.2 StartLimit 防重启风暴</a></li>
+        <li><a href="#93-成功退出码与信号可定制">9.3 成功退出码与信号可定制</a></li>
+        <li><a href="#94-restart-会放大外部故障">9.4 restart 会放大外部故障</a></li>
+      </ol>
+    </li>
+    <li><a href="#10-stop-与-graceful-shutdown">10. Stop 与 graceful shutdown</a>
+      <ol>
+        <li><a href="#101-默认停止流程">10.1 默认停止流程</a></li>
+        <li><a href="#102-execstop-不是必须的-kill-命令">10.2 ExecStop 不是必须的 kill 命令</a></li>
+        <li><a href="#103-execstoppost-用于无论成功失败的清理">10.3 ExecStopPost 用于无论成功失败的清理</a></li>
+        <li><a href="#104-go-http-graceful-shutdown">10.4 Go HTTP graceful shutdown</a></li>
+        <li><a href="#105-reload-与-restart">10.5 reload 与 restart</a></li>
+      </ol>
+    </li>
+    <li><a href="#11-journald日志与-unit-生命周期关联">11. journald：日志与 unit 生命周期关联</a>
+      <ol>
+        <li><a href="#111-stdoutstderr-自动进入-journal">11.1 stdout/stderr 自动进入 journal</a></li>
+        <li><a href="#112-journal-是结构化索引不只文本文件">11.2 journal 是结构化索引，不只文本文件</a></li>
+        <li><a href="#113-持久化轮转与速率限制">11.3 持久化、轮转与速率限制</a></li>
+        <li><a href="#114-日志重复的来源">11.4 日志重复的来源</a></li>
+        <li><a href="#115-journal-权限">11.5 journal 权限</a></li>
+      </ol>
+    </li>
+    <li><a href="#12-timer-activationcron-的另一种模型">12. Timer activation：cron 的另一种模型</a>
+      <ol>
+        <li><a href="#121-timer-与-service-分离">12.1 timer 与 service 分离</a></li>
+        <li><a href="#122-monotonic-与-realtime-timer">12.2 monotonic 与 realtime timer</a></li>
+        <li><a href="#123-随机延迟避免惊群">12.3 随机延迟避免惊群</a></li>
+        <li><a href="#124-timer-不自动并发多实例">12.4 timer 不自动并发多实例</a></li>
+      </ol>
+    </li>
+    <li><a href="#13-sandboxingunit-也是最小权限边界">13. Sandboxing：unit 也是最小权限边界</a>
+      <ol>
+        <li><a href="#131-以非-root-用户运行">13.1 以非 root 用户运行</a></li>
+        <li><a href="#132-文件系统限制">13.2 文件系统限制</a></li>
+        <li><a href="#133-capability-与-syscall-限制">13.3 capability 与 syscall 限制</a></li>
+        <li><a href="#134-namespace-型沙箱-directive">13.4 namespace 型沙箱 directive</a></li>
+        <li><a href="#135-security-score-只是提示">13.5 security score 只是提示</a></li>
+      </ol>
+    </li>
+    <li><a href="#14-配置来源覆盖与环境">14. 配置来源、覆盖与环境</a>
+      <ol>
+        <li><a href="#141-unit-搜索与优先级">14.1 unit 搜索与优先级</a></li>
+        <li><a href="#142-清空列表型-directive">14.2 清空列表型 directive</a></li>
+        <li><a href="#143-system-service-没有交互-shell-环境">14.3 system service 没有交互 shell 环境</a></li>
+        <li><a href="#144-specifier-与环境变量不是一套语法">14.4 specifier 与环境变量不是一套语法</a></li>
+      </ol>
+    </li>
+    <li><a href="#15-go-服务的推荐-unit-基线">15. Go 服务的推荐 unit 基线</a>
+      <ol>
+        <li><a href="#151-启动时序">15.1 启动时序</a></li>
+        <li><a href="#152-停止时序">15.2 停止时序</a></li>
+        <li><a href="#153-watchdog">15.3 watchdog</a></li>
+      </ol>
+    </li>
+    <li><a href="#16-排查启动失败的固定顺序">16. 排查启动失败的固定顺序</a>
+      <ol>
+        <li><a href="#161-先看状态和退出原因">16.1 先看状态和退出原因</a></li>
+        <li><a href="#162-再看本次-boot-的-unit-日志">16.2 再看本次 boot 的 unit 日志</a></li>
+        <li><a href="#163-查看最终-unit-与依赖">16.3 查看最终 unit 与依赖</a></li>
+        <li><a href="#164-在相同身份与环境复现">16.4 在相同身份与环境复现</a></li>
+        <li><a href="#165-检查-cgroup-与资源事件">16.5 检查 cgroup 与资源事件</a></li>
+      </ol>
+    </li>
+    <li><a href="#17-启动性能与关键路径">17. 启动性能与关键路径</a>
+      <ol>
+        <li><a href="#171-blame-不等于根因">17.1 blame 不等于根因</a></li>
+        <li><a href="#172-设备和网络可能异步">17.2 设备和网络可能异步</a></li>
+        <li><a href="#173-绘制依赖图">17.3 绘制依赖图</a></li>
+        <li><a href="#174-启动完成不等于业务-ready">17.4 启动完成不等于业务 ready</a></li>
+      </ol>
+    </li>
+    <li><a href="#18-systemd-为什么赢">18. systemd 为什么赢</a>
+      <ol>
+        <li><a href="#181-并行和-activation-删除不必要顺序">18.1 并行和 activation 删除不必要顺序</a></li>
+        <li><a href="#182-cgroup-给服务稳定身份">18.2 cgroup 给服务稳定身份</a></li>
+        <li><a href="#183-统一配置和诊断">18.3 统一配置和诊断</a></li>
+        <li><a href="#184-桌面和服务器动态需求">18.4 桌面和服务器动态需求</a></li>
+      </ol>
+    </li>
+    <li><a href="#19-systemd-为什么被骂">19. systemd 为什么被骂</a>
+      <ol>
+        <li><a href="#191-职责范围扩大">19.1 职责范围扩大</a></li>
+        <li><a href="#192-配置声明式但语义很多">19.2 配置声明式但语义很多</a></li>
+        <li><a href="#193-linux-专用与可移植性">19.3 Linux 专用与可移植性</a></li>
+        <li><a href="#194-二进制-journal-与集中故障观感">19.4 二进制 journal 与集中故障观感</a></li>
+        <li><a href="#195-争论不应替代具体诊断">19.5 争论不应替代具体诊断</a></li>
+      </ol>
+    </li>
+    <li><a href="#20-常用命令知识点扩展">20. 常用命令知识点扩展</a></li>
+    <li><a href="#21-面试题">21. 面试题</a></li>
+    <li><a href="#小结">小结</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><p>上一篇讲 namespace 改变进程视图、cgroup 约束资源。这一篇回到系统启动的第一个用户态进程：<strong>当一台机器有数百个长期服务、设备可能热插拔、网络异步就绪、服务会崩溃重启时，谁来决定先启动什么、失败后怎么办、关闭时怎样收尾？</strong></p>
+<p>早期 Unix 的 init 只需启动少量 daemon；SysV init 用运行级别和 shell 脚本把流程标准化。现代 Linux 则面对并行启动、动态硬件、按需激活、服务监督、资源控制、日志关联和桌面会话。systemd 把这些问题放进同一个管理器，因此赢得主流发行版，也因为职责扩张、Linux 绑定、配置语义和集中复杂度长期被批评。</p>
+<p>先看五个问题：</p>
+<ol>
+<li>PID 1 为什么不能只是普通 shell？它在信号、孤儿进程和系统关机中承担什么特殊责任？</li>
+<li>SysV init 的 <code>/etc/init.d</code> 脚本为什么难以可靠表达并行、依赖、状态与崩溃恢复？</li>
+<li>systemd 的 unit、job 与 transaction 如何区分“需要谁”和“谁先启动”？为什么 <code>After=</code> 不会自动拉起依赖？</li>
+<li>socket activation、<code>Type=notify</code>、cgroup supervision 与 journal 分别解决哪一种 race？</li>
+<li>Go 服务应怎样写 unit 才能正确处理 readiness、restart、fd/内存限制、SIGTERM 与 graceful shutdown，而不是制造重启风暴？</li>
+</ol>
+<hr>
+<h1 id="1-pid-1-为什么特殊">1. PID 1 为什么特殊</h1>
+<h2 id="11-内核只启动第一个用户态管理者">1.1 内核只启动第一个用户态管理者</h2>
+<p>内核完成初始化、挂载早期根文件系统后，会尝试执行 init 程序。它成为初始 PID namespace 的 PID 1，随后负责把系统从“只有内核”带到可登录、可提供服务的状态。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">firmware
+</span></span><span class="line"><span class="cl">  -&gt; bootloader
+</span></span><span class="line"><span class="cl">  -&gt; Linux kernel
+</span></span><span class="line"><span class="cl">  -&gt; initramfs early userspace
+</span></span><span class="line"><span class="cl">  -&gt; switch/pivot to real root
+</span></span><span class="line"><span class="cl">  -&gt; exec /sbin/init (often systemd)
+</span></span><span class="line"><span class="cl">  -&gt; services, login sessions, workloads
+</span></span></code></pre></div><p>initramfs 中也可能运行一个临时 PID 1，完成磁盘解密、LVM/RAID、根文件系统发现后再 <code>switch_root</code> 到真实系统。</p>
+<h2 id="12-pid-1-要回收孤儿">1.2 PID 1 要回收孤儿</h2>
+<p>父进程退出后，孤儿后代会被 reparent 给 subreaper 或 PID namespace init。子进程退出会留下 zombie，直到父/收养者调用 <code>wait*</code> 获取退出状态。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">parent exits
+</span></span><span class="line"><span class="cl">  -&gt; child later exits
+</span></span><span class="line"><span class="cl">  -&gt; PID 1/subreaper must wait
+</span></span><span class="line"><span class="cl">  -&gt; otherwise zombie table entry remains
+</span></span></code></pre></div><p>系统 PID 1 必须可靠 reap；容器里的 PID 1 同样如此。这也是容器直接用不处理子进程的 shell/应用作为 init 时可能积累 zombie 的原因。</p>
+<h2 id="13-pid-1-的信号语义不同">1.3 PID 1 的信号语义不同</h2>
+<p>内核对 PID 1 的某些默认信号 disposition 有特殊保护，避免系统 init 因普通未处理信号意外退出。PID 1 应显式安装 handler 并协调 shutdown；若它崩溃，内核可能 panic 或系统进入不可用状态，具体行为取决于环境和内核。</p>
+<p>容器 PID 1 也需要显式处理 SIGTERM。shell-form entrypoint 常让 shell 占 PID 1：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-dockerfile" data-lang="dockerfile"><span class="line"><span class="cl"><span class="c"># shell form: /bin/sh -c 包一层</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span><span class="k">ENTRYPOINT</span> ./server<span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span><span class="c"># exec form: server 直接成为 PID 1</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span><span class="k">ENTRYPOINT</span> <span class="p">[</span><span class="s2">&#34;/app/server&#34;</span><span class="p">]</span><span class="err">
+</span></span></span></code></pre></div><p>exec form能让停止信号直接到应用；若应用会派生子进程，还可使用轻量 init做转发和回收。</p>
+<h2 id="14-init-不只是启动脚本">1.4 init 不只是“启动脚本”</h2>
+<p>系统管理者还要处理：</p>
+<ul>
+<li>服务启动、停止、重载和监督</li>
+<li>依赖、冲突、目标状态</li>
+<li>用户会话、seat 与登录</li>
+<li>mount、swap、timer、socket、device 等对象</li>
+<li>cgroup 生命周期和资源设置</li>
+<li>系统关机、重启、切换根文件系统</li>
+<li>记录状态与诊断信息</li>
+</ul>
+<p>争论的核心正是：这些职责应由一个集成系统统一建模，还是由许多可替换小工具组合。</p>
+<hr>
+<h1 id="2-从-rc-脚本到-sysv-init">2. 从 rc 脚本到 SysV init</h1>
+<h2 id="21-最简单的启动流程是顺序执行">2.1 最简单的启动流程是顺序执行</h2>
+<p>早期 BSD 风格 <code>/etc/rc</code> 可以是一段固定 shell：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sh" data-lang="sh"><span class="line"><span class="cl">mount_filesystems
+</span></span><span class="line"><span class="cl">configure_network
+</span></span><span class="line"><span class="cl">start_syslog
+</span></span><span class="line"><span class="cl">start_cron
+</span></span><span class="line"><span class="cl">start_sshd
+</span></span></code></pre></div><p>优点是直观、可读、使用已有 Unix 工具；机器和服务少时足够。缺点是状态、依赖和错误都隐含在脚本控制流中，发行版与管理员很难组合修改。</p>
+<h2 id="22-sysv-runlevel-把脚本模块化">2.2 SysV runlevel 把脚本模块化</h2>
+<p>SysV init 使用运行级别表达系统模式，例如单用户、多用户、关机/重启。目录中用 <code>S</code>/<code>K</code> 和序号链接控制 start/kill 顺序：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">/etc/rc3.d/
+</span></span><span class="line"><span class="cl">  S10network -&gt; ../init.d/network
+</span></span><span class="line"><span class="cl">  S20syslog  -&gt; ../init.d/syslog
+</span></span><span class="line"><span class="cl">  S50sshd    -&gt; ../init.d/sshd
+</span></span></code></pre></div><p>服务脚本约定：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">/etc/init.d/sshd start
+</span></span><span class="line"><span class="cl">/etc/init.d/sshd stop
+</span></span><span class="line"><span class="cl">/etc/init.d/sshd restart
+</span></span><span class="line"><span class="cl">/etc/init.d/sshd status
+</span></span></code></pre></div><p>它让包管理器可以安装独立脚本，也给管理员清晰的人工操作入口。</p>
+<h2 id="23-顺序编号不是依赖图">2.3 顺序编号不是依赖图</h2>
+<p><code>S50sshd</code> 只告诉你排序编号，不能精确表达：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">sshd needs local filesystems
+</span></span><span class="line"><span class="cl">sshd wants logging but logging failure need not block it
+</span></span><span class="line"><span class="cl">sshd should start after network interface configuration
+</span></span><span class="line"><span class="cl">sshd does not require Internet connectivity
+</span></span><span class="line"><span class="cl">sshd conflicts with rescue mode
+</span></span></code></pre></div><p>发行版后来通过 LSB header、辅助工具推导依赖，但 shell 脚本仍可在内部 fork、sleep、轮询文件或吞掉错误，管理器很难知道它何时真正 ready。</p>
+<h2 id="24-shell-脚本状态不可验证">2.4 shell 脚本状态不可验证</h2>
+<p>典型脚本把 PID 写入 <code>/run/foo.pid</code>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sh" data-lang="sh"><span class="line"><span class="cl">start-stop-daemon --start --background --make-pidfile <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --pidfile /run/foo.pid --exec /usr/sbin/foo
+</span></span></code></pre></div><p>可能的问题：</p>
+<ul>
+<li>daemon fork 两次，脚本记录错 PID</li>
+<li>进程崩溃留下 stale pidfile</li>
+<li>PID 被复用，stop 杀错进程</li>
+<li>子进程逃出管理范围</li>
+<li><code>start</code> 返回时 socket 尚未监听</li>
+<li>shell 返回 0，但实际 daemon 几秒后失败</li>
+</ul>
+<p>脚本可以逐个修补，却缺乏统一、内核可验证的服务身份。</p>
+<h2 id="25-并行启动很难靠脚本安全推导">2.5 并行启动很难靠脚本安全推导</h2>
+<p>顺序启动浪费现代机器 IO/CPU；直接把所有脚本放后台又会打破隐含依赖。若服务只因“网络还没 ready”失败，就在脚本里 <code>sleep 5</code>，启动时间和竞态都会变得不可预测。</p>
+<p>这推动了 Upstart 的事件模型、runit/s6 的监督模型，以及 systemd 的声明式 unit/依赖/activation 设计。</p>
+<hr>
+<h1 id="3-systemd-的核心把系统对象建模为-unit">3. systemd 的核心：把系统对象建模为 unit</h1>
+<h2 id="31-unit-不只有-service">3.1 unit 不只有 service</h2>
+<p>systemd 用不同 unit type表示可管理对象：</p>
+<table>
+<thead>
+<tr>
+<th>类型</th>
+<th>示例</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>.service</code></td>
+<td><code>nginx.service</code></td>
+<td>进程服务</td>
+</tr>
+<tr>
+<td><code>.socket</code></td>
+<td><code>api.socket</code></td>
+<td>监听 socket 与按需激活</td>
+</tr>
+<tr>
+<td><code>.target</code></td>
+<td><code>multi-user.target</code></td>
+<td>同步点/逻辑目标集合</td>
+</tr>
+<tr>
+<td><code>.mount</code></td>
+<td><code>var-lib.mount</code></td>
+<td>文件系统挂载</td>
+</tr>
+<tr>
+<td><code>.automount</code></td>
+<td><code>data.automount</code></td>
+<td>按访问触发挂载</td>
+</tr>
+<tr>
+<td><code>.timer</code></td>
+<td><code>backup.timer</code></td>
+<td>单次/周期激活</td>
+</tr>
+<tr>
+<td><code>.path</code></td>
+<td><code>import.path</code></td>
+<td>路径变化激活</td>
+</tr>
+<tr>
+<td><code>.device</code></td>
+<td><code>dev-sda.device</code></td>
+<td>udev 暴露的设备</td>
+</tr>
+<tr>
+<td><code>.slice</code></td>
+<td><code>app.slice</code></td>
+<td>cgroup 层级分组</td>
+</tr>
+<tr>
+<td><code>.scope</code></td>
+<td>session scope</td>
+<td>systemd 未 fork 但纳入管理的进程组</td>
+</tr>
+</tbody>
+</table>
+<p>统一模型让 mount、socket 和 service 可参与同一依赖 transaction，而不是各用一套启动脚本。</p>
+<h2 id="32-unit-文件是声明不是完整程序">3.2 unit 文件是声明，不是完整程序</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="k">[Unit]</span>
+</span></span><span class="line"><span class="cl"><span class="na">Description</span><span class="o">=</span><span class="s">Example API</span>
+</span></span><span class="line"><span class="cl"><span class="na">After</span><span class="o">=</span><span class="s">network.target</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">[Service]</span>
+</span></span><span class="line"><span class="cl"><span class="na">Type</span><span class="o">=</span><span class="s">simple</span>
+</span></span><span class="line"><span class="cl"><span class="na">ExecStart</span><span class="o">=</span><span class="s">/usr/local/bin/api --config /etc/api/config.yaml</span>
+</span></span><span class="line"><span class="cl"><span class="na">Restart</span><span class="o">=</span><span class="s">on-failure</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">[Install]</span>
+</span></span><span class="line"><span class="cl"><span class="na">WantedBy</span><span class="o">=</span><span class="s">multi-user.target</span>
+</span></span></code></pre></div><p>systemd 解析声明，构建 job graph，执行 <code>execve</code> 并跟踪 cgroup。需要条件、环境和沙箱时使用专门 directive，而不是在 shell 中任意编程。</p>
+<p><code>ExecStart=</code> 默认不经 shell：重定向、管道、<code>$VAR</code> 的 shell 语法不会自动生效。若确实需要：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="na">ExecStart</span><span class="o">=</span><span class="s">/bin/sh -c &#39;exec /usr/local/bin/api &gt;&gt;/var/log/api.log 2&gt;&amp;1&#39;</span>
+</span></span></code></pre></div><p>但优先让应用直接输出 stdout/stderr，由 journal/日志系统管理，减少 shell、pid 和 quoting 问题。</p>
+<h2 id="33-system-与-user-manager">3.3 system 与 user manager</h2>
+<p>系统 PID 1 管 system unit；登录用户还可运行 <code>systemd --user</code> 管 user unit。二者的 unit 搜索路径、权限、环境、cgroup 与生命周期不同：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">systemctl status api.service
+</span></span><span class="line"><span class="cl">systemctl --user status editor-agent.service
+</span></span></code></pre></div><p>在错误 manager 中查询会得到“unit not found”或看似未运行。user service 是否在退出登录后继续由 linger 等设置决定。</p>
+<hr>
+<h1 id="4-依赖与顺序最容易配错的两个维度">4. 依赖与顺序：最容易配错的两个维度</h1>
+<h2 id="41-requireswants-是拉入关系">4.1 Requires/Wants 是拉入关系</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="k">[Unit]</span>
+</span></span><span class="line"><span class="cl"><span class="na">Requires</span><span class="o">=</span><span class="s">postgresql.service</span>
+</span></span><span class="line"><span class="cl"><span class="na">Wants</span><span class="o">=</span><span class="s">metrics-agent.service</span>
+</span></span></code></pre></div><p>概念上：</p>
+<ul>
+<li><code>Requires=</code>：启动本 unit 的 transaction 时强依赖另一个 unit；依赖启动失败会影响当前 job</li>
+<li><code>Wants=</code>：弱依赖，尽量一起启动，但对方失败通常不阻止当前 unit</li>
+</ul>
+<p>它们主要表达“把谁加入 transaction”。停止传播和运行中故障行为还受 <code>PartOf=</code>、<code>BindsTo=</code>、依赖类型与具体状态影响；不要把 Requires 简化成“对方任何时候崩溃我必然退出”。</p>
+<h2 id="42-beforeafter-只表达排序">4.2 Before/After 只表达排序</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="na">After</span><span class="o">=</span><span class="s">postgresql.service</span>
+</span></span></code></pre></div><p>只在两个 unit 都进入 transaction 时，要求当前 start job排在 PostgreSQL start 后。它<strong>不会自动启动 PostgreSQL</strong>。完整意图常需组合：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="na">Requires</span><span class="o">=</span><span class="s">postgresql.service</span>
+</span></span><span class="line"><span class="cl"><span class="na">After</span><span class="o">=</span><span class="s">postgresql.service</span>
+</span></span></code></pre></div><p>同理，<code>network.target</code> 的 After 不代表网络可访问，只表示网络管理栈的一个同步点。</p>
+<h2 id="43-停止顺序通常反向">4.3 停止顺序通常反向</h2>
+<p>若 A <code>After=B</code>，启动时 B 在 A 前，停止时通常 A 在 B 前，避免依赖先消失。这让一个 ordering edge 同时表达对称生命周期。</p>
+<p>依赖图必须无排序环。若 A After B、B After A，systemd 会检测 cycle并丢弃某些 job/依赖或使 transaction失败，日志会给出线索。</p>
+<h2 id="44-network-onlinetarget-也不是互联网承诺">4.4 network-online.target 也不是互联网承诺</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="na">Wants</span><span class="o">=</span><span class="s">network-online.target</span>
+</span></span><span class="line"><span class="cl"><span class="na">After</span><span class="o">=</span><span class="s">network-online.target</span>
+</span></span></code></pre></div><p>它依赖网络管理器的 wait-online 服务定义“online”，可能只要求某接口配置完成，不保证 DNS、默认路由、VPN、云元数据或特定数据库可达。把所有服务都绑到它会拖慢启动，也不能消灭网络瞬时故障。</p>
+<p>网络客户端必须支持运行期断线重连、deadline 与 backoff；启动排序只能减少已知竞态，不能把分布式依赖变成本地静态依赖。</p>
+<h2 id="45-condition-与-assert">4.5 Condition 与 Assert</h2>
+<p>systemd 可在启动前检查路径、虚拟化、架构、能力等：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="na">ConditionPathExists</span><span class="o">=</span><span class="s">/etc/api/config.yaml</span>
+</span></span><span class="line"><span class="cl"><span class="na">AssertPathIsReadable</span><span class="o">=</span><span class="s">/etc/api/secret</span>
+</span></span></code></pre></div><p>Condition 不满足通常跳过 unit而非失败；Assert 不满足会失败。它们适合环境门槛，不应代替应用对动态依赖的错误处理。</p>
+<hr>
+<h1 id="5-enablestart-与-preset-不是同一动作">5. enable、start 与 preset 不是同一动作</h1>
+<h2 id="51-start-改变当前运行状态">5.1 start 改变当前运行状态</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">systemctl start api.service
+</span></span><span class="line"><span class="cl">systemctl stop api.service
+</span></span><span class="line"><span class="cl">systemctl restart api.service
+</span></span><span class="line"><span class="cl">systemctl reload api.service
+</span></span></code></pre></div><p><code>start</code> 提交当前 job；重启后是否自动启动取决于 enable/依赖/activation。</p>
+<h2 id="52-enable-创建启动关系">5.2 enable 创建启动关系</h2>
+<p>unit <code>[Install]</code>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="k">[Install]</span>
+</span></span><span class="line"><span class="cl"><span class="na">WantedBy</span><span class="o">=</span><span class="s">multi-user.target</span>
+</span></span></code></pre></div><p>执行：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">systemctl <span class="nb">enable</span> api.service
+</span></span></code></pre></div><p>通常创建符号链接，把 service 加入 target wants。它不一定立即启动；可用：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">systemctl <span class="nb">enable</span> --now api.service
+</span></span></code></pre></div><p>没有 <code>[Install]</code> 的 static unit 不能直接 enable，但可被其他 unit依赖或激活，这不表示它“不可用”。</p>
+<h2 id="53-mask-比-disable-更强">5.3 mask 比 disable 更强</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">systemctl disable api.service
+</span></span><span class="line"><span class="cl">systemctl mask api.service
+</span></span></code></pre></div><ul>
+<li>disable：移除安装关系，仍可手动或被依赖启动</li>
+<li>mask：把 unit 链接到 <code>/dev/null</code>，阻止启动</li>
+</ul>
+<p>排障看到 masked 要查为什么被显式禁止；不要反复 start。</p>
+<h2 id="54-daemon-reload-重新读取定义">5.4 daemon-reload 重新读取定义</h2>
+<p>修改 unit 文件后：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">systemctl daemon-reload
+</span></span><span class="line"><span class="cl">systemctl restart api.service
+</span></span></code></pre></div><p><code>daemon-reload</code> 让 manager重新解析 unit/依赖，不会自动重启服务。<code>reload api</code> 则是请求应用重新加载配置，只有定义了 <code>ExecReload</code> 或相应类型才有意义。两种 reload 常被混淆。</p>
+<hr>
+<h1 id="6-service-type何时算启动完成">6. Service Type：何时算“启动完成”</h1>
+<h2 id="61-typesimple">6.1 Type=simple</h2>
+<p>默认常见行为：systemd fork/exec <code>ExecStart</code> 后，进程一开始执行就认为 start job完成，不等待应用监听端口。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="k">[Service]</span>
+</span></span><span class="line"><span class="cl"><span class="na">Type</span><span class="o">=</span><span class="s">simple</span>
+</span></span><span class="line"><span class="cl"><span class="na">ExecStart</span><span class="o">=</span><span class="s">/usr/local/bin/api</span>
+</span></span></code></pre></div><p>适合前台运行、不 fork 的 Go 服务。缺点是依赖它的 unit可能在应用初始化完成前启动；如果需要严格 readiness，应使用 notify 或 socket activation，而不是 sleep。</p>
+<h2 id="62-typeexec">6.2 Type=exec</h2>
+<p><code>Type=exec</code> 等到 <code>execve</code> 成功才认为已启动，比 simple 能捕获可执行文件不存在、用户切换失败等 exec 前错误；仍不代表应用完成业务初始化。支持情况取决于 systemd 版本。</p>
+<h2 id="63-typeforking-与-pidfile-历史">6.3 Type=forking 与 pidfile 历史</h2>
+<p>传统 daemon 自己 fork 到后台，父进程退出表示初始化完成：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="k">[Service]</span>
+</span></span><span class="line"><span class="cl"><span class="na">Type</span><span class="o">=</span><span class="s">forking</span>
+</span></span><span class="line"><span class="cl"><span class="na">PIDFile</span><span class="o">=</span><span class="s">/run/legacy.pid</span>
+</span></span><span class="line"><span class="cl"><span class="na">ExecStart</span><span class="o">=</span><span class="s">/usr/sbin/legacy-daemon</span>
+</span></span></code></pre></div><p>systemd 需要识别 main PID，pidfile错误和 double-fork 会使监督困难。现代服务在 systemd 下应尽量 <code>--foreground</code>，使用 Type=simple/exec/notify；daemonize 已没有“释放终端”的必要。</p>
+<h2 id="64-typeoneshot">6.4 Type=oneshot</h2>
+<p>适合执行一次并退出的设置动作：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="k">[Service]</span>
+</span></span><span class="line"><span class="cl"><span class="na">Type</span><span class="o">=</span><span class="s">oneshot</span>
+</span></span><span class="line"><span class="cl"><span class="na">ExecStart</span><span class="o">=</span><span class="s">/usr/local/libexec/prepare-data</span>
+</span></span><span class="line"><span class="cl"><span class="na">RemainAfterExit</span><span class="o">=</span><span class="s">yes</span>
+</span></span></code></pre></div><p><code>RemainAfterExit=yes</code> 让命令退出后 unit 保持 active，表示动作产生的状态仍有效。若没有它，oneshot 成功后进入 inactive/dead，不代表失败。</p>
+<h2 id="65-typenotify">6.5 Type=notify</h2>
+<p>服务完成真实初始化后通过 <code>sd_notify</code> 发：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">READY=1
+</span></span><span class="line"><span class="cl">STATUS=Serving requests
+</span></span><span class="line"><span class="cl">MAINPID=...
+</span></span></code></pre></div><p>systemd 在 READY 前保持 activating，依赖排序能等到真实 ready。还可配 watchdog，让服务周期发送 <code>WATCHDOG=1</code>。</p>
+<p>Go 可使用兼容 sd_notify protocol 的库，或向 <code>$NOTIFY_SOCKET</code> 发送 Unix datagram。必须正确处理 abstract socket、权限和 unset 环境，优先使用成熟小库而不是手写不完整协议。</p>
+<h2 id="66-readiness-不是健康永恒保证">6.6 readiness 不是健康永恒保证</h2>
+<p><code>READY=1</code> 只是某时刻完成启动。之后数据库断线、磁盘只读或内部 deadlock，unit 仍可能 active。应用需要运行期 metrics、health、watchdog 或外部探针；systemd active 只说明其进程状态符合 unit 模型。</p>
+<hr>
+<h1 id="7-socket-activation先拥有入口再启动服务">7. Socket activation：先拥有入口，再启动服务</h1>
+<h2 id="71-解决-bind-race">7.1 解决 bind race</h2>
+<p>传统顺序：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">start service
+</span></span><span class="line"><span class="cl">  -&gt; initialize
+</span></span><span class="line"><span class="cl">  -&gt; bind/listen
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">初始化期间客户端 connection refused
+</span></span></code></pre></div><p>socket activation：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">systemd 先 bind/listen socket
+</span></span><span class="line"><span class="cl">  -&gt; client connect 进入内核 accept queue
+</span></span><span class="line"><span class="cl">  -&gt; 激活 service
+</span></span><span class="line"><span class="cl">  -&gt; service 继承已监听 fd
+</span></span><span class="line"><span class="cl">  -&gt; accept 已排队连接
+</span></span></code></pre></div><p>入口可在服务进程启动前存在，也能实现服务重启期间较短窗口的连接排队。</p>
+<h2 id="72-socket-unit-与-service-unit">7.2 socket unit 与 service unit</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="c1"># api.socket</span>
+</span></span><span class="line"><span class="cl"><span class="k">[Socket]</span>
+</span></span><span class="line"><span class="cl"><span class="na">ListenStream</span><span class="o">=</span><span class="s">8080</span>
+</span></span><span class="line"><span class="cl"><span class="na">NoDelay</span><span class="o">=</span><span class="s">true</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">[Install]</span>
+</span></span><span class="line"><span class="cl"><span class="na">WantedBy</span><span class="o">=</span><span class="s">sockets.target</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="c1"># api.service</span>
+</span></span><span class="line"><span class="cl"><span class="k">[Service]</span>
+</span></span><span class="line"><span class="cl"><span class="na">ExecStart</span><span class="o">=</span><span class="s">/usr/local/bin/api</span>
+</span></span></code></pre></div><p>systemd 按约定把监听 fd 从 3 开始传给 service，并设置 <code>LISTEN_PID</code>、<code>LISTEN_FDS</code> 等环境。应用必须检测并使用继承 fd，不能再次 bind 同一端口。</p>
+<p>Go 可把继承 fd 包装成 <code>net.Listener</code>，但要正确验证 PID、fd 数、CLOEXEC 和所有权。<code>os.NewFile</code>/<code>net.FileListener</code> 可能 dup fd，关闭顺序需按库语义处理。</p>
+<h2 id="73-acceptno-与-acceptyes">7.3 Accept=no 与 Accept=yes</h2>
+<p>默认 <code>Accept=no</code>：一个 service接收整个监听 socket，适合现代并发 server。</p>
+<p><code>Accept=yes</code>：每条连接激活一个模板 service 实例，类似 inetd：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">connection -&gt; foo@&lt;instance&gt;.service
+</span></span></code></pre></div><p>它适合低频、简单连接服务；高连接率下每连接进程/manager job 成本很高。</p>
+<h2 id="74-activation-不是无限缓冲">7.4 activation 不是无限缓冲</h2>
+<p>监听 backlog 和 socket receive buffers 都有限。服务长时间启动失败，连接仍会超时或队列满；协议客户端也有 deadline。activation 消除入口 ownership race，不是故障时无限吸收流量。</p>
+<hr>
+<h1 id="8-cgroup-supervision为什么不再追一个-pidfile">8. cgroup supervision：为什么不再追一个 pidfile</h1>
+<h2 id="81-每个-service-有自己的-cgroup">8.1 每个 service 有自己的 cgroup</h2>
+<p>systemd 启动 service 时把进程放进对应 cgroup，后代默认留在其中：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">system.slice/
+</span></span><span class="line"><span class="cl">  api.service/
+</span></span><span class="line"><span class="cl">    main process
+</span></span><span class="line"><span class="cl">    worker children
+</span></span><span class="line"><span class="cl">    helper process
+</span></span></code></pre></div><p>这样 stop 可以针对整个服务进程集合，不依赖猜 main PID 的所有后代，也不因 fork/daemonize 轻易逃出监督。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">systemctl status api.service
+</span></span><span class="line"><span class="cl">systemd-cgls /system.slice/api.service
+</span></span></code></pre></div><h2 id="82-killmode-决定停止范围">8.2 KillMode 决定停止范围</h2>
+<p>常见语义：</p>
+<ul>
+<li><code>KillMode=control-group</code>：停止时终止 unit cgroup 全部进程，通常是安全默认</li>
+<li><code>mixed</code>：main 先收到正常终止信号，其余在最终 kill 阶段处理</li>
+<li><code>process</code>：只处理 main，子进程可能泄漏，通常不推荐</li>
+<li><code>none</code>：几乎不管理终止，危险且新版本可能限制</li>
+</ul>
+<p>若 worker 本应由主进程优雅收尾，可配置合适信号与 mixed/control-group，并实际测试。不要为“保留 helper”随意改 process；应拆成独立 unit表达生命周期。</p>
+<h2 id="83-资源限制直接映射-cgroup">8.3 资源限制直接映射 cgroup</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="k">[Service]</span>
+</span></span><span class="line"><span class="cl"><span class="na">CPUWeight</span><span class="o">=</span><span class="s">200</span>
+</span></span><span class="line"><span class="cl"><span class="na">CPUQuota</span><span class="o">=</span><span class="s">200%</span>
+</span></span><span class="line"><span class="cl"><span class="na">MemoryHigh</span><span class="o">=</span><span class="s">800M</span>
+</span></span><span class="line"><span class="cl"><span class="na">MemoryMax</span><span class="o">=</span><span class="s">1G</span>
+</span></span><span class="line"><span class="cl"><span class="na">TasksMax</span><span class="o">=</span><span class="s">512</span>
+</span></span><span class="line"><span class="cl"><span class="na">IOWeight</span><span class="o">=</span><span class="s">100</span>
+</span></span></code></pre></div><p>这些设置由 systemd 写入 cgroup controller。<code>LimitNOFILE=</code>、<code>LimitCORE=</code> 等则映射 rlimit，不要混淆：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">MemoryMax -&gt; cgroup memory.max（整个 unit）
+</span></span><span class="line"><span class="cl">LimitAS   -&gt; RLIMIT_AS（每进程虚拟地址空间，通常不适合作为容器式内存限制）
+</span></span><span class="line"><span class="cl">TasksMax  -&gt; pids.max
+</span></span><span class="line"><span class="cl">LimitNPROC -&gt; RLIMIT_NPROC（按 UID 等语义）
+</span></span></code></pre></div><h2 id="84-scope-与-transient-unit">8.4 scope 与 transient unit</h2>
+<p>不是 systemd fork 的进程也可放进 <code>.scope</code>，例如登录 session、容器或 <code>systemd-run --scope</code>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">systemd-run --scope -p <span class="nv">MemoryMax</span><span class="o">=</span>1G make -j8
+</span></span></code></pre></div><p>临时 service：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">systemd-run --unit<span class="o">=</span>one-shot-report <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --property<span class="o">=</span><span class="nv">CPUQuota</span><span class="o">=</span>50% <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  /usr/local/bin/report
+</span></span></code></pre></div><p>这比裸 <code>nohup ... &amp;</code> 更容易追踪日志、退出状态、资源和清理。</p>
+<hr>
+<h1 id="9-restart监督不是无限重试">9. Restart：监督不是无限重试</h1>
+<h2 id="91-restart-策略">9.1 Restart 策略</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="na">Restart</span><span class="o">=</span><span class="s">on-failure</span>
+</span></span><span class="line"><span class="cl"><span class="na">RestartSec</span><span class="o">=</span><span class="s">2s</span>
+</span></span></code></pre></div><p>常见选项概念：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">no          不自动重启
+</span></span><span class="line"><span class="cl">on-success  正常退出时重启
+</span></span><span class="line"><span class="cl">on-failure  非零退出、信号、超时、watchdog 等失败时重启
+</span></span><span class="line"><span class="cl">always      不论原因都重启（显式 stop 通常有单独语义）
+</span></span></code></pre></div><p><code>on-failure</code> 适合长期 daemon；配置错误导致稳定退出失败时也会循环，所以必须有 start rate limit。</p>
+<h2 id="92-startlimit-防重启风暴">9.2 StartLimit 防重启风暴</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="k">[Unit]</span>
+</span></span><span class="line"><span class="cl"><span class="na">StartLimitIntervalSec</span><span class="o">=</span><span class="s">60</span>
+</span></span><span class="line"><span class="cl"><span class="na">StartLimitBurst</span><span class="o">=</span><span class="s">5</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">[Service]</span>
+</span></span><span class="line"><span class="cl"><span class="na">Restart</span><span class="o">=</span><span class="s">on-failure</span>
+</span></span><span class="line"><span class="cl"><span class="na">RestartSec</span><span class="o">=</span><span class="s">2s</span>
+</span></span></code></pre></div><p>在窗口内超过启动次数，systemd 标记 start-limit-hit，停止自动尝试。它保护 CPU、日志、下游和端口，避免每秒 crash/restart。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">systemctl reset-failed api.service
+</span></span><span class="line"><span class="cl">systemctl start api.service
+</span></span></code></pre></div><p><code>reset-failed</code> 只清状态/计数，不修复配置；先读日志再重置。</p>
+<h2 id="93-成功退出码与信号可定制">9.3 成功退出码与信号可定制</h2>
+<p>某些 daemon 用特定退出码表达正常重启/配置变化：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="na">SuccessExitStatus</span><span class="o">=</span><span class="s">75 SIGTERM</span>
+</span></span><span class="line"><span class="cl"><span class="na">RestartPreventExitStatus</span><span class="o">=</span><span class="s">78</span>
+</span></span><span class="line"><span class="cl"><span class="na">RestartForceExitStatus</span><span class="o">=</span><span class="s">SIGABRT</span>
+</span></span></code></pre></div><p>应慎用并写注释/文档，否则退出码语义难以维护。Go 服务通常让正常 SIGTERM handler最终返回 0，真实启动/运行失败返回非零即可。</p>
+<h2 id="94-restart-会放大外部故障">9.4 restart 会放大外部故障</h2>
+<p>依赖数据库不可用时应用立即 fatal，systemd不断重启，会制造 DNS/connect/TLS 风暴。更合理的边界：</p>
+<ul>
+<li>配置/密钥缺失：快速失败 + rate limit，等待运维修复</li>
+<li>暂时下游不可用：进程保持运行，内部有界退避并报告 not-ready/degraded</li>
+<li>内部不可恢复不变量：退出，由 supervisor重启</li>
+</ul>
+<p>监督器负责进程生命周期，不应代替应用分布式故障策略。</p>
+<hr>
+<h1 id="10-stop-与-graceful-shutdown">10. Stop 与 graceful shutdown</h1>
+<h2 id="101-默认停止流程">10.1 默认停止流程</h2>
+<p>对 service 执行 stop，systemd通常：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">发送 KillSignal（默认 SIGTERM）
+</span></span><span class="line"><span class="cl">  -&gt; 等 TimeoutStopSec
+</span></span><span class="line"><span class="cl">  -&gt; 仍未退出则发送 FinalKillSignal（通常 SIGKILL）
+</span></span></code></pre></div><p><code>SIGKILL</code> 无法捕获，进程没有机会 flush或清理。<code>TimeoutStopSec</code> 应覆盖业务 drain 的合理上限，又不能让机器关机/发布无限卡住。</p>
+<h2 id="102-execstop-不是必须的-kill-命令">10.2 ExecStop 不是必须的 kill 命令</h2>
+<p>若主进程正确处理 SIGTERM，通常无需：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="na">ExecStop</span><span class="o">=</span><span class="s">/bin/kill $MAINPID</span>
+</span></span></code></pre></div><p>systemd 自己会发信号。<code>ExecStop=</code> 更适合调用应用管理接口执行同步停止，并且只有 service成功启动时调用的具体行为需查版本文档。命令必须等待停止动作完成，不能只异步触发后立即退出，否则 systemd继续终止流程。</p>
+<h2 id="103-execstoppost-用于无论成功失败的清理">10.3 ExecStopPost 用于无论成功失败的清理</h2>
+<p><code>ExecStopPost=</code> 可在服务停止/启动失败后运行清理或记录命令。它不应删除仍需崩溃恢复的数据，也不能假定主服务正常完成。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="na">ExecStopPost</span><span class="o">=</span><span class="s">/usr/local/libexec/api-cleanup</span>
+</span></span></code></pre></div><p>清理脚本要幂等、有超时、权限最小，避免自身卡住 shutdown。</p>
+<h2 id="104-go-http-graceful-shutdown">10.4 Go HTTP graceful shutdown</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="nx">ctx</span><span class="p">,</span> <span class="nx">stop</span> <span class="o">:=</span> <span class="nx">signal</span><span class="p">.</span><span class="nf">NotifyContext</span><span class="p">(</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">context</span><span class="p">.</span><span class="nf">Background</span><span class="p">(),</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">syscall</span><span class="p">.</span><span class="nx">SIGTERM</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">os</span><span class="p">.</span><span class="nx">Interrupt</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl"><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="k">defer</span> <span class="nf">stop</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="nx">srv</span> <span class="o">:=</span> <span class="o">&amp;</span><span class="nx">http</span><span class="p">.</span><span class="nx">Server</span><span class="p">{</span><span class="nx">Addr</span><span class="p">:</span> <span class="s">&#34;:8080&#34;</span><span class="p">,</span> <span class="nx">Handler</span><span class="p">:</span> <span class="nx">handler</span><span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="nx">errc</span> <span class="o">:=</span> <span class="nb">make</span><span class="p">(</span><span class="kd">chan</span> <span class="kt">error</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="k">go</span> <span class="kd">func</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">err</span> <span class="o">:=</span> <span class="nx">srv</span><span class="p">.</span><span class="nf">ListenAndServe</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="o">&amp;&amp;</span> <span class="p">!</span><span class="nx">errors</span><span class="p">.</span><span class="nf">Is</span><span class="p">(</span><span class="nx">err</span><span class="p">,</span> <span class="nx">http</span><span class="p">.</span><span class="nx">ErrServerClosed</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">errc</span> <span class="o">&lt;-</span> <span class="nx">err</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">errc</span> <span class="o">&lt;-</span> <span class="kc">nil</span>
+</span></span><span class="line"><span class="cl"><span class="p">}()</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">select</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl"><span class="k">case</span> <span class="nx">err</span> <span class="o">:=</span> <span class="o">&lt;-</span><span class="nx">errc</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span> <span class="nx">log</span><span class="p">.</span><span class="nf">Fatal</span><span class="p">(</span><span class="nx">err</span><span class="p">)</span> <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="k">case</span> <span class="o">&lt;-</span><span class="nx">ctx</span><span class="p">.</span><span class="nf">Done</span><span class="p">():</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">shutdownCtx</span><span class="p">,</span> <span class="nx">cancel</span> <span class="o">:=</span> <span class="nx">context</span><span class="p">.</span><span class="nf">WithTimeout</span><span class="p">(</span><span class="nx">context</span><span class="p">.</span><span class="nf">Background</span><span class="p">(),</span> <span class="mi">25</span><span class="o">*</span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">defer</span> <span class="nf">cancel</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">srv</span><span class="p">.</span><span class="nf">Shutdown</span><span class="p">(</span><span class="nx">shutdownCtx</span><span class="p">);</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">_</span> <span class="p">=</span> <span class="nx">srv</span><span class="p">.</span><span class="nf">Close</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">err</span> <span class="o">:=</span> <span class="o">&lt;-</span><span class="nx">errc</span><span class="p">;</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">log</span><span class="p">.</span><span class="nf">Printf</span><span class="p">(</span><span class="s">&#34;server exit: %v&#34;</span><span class="p">,</span> <span class="nx">err</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>若 unit <code>TimeoutStopSec=30s</code>，应用内部 timeout 要稍短，留出日志/cleanup余量。<code>Shutdown</code> 不会等待任意 hijacked connection，WebSocket/自定义连接需单独跟踪。</p>
+<h2 id="105-reload-与-restart">10.5 reload 与 restart</h2>
+<p>reload 期望保持主进程/连接，重新读取配置；restart 会停止再启动。应用只有能原子验证/切换配置时才提供 reload：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">read new config
+</span></span><span class="line"><span class="cl">-&gt; validate fully
+</span></span><span class="line"><span class="cl">-&gt; build new immutable state
+</span></span><span class="line"><span class="cl">-&gt; atomic swap
+</span></span><span class="line"><span class="cl">-&gt; old in-flight requests finish with old state
+</span></span></code></pre></div><p>读到一半就修改全局字段会留下混合配置。若无法安全 reload，明确使用 restart 比伪装零停机更可靠，前提是负载均衡和多实例承接流量。</p>
+<hr>
+<h1 id="11-journald日志与-unit-生命周期关联">11. journald：日志与 unit 生命周期关联</h1>
+<h2 id="111-stdoutstderr-自动进入-journal">11.1 stdout/stderr 自动进入 journal</h2>
+<p>system service 默认 stdout/stderr 可由 journald 捕获，并附加：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">unit name
+</span></span><span class="line"><span class="cl">PID/UID/GID
+</span></span><span class="line"><span class="cl">boot ID
+</span></span><span class="line"><span class="cl">monotonic/realtime timestamp
+</span></span><span class="line"><span class="cl">cgroup
+</span></span><span class="line"><span class="cl">executable and transport metadata
+</span></span></code></pre></div><p>查询：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">journalctl -u api.service
+</span></span><span class="line"><span class="cl">journalctl -u api.service -b
+</span></span><span class="line"><span class="cl">journalctl -u api.service --since <span class="s1">&#39;10 minutes ago&#39;</span>
+</span></span></code></pre></div><p>这比每个 daemon 自己管理 pidfile + logfile + rotation 提供统一关联。</p>
+<h2 id="112-journal-是结构化索引不只文本文件">11.2 journal 是结构化索引，不只文本文件</h2>
+<p>应用可使用 syslog/journal API提交 priority、message ID、字段；普通 stdout 一行主要成为 MESSAGE。结构化字段便于过滤，但不要将用户任意 key直接变成 journal field，也要限制高基数字段和敏感信息。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">journalctl <span class="nv">_SYSTEMD_UNIT</span><span class="o">=</span>api.service <span class="nv">PRIORITY</span><span class="o">=</span><span class="m">3</span>
+</span></span><span class="line"><span class="cl">journalctl <span class="nv">_PID</span><span class="o">=</span><span class="m">1234</span>
+</span></span></code></pre></div><h2 id="113-持久化轮转与速率限制">11.3 持久化、轮转与速率限制</h2>
+<p>journal 可配置 volatile（<code>/run</code>）或 persistent（<code>/var/log/journal</code>）存储，并按大小/时间 vacuum。日志不是无限可靠消息队列：高频服务可能触发 rate limit，磁盘满也会丢失或压缩历史。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">journalctl --disk-usage
+</span></span><span class="line"><span class="cl">journalctl --vacuum-time<span class="o">=</span>14d
+</span></span></code></pre></div><p>vacuum 是删除历史的外部影响操作，生产执行前应确认合规/审计保留策略。</p>
+<h2 id="114-日志重复的来源">11.4 日志重复的来源</h2>
+<p>应用同时写 stdout 和独立文件、rsyslog 又转发 journal、容器 runtime再收集 stdout，可能造成重复。先画清日志链：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">app stdout -&gt; journald -&gt; rsyslog/forwarder -&gt; central store
+</span></span></code></pre></div><p>不要靠多个 agent无差别 tail 同一来源。需要集中式可靠传输时，应有缓冲、backpressure、drop 指标和隐私策略。</p>
+<h2 id="115-journal-权限">11.5 journal 权限</h2>
+<p>读取系统 journal 可能暴露其他服务日志、环境路径、错误和用户数据。非 root 用户通常通过特定组/ACL访问；不应为方便给应用广泛 journal 权限。服务自身观测最好通过 metrics/tracing 和受控日志出口。</p>
+<hr>
+<h1 id="12-timer-activationcron-的另一种模型">12. Timer activation：cron 的另一种模型</h1>
+<h2 id="121-timer-与-service-分离">12.1 timer 与 service 分离</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="c1"># report.timer</span>
+</span></span><span class="line"><span class="cl"><span class="k">[Timer]</span>
+</span></span><span class="line"><span class="cl"><span class="na">OnCalendar</span><span class="o">=</span><span class="s">*-*-* 03:00:00</span>
+</span></span><span class="line"><span class="cl"><span class="na">Persistent</span><span class="o">=</span><span class="s">true</span>
+</span></span><span class="line"><span class="cl"><span class="na">RandomizedDelaySec</span><span class="o">=</span><span class="s">10m</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">[Install]</span>
+</span></span><span class="line"><span class="cl"><span class="na">WantedBy</span><span class="o">=</span><span class="s">timers.target</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="c1"># report.service</span>
+</span></span><span class="line"><span class="cl"><span class="k">[Service]</span>
+</span></span><span class="line"><span class="cl"><span class="na">Type</span><span class="o">=</span><span class="s">oneshot</span>
+</span></span><span class="line"><span class="cl"><span class="na">ExecStart</span><span class="o">=</span><span class="s">/usr/local/bin/report</span>
+</span></span></code></pre></div><p>timer 管“何时激活”，service 管“运行什么、资源、用户、日志和失败”。<code>Persistent=true</code> 可在机器离线错过日历触发后补跑，精确语义需结合 timestamp state。</p>
+<h2 id="122-monotonic-与-realtime-timer">12.2 monotonic 与 realtime timer</h2>
+<ul>
+<li><code>OnBootSec</code>、<code>OnUnitActiveSec</code>：基于 monotonic，相对启动/上次运行</li>
+<li><code>OnCalendar</code>：wall clock 日历时间，受时区/DST/校时影响</li>
+</ul>
+<p>周期任务要明确是否允许补跑、并发、重复与时间回拨。无论 cron 还是 timer，任务本身都应幂等并使用锁/事务防重。</p>
+<h2 id="123-随机延迟避免惊群">12.3 随机延迟避免惊群</h2>
+<p>大量机器整点执行更新/备份会冲击下游。<code>RandomizedDelaySec</code> 把启动分散；还有 accuracy/coalescing 设置帮助节能。调度随机化不是业务重试 jitter 的替代，两层都可能需要。</p>
+<h2 id="124-timer-不自动并发多实例">12.4 timer 不自动并发多实例</h2>
+<p>同一个 service 已 active 时再次 trigger通常不会启动第二份。oneshot 长时间运行可能让后续触发被合并/跳过，行为需通过 <code>systemctl list-timers</code> 和日志验证。需要排队每次事件应使用真正任务队列，而不是依赖 timer 保存无限触发。</p>
+<hr>
+<h1 id="13-sandboxingunit-也是最小权限边界">13. Sandboxing：unit 也是最小权限边界</h1>
+<h2 id="131-以非-root-用户运行">13.1 以非 root 用户运行</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="k">[Service]</span>
+</span></span><span class="line"><span class="cl"><span class="na">User</span><span class="o">=</span><span class="s">api</span>
+</span></span><span class="line"><span class="cl"><span class="na">Group</span><span class="o">=</span><span class="s">api</span>
+</span></span><span class="line"><span class="cl"><span class="na">DynamicUser</span><span class="o">=</span><span class="s">yes</span>
+</span></span></code></pre></div><p><code>DynamicUser=yes</code> 可为无长期身份需求的服务动态分配用户，并与状态/缓存目录 directive组合。需要持久文件 ownership、跨服务共享或固定 UID 的服务可能不适合直接使用。</p>
+<h2 id="132-文件系统限制">13.2 文件系统限制</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="na">ProtectSystem</span><span class="o">=</span><span class="s">strict</span>
+</span></span><span class="line"><span class="cl"><span class="na">ProtectHome</span><span class="o">=</span><span class="s">true</span>
+</span></span><span class="line"><span class="cl"><span class="na">PrivateTmp</span><span class="o">=</span><span class="s">true</span>
+</span></span><span class="line"><span class="cl"><span class="na">ReadWritePaths</span><span class="o">=</span><span class="s">/var/lib/api /run/api</span>
+</span></span><span class="line"><span class="cl"><span class="na">StateDirectory</span><span class="o">=</span><span class="s">api</span>
+</span></span><span class="line"><span class="cl"><span class="na">RuntimeDirectory</span><span class="o">=</span><span class="s">api</span>
+</span></span></code></pre></div><p><code>StateDirectory=</code> 让 systemd 创建并管理合适目录，比 <code>ExecStartPre=mkdir/chown</code> 更声明式。<code>PrivateTmp</code> 给服务私有 <code>/tmp</code> 视图，但不限制其总临时空间，仍需 filesystem/cgroup 管理。</p>
+<h2 id="133-capability-与-syscall-限制">13.3 capability 与 syscall 限制</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="na">NoNewPrivileges</span><span class="o">=</span><span class="s">yes</span>
+</span></span><span class="line"><span class="cl"><span class="na">CapabilityBoundingSet</span><span class="o">=</span>
+</span></span><span class="line"><span class="cl"><span class="na">AmbientCapabilities</span><span class="o">=</span>
+</span></span><span class="line"><span class="cl"><span class="na">RestrictAddressFamilies</span><span class="o">=</span><span class="s">AF_UNIX AF_INET AF_INET6</span>
+</span></span><span class="line"><span class="cl"><span class="na">SystemCallFilter</span><span class="o">=</span><span class="s">@system-service</span>
+</span></span></code></pre></div><p>空 <code>CapabilityBoundingSet=</code> 去掉 capability。若服务要绑定低端口，可用 socket activation 避免服务自身拥有 <code>CAP_NET_BIND_SERVICE</code>，或仅授予最小 capability。</p>
+<p><code>SystemCallFilter</code> 可能在 Go 版本升级、cgo、profiling、DNS 或 runtime新路径上阻断 syscall；应从发行版推荐 profile出发，在测试中观察 audit，而非复制网上最严模板直接上线。</p>
+<h2 id="134-namespace-型沙箱-directive">13.4 namespace 型沙箱 directive</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="na">PrivateDevices</span><span class="o">=</span><span class="s">yes</span>
+</span></span><span class="line"><span class="cl"><span class="na">PrivateNetwork</span><span class="o">=</span><span class="s">yes</span>
+</span></span><span class="line"><span class="cl"><span class="na">ProtectKernelTunables</span><span class="o">=</span><span class="s">yes</span>
+</span></span><span class="line"><span class="cl"><span class="na">ProtectControlGroups</span><span class="o">=</span><span class="s">yes</span>
+</span></span><span class="line"><span class="cl"><span class="na">RestrictNamespaces</span><span class="o">=</span><span class="s">yes</span>
+</span></span></code></pre></div><p>它们使用 namespace、mount 和策略构造服务沙箱。<code>PrivateNetwork=yes</code> 会创建只有 loopback 的 network namespace，网络服务自然无法对外；每条 directive 都改变语义，应按服务需求逐步启用并测试。</p>
+<h2 id="135-security-score-只是提示">13.5 security score 只是提示</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">systemd-analyze security api.service
+</span></span></code></pre></div><p>它根据 directive给 exposure 分数，帮助发现缺失加固，不理解应用业务，也不是漏洞扫描/合规证明。低分可能不适合某服务，高分也不代表应用无漏洞。</p>
+<hr>
+<h1 id="14-配置来源覆盖与环境">14. 配置来源、覆盖与环境</h1>
+<h2 id="141-unit-搜索与优先级">14.1 unit 搜索与优先级</h2>
+<p>常见位置：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">/usr/lib/systemd/system  vendor/package units
+</span></span><span class="line"><span class="cl">/etc/systemd/system      administrator overrides
+</span></span><span class="line"><span class="cl">/run/systemd/system      runtime/generated units
+</span></span></code></pre></div><p>不应直接修改 <code>/usr/lib</code> 包文件，升级会覆盖。使用 drop-in：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">systemctl edit api.service
+</span></span></code></pre></div><p>生成：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">/etc/systemd/system/api.service.d/override.conf
+</span></span></code></pre></div><p>查看最终合并：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">systemctl cat api.service
+</span></span><span class="line"><span class="cl">systemctl show api.service
+</span></span></code></pre></div><h2 id="142-清空列表型-directive">14.2 清空列表型 directive</h2>
+<p>某些 directive可多次出现并累加；要替换 vendor <code>ExecStart</code>，先用空值重置：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="k">[Service]</span>
+</span></span><span class="line"><span class="cl"><span class="na">ExecStart</span><span class="o">=</span>
+</span></span><span class="line"><span class="cl"><span class="na">ExecStart</span><span class="o">=</span><span class="s">/usr/local/bin/api --new-flag</span>
+</span></span></code></pre></div><p>遗漏空行可能报“多个 ExecStart”或保留旧值。不同 directive合并规则不同，使用 <code>systemd-analyze verify</code> 验证。</p>
+<h2 id="143-system-service-没有交互-shell-环境">14.3 system service 没有交互 shell 环境</h2>
+<p>systemd 不读取你的 <code>.bashrc</code>，PATH、工作目录、locale、代理变量可能不同：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="k">[Service]</span>
+</span></span><span class="line"><span class="cl"><span class="na">WorkingDirectory</span><span class="o">=</span><span class="s">/var/lib/api</span>
+</span></span><span class="line"><span class="cl"><span class="na">Environment</span><span class="o">=</span><span class="s">APP_ENV=prod</span>
+</span></span><span class="line"><span class="cl"><span class="na">EnvironmentFile</span><span class="o">=</span><span class="s">-/etc/api/env</span>
+</span></span><span class="line"><span class="cl"><span class="na">ExecStart</span><span class="o">=</span><span class="s">/usr/local/bin/api</span>
+</span></span></code></pre></div><p>使用绝对路径，不依赖 <code>cd</code>、shell alias 或当前终端。环境变量可能出现在 manager introspection、core dump 或子进程，不适合承载高敏感 secret；优先使用受权限保护的 credential/file机制。</p>
+<h2 id="144-specifier-与环境变量不是一套语法">14.4 specifier 与环境变量不是一套语法</h2>
+<p><code>%n</code>、<code>%i</code>、<code>%u</code> 是 systemd specifier；<code>${VAR}</code>/<code>$VAR</code> 有 systemd 自己有限的环境展开规则，不等于 shell quoting。复杂命令参数最好让程序从配置文件读取，避免三层转义。</p>
+<hr>
+<h1 id="15-go-服务的推荐-unit-基线">15. Go 服务的推荐 unit 基线</h1>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="k">[Unit]</span>
+</span></span><span class="line"><span class="cl"><span class="na">Description</span><span class="o">=</span><span class="s">Example Go API</span>
+</span></span><span class="line"><span class="cl"><span class="na">Documentation</span><span class="o">=</span><span class="s">https://example.invalid/runbook/api</span>
+</span></span><span class="line"><span class="cl"><span class="na">Wants</span><span class="o">=</span><span class="s">network-online.target</span>
+</span></span><span class="line"><span class="cl"><span class="na">After</span><span class="o">=</span><span class="s">network-online.target</span>
+</span></span><span class="line"><span class="cl"><span class="na">StartLimitIntervalSec</span><span class="o">=</span><span class="s">60</span>
+</span></span><span class="line"><span class="cl"><span class="na">StartLimitBurst</span><span class="o">=</span><span class="s">5</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">[Service]</span>
+</span></span><span class="line"><span class="cl"><span class="na">Type</span><span class="o">=</span><span class="s">notify</span>
+</span></span><span class="line"><span class="cl"><span class="na">NotifyAccess</span><span class="o">=</span><span class="s">main</span>
+</span></span><span class="line"><span class="cl"><span class="na">User</span><span class="o">=</span><span class="s">api</span>
+</span></span><span class="line"><span class="cl"><span class="na">Group</span><span class="o">=</span><span class="s">api</span>
+</span></span><span class="line"><span class="cl"><span class="na">WorkingDirectory</span><span class="o">=</span><span class="s">/var/lib/api</span>
+</span></span><span class="line"><span class="cl"><span class="na">EnvironmentFile</span><span class="o">=</span><span class="s">-/etc/api/env</span>
+</span></span><span class="line"><span class="cl"><span class="na">ExecStart</span><span class="o">=</span><span class="s">/usr/local/bin/api --config=/etc/api/config.yaml</span>
+</span></span><span class="line"><span class="cl"><span class="na">Restart</span><span class="o">=</span><span class="s">on-failure</span>
+</span></span><span class="line"><span class="cl"><span class="na">RestartSec</span><span class="o">=</span><span class="s">3s</span>
+</span></span><span class="line"><span class="cl"><span class="na">TimeoutStartSec</span><span class="o">=</span><span class="s">30s</span>
+</span></span><span class="line"><span class="cl"><span class="na">TimeoutStopSec</span><span class="o">=</span><span class="s">35s</span>
+</span></span><span class="line"><span class="cl"><span class="na">KillSignal</span><span class="o">=</span><span class="s">SIGTERM</span>
+</span></span><span class="line"><span class="cl"><span class="na">KillMode</span><span class="o">=</span><span class="s">mixed</span>
+</span></span><span class="line"><span class="cl"><span class="na">LimitNOFILE</span><span class="o">=</span><span class="s">65536</span>
+</span></span><span class="line"><span class="cl"><span class="na">TasksMax</span><span class="o">=</span><span class="s">512</span>
+</span></span><span class="line"><span class="cl"><span class="na">MemoryHigh</span><span class="o">=</span><span class="s">800M</span>
+</span></span><span class="line"><span class="cl"><span class="na">MemoryMax</span><span class="o">=</span><span class="s">1G</span>
+</span></span><span class="line"><span class="cl"><span class="na">CPUQuota</span><span class="o">=</span><span class="s">200%</span>
+</span></span><span class="line"><span class="cl"><span class="na">NoNewPrivileges</span><span class="o">=</span><span class="s">yes</span>
+</span></span><span class="line"><span class="cl"><span class="na">PrivateTmp</span><span class="o">=</span><span class="s">yes</span>
+</span></span><span class="line"><span class="cl"><span class="na">ProtectSystem</span><span class="o">=</span><span class="s">strict</span>
+</span></span><span class="line"><span class="cl"><span class="na">ProtectHome</span><span class="o">=</span><span class="s">yes</span>
+</span></span><span class="line"><span class="cl"><span class="na">ReadWritePaths</span><span class="o">=</span><span class="s">/var/lib/api</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">[Install]</span>
+</span></span><span class="line"><span class="cl"><span class="na">WantedBy</span><span class="o">=</span><span class="s">multi-user.target</span>
+</span></span></code></pre></div><p>这只是基线，不可原样复制：</p>
+<ul>
+<li>应用若不发 <code>READY=1</code>，<code>Type=notify</code> 会一直 activating并超时，应改 simple/exec</li>
+<li>数据库是否必须先启动不能由 network-online 表达</li>
+<li><code>MemoryMax/CPUQuota/TasksMax</code> 要按容量测试</li>
+<li><code>KillMode=mixed</code> 是否符合 worker生命周期要验证</li>
+<li>sandbox 需与 DNS、证书、配置、profile、临时文件路径兼容</li>
+<li>service监听低端口可用 socket activation或最小 capability</li>
+</ul>
+<h2 id="151-启动时序">15.1 启动时序</h2>
+<p>Go 程序应：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">加载配置和凭据
+</span></span><span class="line"><span class="cl">-&gt; 验证不可变条件
+</span></span><span class="line"><span class="cl">-&gt; 初始化必要资源
+</span></span><span class="line"><span class="cl">-&gt; 建立 listener（或接管 socket activation fd）
+</span></span><span class="line"><span class="cl">-&gt; 启动 worker
+</span></span><span class="line"><span class="cl">-&gt; 确认可接请求
+</span></span><span class="line"><span class="cl">-&gt; sd_notify READY=1
+</span></span></code></pre></div><p>不要在 READY 前接收却无法处理，也不要等所有可恢复远端依赖永远健康才 ready。readiness 定义取决于流量进来后能否给出符合契约的响应。</p>
+<h2 id="152-停止时序">15.2 停止时序</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">收到 SIGTERM
+</span></span><span class="line"><span class="cl">-&gt; 标记 not ready / 停止接受新业务
+</span></span><span class="line"><span class="cl">-&gt; 关闭 listener 或让 LB 停止路由
+</span></span><span class="line"><span class="cl">-&gt; 等待 in-flight 到内部 deadline
+</span></span><span class="line"><span class="cl">-&gt; flush 必须状态
+</span></span><span class="line"><span class="cl">-&gt; close resources
+</span></span><span class="line"><span class="cl">-&gt; exit 0
+</span></span></code></pre></div><p>systemd 本机服务没有 Kubernetes readiness 自动传播，需要通过负载均衡 API、service discovery、socket关闭或应用协议设计协调多实例流量。</p>
+<h2 id="153-watchdog">15.3 watchdog</h2>
+<p>unit：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="na">WatchdogSec</span><span class="o">=</span><span class="s">20s</span>
+</span></span></code></pre></div><p>服务 READY 后按小于一半间隔发送 <code>WATCHDOG=1</code>。watchdog线程必须能反映真正服务活性；若它独立于事件循环永远 tick，即使主 worker deadlock 也会误报健康。可以让主循环/关键调度路径共同更新健康 generation。</p>
+<hr>
+<h1 id="16-排查启动失败的固定顺序">16. 排查启动失败的固定顺序</h1>
+<h2 id="161-先看状态和退出原因">16.1 先看状态和退出原因</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">systemctl status api.service --no-pager -l
+</span></span><span class="line"><span class="cl">systemctl show api.service <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  -p ActiveState -p SubState -p Result <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  -p ExecMainCode -p ExecMainStatus -p NRestarts
+</span></span></code></pre></div><p>常见 <code>status</code>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">203/EXEC       可执行文件/exec/权限/路径问题
+</span></span><span class="line"><span class="cl">217/USER       User/Group 设置或身份切换问题
+</span></span><span class="line"><span class="cl">start-limit-hit 重启过快被限流
+</span></span><span class="line"><span class="cl">timeout        启动/停止未在期限内完成
+</span></span><span class="line"><span class="cl">signal         被信号终止
+</span></span></code></pre></div><p>确切 exit status 映射应查当前 <code>systemd.exec(5)</code>。</p>
+<h2 id="162-再看本次-boot-的-unit-日志">16.2 再看本次 boot 的 unit 日志</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">journalctl -u api.service -b --no-pager
+</span></span><span class="line"><span class="cl">journalctl -u api.service -b -n <span class="m">200</span> -o short-monotonic
+</span></span></code></pre></div><p>monotonic 时间便于与启动顺序比较。若服务在当前 boot未启动，去掉 <code>-b</code> 看上一 boot；可用 <code>journalctl --list-boots</code>。</p>
+<h2 id="163-查看最终-unit-与依赖">16.3 查看最终 unit 与依赖</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">systemctl cat api.service
+</span></span><span class="line"><span class="cl">systemctl show api.service -p FragmentPath -p DropInPaths
+</span></span><span class="line"><span class="cl">systemctl list-dependencies api.service
+</span></span><span class="line"><span class="cl">systemctl list-dependencies --reverse api.service
+</span></span><span class="line"><span class="cl">systemd-analyze verify /etc/systemd/system/api.service
+</span></span></code></pre></div><p>不要只读 <code>/usr/lib</code> 原文件；drop-in 和 generator可能改变最终定义。</p>
+<h2 id="164-在相同身份与环境复现">16.4 在相同身份与环境复现</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">sudo -u api /usr/local/bin/api --config<span class="o">=</span>/etc/api/config.yaml
+</span></span></code></pre></div><p>这仍不完全复制 systemd 的 cgroup、namespace、cwd、umask、environment、fd 和 sandbox。更可靠是使用 transient unit模拟：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">systemd-run --wait --pty <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --uid<span class="o">=</span>api <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --property<span class="o">=</span><span class="nv">WorkingDirectory</span><span class="o">=</span>/var/lib/api <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  /usr/local/bin/api --config<span class="o">=</span>/etc/api/config.yaml
+</span></span></code></pre></div><p>生产命令权限与终端语义需谨慎；不要直接带敏感环境到命令行。</p>
+<h2 id="165-检查-cgroup-与资源事件">16.5 检查 cgroup 与资源事件</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">systemctl show api.service -p ControlGroup
+</span></span><span class="line"><span class="cl">systemd-cgls /system.slice/api.service
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="nv">CG</span><span class="o">=</span>/sys/fs/cgroup/system.slice/api.service
+</span></span><span class="line"><span class="cl">cat <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/cpu.stat&#34;</span>
+</span></span><span class="line"><span class="cl">cat <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/memory.current&#34;</span> <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/memory.events&#34;</span>
+</span></span><span class="line"><span class="cl">cat <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/pids.current&#34;</span> <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/pids.events&#34;</span>
+</span></span></code></pre></div><p>服务被 SIGKILL 可能是 systemd timeout，也可能是 memcg OOM、管理员操作或内核策略。用 Result、journal、memory.events 和 audit共同确认。</p>
+<hr>
+<h1 id="17-启动性能与关键路径">17. 启动性能与关键路径</h1>
+<h2 id="171-blame-不等于根因">17.1 blame 不等于根因</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">systemd-analyze <span class="nb">time</span>
+</span></span><span class="line"><span class="cl">systemd-analyze blame
+</span></span><span class="line"><span class="cl">systemd-analyze critical-chain
+</span></span></code></pre></div><p><code>blame</code> 显示 unit 从 activating 到 active花了多久，但并行启动中一个长 unit未必阻塞默认 target。真正影响启动总时长的是 critical chain 上的 ordering dependency。</p>
+<h2 id="172-设备和网络可能异步">17.2 设备和网络可能异步</h2>
+<p>等待磁盘、cryptsetup、DHCP、远程 mount会延长链。删除依赖可让 target更早 active，却可能把失败推到业务运行时。优化应先明确“系统 ready”的产品定义，再减少不必要串行、改用 activation或让服务容忍动态依赖。</p>
+<h2 id="173-绘制依赖图">17.3 绘制依赖图</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">systemd-analyze dot <span class="s1">&#39;api.service&#39;</span> <span class="p">|</span> dot -Tsvg &gt; api-deps.svg
+</span></span></code></pre></div><p>图可能很大，过滤目标 unit；不同 edge颜色表示类型。生成 SVG 是本地操作，公开前检查 unit 名和拓扑是否敏感。</p>
+<h2 id="174-启动完成不等于业务-ready">17.4 启动完成不等于业务 ready</h2>
+<p><code>multi-user.target active</code> 只表示声明式 job完成；应用可能仍在 warming cache，外部 LB 也可能尚未更新。系统级 boot SLA 与服务级 readiness SLO 要分别测量。</p>
+<hr>
+<h1 id="18-systemd-为什么赢">18. systemd 为什么赢</h1>
+<h2 id="181-并行和-activation-删除不必要顺序">18.1 并行和 activation 删除不必要顺序</h2>
+<p>依赖图允许无关 unit并行，socket/device/path/dbus activation让消费者先建立需求，生产者按需启动，减少脚本 sleep和“先启动但还没 ready”的 race。</p>
+<h2 id="182-cgroup-给服务稳定身份">18.2 cgroup 给服务稳定身份</h2>
+<p>进程可 fork、PID 可复用，cgroup仍能表示整个 service进程集合，支持可靠 stop、资源限制、状态查看和日志关联。这比 pidfile本质上更接近内核真实对象。</p>
+<h2 id="183-统一配置和诊断">18.3 统一配置和诊断</h2>
+<p>发行版可用一致 unit模型管理 daemon、mount、timer、socket和用户 session；管理员有 <code>systemctl</code>、<code>journalctl</code>、<code>systemd-analyze</code> 等共同接口。包升级也更容易安装 declarative defaults和管理员 drop-in。</p>
+<h2 id="184-桌面和服务器动态需求">18.4 桌面和服务器动态需求</h2>
+<p>现代桌面需要设备热插拔、用户 session、seat、电源管理；服务器需要自动监督、按需服务和安全沙箱。systemd 与 udev、logind、resolved、networkd 等项目集成，为发行版提供完整基线。</p>
+<hr>
+<h1 id="19-systemd-为什么被骂">19. systemd 为什么被骂</h1>
+<h2 id="191-职责范围扩大">19.1 职责范围扩大</h2>
+<p>批评者认为 init 应专注启动/监督，而 systemd 项目覆盖日志、登录、网络、DNS、时间、临时文件、core dump等，违背“小工具组合”传统，增加单一项目影响范围。</p>
+<p>支持者则认为这些组件并非都强制使用，统一协议和生命周期能解决长期跨组件 race。争议本质是集成一致性与模块可替换性的权衡。</p>
+<h2 id="192-配置声明式但语义很多">19.2 配置声明式但语义很多</h2>
+<p><code>Wants/Requires/After/Before/BindsTo/PartOf</code>、多种 Type、kill/restart、specifier与 sandbox directive学习成本高。unit比任意 shell更可分析，但“可声明”不等于“简单”。</p>
+<p>错误配置常不会以语法错误出现，而是产生合法但不符合预期的生命周期，例如只写 <code>After=</code>、把 oneshot当 daemon、notify不发 READY。</p>
+<h2 id="193-linux-专用与可移植性">19.3 Linux 专用与可移植性</h2>
+<p>systemd 深度依赖 Linux cgroup、namespace、inotify、capability等，不以跨 Unix 可移植为目标。面向 BSD/多平台的软件仍需保留前台运行和标准信号接口，不能把核心逻辑绑死在 sd_notify/journal；集成应是可选适配层。</p>
+<h2 id="194-二进制-journal-与集中故障观感">19.4 二进制 journal 与集中故障观感</h2>
+<p>journal 的结构化索引、轮转和 metadata有优势，但二进制格式、损坏恢复、权限和工具依赖让习惯文本日志的人不安。最稳妥的工程做法是定义日志保留/转发/导出策略，而不是假定本地 journal是永久唯一副本。</p>
+<h2 id="195-争论不应替代具体诊断">19.5 争论不应替代具体诊断</h2>
+<p>“systemd 太复杂”不能解释某 unit为什么 timeout；“systemd 已统一一切”也不能证明配置正确。实际工作应回到：job graph、进程/cgroup、fd、signal、日志、resource events和应用协议。</p>
+<hr>
+<h1 id="20-常用命令知识点扩展">20. 常用命令知识点扩展</h1>
+<table>
+<thead>
+<tr>
+<th>命令/短参</th>
+<th>英文全称</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>systemctl -u</code></td>
+<td>unit（部分子命令使用）</td>
+<td>指定/过滤 unit；以子命令文档为准</td>
+</tr>
+<tr>
+<td><code>systemctl --now</code></td>
+<td>now</td>
+<td>enable/disable 同时立即 start/stop</td>
+</tr>
+<tr>
+<td><code>systemctl --failed</code></td>
+<td>failed</td>
+<td>列出失败 unit</td>
+</tr>
+<tr>
+<td><code>journalctl -u</code></td>
+<td>unit</td>
+<td>按 unit过滤日志</td>
+</tr>
+<tr>
+<td><code>journalctl -b</code></td>
+<td>boot</td>
+<td>只看指定 boot</td>
+</tr>
+<tr>
+<td><code>journalctl -f</code></td>
+<td>follow</td>
+<td>持续跟随新日志</td>
+</tr>
+<tr>
+<td><code>journalctl -n</code></td>
+<td>lines</td>
+<td>显示末尾若干条</td>
+</tr>
+<tr>
+<td><code>systemd-analyze blame</code></td>
+<td>activation duration</td>
+<td>列出 unit激活耗时</td>
+</tr>
+<tr>
+<td><code>systemd-analyze critical-chain</code></td>
+<td>critical chain</td>
+<td>显示启动关键排序链</td>
+</tr>
+<tr>
+<td><code>systemd-analyze verify</code></td>
+<td>verify</td>
+<td>验证 unit文件与依赖</td>
+</tr>
+</tbody>
+</table>
+<p>场景配方：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 查看失败服务及本次 boot 证据</span>
+</span></span><span class="line"><span class="cl">systemctl --failed
+</span></span><span class="line"><span class="cl">systemctl status api.service --no-pager -l
+</span></span><span class="line"><span class="cl">journalctl -u api.service -b -n <span class="m">200</span> --no-pager
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 查看最终配置、覆盖和关键属性</span>
+</span></span><span class="line"><span class="cl">systemctl cat api.service
+</span></span><span class="line"><span class="cl">systemctl show api.service -p Type -p MainPID -p ControlGroup -p Result
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 查看谁依赖它</span>
+</span></span><span class="line"><span class="cl">systemctl list-dependencies --reverse api.service
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 修改 drop-in 并生效</span>
+</span></span><span class="line"><span class="cl">systemctl edit api.service
+</span></span><span class="line"><span class="cl">systemctl daemon-reload
+</span></span><span class="line"><span class="cl">systemctl restart api.service
+</span></span></code></pre></div><hr>
+<h1 id="21-面试题">21. 面试题</h1>
+<p><strong>Q：PID 1 为什么不能只是普通进程？</strong></p>
+<p>它是初始用户态管理者，需要启动/停止系统服务、收养并 wait 孤儿进程、协调关机；内核还对 PID 1 的部分默认信号处理有特殊规则。容器 PID 1 同样要转发信号和 reap，否则会出现优雅退出失败与 zombie。</p>
+<p><strong>Q：SysV init 的核心局限是什么？</strong></p>
+<p>运行级别和编号 shell脚本能模块化启动，但顺序数字难表达强/弱依赖、冲突和动态事件；脚本内部 fork/sleep/pidfile让 manager难判断 main PID、ready状态与崩溃。安全并行和统一监督只能靠约定与额外工具修补。</p>
+<p><strong>Q：systemd unit 相比启动脚本解决了什么？</strong></p>
+<p>unit把 service、socket、mount、device、timer、target等建模为声明对象，manager可构建 dependency transaction、并行无关 job、跟踪 cgroup、设置资源/沙箱并统一日志。它牺牲了一部分任意 shell灵活性，换取可分析生命周期。</p>
+<p><strong>Q：Wants/Requires 与 Before/After 有何区别？</strong></p>
+<p>Wants/Requires 是 requirement dependency，决定启动当前 unit时是否把另一 unit拉入 transaction及失败强度；Before/After 是 ordering dependency，只在两者都有 job时排序。<code>After=db.service</code> 不会自动启动数据库，通常需再配 Wants或Requires。</p>
+<p><strong>Q：After=network-online.target 是否保证数据库网络可达？</strong></p>
+<p>不保证。online由网络管理器定义，通常只表示某些接口/地址配置完成，不承诺 DNS、Internet、VPN或特定远端健康。客户端仍必须有 connect deadline、有界重试和运行期断线恢复。</p>
+<p><strong>Q：enable 与 start 有什么区别？</strong></p>
+<p>start改变当前运行状态；enable根据 <code>[Install]</code> 创建 target wants等持久启动关系，通常不立即启动。<code>enable --now</code> 才两者同时做。static unit无法直接 enable，但可被依赖或 activation启动。</p>
+<p><strong>Q：Type=simple、forking、notify 的边界是什么？</strong></p>
+<p>simple在进程开始执行后即视为 start完成；forking等待传统 daemon父进程退出并常依赖 PIDFile；notify要求服务显式发送 READY=1，能表达真实初始化完成。现代前台 Go服务适合 simple/exec；需要依赖者等待真实 ready时使用正确实现的 notify。</p>
+<p><strong>Q：socket activation 解决什么 race？</strong></p>
+<p>systemd先 bind/listen并持有入口，客户端连接可在服务初始化/重启时进入有限 backlog；服务启动后继承监听 fd，避免“端口还没绑定”和特权 bind问题。它不是无限队列，应用必须支持 fd传递协议。</p>
+<p><strong>Q：systemd 为什么用 cgroup 而不是 pidfile 管服务？</strong></p>
+<p>PID会复用且 daemon可 fork多代，pidfile可能 stale或记录错误；cgroup表示整个服务进程集合，后代默认留在其中，可可靠 stop、计量与限制资源，并关联日志。main PID仍有意义，但不再是唯一身份。</p>
+<p><strong>Q：Restart=always 为什么可能造成事故？</strong></p>
+<p>配置错误或下游故障会让进程快速退出，supervisor无限重启，放大日志、CPU、DNS/connect和下游压力。应使用合适 Restart、RestartSec和StartLimit；应用对暂时外部故障应内部有界退避，而非立即 fatal循环。</p>
+<p><strong>Q：systemd stop 一个服务时发生什么？</strong></p>
+<p>通常先向按 KillMode确定的进程发送 KillSignal（默认 SIGTERM），等待 <code>TimeoutStopSec</code>，仍存活则发送最终强制信号通常 SIGKILL。应用应在 TERM后停止新请求、限时排空并退出；内部 timeout要短于 unit总期限。</p>
+<p><strong>Q：ExecStop 是否必须配置 kill 命令？</strong></p>
+<p>通常不必。systemd会对 main/cgroup发送停止信号。ExecStop适合调用应用的同步关闭接口，命令应等到动作完成；仅异步触发会让 manager继续进入终止阶段。清理可用幂等的 ExecStopPost，但不能替代应用一致性协议。</p>
+<p><strong>Q：journald 相比普通日志文件有什么优势和边界？</strong></p>
+<p>它自动附加 unit、PID、boot、cgroup等 metadata并支持结构化过滤、统一轮转；边界是本地容量、rate limit、权限、二进制工具依赖与并非永久可靠队列。关键日志仍需受控转发和保留策略。</p>
+<p><strong>Q：CPUQuota=200% 表示什么？</strong></p>
+<p>通常表示 unit平均最多使用约两个 CPU的调度带宽，由 cgroup <code>cpu.max</code> quota/period实现，不是绑定两个固定核。多线程可并行提前耗尽 quota而被 throttle；需要结合 CPUAffinity/cpuset、CPUWeight和 <code>cpu.stat</code> 理解。</p>
+<p><strong>Q：MemoryMax 与 LimitAS 有什么区别？</strong></p>
+<p>MemoryMax映射 cgroup memory硬上限，对整个 unit的匿名页、cache和被记账内核内存等施加约束，回收失败可触发 memcg OOM；LimitAS是每进程虚拟地址空间 rlimit，对 mmap/Go runtime不等同实际驻留内存，通常不应替代 cgroup内存限制。</p>
+<p><strong>Q：如何安全覆盖发行版提供的 unit？</strong></p>
+<p>不要修改 <code>/usr/lib/systemd/system</code>；用 <code>systemctl edit</code> 创建 <code>/etc/systemd/system/name.service.d/*.conf</code> drop-in，必要时先用空 directive重置列表，再设置新值。执行 daemon-reload、用 <code>systemctl cat/show</code>确认最终合并，并运行 <code>systemd-analyze verify</code>。</p>
+<p><strong>Q：systemd-analyze blame 为什么不能直接证明启动瓶颈？</strong></p>
+<p>它列出每个 unit处于 activating的时长，但 unit可并行；很慢的 unit若不在默认 target的 ordering critical path，就不决定总启动时间。应看 <code>critical-chain</code> 和依赖图，再结合设备/网络日志分析等待原因。</p>
+<p><strong>Q：systemd 被批评的主要设计权衡是什么？</strong></p>
+<p>它用深度集成统一 activation、supervision、cgroup、日志、session和系统对象，换来一致性与可诊断性；代价是职责面大、Linux专用、配置语义多、组件集中影响范围和替换成本。评价应落到具体需求，而不是把架构立场当故障结论。</p>
+<hr>
+<h1 id="小结">小结</h1>
+<ul>
+<li>PID 1 是系统用户态生命周期根，负责服务编排、孤儿回收与关机；容器 PID 1 同样需要信号转发和 wait</li>
+<li>SysV init用 runlevel与顺序脚本实现模块化，但依赖、并行、ready状态、pidfile和崩溃监督难以可靠组合</li>
+<li>systemd将 service、socket、mount、timer、device、target和slice建模为 unit，通过 job transaction分析依赖和排序</li>
+<li>Wants/Requires表达拉入与失败强度，Before/After只表达 job顺序；<code>After=</code> 不会自动启动对方，network-online也不是远端可达承诺</li>
+<li>service Type定义何时视为启动完成：simple/exec不等于业务 ready，forking服务难监督，notify可显式发送 READY</li>
+<li>socket activation先持有监听入口并把 fd传给服务，消除 bind/启动 race和部分特权需求，但受 backlog与客户端 deadline限制</li>
+<li>systemd用 cgroup跟踪整个服务进程集合，可设置 CPU、memory、IO、tasks资源和安全沙箱，比 pidfile更接近真实生命周期</li>
+<li>Restart必须配合退避与StartLimit；外部暂时故障不应变成进程级重启风暴</li>
+<li>停止流程是 TERM—限时排空—KILL；Go内部 graceful timeout要短于 TimeoutStopSec，并处理 WebSocket/自定义连接</li>
+<li>journald将日志与 unit/PID/boot/cgroup关联，但仍需容量、rate limit、权限、转发与保留策略</li>
+<li>unit应通过 drop-in覆盖，明确非交互环境、用户、目录、fd、resource与sandbox，不要原样复制“最安全模板”</li>
+<li>排查按 status/result、journal、最终 unit、dependency、相同环境复现、cgroup events和critical chain逐层验证</li>
+</ul>
+<p>下一篇讲 <strong>观测体系的设计与 eBPF</strong> —— metric、log、trace、profile 为什么回答不同问题，传统 <code>/proc</code>、perf、ptrace和内核 tracepoint 各有什么盲区，eBPF 如何安全地在内核事件上运行受验证程序，以及为什么高基数、采样偏差和观测开销比“会写 BPF”更容易毁掉生产系统。</p>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2026-08-12</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/linux/">linux</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/linux/linux_38_%E8%A7%82%E6%B5%8B%E4%BD%93%E7%B3%BB%E7%9A%84%E8%AE%BE%E8%AE%A1%E4%B8%8EeBPF/" class="prev" rel="prev" title="Linux-38 观测体系的设计与 eBPF：看见系统而不压垮系统"><i class="fas fa-angle-left fa-fw"></i>Linux-38 观测体系的设计与 eBPF：看见系统而不压垮系统</a>
+            <a href="/posts/linux/linux_36_namespace%E4%B8%8Ecgroup%E5%AE%B9%E5%99%A8%E5%88%B0%E5%BA%95%E9%9A%94%E7%A6%BB%E4%BA%86%E4%BB%80%E4%B9%88/" class="next" rel="next" title="Linux-36 namespace 与 cgroup：容器到底隔离了什么">Linux-36 namespace 与 cgroup：容器到底隔离了什么<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2026-08-12T05:30:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Linux-37 init 之争：systemd 为什么赢也被骂"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

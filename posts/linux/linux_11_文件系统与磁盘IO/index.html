@@ -1,912 +1,400 @@
-<!DOCTYPE html>
-<html lang="zh-CN">
-    <head>
-        <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <meta name="robots" content="noodp" />
-        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
-        <title>Linux-11 文件系统与磁盘 IO - xingliuhua博客</title><meta name="Description" content="VFS 统一抽象、ext4 与 xfs 的选择、挂载选项与 fstab、LVM 扩容、IO 调度器的现代选型、iostat 各指标的判读标准、fd 与 ulimit 的真实生效路径、lsof 排查手法"><meta property="og:title" content="Linux-11 文件系统与磁盘 IO" />
-<meta property="og:description" content="VFS 统一抽象、ext4 与 xfs 的选择、挂载选项与 fstab、LVM 扩容、IO 调度器的现代选型、iostat 各指标的判读标准、fd 与 ulimit 的真实生效路径、lsof 排查手法" />
-<meta property="og:type" content="article" />
-<meta property="og:url" content="https://xingliuhua.github.io/posts/linux/linux_11_%E6%96%87%E4%BB%B6%E7%B3%BB%E7%BB%9F%E4%B8%8E%E7%A3%81%E7%9B%98IO/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
-<meta property="article:published_time" content="2026-08-06T18:00:00+08:00" />
-<meta property="article:modified_time" content="2026-08-06T18:00:00+08:00" />
-
-<meta name="twitter:card" content="summary_large_image"/>
-<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
-
-<meta name="twitter:title" content="Linux-11 文件系统与磁盘 IO"/>
-<meta name="twitter:description" content="VFS 统一抽象、ext4 与 xfs 的选择、挂载选项与 fstab、LVM 扩容、IO 调度器的现代选型、iostat 各指标的判读标准、fd 与 ulimit 的真实生效路径、lsof 排查手法"/>
-<meta name="application-name" content="xingliuhua博客">
-<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
-        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
-        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/linux/linux_11_%E6%96%87%E4%BB%B6%E7%B3%BB%E7%BB%9F%E4%B8%8E%E7%A3%81%E7%9B%98IO/" /><link rel="prev" href="https://xingliuhua.github.io/posts/linux/linux_12_IO%E6%A8%A1%E5%9E%8B%E4%B8%8Eepoll/" /><link rel="next" href="https://xingliuhua.github.io/posts/linux/linux_10_%E5%86%85%E5%AD%98%E7%AE%A1%E7%90%86/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
-    {
-        "@context": "http://schema.org",
-        "@type": "BlogPosting",
-        "headline": "Linux-11 文件系统与磁盘 IO",
-        "inLanguage": "zh-CN",
-        "mainEntityOfPage": {
-            "@type": "WebPage",
-            "@id": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_11_%E6%96%87%E4%BB%B6%E7%B3%BB%E7%BB%9F%E4%B8%8E%E7%A3%81%E7%9B%98IO\/"
-        },"genre": "posts","keywords": "linux","wordcount":  8385 ,
-        "url": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_11_%E6%96%87%E4%BB%B6%E7%B3%BB%E7%BB%9F%E4%B8%8E%E7%A3%81%E7%9B%98IO\/","datePublished": "2026-08-06T18:00:00+08:00","dateModified": "2026-08-06T18:00:00+08:00","publisher": {
-            "@type": "Organization",
-            "name": "xingliuhua"},"author": {
-                "@type": "Person",
-                "name": "xingliuhua"
-            },"description": "VFS 统一抽象、ext4 与 xfs 的选择、挂载选项与 fstab、LVM 扩容、IO 调度器的现代选型、iostat 各指标的判读标准、fd 与 ulimit 的真实生效路径、lsof 排查手法"
-    }
-    </script></head>
-    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
-
-        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
-    <div class="header-wrapper">
-        <div class="header-title">
-            <a href="/" title="xingliuhua博客"><img
-        class="lazyload logo"
-        src="/svg/loading.min.svg"
-        data-src="/logo.png"
-        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
-        data-sizes="auto"
-        alt="/logo.png"
-        title="/logo.png" />xingliuhua</a>
-        </div>
-        <div class="menu">
-            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
-                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
-                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
-                            <i class="fas fa-search fa-fw"></i>
-                        </a>
-                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
-                            <i class="fas fa-times-circle fa-fw"></i>
-                        </a>
-                        <span class="search-button search-loading" id="search-loading-desktop">
-                            <i class="fas fa-spinner fa-fw fa-spin"></i>
-                        </span>
-                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
-                    <i class="fas fa-adjust fa-fw"></i>
-                </a>
-            </div>
-        </div>
-    </div>
-</header><header class="mobile" id="header-mobile">
-    <div class="header-container">
-        <div class="header-wrapper">
-            <div class="header-title">
-                <a href="/" title="xingliuhua博客"><img
-        class="lazyload logo"
-        src="/svg/loading.min.svg"
-        data-src="/logo.png"
-        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
-        data-sizes="auto"
-        alt="/logo.png"
-        title="/logo.png" />xingliuhua</a>
-            </div>
-            <div class="menu-toggle" id="menu-toggle-mobile">
-                <span></span><span></span><span></span>
-            </div>
-        </div>
-        <div class="menu" id="menu-mobile"><div class="search-wrapper">
-                    <div class="search mobile" id="search-mobile">
-                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
-                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
-                            <i class="fas fa-search fa-fw"></i>
-                        </a>
-                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
-                            <i class="fas fa-times-circle fa-fw"></i>
-                        </a>
-                        <span class="search-button search-loading" id="search-loading-mobile">
-                            <i class="fas fa-spinner fa-fw fa-spin"></i>
-                        </span>
-                    </div>
-                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
-                        取消
-                    </a>
-                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
-                <i class="fas fa-adjust fa-fw"></i>
-            </a></div>
-    </div>
-</header>
-<div class="search-dropdown desktop">
-    <div id="search-dropdown-desktop"></div>
-</div>
-<div class="search-dropdown mobile">
-    <div id="search-dropdown-mobile"></div>
-</div>
-<main class="main">
-                <div class="container"><div class="toc" id="toc-auto">
-            <h2 class="toc-title">目录</h2>
-            <div class="toc-content" id="toc-content-auto"></div>
-        </div><article class="page single"><h1 class="single-title animated flipInX">Linux-11 文件系统与磁盘 IO</h1><div class="post-meta">
-            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
-            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2026-08-06">2026-08-06</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 8385 字&nbsp;
-                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 17 分钟&nbsp;</div>
-        </div><div class="details toc" id="toc-static"  kept="">
-                <div class="details-summary toc-title">
-                    <span>目录</span>
-                    <span><i class="details-icon fas fa-angle-right"></i></span>
-                </div>
-                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
-  <ol>
-    <li><a href="#1-vfs一切皆文件的实现层">1. VFS：一切皆文件的实现层</a>
-      <ol>
-        <li><a href="#11-文件描述符的三层结构">1.1 文件描述符的三层结构</a></li>
-      </ol>
-    </li>
-    <li><a href="#2-ext4-与-xfs怎么选">2. ext4 与 xfs：怎么选</a></li>
-    <li><a href="#3-挂载与-fstab">3. 挂载与 fstab</a>
-      <ol>
-        <li><a href="#31-值得关注的挂载选项">3.1 值得关注的挂载选项</a></li>
-        <li><a href="#32-fstab-用-uuid-而不是设备名">3.2 fstab 用 UUID 而不是设备名</a></li>
-      </ol>
-    </li>
-    <li><a href="#4-lvm在线扩容">4. LVM：在线扩容</a></li>
-    <li><a href="#5-io-调度器">5. IO 调度器</a></li>
-    <li><a href="#6-iostat判断磁盘是不是瓶颈">6. iostat：判断磁盘是不是瓶颈</a>
-      <ol>
-        <li><a href="#61-各指标的含义与判读标准">6.1 各指标的含义与判读标准</a></li>
-        <li><a href="#62-util-是个陷阱">6.2 %util 是个陷阱</a></li>
-        <li><a href="#63-区分随机-io-和顺序-io">6.3 区分随机 IO 和顺序 IO</a></li>
-        <li><a href="#64-定位到具体进程">6.4 定位到具体进程</a></li>
-      </ol>
-    </li>
-    <li><a href="#7-df-与-du-对不上的三种原因">7. df 与 du 对不上的三种原因</a></li>
-    <li><a href="#8-文件描述符与-ulimit">8. 文件描述符与 ulimit</a>
-      <ol>
-        <li><a href="#81-三层限制">8.1 三层限制</a></li>
-        <li><a href="#82-为什么改了-limitsconf-没用">8.2 为什么改了 limits.conf 没用</a></li>
-        <li><a href="#83-容器里的-fd-限制">8.3 容器里的 fd 限制</a></li>
-        <li><a href="#84-用-lsof-排查-fd-泄漏">8.4 用 lsof 排查 fd 泄漏</a></li>
-      </ol>
-    </li>
-    <li><a href="#9-实战确认磁盘是不是瓶颈">9. 实战：确认磁盘是不是瓶颈</a></li>
-    <li><a href="#10-面试题">10. 面试题</a></li>
-  </ol>
-</nav></div>
-            </div><div class="content" id="content"><blockquote>
-<p>前置阅读：<a href="../linux_02_%e6%96%87%e4%bb%b6%e9%93%be%e6%8e%a5%e4%b8%8e%e5%bd%92%e6%a1%a3%e5%8e%8b%e7%bc%a9/" rel="">Linux-02 文件、链接与归档压缩</a>、<a href="../linux_10_%e5%86%85%e5%ad%98%e7%ae%a1%e7%90%86/" rel="">Linux-10 内存管理</a></p>
-</blockquote>
-<p>第 2 篇讲了 inode 和文件操作，这一篇往下走一层：<strong>文件系统怎么组织磁盘、IO 请求怎么到达硬件、以及怎么判断磁盘是不是瓶颈</strong>。</p>
-<p><code>iostat</code> 的指标判读是本篇的核心——「磁盘慢」是个笼统的说法，<code>await</code> 高、<code>%util</code> 高、<code>aqu-sz</code> 高分别对应完全不同的原因和处理方式。</p>
-<h1 id="1-vfs一切皆文件的实现层">1. VFS：一切皆文件的实现层</h1>
-<p>一句话：<strong>VFS（Virtual File System）是内核提供的统一抽象层，让 <code>read()</code>/<code>write()</code> 能作用于任何东西——磁盘文件、管道、socket、设备、甚至 <code>/proc</code> 里的虚拟内容。</strong></p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">        应用程序
-</span></span><span class="line"><span class="cl">     read() / write()
-</span></span><span class="line"><span class="cl">            v
-</span></span><span class="line"><span class="cl">    +---------------+
-</span></span><span class="line"><span class="cl">    |      VFS      |   统一接口：file_operations 结构体
-</span></span><span class="line"><span class="cl">    +-------+-------+
-</span></span><span class="line"><span class="cl">            v
-</span></span><span class="line"><span class="cl">  +-----+-----+-----+------+-----+
-</span></span><span class="line"><span class="cl">  |ext4 | xfs |tmpfs|procfs| NFS |   各文件系统实现同一套接口
-</span></span><span class="line"><span class="cl">  +--+--+--+--+-----+------+-----+
-</span></span><span class="line"><span class="cl">     v     v
-</span></span><span class="line"><span class="cl">  +-------------+
-</span></span><span class="line"><span class="cl">  |  page cache |
-</span></span><span class="line"><span class="cl">  +------+------+
-</span></span><span class="line"><span class="cl">         v
-</span></span><span class="line"><span class="cl">  +-------------+
-</span></span><span class="line"><span class="cl">  |  块设备层   |   IO 调度、合并、排序
-</span></span><span class="line"><span class="cl">  +------+------+
-</span></span><span class="line"><span class="cl">         v
-</span></span><span class="line"><span class="cl">  +-------------+
-</span></span><span class="line"><span class="cl">  | 设备驱动    |
-</span></span><span class="line"><span class="cl">  +------+------+
-</span></span><span class="line"><span class="cl">         v
-</span></span><span class="line"><span class="cl">      物理磁盘
-</span></span></code></pre></div><p><strong>VFS 的核心是四个对象</strong>：</p>
-<table>
-<thead>
-<tr>
-<th>对象</th>
-<th>含义</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>superblock</code></td>
-<td>一个已挂载的文件系统的整体信息</td>
-</tr>
-<tr>
-<td><code>inode</code></td>
-<td>一个文件的元数据（第 2 篇讲过）</td>
-</tr>
-<tr>
-<td><code>dentry</code></td>
-<td>目录项，缓存「路径名 → inode」的映射</td>
-</tr>
-<tr>
-<td><code>file</code></td>
-<td>一个<strong>已打开</strong>的文件，含读写偏移量</td>
-</tr>
-</tbody>
-</table>
-<p><strong><code>dentry</code> 缓存的作用容易被忽略</strong>——解析 <code>/var/log/nginx/access.log</code> 要逐级查找 4 层目录，每层都要读 inode。dentry 缓存把结果记下来，避免重复解析：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 查看 dentry 和 inode 缓存占用</span>
-</span></span><span class="line"><span class="cl">cat /proc/meminfo <span class="p">|</span> grep -i slab
-</span></span><span class="line"><span class="cl"><span class="c1"># Slab:            1048576 kB</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># SReclaimable:     892340 kB      &lt;- 可回收的（dentry/inode 缓存主要在这）</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">slabtop -o <span class="p">|</span> head -8
-</span></span><span class="line"><span class="cl"><span class="c1">#  OBJS ACTIVE  USE OBJ SIZE  SLABS CACHE SIZE NAME</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># 823410 812340  98%    0.19K  39210      21    156840K dentry</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># 412034 401234  97%    0.58K  15242      27    243872K ext4_inode_cache</span>
-</span></span></code></pre></div><blockquote>
-<p>坑：<strong>海量小文件的目录遍历会让 dentry 缓存暴涨</strong>。有个几千万文件的目录被 <code>find</code> 扫过之后，<code>slab</code> 可能占掉几 GB。它是可回收的（<code>SReclaimable</code>），但在容器里<strong>会算进 cgroup 内存限制</strong>，可能直接导致 OOM。这是「容器里跑 <code>find</code> 或备份任务突然 OOM」的一个隐蔽原因。</p>
-</blockquote>
-<h2 id="11-文件描述符的三层结构">1.1 文件描述符的三层结构</h2>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">进程 A                        内核
-</span></span><span class="line"><span class="cl">+--------------+
-</span></span><span class="line"><span class="cl">| fd 表        |
-</span></span><span class="line"><span class="cl">|  0 -&gt; -------+--&gt; +----------------+
-</span></span><span class="line"><span class="cl">|  1 -&gt; -------+--&gt; | file 对象      |   含读写偏移量、打开模式
-</span></span><span class="line"><span class="cl">|  3 -&gt; -------+--&gt; | +- f_pos       |
-</span></span><span class="line"><span class="cl">+--------------+    | +- f_inode ----+--&gt; +----------+
-</span></span><span class="line"><span class="cl">                    +----------------+    |  inode   |  文件元数据
-</span></span><span class="line"><span class="cl">进程 B                                    | (元数据) |
-</span></span><span class="line"><span class="cl">+--------------+                          +----------+
-</span></span><span class="line"><span class="cl">|  4 -&gt; -------+--&gt; +----------------+          ^
-</span></span><span class="line"><span class="cl">+--------------+    | 另一个 file    |----------+
-</span></span><span class="line"><span class="cl">                    | (独立的偏移量) |
-</span></span><span class="line"><span class="cl">                    +----------------+
-</span></span></code></pre></div><p><strong>三层结构解释了几个现象</strong>：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ① 两个进程各自 open 同一个文件 -&gt; 各有独立的偏移量，互不影响</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># ② fork 后父子共享 file 对象 -&gt; 共享偏移量！一方读了另一方也会前进</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># ③ dup2 复制 fd -&gt; 指向同一个 file 对象，共享偏移量</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#    这就是 shell 重定向 2&gt;&amp;1 的原理（第 5 篇）</span>
-</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 实际查看 fd 的指向</span>
-</span></span><span class="line"><span class="cl">ls -l /proc/1234/fd/
-</span></span><span class="line"><span class="cl"><span class="c1"># lrwx------ 1 app app 64 Aug 6 22:00 0 -&gt; /dev/null</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># lrwx------ 1 app app 64 Aug 6 22:00 1 -&gt; pipe:[89234]</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># lrwx------ 1 app app 64 Aug 6 22:00 3 -&gt; /var/log/app.log</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># lrwx------ 1 app app 64 Aug 6 22:00 4 -&gt; socket:[92341]</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># lrwx------ 1 app app 64 Aug 6 22:00 5 -&gt; anon_inode:[eventpoll]  &lt;- epoll 实例</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># 看某个 fd 的详细信息，包括偏移量</span>
-</span></span><span class="line"><span class="cl">cat /proc/1234/fdinfo/3
-</span></span><span class="line"><span class="cl"><span class="c1"># pos:	1048576          &lt;- 当前读写偏移</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># flags:	02100002</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># mnt_id:	29</span>
-</span></span></code></pre></div><h1 id="2-ext4-与-xfs怎么选">2. ext4 与 xfs：怎么选</h1>
-<p>现代 Linux 上的实际选择基本就这两个。</p>
-<table>
-<thead>
-<tr>
-<th>维度</th>
-<th>ext4</th>
-<th>xfs</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>inode 分配</td>
-<td><strong>mkfs 时固定</strong>，事后无法增加</td>
-<td><strong>动态分配</strong>，不会耗尽</td>
-</tr>
-<tr>
-<td>能否缩小</td>
-<td>能（<code>resize2fs</code>）</td>
-<td><strong>不能</strong>，只能扩大</td>
-</tr>
-<tr>
-<td>大文件性能</td>
-<td>好</td>
-<td><strong>更好</strong>（extent + 延迟分配更成熟）</td>
-</tr>
-<tr>
-<td>海量小文件</td>
-<td>好</td>
-<td>略差</td>
-</tr>
-<tr>
-<td>并发写入</td>
-<td>一般</td>
-<td><strong>更好</strong>（AG 分组，多线程写不争锁）</td>
-</tr>
-<tr>
-<td>单文件上限</td>
-<td>16 TB</td>
-<td>8 EB</td>
-</tr>
-<tr>
-<td>默认于</td>
-<td>Debian/Ubuntu</td>
-<td><strong>RHEL 7+ / Rocky</strong></td>
-</tr>
-<tr>
-<td>修复工具</td>
-<td><code>fsck.ext4</code></td>
-<td><code>xfs_repair</code>（需先卸载）</td>
-</tr>
-</tbody>
-</table>
-<p><strong>决策建议</strong>：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">数据库、大文件、高并发写   -&gt; xfs
-</span></span><span class="line"><span class="cl">需要能缩容、海量小文件      -&gt; ext4
-</span></span><span class="line"><span class="cl">不确定、跟随发行版默认      -&gt; 都行，差异在大多数场景下不明显
-</span></span></code></pre></div><p><strong>ext4 最需要警惕的是 inode 耗尽</strong>（第 2 篇讲过）——<code>mkfs</code> 时确定的 inode 总数无法事后增加：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">df -i /data
-</span></span><span class="line"><span class="cl"><span class="c1"># Filesystem      Inodes  IUsed IFree IUse% Mounted on</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># /dev/vdb1     32768000 32768000    0  100% /data      &lt;- 空间还有，但建不了文件</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># 格式化时提高 inode 密度（每 8KB 一个 inode，默认是 16KB）</span>
-</span></span><span class="line"><span class="cl">mkfs.ext4 -i <span class="m">8192</span> /dev/vdb1
-</span></span><span class="line"><span class="cl"><span class="c1"># 或用预设的 profile</span>
-</span></span><span class="line"><span class="cl">mkfs.ext4 -T small /dev/vdb1     <span class="c1"># small = 适合小文件多的场景</span>
-</span></span></code></pre></div><p><strong>xfs 没有这个问题</strong>（动态分配 inode），这是选它的一个实际理由。</p>
-<h1 id="3-挂载与-fstab">3. 挂载与 fstab</h1>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 查看当前挂载</span>
-</span></span><span class="line"><span class="cl">findmnt
-</span></span><span class="line"><span class="cl"><span class="c1"># TARGET       SOURCE    FSTYPE OPTIONS</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># /            /dev/vda1 ext4   rw,relatime</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># /data        /dev/vdb1 xfs    rw,noatime,nodiratime</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># /dev/shm     tmpfs     tmpfs  rw,nosuid,nodev</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># 比 mount 命令的输出好读</span>
-</span></span><span class="line"><span class="cl">mount <span class="p">|</span> column -t <span class="p">|</span> head -5
-</span></span></code></pre></div><h2 id="31-值得关注的挂载选项">3.1 值得关注的挂载选项</h2>
-<table>
-<thead>
-<tr>
-<th>选项</th>
-<th>作用</th>
-<th>建议</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>noatime</code></td>
-<td><strong>不更新访问时间</strong></td>
-<td><strong>数据盘推荐</strong>，减少无意义的写</td>
-</tr>
-<tr>
-<td><code>relatime</code></td>
-<td>折中：仅当 atime &lt; mtime 或超 24h 才更新</td>
-<td>现代默认值</td>
-</tr>
-<tr>
-<td><code>nodiratime</code></td>
-<td>目录不更新 atime</td>
-<td>配合 noatime</td>
-</tr>
-<tr>
-<td><code>nosuid</code></td>
-<td>忽略 SUID 位</td>
-<td><strong>用户可写的分区必加</strong>（第 3 篇）</td>
-</tr>
-<tr>
-<td><code>nodev</code></td>
-<td>不识别设备文件</td>
-<td>同上</td>
-</tr>
-<tr>
-<td><code>noexec</code></td>
-<td>禁止执行文件</td>
-<td><code>/tmp</code>、上传目录</td>
-</tr>
-<tr>
-<td><code>discard</code></td>
-<td>实时 TRIM</td>
-<td><strong>不推荐</strong>，用定时 <code>fstrim</code> 代替</td>
-</tr>
-<tr>
-<td><code>data=writeback</code></td>
-<td>ext4 日志只记元数据</td>
-<td>性能好但崩溃可能丢数据</td>
-</tr>
-</tbody>
-</table>
-<p><strong><code>noatime</code> 是最实用的一项</strong>。默认的 <code>relatime</code> 仍然会在某些情况下产生写操作——对于读多写少的场景（静态资源服务、日志读取），这些写是纯粹的浪费：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># /etc/fstab</span>
-</span></span><span class="line"><span class="cl">/dev/vdb1  /data  xfs  defaults,noatime,nodiratime  <span class="m">0</span> <span class="m">0</span>
-</span></span></code></pre></div><blockquote>
-<p>坑：<strong><code>discard</code>（实时 TRIM）会让删除操作变慢</strong>，因为每次删文件都要给 SSD 发 TRIM 命令。推荐改用定时批量 TRIM：</p>
-</blockquote>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 用 systemd timer 每周做一次批量 TRIM（现代发行版默认已启用）</span>
-</span></span><span class="line"><span class="cl">systemctl <span class="nb">enable</span> --now fstrim.timer
-</span></span><span class="line"><span class="cl">systemctl status fstrim.timer
-</span></span></code></pre></div><h2 id="32-fstab-用-uuid-而不是设备名">3.2 fstab 用 UUID 而不是设备名</h2>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ❌ 设备名不稳定：加了新盘或改了顺序，/dev/vdb 可能变成 /dev/vdc</span>
-</span></span><span class="line"><span class="cl">/dev/vdb1  /data  xfs  defaults  <span class="m">0</span> <span class="m">0</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 用 UUID</span>
-</span></span><span class="line"><span class="cl"><span class="nv">UUID</span><span class="o">=</span>a1b2c3d4-...  /data  xfs  defaults,noatime  <span class="m">0</span> <span class="m">0</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># 查 UUID</span>
-</span></span><span class="line"><span class="cl">blkid
-</span></span><span class="line"><span class="cl">lsblk -o NAME,SIZE,FSTYPE,UUID,MOUNTPOINT
-</span></span></code></pre></div><p><strong>「加了一块盘之后系统起不来」的经典原因就是设备名漂移</strong>——<code>/etc/fstab</code> 里写的 <code>/dev/vdb1</code> 变成了别的盘，挂载失败导致系统进入紧急模式。</p>
-<p><strong>改完 fstab 一定要在重启前验证</strong>：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 测试所有 fstab 条目能否正常挂载</span>
-</span></span><span class="line"><span class="cl">mount -a
-</span></span><span class="line"><span class="cl"><span class="c1"># 无输出 = 全部成功；有报错就赶紧修，别急着重启</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># 加 nofail 让挂载失败不阻塞启动（数据盘推荐）</span>
-</span></span><span class="line"><span class="cl"><span class="nv">UUID</span><span class="o">=</span>xxx  /data  xfs  defaults,noatime,nofail  <span class="m">0</span> <span class="m">2</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#                                              ^^^^^^ 关键</span>
-</span></span></code></pre></div><p><strong><code>nofail</code> 值得默认加上</strong>——它让「数据盘挂载失败」变成「系统正常启动但少个目录」，而不是「系统起不来只能上控制台救援」。</p>
-<h1 id="4-lvm在线扩容">4. LVM：在线扩容</h1>
-<p>云上加盘扩容是常见运维操作，LVM 让它可以在<strong>不停机</strong>的情况下完成。</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">物理卷 PV (Physical Volume)     &lt;- 实际的磁盘或分区 /dev/vdb1
-</span></span><span class="line"><span class="cl">       v 组成
-</span></span><span class="line"><span class="cl">卷组   VG (Volume Group)        &lt;- 一个&#34;资源池&#34;
-</span></span><span class="line"><span class="cl">       v 划分
-</span></span><span class="line"><span class="cl">逻辑卷 LV (Logical Volume)      &lt;- 给文件系统用 /dev/vg_data/lv_data
-</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 查看三层结构</span>
-</span></span><span class="line"><span class="cl">pvs<span class="p">;</span> vgs<span class="p">;</span> lvs
-</span></span><span class="line"><span class="cl"><span class="c1">#   PV         VG      Fmt  Attr PSize   PFree</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#   /dev/vdb1  vg_data lvm2 a--  500.00g    0</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#   VG      #PV #LV #SN Attr   VSize   VFree</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#   vg_data   1   1   0 wz--n- 500.00g    0</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#   LV      VG      Attr       LSize</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#   lv_data vg_data -wi-ao---- 500.00g</span>
-</span></span></code></pre></div><p><strong>扩容的完整流程</strong>（云上加了一块 500GB 新盘 <code>/dev/vdc</code>）：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ① 把新盘做成 PV</span>
-</span></span><span class="line"><span class="cl">pvcreate /dev/vdc
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># ② 加进现有的 VG</span>
-</span></span><span class="line"><span class="cl">vgextend vg_data /dev/vdc
-</span></span><span class="line"><span class="cl">vgs
-</span></span><span class="line"><span class="cl"><span class="c1">#   VG      #PV #LV VSize VFree</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#   vg_data   2   1 1000g 500g      &lt;- 池子变成 1TB</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># ③ 扩展 LV，吃掉所有空闲空间</span>
-</span></span><span class="line"><span class="cl">lvextend -l +100%FREE /dev/vg_data/lv_data
-</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ④ 扩展文件系统 —— 注意两种文件系统命令不同</span>
-</span></span><span class="line"><span class="cl">resize2fs /dev/vg_data/lv_data        <span class="c1"># ext4</span>
-</span></span><span class="line"><span class="cl">xfs_growfs /data                      <span class="c1"># xfs，参数是【挂载点】不是设备</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># ⑤ 验证</span>
-</span></span><span class="line"><span class="cl">df -h /data
-</span></span><span class="line"><span class="cl"><span class="c1"># /dev/mapper/vg_data-lv_data  1000G  423G  577G  43% /data</span>
-</span></span></code></pre></div><p>**全程不需要卸载，业务无感知。**这是 LVM 最大的价值。</p>
-<blockquote>
-<p>注意：<strong>xfs 只能扩大不能缩小</strong>。如果需要缩容，只能备份数据、重建文件系统、恢复数据。ext4 可以缩小但必须先卸载（<code>umount</code> → <code>e2fsck -f</code> → <code>resize2fs</code> 缩小 → <code>lvreduce</code>），且顺序错了会丢数据。<strong>规划分区时宁可先给小一点，因为扩容容易缩容难。</strong></p>
-</blockquote>
-<h1 id="5-io-调度器">5. IO 调度器</h1>
-<p>块设备层会对 IO 请求做<strong>合并</strong>和<strong>排序</strong>再下发给硬件。调度器决定这个策略。</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 查看当前调度器</span>
-</span></span><span class="line"><span class="cl">cat /sys/block/vda/queue/scheduler
-</span></span><span class="line"><span class="cl"><span class="c1"># [none] mq-deadline kyber bfq</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#  ^^^^ 方括号里是当前生效的</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># 临时切换</span>
-</span></span><span class="line"><span class="cl"><span class="nb">echo</span> mq-deadline &gt; /sys/block/vda/queue/scheduler
-</span></span></code></pre></div><table>
-<thead>
-<tr>
-<th>调度器</th>
-<th>适用</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>none</code></td>
-<td><strong>NVMe SSD</strong></td>
-<td>不排序不合并，直接下发。SSD 没有寻道，排序无意义</td>
-</tr>
-<tr>
-<td><code>mq-deadline</code></td>
-<td>SATA SSD、云盘</td>
-<td>保证请求不会饿死，有读优先倾向</td>
-</tr>
-<tr>
-<td><code>kyber</code></td>
-<td>高速 SSD</td>
-<td>按延迟目标自适应节流</td>
-</tr>
-<tr>
-<td><code>bfq</code></td>
-<td>桌面、机械盘</td>
-<td>保证交互进程的公平性，服务器上开销偏大</td>
-</tr>
-</tbody>
-</table>
-<p><strong>现代选型很简单</strong>：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">NVMe SSD          -&gt; none        （内核默认就是这个）
-</span></span><span class="line"><span class="cl">SATA SSD / 云盘   -&gt; mq-deadline  或 none
-</span></span><span class="line"><span class="cl">机械盘            -&gt; mq-deadline  或 bfq
-</span></span><span class="line"><span class="cl">虚拟机 / 容器      -&gt; none        （宿主机已经调度过了，再调度是浪费）
-</span></span></code></pre></div><p><strong>关键认知：<code>cfq</code> 和 <code>deadline</code> 这些单队列调度器在 5.0+ 内核已被移除</strong>，全部换成了 multi-queue 版本。网上很多「把调度器改成 deadline」的老文章已经过时——现在应该看有没有 <code>mq-</code> 前缀。</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 持久化配置（用 udev 规则，按设备类型自动设置）</span>
-</span></span><span class="line"><span class="cl">cat &gt; /etc/udev/rules.d/60-scheduler.rules <span class="s">&lt;&lt;&#39;EOF&#39;
-</span></span></span><span class="line"><span class="cl"><span class="s"># NVMe 用 none
-</span></span></span><span class="line"><span class="cl"><span class="s">ACTION==&#34;add|change&#34;, KERNEL==&#34;nvme[0-9]*n[0-9]*&#34;, ATTR{queue/scheduler}=&#34;none&#34;
-</span></span></span><span class="line"><span class="cl"><span class="s"># 旋转磁盘用 mq-deadline
-</span></span></span><span class="line"><span class="cl"><span class="s">ACTION==&#34;add|change&#34;, KERNEL==&#34;sd[a-z]&#34;, ATTR{queue/rotational}==&#34;1&#34;, ATTR{queue/scheduler}=&#34;mq-deadline&#34;
-</span></span></span><span class="line"><span class="cl"><span class="s">EOF</span>
-</span></span></code></pre></div><p><strong>另外两个值得调的队列参数</strong>：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 队列深度：允许多少请求同时在飞</span>
-</span></span><span class="line"><span class="cl">cat /sys/block/nvme0n1/queue/nr_requests
-</span></span><span class="line"><span class="cl"><span class="c1"># 1023</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># 预读大小（KB）—— 顺序读大文件时加大有收益</span>
-</span></span><span class="line"><span class="cl">cat /sys/block/vda/queue/read_ahead_kb
-</span></span><span class="line"><span class="cl"><span class="c1"># 128</span>
-</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="m">512</span> &gt; /sys/block/vda/queue/read_ahead_kb    <span class="c1"># 顺序扫描场景</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># 随机 IO 为主的场景（数据库）反而应该减小预读，避免读入无用数据</span>
-</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="m">16</span> &gt; /sys/block/vda/queue/read_ahead_kb
-</span></span></code></pre></div><p>**规律：顺序读加大 <code>read_ahead_kb</code>，随机读减小它。**默认 128KB 是个折中值。</p>
-<h1 id="6-iostat判断磁盘是不是瓶颈">6. iostat：判断磁盘是不是瓶颈</h1>
-<p><strong>这是本篇最实用的一节。</strong></p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">iostat -x <span class="m">1</span> <span class="m">3</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># 注意：第一组数据是【开机至今的平均值】，要看第二组之后的</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># Device  r/s   w/s  rkB/s   wkB/s  rrqm/s wrqm/s %rrqm %wrqm r_await w_await aqu-sz rareq-sz wareq-sz  svctm  %util</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># nvme0n1 120.0 890.0 4800.0 89000.0   2.0   45.0   1.6   4.8    0.42    2.31   2.14     40.0    100.0   0.00  45.20</span>
-</span></span></code></pre></div><h2 id="61-各指标的含义与判读标准">6.1 各指标的含义与判读标准</h2>
-<table>
-<thead>
-<tr>
-<th>指标</th>
-<th>含义</th>
-<th>判读标准</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>r/s</code> <code>w/s</code></td>
-<td>每秒读/写次数（<strong>IOPS</strong>）</td>
-<td>与设备能力对比</td>
-</tr>
-<tr>
-<td><code>rkB/s</code> <code>wkB/s</code></td>
-<td>每秒读/写数据量（<strong>吞吐</strong>）</td>
-<td>与设备带宽对比</td>
-</tr>
-<tr>
-<td><code>rrqm/s</code> <code>wrqm/s</code></td>
-<td>每秒被<strong>合并</strong>的请求数</td>
-<td>高说明有顺序 IO 被合并了，是好事</td>
-</tr>
-<tr>
-<td><code>r_await</code> <code>w_await</code></td>
-<td><strong>平均等待时间</strong>（含排队+服务，ms）</td>
-<td><strong>最重要的指标</strong>，见下</td>
-</tr>
-<tr>
-<td><code>aqu-sz</code></td>
-<td>平均队列长度</td>
-<td><strong>&gt; 1 说明在排队</strong></td>
-</tr>
-<tr>
-<td><code>rareq-sz</code> <code>wareq-sz</code></td>
-<td>平均单次请求大小（KB）</td>
-<td>判断是随机小 IO 还是顺序大 IO</td>
-</tr>
-<tr>
-<td><code>%util</code></td>
-<td>设备繁忙时间占比</td>
-<td><strong>对 SSD 已失去意义</strong>，见下</td>
-</tr>
-</tbody>
-</table>
-<p><strong><code>await</code> 的参考基准</strong>：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">NVMe SSD      &lt; 1 ms       正常；&gt; 5 ms 需要关注
-</span></span><span class="line"><span class="cl">SATA SSD      &lt; 5 ms       正常；&gt; 20 ms 有问题
-</span></span><span class="line"><span class="cl">云盘（普通）   &lt; 10 ms      正常；&gt; 50 ms 有问题
-</span></span><span class="line"><span class="cl">机械盘        &lt; 20 ms      正常；&gt; 100 ms 严重
-</span></span></code></pre></div><h2 id="62-util-是个陷阱">6.2 %util 是个陷阱</h2>
-<p><strong><code>%util = 100%</code> 在 SSD 上不代表磁盘满载。</strong></p>
-<p><code>%util</code> 的定义是「设备至少有一个请求在处理的时间占比」。这个定义源自机械盘时代——机械盘只有一个磁头，同一时刻只能处理一个请求，所以 <code>%util=100%</code> 确实意味着饱和。</p>
-<p>但<strong>SSD 和 NVMe 有几十甚至上千个并行队列</strong>，可以同时处理大量请求。<code>%util=100%</code> 只说明「一直有请求在处理」，可能只用了 5% 的实际能力。</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 一个真实的例子</span>
-</span></span><span class="line"><span class="cl">iostat -x <span class="m">1</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># Device   r/s   w/s  r_await w_await aqu-sz  %util</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># nvme0n1 50.0  30.0     0.08    0.12   0.01  99.80</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#                        ^^^^^^^^^^^^ 等待时间极低       ^^^^^ 但 util 99.8%</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#                                     aqu-sz 0.01 说明几乎不排队</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># 结论：磁盘一点都不忙，%util 高只是因为请求间隔小于采样精度</span>
-</span></span></code></pre></div><p><strong>判断 SSD 是否真的饱和，要看这三个组合</strong>：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">① r_await / w_await 显著升高（超过基准的 3~5 倍）
-</span></span><span class="line"><span class="cl">② aqu-sz &gt; 1 且持续增长（请求在排队）
-</span></span><span class="line"><span class="cl">③ IOPS 或吞吐接近设备标称上限
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">三者同时出现 = 真饱和
-</span></span><span class="line"><span class="cl">只有 %util 高 = 大概率没问题
-</span></span></code></pre></div><p><strong>规律：SSD 时代看 <code>await</code> 和 <code>aqu-sz</code>，不看 <code>%util</code>。</strong></p>
-<h2 id="63-区分随机-io-和顺序-io">6.3 区分随机 IO 和顺序 IO</h2>
-<p><code>rareq-sz</code>/<code>wareq-sz</code>（平均请求大小）能告诉你负载类型：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 场景 A：数据库的随机小 IO</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># Device   r/s    rkB/s  rareq-sz  r_await</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># nvme0n1 8000.0 32000.0     4.0     0.35</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#                            ^^^ 平均 4KB = 典型的随机小 IO</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># -&gt; IOPS 是瓶颈，看 8000 IOPS 是否接近设备上限</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># 场景 B：日志顺序写</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># Device   w/s    wkB/s  wareq-sz  w_await</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># nvme0n1  120.0 122880.0  1024.0    1.20</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#                          ^^^^^^ 平均 1MB = 顺序大 IO</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># -&gt; 带宽是瓶颈，看 120MB/s 是否接近设备上限</span>
-</span></span></code></pre></div><p><strong>设备能力的量级感</strong>：</p>
-<table>
-<thead>
-<tr>
-<th>设备</th>
-<th>随机 4K IOPS</th>
-<th>顺序吞吐</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>机械盘 7200rpm</td>
-<td>100 ~ 200</td>
-<td>150 MB/s</td>
-</tr>
-<tr>
-<td>SATA SSD</td>
-<td>50k ~ 90k</td>
-<td>500 MB/s</td>
-</tr>
-<tr>
-<td>NVMe SSD</td>
-<td>200k ~ 1M</td>
-<td>3 ~ 7 GB/s</td>
-</tr>
-<tr>
-<td>云盘（通用型）</td>
-<td>3k ~ 20k（按容量给）</td>
-<td>100 ~ 350 MB/s</td>
-</tr>
-</tbody>
-</table>
-<p><strong>云盘的 IOPS 通常与容量挂钩</strong>——这是个容易踩的坑：100GB 的云盘可能只有 3000 IOPS，把数据库放上去必然慢。扩容盘不只是为了空间，也是为了 IOPS。</p>
-<h2 id="64-定位到具体进程">6.4 定位到具体进程</h2>
-<p><code>iostat</code> 只告诉你设备忙，<code>pidstat</code> 和 <code>iotop</code> 告诉你是谁在忙：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 按 IO 排序看进程</span>
-</span></span><span class="line"><span class="cl">pidstat -d <span class="m">1</span> <span class="m">3</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># 时间     UID  PID   kB_rd/s   kB_wr/s kB_ccwr/s iodelay  Command</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># 22:15:01   0  8821      0.00  45230.00      0.00     234  mysqld</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#                                ^^^^^^^^ 每秒写 45MB</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#                                                     ^^^ IO 延迟（时钟周期）</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># 或者用 iotop（更直观，需要 root）</span>
-</span></span><span class="line"><span class="cl">iotop -oPa
-</span></span><span class="line"><span class="cl"><span class="c1">#  -o 只显示真正在做 IO 的</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#  -P 只显示进程不显示线程</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#  -a 显示累计值而不是速率</span>
-</span></span></code></pre></div><p><strong>看单个进程的 IO 总量</strong>：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">cat /proc/1234/io
-</span></span><span class="line"><span class="cl"><span class="c1"># rchar: 892340123          &lt;- 读的字节数（含从 cache 读的）</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># wchar: 1234567890         &lt;- 写的字节数</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># read_bytes: 234560000     &lt;- 【真正从块设备读】的字节数</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># write_bytes: 1089234000   &lt;- 真正写到块设备的</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># cancelled_write_bytes: 0</span>
-</span></span></code></pre></div><p><strong><code>rchar</code> 和 <code>read_bytes</code> 的差值就是 page cache 的贡献</strong>：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">rchar = 892MB, read_bytes = 234MB
-</span></span><span class="line"><span class="cl">-&gt; 缓存命中率 ≈ (892-234)/892 = 74%
-</span></span></code></pre></div><p>这是评估 page cache 效果最直接的方法。</p>
-<h1 id="7-df-与-du-对不上的三种原因">7. df 与 du 对不上的三种原因</h1>
-<p>第 2 篇讲了最常见的一种，这里补全：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">df -h /data
-</span></span><span class="line"><span class="cl"><span class="c1"># /dev/vdb1  500G  480G  0G  100% /data</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">du -sh /data
-</span></span><span class="line"><span class="cl"><span class="c1"># 210G                                  &lt;- 差了 270G</span>
-</span></span></code></pre></div><table>
-<thead>
-<tr>
-<th>原因</th>
-<th>判断方法</th>
-<th>处理</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><strong>被删但仍被进程持有</strong></td>
-<td><code>lsof +L1</code></td>
-<td>reload/重启持有它的进程</td>
-</tr>
-<tr>
-<td><strong>被挂载点遮盖的文件</strong></td>
-<td>见下</td>
-<td>卸载后清理</td>
-</tr>
-<tr>
-<td>预留块（reserved blocks）</td>
-<td><code>tune2fs -l</code></td>
-<td>正常现象，不用处理</td>
-</tr>
-</tbody>
-</table>
-<p><strong>「被挂载点遮盖」这种情况很隐蔽</strong>：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">① 原本 /data 下有 270GB 文件（在根分区上）
-</span></span><span class="line"><span class="cl">② 后来挂载了一块新盘到 /data
-</span></span><span class="line"><span class="cl">③ 那 270GB 文件还在根分区的 /data 目录里，但被新挂载点【遮住】了
-</span></span><span class="line"><span class="cl">④ du /data 看到的是新盘的内容，df / 却仍算着那 270GB
-</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 排查：把上层目录重新挂载到别处，看被遮盖的内容</span>
-</span></span><span class="line"><span class="cl">mkdir /mnt/tmp
-</span></span><span class="line"><span class="cl">mount --bind / /mnt/tmp
-</span></span><span class="line"><span class="cl">du -sh /mnt/tmp/data
-</span></span><span class="line"><span class="cl"><span class="c1"># 270G                    &lt;- 找到了！这些文件被 /data 的挂载点遮住了</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">rm -rf /mnt/tmp/data/*    <span class="c1"># 清理</span>
-</span></span><span class="line"><span class="cl">umount /mnt/tmp
-</span></span></code></pre></div><p><strong>ext4 的预留块</strong>是设计如此，不是问题：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">tune2fs -l /dev/vdb1 <span class="p">|</span> grep -i reserved
-</span></span><span class="line"><span class="cl"><span class="c1"># Reserved block count:     6553600</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># Reserved GDT blocks:      1024</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># 默认预留 5% 给 root，防止磁盘完全满时 root 也无法登录修复</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># 数据盘可以调低到 1%（大盘上 5% 是很多空间）</span>
-</span></span><span class="line"><span class="cl">tune2fs -m <span class="m">1</span> /dev/vdb1
-</span></span></code></pre></div><p>500GB 盘的 5% 是 25GB——对纯数据盘来说这是浪费，调到 1% 能省出 20GB。</p>
-<h1 id="8-文件描述符与-ulimit">8. 文件描述符与 ulimit</h1>
-<p><strong>「Too many open files」是后端最常见的错误之一</strong>，而它的排查有一条明确的路径。</p>
-<h2 id="81-三层限制">8.1 三层限制</h2>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">① 系统级：整个系统能打开的 fd 总数
-</span></span><span class="line"><span class="cl">   /proc/sys/fs/file-max
-</span></span><span class="line"><span class="cl">   
-</span></span><span class="line"><span class="cl">② 用户级：单个用户的限制（PAM 机制，只对【登录会话】生效）
-</span></span><span class="line"><span class="cl">   /etc/security/limits.conf
-</span></span><span class="line"><span class="cl">   
-</span></span><span class="line"><span class="cl">③ 进程级：进程实际继承到的限制  &lt;- 【只有这个才是真相】
-</span></span><span class="line"><span class="cl">   /proc/&lt;pid&gt;/limits
-</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 系统级</span>
-</span></span><span class="line"><span class="cl">cat /proc/sys/fs/file-max
-</span></span><span class="line"><span class="cl"><span class="c1"># 9223372036854775807      &lt;- 现代内核基本无上限</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># 当前系统打开了多少</span>
-</span></span><span class="line"><span class="cl">cat /proc/sys/fs/file-nr
-</span></span><span class="line"><span class="cl"><span class="c1"># 12480	0	9223372036854775807</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#  ^^^^^ 已分配   ^ 空闲   ^^^ 上限</span>
-</span></span></code></pre></div><h2 id="82-为什么改了-limitsconf-没用">8.2 为什么改了 limits.conf 没用</h2>
-<p><strong>这是最经典的坑，第 1 篇提过，这里讲透。</strong></p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 改了这个文件</span>
-</span></span><span class="line"><span class="cl">cat /etc/security/limits.conf
-</span></span><span class="line"><span class="cl"><span class="c1"># app  soft  nofile  65535</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># app  hard  nofile  65535</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># 登录后确认生效了</span>
-</span></span><span class="line"><span class="cl"><span class="nb">ulimit</span> -n
-</span></span><span class="line"><span class="cl"><span class="c1"># 65535                   &lt;- 看起来对了</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># 但服务还是报 Too many open files</span>
-</span></span><span class="line"><span class="cl">cat /proc/<span class="k">$(</span>pgrep myapp<span class="k">)</span>/limits <span class="p">|</span> grep -i <span class="s2">&#34;open files&#34;</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># Max open files            1024      1024      files</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#                           ^^^^ 真相：还是 1024</span>
-</span></span></code></pre></div><p>**原因：<code>limits.conf</code> 是 PAM（<code>pam_limits.so</code>）的机制，只在「用户登录」时被应用。**systemd 启动服务时不经过 PAM，所以完全不读这个文件。</p>
-<p><strong>正确做法是在 systemd unit 里配置</strong>：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="c1"># /etc/systemd/system/myapp.service</span>
-</span></span><span class="line"><span class="cl"><span class="k">[Service]</span>
-</span></span><span class="line"><span class="cl"><span class="na">LimitNOFILE</span><span class="o">=</span><span class="s">65535</span>
-</span></span><span class="line"><span class="cl"><span class="na">LimitNPROC</span><span class="o">=</span><span class="s">65535</span>
-</span></span><span class="line"><span class="cl"><span class="na">LimitCORE</span><span class="o">=</span><span class="s">infinity</span>
-</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">systemctl daemon-reload
-</span></span><span class="line"><span class="cl">systemctl restart myapp
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># 验证 —— 唯一可信的方式</span>
-</span></span><span class="line"><span class="cl">cat /proc/<span class="k">$(</span>pgrep myapp<span class="k">)</span>/limits <span class="p">|</span> grep -i <span class="s2">&#34;open files&#34;</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># Max open files            65535     65535     files      ✅</span>
-</span></span></code></pre></div><p><strong>也可以设全局默认</strong>：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># /etc/systemd/system.conf</span>
-</span></span><span class="line"><span class="cl"><span class="nv">DefaultLimitNOFILE</span><span class="o">=</span>65535:65535
-</span></span><span class="line"><span class="cl"><span class="c1"># 改完需要重启机器或 systemctl daemon-reexec</span>
-</span></span></code></pre></div><p><strong>规律：<code>ulimit -n</code> 只反映当前 shell；进程的真实限制永远看 <code>/proc/&lt;pid&gt;/limits</code>。</strong></p>
-<h2 id="83-容器里的-fd-限制">8.3 容器里的 fd 限制</h2>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># Docker</span>
-</span></span><span class="line"><span class="cl">docker run --ulimit <span class="nv">nofile</span><span class="o">=</span>65535:65535 myapp
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># K8s 没有直接的字段，要靠以下方式之一：</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># ① 容器镜像的 entrypoint 里 ulimit -n 65535（需要 CAP_SYS_RESOURCE）</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># ② 改 containerd/dockerd 的默认值</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># ③ 用 initContainer 配合 privileged 调整</span>
-</span></span></code></pre></div><p><strong>containerd 的默认值配置</strong>：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-toml" data-lang="toml"><span class="line"><span class="cl"><span class="c"># /etc/containerd/config.toml</span>
-</span></span><span class="line"><span class="cl"><span class="p">[</span><span class="nx">plugins</span><span class="p">.</span><span class="s2">&#34;io.containerd.grpc.v1.cri&#34;</span><span class="p">]</span>
-</span></span><span class="line"><span class="cl">  <span class="c"># 容器的默认 fd 限制</span>
-</span></span><span class="line"><span class="cl">  <span class="p">...</span>
-</span></span></code></pre></div><p><strong>现代 containerd/Docker 的默认 <code>nofile</code> 通常已经是 1048576</strong>，所以容器里反而很少遇到这个问题——遇到的话优先怀疑是应用自己泄漏 fd。</p>
-<h2 id="84-用-lsof-排查-fd-泄漏">8.4 用 lsof 排查 fd 泄漏</h2>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ① 确认是哪个进程 fd 多</span>
-</span></span><span class="line"><span class="cl"><span class="k">for</span> p in /proc/<span class="o">[</span>0-9<span class="o">]</span>*<span class="p">;</span> <span class="k">do</span>
-</span></span><span class="line"><span class="cl">    <span class="nv">n</span><span class="o">=</span><span class="k">$(</span>ls <span class="s2">&#34;</span><span class="nv">$p</span><span class="s2">/fd&#34;</span> 2&gt;/dev/null <span class="p">|</span> wc -l<span class="k">)</span>
-</span></span><span class="line"><span class="cl">    <span class="o">[</span> <span class="s2">&#34;</span><span class="nv">$n</span><span class="s2">&#34;</span> -gt <span class="m">500</span> <span class="o">]</span> <span class="o">&amp;&amp;</span> <span class="nb">echo</span> <span class="s2">&#34;</span><span class="nv">$n</span><span class="s2"> </span><span class="k">$(</span>cat <span class="nv">$p</span>/comm 2&gt;/dev/null<span class="k">)</span><span class="s2"> </span><span class="si">${</span><span class="nv">p</span><span class="p">#/proc/</span><span class="si">}</span><span class="s2">&#34;</span>
-</span></span><span class="line"><span class="cl"><span class="k">done</span> <span class="p">|</span> sort -rn <span class="p">|</span> head
-</span></span><span class="line"><span class="cl"><span class="c1"># 24312 myapp 1234        &lt;- 2 万多个 fd，明显异常</span>
-</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ② 看 fd 的类型分布 —— 这一步直接指向问题</span>
-</span></span><span class="line"><span class="cl">ls -l /proc/1234/fd/ <span class="p">|</span> awk <span class="s1">&#39;{print $NF}&#39;</span> <span class="p">|</span> sed <span class="s1">&#39;s/:\[.*//&#39;</span> <span class="p">|</span> sort <span class="p">|</span> uniq -c <span class="p">|</span> sort -rn
-</span></span><span class="line"><span class="cl"><span class="c1">#  23890 socket</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#    412 /var/log/app.log</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#      8 pipe</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#      2 /dev/null</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#        ^^^^^^^^^^ 2 万多个 socket -&gt; socket 泄漏，不是文件句柄泄漏</span>
-</span></span></code></pre></div><p><strong>这两步就能把方向分成两类</strong>：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">socket 占大头     -&gt; 连接泄漏，继续用 ss 看状态分布（见下）
-</span></span><span class="line"><span class="cl">普通文件占大头     -&gt; 文件句柄泄漏，看是哪些路径，通常是日志或临时文件没关
-</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ③ socket 泄漏时，看连接状态</span>
-</span></span><span class="line"><span class="cl">ss -tanp <span class="p">|</span> grep <span class="s2">&#34;pid=1234&#34;</span> <span class="p">|</span> awk <span class="s1">&#39;{print $1}&#39;</span> <span class="p">|</span> sort <span class="p">|</span> uniq -c
-</span></span><span class="line"><span class="cl"><span class="c1">#  23880 CLOSE-WAIT          &lt;- 应用漏了 close()</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#     10 ESTAB</span>
-</span></span></code></pre></div><p><strong><code>CLOSE-WAIT</code> 堆积是纯粹的应用 bug</strong>——对端已关闭但本地没调用 <code>close()</code>，而且没有任何超时机制，调内核参数完全无效。它与 <code>TIME-WAIT</code> 的完整区分见 <a href="../linux_13_%e7%bd%91%e7%bb%9c%e9%85%8d%e7%bd%ae%e4%b8%8e%e6%8e%92%e6%9f%a5/" rel="">Linux-13 §3.2</a>，一个真实的排查案例见 <a href="../linux_20_%e7%ba%bf%e4%b8%8a%e9%97%ae%e9%a2%98%e6%8e%92%e6%9f%a5%e5%ae%9e%e6%88%98/" rel="">Linux-20 §5</a>。</p>
-<h1 id="9-实战确认磁盘是不是瓶颈">9. 实战：确认磁盘是不是瓶颈</h1>
-<p>把本篇的判读方法串成一个最小流程。<strong>这里只演示「怎么确认是磁盘问题、是谁造成的」</strong>——完整的案例复盘（含根因分析、止血、长期改进）见 <a href="../linux_20_%e7%ba%bf%e4%b8%8a%e9%97%ae%e9%a2%98%e6%8e%92%e6%9f%a5%e5%ae%9e%e6%88%98/" rel="">Linux-20 §3</a>。</p>
-<p><strong>现象</strong>：订单服务 P99 从 80ms 涨到 4s，同机的其他服务也变慢。</p>
-<p><strong>① 先确认瓶颈在 IO 而不是 CPU</strong></p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">vmstat <span class="m">1</span> <span class="m">3</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># procs -----------io---- -system-- ------cpu-----</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#  r  b     bi     bo   in   cs us sy id wa st</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#  1 22   4096 189234 3421 5623  3  4  6 87  0</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#    ^^ 22 个进程阻塞在 D 状态</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#                                          ^^ wa 87%，而 r 列只有 1</span>
-</span></span></code></pre></div><p><code>r</code> 小、<code>b</code> 大、<code>wa</code> 高 → CPU 不排队，瓶颈在磁盘（判读规则见第 7 篇 §6）。</p>
-<p><strong>② 用三条件确认磁盘真饱和</strong></p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">iostat -xz <span class="m">1</span> <span class="m">3</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># Device   w/s    wkB/s  r_await w_await aqu-sz wareq-sz %util</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># nvme0n1 3200.0 204800.0   1.20   28.45  92.31     64.0  99.90</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#                                          ^^^^^ 28ms，是 NVMe 基准的 28 倍</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#                                                  ^^^^^ 队列 92，远大于 1</span>
-</span></span></code></pre></div><p><code>await</code> 超基准数倍 + <code>aqu-sz &gt; 1</code> + 吞吐接近上限，三者同时成立才是真饱和（§6.2）。<strong>只有 <code>%util</code> 高不算</strong>。</p>
-<p><strong>③ 定位到进程</strong></p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">pidstat -d <span class="m">1</span> <span class="m">3</span> <span class="p">|</span> sort -k5 -rn <span class="p">|</span> head -3
-</span></span><span class="line"><span class="cl"><span class="c1"># UID  PID   kB_rd/s   kB_wr/s kB_ccwr/s iodelay  Command</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#   0 8821      0.00 178234.00      0.00    8923  mysqld</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#                      ^^^^^^^^^ 写了 178MB/s，占绝大部分</span>
-</span></span></code></pre></div><p>到这一步，排查就从「系统层」转入「应用层」了——接下来要查的是 MySQL 里在跑什么。</p>
-<p><strong>规律：<code>wa</code> 高 + <code>b</code> 列高 + <code>await</code> 超基准数倍 + <code>aqu-sz &gt; 1</code> = 确定的磁盘瓶颈。然后用 <code>pidstat -d</code> 定位到进程，再往应用层查根因。</strong></p>
-<h1 id="10-面试题">10. 面试题</h1>
-<p><strong>Q：VFS 是什么？为什么 <code>read()</code> 既能读文件又能读 socket？</strong></p>
-<p>VFS（Virtual File System）是内核的统一抽象层，它定义了一套标准接口（<code>file_operations</code> 结构体，含 <code>read</code>/<code>write</code>/<code>open</code> 等函数指针），各种具体实现——ext4、xfs、tmpfs、procfs、socket、管道、设备——都实现这套接口。应用调用 <code>read(fd, ...)</code> 时，VFS 根据 fd 找到对应的 <code>file</code> 对象，再调用它挂载的 <code>f_op-&gt;read</code>，从而分发到具体实现。这就是「一切皆文件」的落地方式。VFS 的四个核心对象是 <code>superblock</code>（文件系统整体）、<code>inode</code>（文件元数据）、<code>dentry</code>（路径名到 inode 的缓存）、<code>file</code>（已打开的文件，含读写偏移量）。</p>
-<p><strong>Q：<code>iostat</code> 里 <code>%util</code> 达到 100%，磁盘是不是已经满载了？</strong></p>
-<p><strong>在 SSD 上不是</strong>。<code>%util</code> 的定义是「设备至少有一个请求在处理的时间占比」，这个定义源自机械盘时代——机械盘只有一个磁头，同一时刻只能处理一个请求，所以 100% 确实等于饱和。但 NVMe/SSD 有几十到上千个并行队列，<code>%util=100%</code> 只说明「一直有请求在处理」，可能只用了 5% 的实际能力。判断 SSD 真饱和要看三个条件同时成立：① <code>r_await</code>/<code>w_await</code> 超过设备基准的 3~5 倍（NVMe 基准 &lt; 1ms）；② <code>aqu-sz &gt; 1</code> 且持续增长（请求在排队）；③ IOPS 或吞吐接近设备标称上限。<strong>规律：SSD 时代看 <code>await</code> 和 <code>aqu-sz</code>，不看 <code>%util</code>。</strong></p>
-<p><strong>Q：改了 <code>/etc/security/limits.conf</code>，<code>ulimit -n</code> 也显示 65535，服务还是报 Too many open files，为什么？</strong></p>
-<p>因为 <code>limits.conf</code> 是 <strong>PAM 机制</strong>（<code>pam_limits.so</code>），只在「用户登录」时被应用。systemd 启动服务时不经过 PAM，完全不读这个文件，所以服务进程继承的还是 systemd 的默认值（通常 1024）。而 <code>ulimit -n</code> 显示的是<strong>你当前登录 shell</strong> 的限制，与服务进程无关。正确做法是在 systemd unit 里写 <code>LimitNOFILE=65535</code>，或在 <code>/etc/systemd/system.conf</code> 里设 <code>DefaultLimitNOFILE</code>。<strong>唯一可信的验证方式是 <code>cat /proc/&lt;pid&gt;/limits</code></strong>——这是进程真实生效的限制，其他任何地方看到的都可能是假象。</p>
-<p><strong>Q：进程 fd 数量异常增长，怎么定位是哪一类泄漏？</strong></p>
-<p>先看 <code>/proc/PID/limits</code> 确认限制是否真的生效（不看 <code>ulimit -n</code>，那只是当前 shell 的值）。然后关键一步是<strong>看 fd 的类型分布</strong>：<code>ls -l /proc/PID/fd | awk '{print $NF}' | sed 's/:\[.*//' | sort | uniq -c | sort -rn</code>。socket 占大头是<strong>连接泄漏</strong>，继续用 <code>ss -tanp | grep pid=</code> 看状态——<code>CLOSE-WAIT</code> 堆积说明应用漏了 <code>close()</code>（纯代码 bug，调内核参数无效，详见 <a href="../linux_13_%e7%bd%91%e7%bb%9c%e9%85%8d%e7%bd%ae%e4%b8%8e%e6%8e%92%e6%9f%a5/" rel="">第 13 篇 §3.2</a>）；普通文件占大头是<strong>文件句柄泄漏</strong>，看具体路径通常能直接认出是日志还是临时文件。<strong>注意</strong>：<code>lsof</code> 在 fd 极多时会很慢，直接读 <code>/proc/PID/fd</code> 更快。</p>
-<p><strong>Q：ext4 和 xfs 怎么选？</strong></p>
-<p>关键差异有三点。① <strong>inode 分配</strong>：ext4 的 inode 总数在 <code>mkfs</code> 时固定，<strong>事后无法增加</strong>，海量小文件场景可能空间还有但 inode 耗尽（<code>df -i</code> 看 100%）；xfs 动态分配 inode，没这个问题。② <strong>能否缩容</strong>：ext4 可以缩小（需先卸载），xfs <strong>只能扩大不能缩小</strong>。③ <strong>并发写</strong>：xfs 用 AG（Allocation Group）分组，多线程写不争同一把锁，大文件和高并发写性能更好。所以：数据库、大文件、高并发写选 xfs；需要缩容能力或海量小文件选 ext4；不确定就跟随发行版默认（RHEL 系默认 xfs，Debian 系默认 ext4）。<strong>规划时宁可先给小一点，因为扩容容易缩容难。</strong></p>
-<p><strong>Q：怎么在不停机的情况下给一个已经写满的分区扩容？</strong></p>
-<p>前提是用了 LVM。步骤：① 云上挂载新盘后 <code>pvcreate /dev/vdc</code> 做成物理卷；② <code>vgextend vg_data /dev/vdc</code> 加进现有卷组；③ <code>lvextend -l +100%FREE /dev/vg_data/lv_data</code> 扩展逻辑卷；④ 扩展文件系统——<strong>ext4 用 <code>resize2fs /dev/vg_data/lv_data</code>，xfs 用 <code>xfs_growfs /data</code>（参数是挂载点不是设备）</strong>。全程不需要卸载，业务无感知。如果没用 LVM，只能加新盘挂到别的目录、或者停机迁移数据。<strong>另外 <code>/etc/fstab</code> 必须用 UUID 而不是 <code>/dev/vdb1</code></strong>——加盘后设备名可能漂移导致系统起不来，同时给数据盘加 <code>nofail</code> 让挂载失败不阻塞启动。</p>
-<p><strong>Q：<code>df</code> 显示磁盘 100%，<code>du</code> 加起来却对不上，有哪几种原因？</strong></p>
-<p>三种。① <strong>被删但仍被进程持有</strong>（最常见）：文件已 unlink 但进程还持有 fd，inode 未释放，<code>du</code> 数不到而 <code>df</code> 仍算。用 <code>lsof +L1</code> 定位（<code>NLINK=0</code> 的就是），让持有它的进程 reload 或重启。② <strong>被挂载点遮盖的文件</strong>：先在 <code>/data</code> 目录下写了大量文件，后来挂载新盘到 <code>/data</code>，那些文件仍在原分区上但被遮住了。排查方法是 <code>mount --bind / /mnt/tmp</code> 然后看 <code>du -sh /mnt/tmp/data</code>。③ <strong>ext4 的预留块</strong>：默认给 root 预留 5%，500GB 盘就是 25GB，纯数据盘可以用 <code>tune2fs -m 1</code> 调到 1%。</p>
-<p><strong>Q：IO 调度器该怎么选？网上说的 <code>deadline</code> 还能用吗？</strong></p>
-<p><code>cfq</code>、<code>deadline</code>、<code>noop</code> 这些<strong>单队列调度器在 5.0+ 内核已被移除</strong>，全部换成了 multi-queue 版本，所以网上「改成 deadline」的老文章已经过时——现在应该看有没有 <code>mq-</code> 前缀。现代选型：<strong>NVMe SSD 用 <code>none</code></strong>（SSD 没有寻道，排序和合并纯属浪费 CPU，内核默认就是 none）；SATA SSD 和云盘用 <code>none</code> 或 <code>mq-deadline</code>；机械盘用 <code>mq-deadline</code> 或 <code>bfq</code>；<strong>虚拟机和容器里用 <code>none</code></strong>（宿主机已经调度过一遍了，再调度是重复劳动）。另外两个更值得调的参数是 <code>read_ahead_kb</code>——顺序读大文件时加大（512KB），随机读为主的数据库反而应该减小（16KB）避免读入无用数据。</p>
-<p><strong>Q：<code>/proc/&lt;pid&gt;/io</code> 里的 <code>rchar</code> 和 <code>read_bytes</code> 有什么区别？</strong></p>
-<p><code>rchar</code> 是应用层通过 <code>read()</code> 系统调用读取的总字节数，<strong>包含从 page cache 命中的部分</strong>；<code>read_bytes</code> 是<strong>真正从块设备读上来</strong>的字节数。两者的差值就是 page cache 的贡献，所以 <code>(rchar - read_bytes) / rchar</code> 是一个直接可算的<strong>缓存命中率</strong>。这是评估 page cache 效果最方便的方法——如果命中率很低（比如低于 50%），说明工作集远大于可用内存，加内存会有明显收益。同理 <code>wchar</code> 和 <code>write_bytes</code> 的差值反映了写合并和延迟写的效果。</p>
-<hr>
-<p>上一篇：<a href="../linux_10_%e5%86%85%e5%ad%98%e7%ae%a1%e7%90%86/" rel="">Linux-10 内存管理</a> ｜ 下一篇：<a href="../linux_12_IO%e6%a8%a1%e5%9e%8b%e4%b8%8eepoll/" rel="">Linux-12 IO 模型与 epoll</a></p>
-</div><div class="post-footer" id="post-footer">
-    <div class="post-info">
-        <div class="post-info-line">
-            <div class="post-info-mod">
-                <span>更新于 2026-08-06</span>
-            </div>
-            <div class="post-info-license"></div>
-        </div>
-        <div class="post-info-line">
-            <div class="post-info-md"></div>
-            <div class="post-info-share">
-                <span></span>
-            </div>
-        </div>
-    </div>
-
-    <div class="post-info-more">
-        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/linux/">linux</a></section>
-        <section>
-            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
-        </section>
-    </div>
-
-    <div class="post-nav"><a href="/posts/linux/linux_12_IO%E6%A8%A1%E5%9E%8B%E4%B8%8Eepoll/" class="prev" rel="prev" title="Linux-12 IO 模型与 epoll"><i class="fas fa-angle-left fa-fw"></i>Linux-12 IO 模型与 epoll</a>
-            <a href="/posts/linux/linux_10_%E5%86%85%E5%AD%98%E7%AE%A1%E7%90%86/" class="next" rel="next" title="Linux-10 内存管理">Linux-10 内存管理<i class="fas fa-angle-right fa-fw"></i></a></div>
-</div>
-<div id="comments"><div id="gitalk" class="comment"></div><noscript>
-                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
-            </noscript></div></article></div>
-            </main><footer class="footer">
-        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
-                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
-        </div>
-    </footer></div>
-
-        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
-                <i class="fas fa-arrow-up fa-fw"></i>
-            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
-                <i class="fas fa-comment fa-fw"></i>
-            </a>
-        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2026-08-06T18:00:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Linux-11 文件系统与磁盘 IO"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
-</html>
+<!doctype html><html lang=zh-cn><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><meta name=robots content="noodp"><meta http-equiv=x-ua-compatible content="IE=edge, chrome=1"><title>Linux-11 文件系统与磁盘 IO - xingliuhua博客</title><meta name=Description content="VFS 统一抽象、ext4 与 xfs 的选择、挂载原理、mount/umount 与 fstab、LVM 扩容、IO 调度器的现代选型、iostat 各指标的判读标准、fd 与 ulimit 的真实生效路径、lsof 排查手法"><meta property="og:title" content="Linux-11 文件系统与磁盘 IO"><meta property="og:description" content="VFS 统一抽象、ext4 与 xfs 的选择、挂载原理、mount/umount 与 fstab、LVM 扩容、IO 调度器的现代选型、iostat 各指标的判读标准、fd 与 ulimit 的真实生效路径、lsof 排查手法"><meta property="og:type" content="article"><meta property="og:url" content="https://xingliuhua.github.io/posts/linux/linux_11_%E6%96%87%E4%BB%B6%E7%B3%BB%E7%BB%9F%E4%B8%8E%E7%A3%81%E7%9B%98IO/"><meta property="og:image" content="https://xingliuhua.github.io/logo.png"><meta property="article:section" content="posts"><meta property="article:published_time" content="2026-08-06T18:00:00+08:00"><meta property="article:modified_time" content="2026-08-11T00:00:00+08:00"><meta name=twitter:card content="summary_large_image"><meta name=twitter:image content="https://xingliuhua.github.io/logo.png"><meta name=twitter:title content="Linux-11 文件系统与磁盘 IO"><meta name=twitter:description content="VFS 统一抽象、ext4 与 xfs 的选择、挂载原理、mount/umount 与 fstab、LVM 扩容、IO 调度器的现代选型、iostat 各指标的判读标准、fd 与 ulimit 的真实生效路径、lsof 排查手法"><meta name=application-name content="xingliuhua博客"><meta name=apple-mobile-web-app-title content="xingliuhua博客"><link rel="shortcut icon" type=image/x-icon href=/favicon.ico><link rel=icon type=image/png sizes=32x32 href=/favicon-32x32.png><link rel=icon type=image/png sizes=16x16 href=/favicon-16x16.png><link rel=apple-touch-icon sizes=180x180 href=/apple-touch-icon.png><link rel=manifest href=/site.webmanifest><link rel=canonical href=https://xingliuhua.github.io/posts/linux/linux_11_%E6%96%87%E4%BB%B6%E7%B3%BB%E7%BB%9F%E4%B8%8E%E7%A3%81%E7%9B%98IO/><link rel=prev href=https://xingliuhua.github.io/posts/linux/linux_12_IO%E6%A8%A1%E5%9E%8B%E4%B8%8Eepoll/><link rel=next href=https://xingliuhua.github.io/posts/linux/linux_10_%E5%86%85%E5%AD%98%E7%AE%A1%E7%90%86/><link rel=stylesheet href=/lib/normalize/normalize.min.css><link rel=stylesheet href=/css/style.min.css><link rel=stylesheet href=/lib/fontawesome-free/all.min.css><link rel=stylesheet href=/lib/animate/animate.min.css><script type=application/ld+json>{"@context":"http://schema.org","@type":"BlogPosting","headline":"Linux-11 文件系统与磁盘 IO","inLanguage":"zh-CN","mainEntityOfPage":{"@type":"WebPage","@id":"https:\/\/xingliuhua.github.io\/posts\/linux\/linux_11_%E6%96%87%E4%BB%B6%E7%B3%BB%E7%BB%9F%E4%B8%8E%E7%A3%81%E7%9B%98IO\/"},"genre":"posts","keywords":"linux","wordcount":11022,"url":"https:\/\/xingliuhua.github.io\/posts\/linux\/linux_11_%E6%96%87%E4%BB%B6%E7%B3%BB%E7%BB%9F%E4%B8%8E%E7%A3%81%E7%9B%98IO\/","datePublished":"2026-08-06T18:00:00+08:00","dateModified":"2026-08-11T00:00:00+08:00","publisher":{"@type":"Organization","name":"xingliuhua"},"author":{"@type":"Person","name":"xingliuhua"},"description":"VFS 统一抽象、ext4 与 xfs 的选择、挂载原理、mount/umount 与 fstab、LVM 扩容、IO 调度器的现代选型、iostat 各指标的判读标准、fd 与 ulimit 的真实生效路径、lsof 排查手法"}</script></head><body header-desktop=fixed header-mobile=auto><script type=text/javascript>(window.localStorage&&localStorage.getItem("theme")?localStorage.getItem("theme")==="dark":"auto"==="auto"?window.matchMedia("(prefers-color-scheme: dark)").matches:"auto"==="dark")&&document.body.setAttribute("theme","dark")</script><div id=mask></div><div class=wrapper><header class=desktop id=header-desktop><div class=header-wrapper><div class=header-title><a href=/ title=xingliuhua博客><img class="lazyload logo" src=/svg/loading.min.svg data-src=/logo.png data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x" data-sizes=auto alt=/logo.png title=/logo.png>xingliuhua</a></div><div class=menu><div class=menu-inner><a class=menu-item href=/posts/>文章 </a><a class=menu-item href=/tags/>标签 </a><a class=menu-item href=/categories/>分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id=search-desktop>
+<input type=text placeholder=搜索文章标题或内容... id=search-input-desktop>
+<a href=javascript:void(0); class="search-button search-toggle" id=search-toggle-desktop title=搜索><i class="fas fa-search fa-fw"></i></a>
+<a href=javascript:void(0); class="search-button search-clear" id=search-clear-desktop title=清空><i class="fas fa-times-circle fa-fw"></i></a>
+<span class="search-button search-loading" id=search-loading-desktop><i class="fas fa-spinner fa-fw fa-spin"></i></span>
+</span><a href=javascript:void(0); class="menu-item theme-switch" title=切换主题><i class="fas fa-adjust fa-fw"></i></a></div></div></div></header><header class=mobile id=header-mobile><div class=header-container><div class=header-wrapper><div class=header-title><a href=/ title=xingliuhua博客><img class="lazyload logo" src=/svg/loading.min.svg data-src=/logo.png data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x" data-sizes=auto alt=/logo.png title=/logo.png>xingliuhua</a></div><div class=menu-toggle id=menu-toggle-mobile><span></span><span></span><span></span></div></div><div class=menu id=menu-mobile><div class=search-wrapper><div class="search mobile" id=search-mobile><input type=text placeholder=搜索文章标题或内容... id=search-input-mobile>
+<a href=javascript:void(0); class="search-button search-toggle" id=search-toggle-mobile title=搜索><i class="fas fa-search fa-fw"></i></a>
+<a href=javascript:void(0); class="search-button search-clear" id=search-clear-mobile title=清空><i class="fas fa-times-circle fa-fw"></i></a>
+<span class="search-button search-loading" id=search-loading-mobile><i class="fas fa-spinner fa-fw fa-spin"></i></span></div><a href=javascript:void(0); class=search-cancel id=search-cancel-mobile>取消</a></div><a class=menu-item href=/posts/ title>文章</a><a class=menu-item href=/tags/ title>标签</a><a class=menu-item href=/categories/ title>分类</a><a href=javascript:void(0); class="menu-item theme-switch" title=切换主题>
+<i class="fas fa-adjust fa-fw"></i></a></div></div></header><div class="search-dropdown desktop"><div id=search-dropdown-desktop></div></div><div class="search-dropdown mobile"><div id=search-dropdown-mobile></div></div><main class=main><div class=container><div class=toc id=toc-auto><h2 class=toc-title>目录</h2><div class=toc-content id=toc-content-auto></div></div><article class="page single"><h1 class="single-title animated flipInX">Linux-11 文件系统与磁盘 IO</h1><div class=post-meta><div class=post-meta-line><span class=post-author><a href=https://xingliuhua/github.com.io title=Author target=_blank rel="noopener noreffer author" class=author><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class=post-category>收录于 <a href=/categories/%E7%AC%94%E8%AE%B0/><i class="far fa-folder fa-fw"></i>笔记</a></span></div><div class=post-meta-line><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime=2026-08-06>2026-08-06</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 11022 字&nbsp;
+<i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 22 分钟&nbsp;</div></div><div class="details toc" id=toc-static kept><div class="details-summary toc-title"><span>目录</span>
+<span><i class="details-icon fas fa-angle-right"></i></span></div><div class="details-content toc-content" id=toc-content-static><nav id=TableOfContents><ol><li><a href=#1-vfs一切皆文件的实现层>1. VFS：一切皆文件的实现层</a><ol><li><a href=#11-文件描述符的三层结构>1.1 文件描述符的三层结构</a></li></ol></li><li><a href=#2-ext4-与-xfs怎么选>2. ext4 与 xfs：怎么选</a></li><li><a href=#3-挂载与-fstab>3. 挂载与 fstab</a><ol><li><a href=#31-为什么需要挂载>3.1 为什么需要挂载</a></li><li><a href=#32-如何挂载与取消挂载>3.2 如何挂载与取消挂载</a><ol><li><a href=#临时挂载>临时挂载</a></li><li><a href=#挂载点会遮住原目录内容>挂载点会遮住原目录内容</a></li><li><a href=#取消挂载>取消挂载</a></li><li><a href=#target-is-busy-怎么处理><code>target is busy</code> 怎么处理</a></li><li><a href=#查看当前挂载>查看当前挂载</a></li></ol></li><li><a href=#33-值得关注的挂载选项>3.3 值得关注的挂载选项</a></li><li><a href=#34-fstab配置开机自动挂载>3.4 fstab：配置开机自动挂载</a><ol><li><a href=#为什么使用-uuid>为什么使用 UUID</a></li><li><a href=#修改后如何安全验证>修改后如何安全验证</a></li></ol></li></ol></li><li><a href=#4-lvm在线扩容>4. LVM：在线扩容</a></li><li><a href=#5-io-调度器>5. IO 调度器</a></li><li><a href=#6-iostat判断磁盘是不是瓶颈>6. iostat：判断磁盘是不是瓶颈</a><ol><li><a href=#61-各指标的含义与判读标准>6.1 各指标的含义与判读标准</a></li><li><a href=#62-util-是个陷阱>6.2 %util 是个陷阱</a></li><li><a href=#63-区分随机-io-和顺序-io>6.3 区分随机 IO 和顺序 IO</a></li><li><a href=#64-定位到具体进程>6.4 定位到具体进程</a></li></ol></li><li><a href=#7-df-与-du-对不上的三种原因>7. df 与 du 对不上的三种原因</a></li><li><a href=#8-文件描述符与-ulimit>8. 文件描述符与 ulimit</a><ol><li><a href=#81-三层限制>8.1 三层限制</a></li><li><a href=#82-为什么改了-limitsconf-没用>8.2 为什么改了 limits.conf 没用</a></li><li><a href=#83-容器里的-fd-限制>8.3 容器里的 fd 限制</a></li><li><a href=#84-用-lsof-排查-fd-泄漏>8.4 用 lsof 排查 fd 泄漏</a></li></ol></li><li><a href=#9-实战确认磁盘是不是瓶颈>9. 实战：确认磁盘是不是瓶颈</a></li><li><a href=#命令附录文件系统与磁盘命令>命令附录：文件系统与磁盘命令</a><ol><li><a href=#名称与参数速查>名称与参数速查</a></li><li><a href=#df-与-du-的观察层次><code>df</code> 与 <code>du</code> 的观察层次</a></li></ol></li><li><a href=#10-面试题>10. 面试题</a></li></ol></nav></div></div><div class=content id=content><blockquote><p>前置阅读：<a href=../linux_02_%e6%96%87%e4%bb%b6%e9%93%be%e6%8e%a5%e4%b8%8e%e5%bd%92%e6%a1%a3%e5%8e%8b%e7%bc%a9/ rel>Linux-02 文件、链接与归档压缩</a>、<a href=../linux_10_%e5%86%85%e5%ad%98%e7%ae%a1%e7%90%86/ rel>Linux-10 内存管理</a></p></blockquote><p>第 2 篇讲了 inode 和文件操作，这一篇往下走一层：<strong>文件系统怎么组织磁盘、IO 请求怎么到达硬件、以及怎么判断磁盘是不是瓶颈</strong>。</p><p><code>iostat</code> 的指标判读是本篇的核心——「磁盘慢」是个笼统的说法，<code>await</code> 高、<code>%util</code> 高、<code>aqu-sz</code> 高分别对应完全不同的原因和处理方式。</p><h1 id=1-vfs一切皆文件的实现层>1. VFS：一切皆文件的实现层</h1><p>一句话：<strong>VFS（Virtual File System）是内核提供的统一抽象层，让 <code>read()</code>/<code>write()</code> 能作用于任何东西——磁盘文件、管道、socket、设备、甚至 <code>/proc</code> 里的虚拟内容。</strong></p><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>        应用程序
+</span></span><span class=line><span class=cl>     read() / write()
+</span></span><span class=line><span class=cl>            v
+</span></span><span class=line><span class=cl>    +---------------+
+</span></span><span class=line><span class=cl>    |      VFS      |   统一接口：file_operations 结构体
+</span></span><span class=line><span class=cl>    +-------+-------+
+</span></span><span class=line><span class=cl>            v
+</span></span><span class=line><span class=cl>  +-----+-----+-----+------+-----+
+</span></span><span class=line><span class=cl>  |ext4 | xfs |tmpfs|procfs| NFS |   各文件系统实现同一套接口
+</span></span><span class=line><span class=cl>  +--+--+--+--+-----+------+-----+
+</span></span><span class=line><span class=cl>     v     v
+</span></span><span class=line><span class=cl>  +-------------+
+</span></span><span class=line><span class=cl>  |  page cache |
+</span></span><span class=line><span class=cl>  +------+------+
+</span></span><span class=line><span class=cl>         v
+</span></span><span class=line><span class=cl>  +-------------+
+</span></span><span class=line><span class=cl>  |  块设备层   |   IO 调度、合并、排序
+</span></span><span class=line><span class=cl>  +------+------+
+</span></span><span class=line><span class=cl>         v
+</span></span><span class=line><span class=cl>  +-------------+
+</span></span><span class=line><span class=cl>  | 设备驱动    |
+</span></span><span class=line><span class=cl>  +------+------+
+</span></span><span class=line><span class=cl>         v
+</span></span><span class=line><span class=cl>      物理磁盘
+</span></span></code></pre></div><p><strong>VFS 的核心是四个对象</strong>：</p><table><thead><tr><th>对象</th><th>含义</th></tr></thead><tbody><tr><td><code>superblock</code></td><td>一个已挂载的文件系统的整体信息</td></tr><tr><td><code>inode</code></td><td>一个文件的元数据（第 2 篇讲过）</td></tr><tr><td><code>dentry</code></td><td>目录项，缓存「路径名 → inode」的映射</td></tr><tr><td><code>file</code></td><td>一个<strong>已打开</strong>的文件，含读写偏移量</td></tr></tbody></table><p><strong><code>dentry</code> 缓存的作用容易被忽略</strong>——解析 <code>/var/log/nginx/access.log</code> 要逐级查找 4 层目录，每层都要读 inode。dentry 缓存把结果记下来，避免重复解析：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># 查看 dentry 和 inode 缓存占用</span>
+</span></span><span class=line><span class=cl>cat /proc/meminfo <span class=p>|</span> grep -i slab
+</span></span><span class=line><span class=cl><span class=c1># Slab:            1048576 kB</span>
+</span></span><span class=line><span class=cl><span class=c1># SReclaimable:     892340 kB      &lt;- 可回收的（dentry/inode 缓存主要在这）</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>slabtop -o <span class=p>|</span> head -8
+</span></span><span class=line><span class=cl><span class=c1>#  OBJS ACTIVE  USE OBJ SIZE  SLABS CACHE SIZE NAME</span>
+</span></span><span class=line><span class=cl><span class=c1># 823410 812340  98%    0.19K  39210      21    156840K dentry</span>
+</span></span><span class=line><span class=cl><span class=c1># 412034 401234  97%    0.58K  15242      27    243872K ext4_inode_cache</span>
+</span></span></code></pre></div><blockquote><p>坑：<strong>海量小文件的目录遍历会让 dentry 缓存暴涨</strong>。有个几千万文件的目录被 <code>find</code> 扫过之后，<code>slab</code> 可能占掉几 GB。它是可回收的（<code>SReclaimable</code>），但在容器里<strong>会算进 cgroup 内存限制</strong>，可能直接导致 OOM。这是「容器里跑 <code>find</code> 或备份任务突然 OOM」的一个隐蔽原因。</p></blockquote><h2 id=11-文件描述符的三层结构>1.1 文件描述符的三层结构</h2><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>进程 A                        内核
+</span></span><span class=line><span class=cl>+--------------+
+</span></span><span class=line><span class=cl>| fd 表        |
+</span></span><span class=line><span class=cl>|  0 -&gt; -------+--&gt; +----------------+
+</span></span><span class=line><span class=cl>|  1 -&gt; -------+--&gt; | file 对象      |   含读写偏移量、打开模式
+</span></span><span class=line><span class=cl>|  3 -&gt; -------+--&gt; | +- f_pos       |
+</span></span><span class=line><span class=cl>+--------------+    | +- f_inode ----+--&gt; +----------+
+</span></span><span class=line><span class=cl>                    +----------------+    |  inode   |  文件元数据
+</span></span><span class=line><span class=cl>进程 B                                    | (元数据) |
+</span></span><span class=line><span class=cl>+--------------+                          +----------+
+</span></span><span class=line><span class=cl>|  4 -&gt; -------+--&gt; +----------------+          ^
+</span></span><span class=line><span class=cl>+--------------+    | 另一个 file    |----------+
+</span></span><span class=line><span class=cl>                    | (独立的偏移量) |
+</span></span><span class=line><span class=cl>                    +----------------+
+</span></span></code></pre></div><p><strong>三层结构解释了几个现象</strong>：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># ① 两个进程各自 open 同一个文件 -&gt; 各有独立的偏移量，互不影响</span>
+</span></span><span class=line><span class=cl><span class=c1># ② fork 后父子共享 file 对象 -&gt; 共享偏移量！一方读了另一方也会前进</span>
+</span></span><span class=line><span class=cl><span class=c1># ③ dup2 复制 fd -&gt; 指向同一个 file 对象，共享偏移量</span>
+</span></span><span class=line><span class=cl><span class=c1>#    这就是 shell 重定向 2&gt;&amp;1 的原理（第 5 篇）</span>
+</span></span></code></pre></div><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># 实际查看 fd 的指向</span>
+</span></span><span class=line><span class=cl>ls -l /proc/1234/fd/
+</span></span><span class=line><span class=cl><span class=c1># lrwx------ 1 app app 64 Aug 6 22:00 0 -&gt; /dev/null</span>
+</span></span><span class=line><span class=cl><span class=c1># lrwx------ 1 app app 64 Aug 6 22:00 1 -&gt; pipe:[89234]</span>
+</span></span><span class=line><span class=cl><span class=c1># lrwx------ 1 app app 64 Aug 6 22:00 3 -&gt; /var/log/app.log</span>
+</span></span><span class=line><span class=cl><span class=c1># lrwx------ 1 app app 64 Aug 6 22:00 4 -&gt; socket:[92341]</span>
+</span></span><span class=line><span class=cl><span class=c1># lrwx------ 1 app app 64 Aug 6 22:00 5 -&gt; anon_inode:[eventpoll]  &lt;- epoll 实例</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 看某个 fd 的详细信息，包括偏移量</span>
+</span></span><span class=line><span class=cl>cat /proc/1234/fdinfo/3
+</span></span><span class=line><span class=cl><span class=c1># pos:	1048576          &lt;- 当前读写偏移</span>
+</span></span><span class=line><span class=cl><span class=c1># flags:	02100002</span>
+</span></span><span class=line><span class=cl><span class=c1># mnt_id:	29</span>
+</span></span></code></pre></div><h1 id=2-ext4-与-xfs怎么选>2. ext4 与 xfs：怎么选</h1><p>现代 Linux 上的实际选择基本就这两个。</p><table><thead><tr><th>维度</th><th>ext4</th><th>xfs</th></tr></thead><tbody><tr><td>inode 分配</td><td><strong>mkfs 时固定</strong>，事后无法增加</td><td><strong>动态分配</strong>，不会耗尽</td></tr><tr><td>能否缩小</td><td>能（<code>resize2fs</code>）</td><td><strong>不能</strong>，只能扩大</td></tr><tr><td>大文件性能</td><td>好</td><td><strong>更好</strong>（extent + 延迟分配更成熟）</td></tr><tr><td>海量小文件</td><td>好</td><td>略差</td></tr><tr><td>并发写入</td><td>一般</td><td><strong>更好</strong>（AG 分组，多线程写不争锁）</td></tr><tr><td>单文件上限</td><td>16 TB</td><td>8 EB</td></tr><tr><td>默认于</td><td>Debian/Ubuntu</td><td><strong>RHEL 7+ / Rocky</strong></td></tr><tr><td>修复工具</td><td><code>fsck.ext4</code></td><td><code>xfs_repair</code>（需先卸载）</td></tr></tbody></table><p><strong>决策建议</strong>：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>数据库、大文件、高并发写   -&gt; xfs
+</span></span><span class=line><span class=cl>需要能缩容、海量小文件      -&gt; ext4
+</span></span><span class=line><span class=cl>不确定、跟随发行版默认      -&gt; 都行，差异在大多数场景下不明显
+</span></span></code></pre></div><p><strong>ext4 最需要警惕的是 inode 耗尽</strong>（第 2 篇讲过）——<code>mkfs</code> 时确定的 inode 总数无法事后增加：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>df -i /data
+</span></span><span class=line><span class=cl><span class=c1># Filesystem      Inodes  IUsed IFree IUse% Mounted on</span>
+</span></span><span class=line><span class=cl><span class=c1># /dev/vdb1     32768000 32768000    0  100% /data      &lt;- 空间还有，但建不了文件</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 格式化时提高 inode 密度（每 8KB 一个 inode，默认是 16KB）</span>
+</span></span><span class=line><span class=cl>mkfs.ext4 -i <span class=m>8192</span> /dev/vdb1
+</span></span><span class=line><span class=cl><span class=c1># 或用预设的 profile</span>
+</span></span><span class=line><span class=cl>mkfs.ext4 -T small /dev/vdb1     <span class=c1># small = 适合小文件多的场景</span>
+</span></span></code></pre></div><p><strong>xfs 没有这个问题</strong>（动态分配 inode），这是选它的一个实际理由。</p><h1 id=3-挂载与-fstab>3. 挂载与 fstab</h1><p>Linux 里的磁盘为什么需要“挂载”？先把三个对象分清：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>块设备                 文件系统                挂载点
+</span></span><span class=line><span class=cl>/dev/vdb1   --包含--&gt;   xfs / ext4   --接入--&gt;  /data
+</span></span></code></pre></div><ul><li><strong>块设备</strong>提供按块读写的存储空间，本身只是一串扇区或逻辑块。</li><li><strong>文件系统</strong>用 inode、目录项等结构把这些块组织成文件和目录。</li><li><strong>挂载点</strong>是现有目录树中的一个目录，作为进入这个文件系统的入口。</li></ul><h2 id=31-为什么需要挂载>3.1 为什么需要挂载</h2><p>Windows 给不同文件系统分配 <code>C:</code>、<code>D:</code> 等盘符；Linux 只有一棵从根目录 <code>/</code> 开始的目录树。新接入的磁盘即使已经有 ext4 或 xfs 文件系统，也必须先决定“接到这棵树的哪个位置”，程序才能用普通路径访问它。</p><p>例如：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>mount /dev/vdb1 /data
+</span></span></code></pre></div><p>这句话的含义是：**把 <code>/dev/vdb1</code> 中的文件系统接到 <code>/data</code>，之后访问 <code>/data/...</code> 就是在访问这块盘。**内核层面是 VFS 在当前 mount namespace 中建立“挂载点 → 文件系统根目录”的关联。</p><p>根目录 <code>/</code> 自己也是挂载出来的，只是在启动早期由内核和 initramfs 完成。<code>/proc</code>、<code>/sys</code>、<code>/dev/shm</code> 也都是挂载点，只是背后分别是 procfs、sysfs、tmpfs 等虚拟或内存文件系统，而不一定是物理磁盘。</p><blockquote><p><strong>挂载不等于格式化。</strong><code>mount</code> 只是连接已有文件系统，不会创建文件系统；<code>mkfs.ext4</code>、<code>mkfs.xfs</code> 才会重新创建文件系统，通常会破坏设备上的原有数据。看到挂载失败时，绝不能把 <code>mkfs</code> 当成随手尝试的修复命令。</p></blockquote><p>通常挂载的是包含文件系统的<strong>分区</strong>（如 <code>/dev/vdb1</code>）或 LVM 逻辑卷，而不是不加判断地挂载整块物理磁盘 <code>/dev/vdb</code>。先用下面的命令确认：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>lsblk -f                       <span class=c1># list block devices，并显示文件系统信息</span>
+</span></span><span class=line><span class=cl>lsblk -o NAME,SIZE,FSTYPE,UUID,MOUNTPOINTS  <span class=c1># 自定义列，适合对照下面的输出</span>
+</span></span><span class=line><span class=cl>blkid /dev/vdb1                <span class=c1># block device ID：查看 TYPE、UUID</span>
+</span></span><span class=line><span class=cl>findmnt                        <span class=c1># 查看当前挂载树</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 示例</span>
+</span></span><span class=line><span class=cl><span class=c1># NAME   FSTYPE UUID          SIZE MOUNTPOINTS</span>
+</span></span><span class=line><span class=cl><span class=c1># vda                         100G</span>
+</span></span><span class=line><span class=cl><span class=c1># └─vda1 ext4   root-uuid     100G /</span>
+</span></span><span class=line><span class=cl><span class=c1># vdb                         500G</span>
+</span></span><span class=line><span class=cl><span class=c1># └─vdb1 xfs    data-uuid     500G</span>
+</span></span></code></pre></div><p>从示例可知 <code>/dev/vdb1</code> 已经有 xfs，但 <code>MOUNTPOINTS</code> 为空，说明它尚未接入目录树。</p><h2 id=32-如何挂载与取消挂载>3.2 如何挂载与取消挂载</h2><h3 id=临时挂载>临时挂载</h3><p>临时挂载分三步：准备空目录、执行挂载、验证结果。</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># ① 创建挂载点；/mnt 常用于临时挂载，长期数据也常直接使用 /data</span>
+</span></span><span class=line><span class=cl>mkdir -p /mnt/data
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># ② 挂载；下面两种写法二选一</span>
+</span></span><span class=line><span class=cl><span class=c1># 大多数情况下 mount 能自动识别文件系统类型</span>
+</span></span><span class=line><span class=cl>mount /dev/vdb1 /mnt/data
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 或者用 -t（type）显式指定</span>
+</span></span><span class=line><span class=cl>mount -t xfs /dev/vdb1 /mnt/data
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># ③ 验证设备、类型、选项和容量</span>
+</span></span><span class=line><span class=cl>findmnt /mnt/data
+</span></span><span class=line><span class=cl>df -hT /mnt/data
+</span></span></code></pre></div><p>示例省略了 <code>sudo</code>。普通用户通常没有挂载权限，实际操作时应使用 root 或在命令前加 <code>sudo</code>。这类命令改变系统状态，执行前必须把示例设备名替换成经过 <code>lsblk -f</code> 核对的真实设备。</p><p>不写入 <code>/etc/fstab</code> 的挂载通常在重启后消失，因此叫临时挂载。桌面环境自动识别 U 盘，也是 udisks 等服务替你完成了同一类挂载操作。</p><h3 id=挂载点会遮住原目录内容>挂载点会遮住原目录内容</h3><p>挂载点最好是空目录。假设 <code>/mnt/data</code> 原来有 <code>old.txt</code>，把新文件系统挂到这里以后，<code>old.txt</code> 会暂时看不见：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>挂载前：/mnt/data/old.txt       &lt;- 根文件系统里的文件
+</span></span><span class=line><span class=cl>挂载后：/mnt/data/new.txt       &lt;- /dev/vdb1 里的文件
+</span></span><span class=line><span class=cl>卸载后：/mnt/data/old.txt       &lt;- 原文件重新出现
+</span></span></code></pre></div><p>原文件没有被删除，只是被新挂载的文件系统遮住了。这也是“<code>df</code> 显示空间被占用，但 <code>du</code> 找不到文件”的一种原因：文件可能藏在挂载点下面。</p><h3 id=取消挂载>取消挂载</h3><p>取消挂载的命令拼写为 <code>umount</code>，不是 <code>unmount</code>：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># 推荐按挂载点卸载，语义最明确</span>
+</span></span><span class=line><span class=cl>umount /mnt/data
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 也可以按设备卸载</span>
+</span></span><span class=line><span class=cl>umount /dev/vdb1
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 确认已经不在挂载树中；无输出表示没有该挂载</span>
+</span></span><span class=line><span class=cl>findmnt /mnt/data
+</span></span></code></pre></div><p>卸载不会删除磁盘里的文件，只是解除文件系统与目录树的连接。正常 <code>umount</code> 会处理文件系统所需的同步和收尾，卸载成功后再拔除移动设备。</p><h3 id=target-is-busy-怎么处理><code>target is busy</code> 怎么处理</h3><p>如果当前终端停在挂载点中，或者某个进程仍在读写文件，内核会拒绝卸载：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>umount: /mnt/data: target is busy
+</span></span></code></pre></div><p>按下面的顺序排查：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># ① 当前 Shell 不能停留在要卸载的目录中</span>
+</span></span><span class=line><span class=cl><span class=nb>cd</span> /
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># ② 检查下面是否还有子挂载点；有就先卸载子挂载</span>
+</span></span><span class=line><span class=cl>findmnt -R /mnt/data
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># ③ 找出正在使用该文件系统的进程</span>
+</span></span><span class=line><span class=cl>fuser -vm /mnt/data
+</span></span><span class=line><span class=cl>lsof +D /mnt/data              <span class=c1># 目录很大时递归扫描可能较慢</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># ④ 停止或迁移相关进程后，重新正常卸载</span>
+</span></span><span class=line><span class=cl>umount /mnt/data
+</span></span></code></pre></div><p>两个应急选项不要滥用：</p><table><thead><tr><th>选项</th><th>全称</th><th>行为与风险</th></tr></thead><tbody><tr><td><code>umount -l</code></td><td><strong>lazy</strong></td><td>先从目录树移除，等引用释放后再清理；进程可能继续持有旧文件系统</td></tr><tr><td><code>umount -f</code></td><td><strong>force</strong></td><td>强制卸载，主要用于失联的 NFS 等网络文件系统；可能导致未完成的 IO 或数据问题</td></tr></tbody></table><p>日常操作应优先找到占用者并正常卸载，不能用 <code>-l</code> 或 <code>-f</code> 掩盖“谁还在使用磁盘”这个问题。</p><h3 id=查看当前挂载>查看当前挂载</h3><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>findmnt
+</span></span><span class=line><span class=cl><span class=c1># TARGET       SOURCE    FSTYPE OPTIONS</span>
+</span></span><span class=line><span class=cl><span class=c1># /            /dev/vda1 ext4   rw,relatime</span>
+</span></span><span class=line><span class=cl><span class=c1># /data        /dev/vdb1 xfs    rw,noatime,nodiratime</span>
+</span></span><span class=line><span class=cl><span class=c1># /dev/shm     tmpfs     tmpfs  rw,nosuid,nodev</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 比 mount 命令的输出好读</span>
+</span></span><span class=line><span class=cl>mount <span class=p>|</span> column -t <span class=p>|</span> head -5
+</span></span></code></pre></div><h2 id=33-值得关注的挂载选项>3.3 值得关注的挂载选项</h2><table><thead><tr><th>选项</th><th>作用</th><th>建议</th></tr></thead><tbody><tr><td><code>noatime</code></td><td><strong>不更新访问时间</strong></td><td><strong>数据盘推荐</strong>，减少无意义的写</td></tr><tr><td><code>relatime</code></td><td>折中：仅当 atime &lt; mtime 或超 24h 才更新</td><td>现代默认值</td></tr><tr><td><code>nodiratime</code></td><td>目录不更新 atime</td><td>配合 noatime</td></tr><tr><td><code>nosuid</code></td><td>忽略 SUID 位</td><td><strong>用户可写的分区必加</strong>（第 3 篇）</td></tr><tr><td><code>nodev</code></td><td>不识别设备文件</td><td>同上</td></tr><tr><td><code>noexec</code></td><td>禁止执行文件</td><td><code>/tmp</code>、上传目录</td></tr><tr><td><code>discard</code></td><td>实时 TRIM</td><td><strong>不推荐</strong>，用定时 <code>fstrim</code> 代替</td></tr><tr><td><code>data=writeback</code></td><td>ext4 日志只记元数据</td><td>性能好但崩溃可能丢数据</td></tr></tbody></table><p><strong><code>noatime</code> 是最实用的一项</strong>。默认的 <code>relatime</code> 仍然会在某些情况下产生写操作——对于读多写少的场景（静态资源服务、日志读取），这些写是纯粹的浪费：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># /etc/fstab</span>
+</span></span><span class=line><span class=cl>/dev/vdb1  /data  xfs  defaults,noatime,nodiratime  <span class=m>0</span> <span class=m>0</span>
+</span></span></code></pre></div><blockquote><p>坑：<strong><code>discard</code>（实时 TRIM）会让删除操作变慢</strong>，因为每次删文件都要给 SSD 发 TRIM 命令。推荐改用定时批量 TRIM：</p></blockquote><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># 用 systemd timer 每周做一次批量 TRIM（现代发行版默认已启用）</span>
+</span></span><span class=line><span class=cl>systemctl <span class=nb>enable</span> --now fstrim.timer
+</span></span><span class=line><span class=cl>systemctl status fstrim.timer
+</span></span></code></pre></div><h2 id=34-fstab配置开机自动挂载>3.4 fstab：配置开机自动挂载</h2><p>临时执行 <code>mount</code> 只修改当前运行状态。想让系统重启后自动恢复挂载，需要写入 <code>/etc/fstab</code>。<code>fstab</code> 是 <strong>file systems table</strong>，每条记录有六列：</p><table><thead><tr><th>列</th><th>示例</th><th>含义</th></tr></thead><tbody><tr><td>1. 设备</td><td><code>UUID=a1b2...</code></td><td>要挂载的文件系统，推荐使用 UUID</td></tr><tr><td>2. 挂载点</td><td><code>/data</code></td><td>接入目录树的位置，目录需要提前存在</td></tr><tr><td>3. 类型</td><td><code>xfs</code></td><td>文件系统类型，如 <code>xfs</code>、<code>ext4</code></td></tr><tr><td>4. 选项</td><td><code>defaults,noatime,nofail</code></td><td>多个挂载选项用逗号分隔</td></tr><tr><td>5. dump</td><td><code>0</code></td><td>是否参与传统 dump 备份，现代系统通常填 0</td></tr><tr><td>6. fsck 顺序</td><td><code>0</code> / <code>1</code> / <code>2</code></td><td>根文件系统常为 1，其他需要检查的本地文件系统为 2，XFS 等填 0</td></tr></tbody></table><h3 id=为什么使用-uuid>为什么使用 UUID</h3><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># ❌ 设备名不稳定：加了新盘或改了顺序，/dev/vdb 可能变成 /dev/vdc</span>
+</span></span><span class=line><span class=cl>/dev/vdb1  /data  xfs  defaults  <span class=m>0</span> <span class=m>0</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># ✅ 用 UUID</span>
+</span></span><span class=line><span class=cl><span class=nv>UUID</span><span class=o>=</span>a1b2c3d4-...  /data  xfs  defaults,noatime,nofail  <span class=m>0</span> <span class=m>0</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 查 UUID</span>
+</span></span><span class=line><span class=cl>blkid
+</span></span><span class=line><span class=cl>lsblk -o NAME,SIZE,FSTYPE,UUID,MOUNTPOINT
+</span></span></code></pre></div><p><strong>「加了一块盘之后系统起不来」的经典原因就是设备名漂移</strong>——<code>/etc/fstab</code> 里写的 <code>/dev/vdb1</code> 变成了别的盘，挂载失败导致系统进入紧急模式。</p><h3 id=修改后如何安全验证>修改后如何安全验证</h3><p><code>fstab</code> 写错可能导致系统启动时进入 emergency mode。修改后不要直接重启，先检查语法，再实际测试：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># 检查 fstab 的可解析性、挂载点和 UUID</span>
+</span></span><span class=line><span class=cl>findmnt --verify --verbose
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># systemd 系统修改 fstab 后重新加载配置</span>
+</span></span><span class=line><span class=cl>systemctl daemon-reload
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 实际测试所有尚未挂载的 fstab 条目</span>
+</span></span><span class=line><span class=cl>mount -a
+</span></span><span class=line><span class=cl><span class=c1># 无输出通常表示成功；有报错先修复，不要重启</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 最后验证目标挂载关系</span>
+</span></span><span class=line><span class=cl>findmnt /data
+</span></span></code></pre></div><p><code>nofail</code> 适合“缺少这块数据盘也必须允许系统启动”的可选磁盘：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>UUID=xxx  /data  xfs  defaults,noatime,nofail  0 0
+</span></span></code></pre></div><p>但 <code>nofail</code> 不是所有数据盘都应该默认添加。如果业务必须依赖 <code>/data</code>，静默跳过挂载可能让程序误写到根文件系统中的空 <code>/data</code> 目录，反而更危险。这种场景应让服务明确依赖挂载点，例如在 systemd unit 中使用 <code>RequiresMountsFor=/data</code>，让缺盘变成可见的启动失败。</p><h1 id=4-lvm在线扩容>4. LVM：在线扩容</h1><p>云上加盘扩容是常见运维操作，LVM 让它可以在<strong>不停机</strong>的情况下完成。</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>物理卷 PV (Physical Volume)     &lt;- 实际的磁盘或分区 /dev/vdb1
+</span></span><span class=line><span class=cl>       v 组成
+</span></span><span class=line><span class=cl>卷组   VG (Volume Group)        &lt;- 一个&#34;资源池&#34;
+</span></span><span class=line><span class=cl>       v 划分
+</span></span><span class=line><span class=cl>逻辑卷 LV (Logical Volume)      &lt;- 给文件系统用 /dev/vg_data/lv_data
+</span></span></code></pre></div><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># 查看三层结构</span>
+</span></span><span class=line><span class=cl>pvs<span class=p>;</span> vgs<span class=p>;</span> lvs
+</span></span><span class=line><span class=cl><span class=c1>#   PV         VG      Fmt  Attr PSize   PFree</span>
+</span></span><span class=line><span class=cl><span class=c1>#   /dev/vdb1  vg_data lvm2 a--  500.00g    0</span>
+</span></span><span class=line><span class=cl><span class=c1>#   VG      #PV #LV #SN Attr   VSize   VFree</span>
+</span></span><span class=line><span class=cl><span class=c1>#   vg_data   1   1   0 wz--n- 500.00g    0</span>
+</span></span><span class=line><span class=cl><span class=c1>#   LV      VG      Attr       LSize</span>
+</span></span><span class=line><span class=cl><span class=c1>#   lv_data vg_data -wi-ao---- 500.00g</span>
+</span></span></code></pre></div><p><strong>扩容的完整流程</strong>（云上加了一块 500GB 新盘 <code>/dev/vdc</code>）：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># ① 把新盘做成 PV</span>
+</span></span><span class=line><span class=cl>pvcreate /dev/vdc
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># ② 加进现有的 VG</span>
+</span></span><span class=line><span class=cl>vgextend vg_data /dev/vdc
+</span></span><span class=line><span class=cl>vgs
+</span></span><span class=line><span class=cl><span class=c1>#   VG      #PV #LV VSize VFree</span>
+</span></span><span class=line><span class=cl><span class=c1>#   vg_data   2   1 1000g 500g      &lt;- 池子变成 1TB</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># ③ 扩展 LV，吃掉所有空闲空间</span>
+</span></span><span class=line><span class=cl>lvextend -l +100%FREE /dev/vg_data/lv_data
+</span></span></code></pre></div><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># ④ 扩展文件系统 —— 注意两种文件系统命令不同</span>
+</span></span><span class=line><span class=cl>resize2fs /dev/vg_data/lv_data        <span class=c1># ext4</span>
+</span></span><span class=line><span class=cl>xfs_growfs /data                      <span class=c1># xfs，参数是【挂载点】不是设备</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># ⑤ 验证</span>
+</span></span><span class=line><span class=cl>df -h /data
+</span></span><span class=line><span class=cl><span class=c1># /dev/mapper/vg_data-lv_data  1000G  423G  577G  43% /data</span>
+</span></span></code></pre></div><p>**全程不需要卸载，业务无感知。**这是 LVM 最大的价值。</p><blockquote><p>注意：<strong>xfs 只能扩大不能缩小</strong>。如果需要缩容，只能备份数据、重建文件系统、恢复数据。ext4 可以缩小但必须先卸载（<code>umount</code> → <code>e2fsck -f</code> → <code>resize2fs</code> 缩小 → <code>lvreduce</code>），且顺序错了会丢数据。<strong>规划分区时宁可先给小一点，因为扩容容易缩容难。</strong></p></blockquote><h1 id=5-io-调度器>5. IO 调度器</h1><p>块设备层会对 IO 请求做<strong>合并</strong>和<strong>排序</strong>再下发给硬件。调度器决定这个策略。</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># 查看当前调度器</span>
+</span></span><span class=line><span class=cl>cat /sys/block/vda/queue/scheduler
+</span></span><span class=line><span class=cl><span class=c1># [none] mq-deadline kyber bfq</span>
+</span></span><span class=line><span class=cl><span class=c1>#  ^^^^ 方括号里是当前生效的</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 临时切换</span>
+</span></span><span class=line><span class=cl><span class=nb>echo</span> mq-deadline &gt; /sys/block/vda/queue/scheduler
+</span></span></code></pre></div><table><thead><tr><th>调度器</th><th>适用</th><th>说明</th></tr></thead><tbody><tr><td><code>none</code></td><td><strong>NVMe SSD</strong></td><td>不排序不合并，直接下发。SSD 没有寻道，排序无意义</td></tr><tr><td><code>mq-deadline</code></td><td>SATA SSD、云盘</td><td>保证请求不会饿死，有读优先倾向</td></tr><tr><td><code>kyber</code></td><td>高速 SSD</td><td>按延迟目标自适应节流</td></tr><tr><td><code>bfq</code></td><td>桌面、机械盘</td><td>保证交互进程的公平性，服务器上开销偏大</td></tr></tbody></table><p><strong>现代选型很简单</strong>：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>NVMe SSD          -&gt; none        （内核默认就是这个）
+</span></span><span class=line><span class=cl>SATA SSD / 云盘   -&gt; mq-deadline  或 none
+</span></span><span class=line><span class=cl>机械盘            -&gt; mq-deadline  或 bfq
+</span></span><span class=line><span class=cl>虚拟机 / 容器      -&gt; none        （宿主机已经调度过了，再调度是浪费）
+</span></span></code></pre></div><p><strong>关键认知：<code>cfq</code> 和 <code>deadline</code> 这些单队列调度器在 5.0+ 内核已被移除</strong>，全部换成了 multi-queue 版本。网上很多「把调度器改成 deadline」的老文章已经过时——现在应该看有没有 <code>mq-</code> 前缀。</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># 持久化配置（用 udev 规则，按设备类型自动设置）</span>
+</span></span><span class=line><span class=cl>cat &gt; /etc/udev/rules.d/60-scheduler.rules <span class=s>&lt;&lt;&#39;EOF&#39;
+</span></span></span><span class=line><span class=cl><span class=s># NVMe 用 none
+</span></span></span><span class=line><span class=cl><span class=s>ACTION==&#34;add|change&#34;, KERNEL==&#34;nvme[0-9]*n[0-9]*&#34;, ATTR{queue/scheduler}=&#34;none&#34;
+</span></span></span><span class=line><span class=cl><span class=s># 旋转磁盘用 mq-deadline
+</span></span></span><span class=line><span class=cl><span class=s>ACTION==&#34;add|change&#34;, KERNEL==&#34;sd[a-z]&#34;, ATTR{queue/rotational}==&#34;1&#34;, ATTR{queue/scheduler}=&#34;mq-deadline&#34;
+</span></span></span><span class=line><span class=cl><span class=s>EOF</span>
+</span></span></code></pre></div><p><strong>另外两个值得调的队列参数</strong>：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># 队列深度：允许多少请求同时在飞</span>
+</span></span><span class=line><span class=cl>cat /sys/block/nvme0n1/queue/nr_requests
+</span></span><span class=line><span class=cl><span class=c1># 1023</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 预读大小（KB）—— 顺序读大文件时加大有收益</span>
+</span></span><span class=line><span class=cl>cat /sys/block/vda/queue/read_ahead_kb
+</span></span><span class=line><span class=cl><span class=c1># 128</span>
+</span></span><span class=line><span class=cl><span class=nb>echo</span> <span class=m>512</span> &gt; /sys/block/vda/queue/read_ahead_kb    <span class=c1># 顺序扫描场景</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 随机 IO 为主的场景（数据库）反而应该减小预读，避免读入无用数据</span>
+</span></span><span class=line><span class=cl><span class=nb>echo</span> <span class=m>16</span> &gt; /sys/block/vda/queue/read_ahead_kb
+</span></span></code></pre></div><p>**规律：顺序读加大 <code>read_ahead_kb</code>，随机读减小它。**默认 128KB 是个折中值。</p><h1 id=6-iostat判断磁盘是不是瓶颈>6. iostat：判断磁盘是不是瓶颈</h1><p><strong>这是本篇最实用的一节。</strong></p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>iostat -x <span class=m>1</span> <span class=m>3</span>
+</span></span><span class=line><span class=cl><span class=c1># 注意：第一组数据是【开机至今的平均值】，要看第二组之后的</span>
+</span></span><span class=line><span class=cl><span class=c1>#</span>
+</span></span><span class=line><span class=cl><span class=c1># Device  r/s   w/s  rkB/s   wkB/s  rrqm/s wrqm/s %rrqm %wrqm r_await w_await aqu-sz rareq-sz wareq-sz  svctm  %util</span>
+</span></span><span class=line><span class=cl><span class=c1># nvme0n1 120.0 890.0 4800.0 89000.0   2.0   45.0   1.6   4.8    0.42    2.31   2.14     40.0    100.0   0.00  45.20</span>
+</span></span></code></pre></div><h2 id=61-各指标的含义与判读标准>6.1 各指标的含义与判读标准</h2><table><thead><tr><th>指标</th><th>含义</th><th>判读标准</th></tr></thead><tbody><tr><td><code>r/s</code> <code>w/s</code></td><td>每秒读/写次数（<strong>IOPS</strong>）</td><td>与设备能力对比</td></tr><tr><td><code>rkB/s</code> <code>wkB/s</code></td><td>每秒读/写数据量（<strong>吞吐</strong>）</td><td>与设备带宽对比</td></tr><tr><td><code>rrqm/s</code> <code>wrqm/s</code></td><td>每秒被<strong>合并</strong>的请求数</td><td>高说明有顺序 IO 被合并了，是好事</td></tr><tr><td><code>r_await</code> <code>w_await</code></td><td><strong>平均等待时间</strong>（含排队+服务，ms）</td><td><strong>最重要的指标</strong>，见下</td></tr><tr><td><code>aqu-sz</code></td><td>平均队列长度</td><td><strong>> 1 说明在排队</strong></td></tr><tr><td><code>rareq-sz</code> <code>wareq-sz</code></td><td>平均单次请求大小（KB）</td><td>判断是随机小 IO 还是顺序大 IO</td></tr><tr><td><code>%util</code></td><td>设备繁忙时间占比</td><td><strong>对 SSD 已失去意义</strong>，见下</td></tr></tbody></table><p><strong><code>await</code> 的参考基准</strong>：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>NVMe SSD      &lt; 1 ms       正常；&gt; 5 ms 需要关注
+</span></span><span class=line><span class=cl>SATA SSD      &lt; 5 ms       正常；&gt; 20 ms 有问题
+</span></span><span class=line><span class=cl>云盘（普通）   &lt; 10 ms      正常；&gt; 50 ms 有问题
+</span></span><span class=line><span class=cl>机械盘        &lt; 20 ms      正常；&gt; 100 ms 严重
+</span></span></code></pre></div><h2 id=62-util-是个陷阱>6.2 %util 是个陷阱</h2><p><strong><code>%util = 100%</code> 在 SSD 上不代表磁盘满载。</strong></p><p><code>%util</code> 的定义是「设备至少有一个请求在处理的时间占比」。这个定义源自机械盘时代——机械盘只有一个磁头，同一时刻只能处理一个请求，所以 <code>%util=100%</code> 确实意味着饱和。</p><p>但<strong>SSD 和 NVMe 有几十甚至上千个并行队列</strong>，可以同时处理大量请求。<code>%util=100%</code> 只说明「一直有请求在处理」，可能只用了 5% 的实际能力。</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># 一个真实的例子</span>
+</span></span><span class=line><span class=cl>iostat -x <span class=m>1</span>
+</span></span><span class=line><span class=cl><span class=c1># Device   r/s   w/s  r_await w_await aqu-sz  %util</span>
+</span></span><span class=line><span class=cl><span class=c1># nvme0n1 50.0  30.0     0.08    0.12   0.01  99.80</span>
+</span></span><span class=line><span class=cl><span class=c1>#                        ^^^^^^^^^^^^ 等待时间极低       ^^^^^ 但 util 99.8%</span>
+</span></span><span class=line><span class=cl><span class=c1>#                                     aqu-sz 0.01 说明几乎不排队</span>
+</span></span><span class=line><span class=cl><span class=c1># 结论：磁盘一点都不忙，%util 高只是因为请求间隔小于采样精度</span>
+</span></span></code></pre></div><p><strong>判断 SSD 是否真的饱和，要看这三个组合</strong>：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>① r_await / w_await 显著升高（超过基准的 3~5 倍）
+</span></span><span class=line><span class=cl>② aqu-sz &gt; 1 且持续增长（请求在排队）
+</span></span><span class=line><span class=cl>③ IOPS 或吞吐接近设备标称上限
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>三者同时出现 = 真饱和
+</span></span><span class=line><span class=cl>只有 %util 高 = 大概率没问题
+</span></span></code></pre></div><p><strong>规律：SSD 时代看 <code>await</code> 和 <code>aqu-sz</code>，不看 <code>%util</code>。</strong></p><h2 id=63-区分随机-io-和顺序-io>6.3 区分随机 IO 和顺序 IO</h2><p><code>rareq-sz</code>/<code>wareq-sz</code>（平均请求大小）能告诉你负载类型：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># 场景 A：数据库的随机小 IO</span>
+</span></span><span class=line><span class=cl><span class=c1># Device   r/s    rkB/s  rareq-sz  r_await</span>
+</span></span><span class=line><span class=cl><span class=c1># nvme0n1 8000.0 32000.0     4.0     0.35</span>
+</span></span><span class=line><span class=cl><span class=c1>#                            ^^^ 平均 4KB = 典型的随机小 IO</span>
+</span></span><span class=line><span class=cl><span class=c1># -&gt; IOPS 是瓶颈，看 8000 IOPS 是否接近设备上限</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 场景 B：日志顺序写</span>
+</span></span><span class=line><span class=cl><span class=c1># Device   w/s    wkB/s  wareq-sz  w_await</span>
+</span></span><span class=line><span class=cl><span class=c1># nvme0n1  120.0 122880.0  1024.0    1.20</span>
+</span></span><span class=line><span class=cl><span class=c1>#                          ^^^^^^ 平均 1MB = 顺序大 IO</span>
+</span></span><span class=line><span class=cl><span class=c1># -&gt; 带宽是瓶颈，看 120MB/s 是否接近设备上限</span>
+</span></span></code></pre></div><p><strong>设备能力的量级感</strong>：</p><table><thead><tr><th>设备</th><th>随机 4K IOPS</th><th>顺序吞吐</th></tr></thead><tbody><tr><td>机械盘 7200rpm</td><td>100 ~ 200</td><td>150 MB/s</td></tr><tr><td>SATA SSD</td><td>50k ~ 90k</td><td>500 MB/s</td></tr><tr><td>NVMe SSD</td><td>200k ~ 1M</td><td>3 ~ 7 GB/s</td></tr><tr><td>云盘（通用型）</td><td>3k ~ 20k（按容量给）</td><td>100 ~ 350 MB/s</td></tr></tbody></table><p><strong>云盘的 IOPS 通常与容量挂钩</strong>——这是个容易踩的坑：100GB 的云盘可能只有 3000 IOPS，把数据库放上去必然慢。扩容盘不只是为了空间，也是为了 IOPS。</p><h2 id=64-定位到具体进程>6.4 定位到具体进程</h2><p><code>iostat</code> 只告诉你设备忙，<code>pidstat</code> 和 <code>iotop</code> 告诉你是谁在忙：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># 按 IO 排序看进程</span>
+</span></span><span class=line><span class=cl>pidstat -d <span class=m>1</span> <span class=m>3</span>
+</span></span><span class=line><span class=cl><span class=c1># 时间     UID  PID   kB_rd/s   kB_wr/s kB_ccwr/s iodelay  Command</span>
+</span></span><span class=line><span class=cl><span class=c1># 22:15:01   0  8821      0.00  45230.00      0.00     234  mysqld</span>
+</span></span><span class=line><span class=cl><span class=c1>#                                ^^^^^^^^ 每秒写 45MB</span>
+</span></span><span class=line><span class=cl><span class=c1>#                                                     ^^^ IO 延迟（时钟周期）</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 或者用 iotop（更直观，需要 root）</span>
+</span></span><span class=line><span class=cl>iotop -oPa
+</span></span><span class=line><span class=cl><span class=c1>#  -o 只显示真正在做 IO 的</span>
+</span></span><span class=line><span class=cl><span class=c1>#  -P 只显示进程不显示线程</span>
+</span></span><span class=line><span class=cl><span class=c1>#  -a 显示累计值而不是速率</span>
+</span></span></code></pre></div><p><strong>看单个进程的 IO 总量</strong>：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>cat /proc/1234/io
+</span></span><span class=line><span class=cl><span class=c1># rchar: 892340123          &lt;- 读的字节数（含从 cache 读的）</span>
+</span></span><span class=line><span class=cl><span class=c1># wchar: 1234567890         &lt;- 写的字节数</span>
+</span></span><span class=line><span class=cl><span class=c1># read_bytes: 234560000     &lt;- 【真正从块设备读】的字节数</span>
+</span></span><span class=line><span class=cl><span class=c1># write_bytes: 1089234000   &lt;- 真正写到块设备的</span>
+</span></span><span class=line><span class=cl><span class=c1># cancelled_write_bytes: 0</span>
+</span></span></code></pre></div><p><strong><code>rchar</code> 和 <code>read_bytes</code> 的差值就是 page cache 的贡献</strong>：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>rchar = 892MB, read_bytes = 234MB
+</span></span><span class=line><span class=cl>-&gt; 缓存命中率 ≈ (892-234)/892 = 74%
+</span></span></code></pre></div><p>这是评估 page cache 效果最直接的方法。</p><h1 id=7-df-与-du-对不上的三种原因>7. df 与 du 对不上的三种原因</h1><p>第 2 篇讲了最常见的一种，这里补全：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>df -h /data
+</span></span><span class=line><span class=cl><span class=c1># /dev/vdb1  500G  480G  0G  100% /data</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>du -sh /data
+</span></span><span class=line><span class=cl><span class=c1># 210G                                  &lt;- 差了 270G</span>
+</span></span></code></pre></div><table><thead><tr><th>原因</th><th>判断方法</th><th>处理</th></tr></thead><tbody><tr><td><strong>被删但仍被进程持有</strong></td><td><code>lsof +L1</code></td><td>reload/重启持有它的进程</td></tr><tr><td><strong>被挂载点遮盖的文件</strong></td><td>见下</td><td>卸载后清理</td></tr><tr><td>预留块（reserved blocks）</td><td><code>tune2fs -l</code></td><td>正常现象，不用处理</td></tr></tbody></table><p><strong>「被挂载点遮盖」这种情况很隐蔽</strong>：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>① 原本 /data 下有 270GB 文件（在根分区上）
+</span></span><span class=line><span class=cl>② 后来挂载了一块新盘到 /data
+</span></span><span class=line><span class=cl>③ 那 270GB 文件还在根分区的 /data 目录里，但被新挂载点【遮住】了
+</span></span><span class=line><span class=cl>④ du /data 看到的是新盘的内容，df / 却仍算着那 270GB
+</span></span></code></pre></div><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># 排查：把上层目录重新挂载到别处，看被遮盖的内容</span>
+</span></span><span class=line><span class=cl>mkdir /mnt/tmp
+</span></span><span class=line><span class=cl>mount --bind / /mnt/tmp
+</span></span><span class=line><span class=cl>du -sh /mnt/tmp/data
+</span></span><span class=line><span class=cl><span class=c1># 270G                    &lt;- 找到了！这些文件被 /data 的挂载点遮住了</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>rm -rf /mnt/tmp/data/*    <span class=c1># 清理</span>
+</span></span><span class=line><span class=cl>umount /mnt/tmp
+</span></span></code></pre></div><p><strong>ext4 的预留块</strong>是设计如此，不是问题：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>tune2fs -l /dev/vdb1 <span class=p>|</span> grep -i reserved
+</span></span><span class=line><span class=cl><span class=c1># Reserved block count:     6553600</span>
+</span></span><span class=line><span class=cl><span class=c1># Reserved GDT blocks:      1024</span>
+</span></span><span class=line><span class=cl><span class=c1># 默认预留 5% 给 root，防止磁盘完全满时 root 也无法登录修复</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 数据盘可以调低到 1%（大盘上 5% 是很多空间）</span>
+</span></span><span class=line><span class=cl>tune2fs -m <span class=m>1</span> /dev/vdb1
+</span></span></code></pre></div><p>500GB 盘的 5% 是 25GB——对纯数据盘来说这是浪费，调到 1% 能省出 20GB。</p><h1 id=8-文件描述符与-ulimit>8. 文件描述符与 ulimit</h1><p><strong>「Too many open files」是后端最常见的错误之一</strong>，而它的排查有一条明确的路径。</p><h2 id=81-三层限制>8.1 三层限制</h2><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>① 系统级：整个系统能打开的 fd 总数
+</span></span><span class=line><span class=cl>   /proc/sys/fs/file-max
+</span></span><span class=line><span class=cl>   
+</span></span><span class=line><span class=cl>② 用户级：单个用户的限制（PAM 机制，只对【登录会话】生效）
+</span></span><span class=line><span class=cl>   /etc/security/limits.conf
+</span></span><span class=line><span class=cl>   
+</span></span><span class=line><span class=cl>③ 进程级：进程实际继承到的限制  &lt;- 【只有这个才是真相】
+</span></span><span class=line><span class=cl>   /proc/&lt;pid&gt;/limits
+</span></span></code></pre></div><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># 系统级</span>
+</span></span><span class=line><span class=cl>cat /proc/sys/fs/file-max
+</span></span><span class=line><span class=cl><span class=c1># 9223372036854775807      &lt;- 现代内核基本无上限</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 当前系统打开了多少</span>
+</span></span><span class=line><span class=cl>cat /proc/sys/fs/file-nr
+</span></span><span class=line><span class=cl><span class=c1># 12480	0	9223372036854775807</span>
+</span></span><span class=line><span class=cl><span class=c1>#  ^^^^^ 已分配   ^ 空闲   ^^^ 上限</span>
+</span></span></code></pre></div><h2 id=82-为什么改了-limitsconf-没用>8.2 为什么改了 limits.conf 没用</h2><p><strong>这是最经典的坑，第 1 篇提过，这里讲透。</strong></p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># 改了这个文件</span>
+</span></span><span class=line><span class=cl>cat /etc/security/limits.conf
+</span></span><span class=line><span class=cl><span class=c1># app  soft  nofile  65535</span>
+</span></span><span class=line><span class=cl><span class=c1># app  hard  nofile  65535</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 登录后确认生效了</span>
+</span></span><span class=line><span class=cl><span class=nb>ulimit</span> -n
+</span></span><span class=line><span class=cl><span class=c1># 65535                   &lt;- 看起来对了</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 但服务还是报 Too many open files</span>
+</span></span><span class=line><span class=cl>cat /proc/<span class=k>$(</span>pgrep myapp<span class=k>)</span>/limits <span class=p>|</span> grep -i <span class=s2>&#34;open files&#34;</span>
+</span></span><span class=line><span class=cl><span class=c1># Max open files            1024      1024      files</span>
+</span></span><span class=line><span class=cl><span class=c1>#                           ^^^^ 真相：还是 1024</span>
+</span></span></code></pre></div><p>**原因：<code>limits.conf</code> 是 PAM（<code>pam_limits.so</code>）的机制，只在「用户登录」时被应用。**systemd 启动服务时不经过 PAM，所以完全不读这个文件。</p><p><strong>正确做法是在 systemd unit 里配置</strong>：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-ini data-lang=ini><span class=line><span class=cl><span class=c1># /etc/systemd/system/myapp.service</span>
+</span></span><span class=line><span class=cl><span class=k>[Service]</span>
+</span></span><span class=line><span class=cl><span class=na>LimitNOFILE</span><span class=o>=</span><span class=s>65535</span>
+</span></span><span class=line><span class=cl><span class=na>LimitNPROC</span><span class=o>=</span><span class=s>65535</span>
+</span></span><span class=line><span class=cl><span class=na>LimitCORE</span><span class=o>=</span><span class=s>infinity</span>
+</span></span></code></pre></div><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>systemctl daemon-reload
+</span></span><span class=line><span class=cl>systemctl restart myapp
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 验证 —— 唯一可信的方式</span>
+</span></span><span class=line><span class=cl>cat /proc/<span class=k>$(</span>pgrep myapp<span class=k>)</span>/limits <span class=p>|</span> grep -i <span class=s2>&#34;open files&#34;</span>
+</span></span><span class=line><span class=cl><span class=c1># Max open files            65535     65535     files      ✅</span>
+</span></span></code></pre></div><p><strong>也可以设全局默认</strong>：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># /etc/systemd/system.conf</span>
+</span></span><span class=line><span class=cl><span class=nv>DefaultLimitNOFILE</span><span class=o>=</span>65535:65535
+</span></span><span class=line><span class=cl><span class=c1># 改完需要重启机器或 systemctl daemon-reexec</span>
+</span></span></code></pre></div><p><strong>规律：<code>ulimit -n</code> 只反映当前 shell；进程的真实限制永远看 <code>/proc/&lt;pid>/limits</code>。</strong></p><h2 id=83-容器里的-fd-限制>8.3 容器里的 fd 限制</h2><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># Docker</span>
+</span></span><span class=line><span class=cl>docker run --ulimit <span class=nv>nofile</span><span class=o>=</span>65535:65535 myapp
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># K8s 没有直接的字段，要靠以下方式之一：</span>
+</span></span><span class=line><span class=cl><span class=c1># ① 容器镜像的 entrypoint 里 ulimit -n 65535（需要 CAP_SYS_RESOURCE）</span>
+</span></span><span class=line><span class=cl><span class=c1># ② 改 containerd/dockerd 的默认值</span>
+</span></span><span class=line><span class=cl><span class=c1># ③ 用 initContainer 配合 privileged 调整</span>
+</span></span></code></pre></div><p><strong>containerd 的默认值配置</strong>：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-toml data-lang=toml><span class=line><span class=cl><span class=c># /etc/containerd/config.toml</span>
+</span></span><span class=line><span class=cl><span class=p>[</span><span class=nx>plugins</span><span class=p>.</span><span class=s2>&#34;io.containerd.grpc.v1.cri&#34;</span><span class=p>]</span>
+</span></span><span class=line><span class=cl>  <span class=c># 容器的默认 fd 限制</span>
+</span></span><span class=line><span class=cl>  <span class=p>...</span>
+</span></span></code></pre></div><p><strong>现代 containerd/Docker 的默认 <code>nofile</code> 通常已经是 1048576</strong>，所以容器里反而很少遇到这个问题——遇到的话优先怀疑是应用自己泄漏 fd。</p><h2 id=84-用-lsof-排查-fd-泄漏>8.4 用 lsof 排查 fd 泄漏</h2><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># ① 确认是哪个进程 fd 多</span>
+</span></span><span class=line><span class=cl><span class=k>for</span> p in /proc/<span class=o>[</span>0-9<span class=o>]</span>*<span class=p>;</span> <span class=k>do</span>
+</span></span><span class=line><span class=cl>    <span class=nv>n</span><span class=o>=</span><span class=k>$(</span>ls <span class=s2>&#34;</span><span class=nv>$p</span><span class=s2>/fd&#34;</span> 2&gt;/dev/null <span class=p>|</span> wc -l<span class=k>)</span>
+</span></span><span class=line><span class=cl>    <span class=o>[</span> <span class=s2>&#34;</span><span class=nv>$n</span><span class=s2>&#34;</span> -gt <span class=m>500</span> <span class=o>]</span> <span class=o>&amp;&amp;</span> <span class=nb>echo</span> <span class=s2>&#34;</span><span class=nv>$n</span><span class=s2> </span><span class=k>$(</span>cat <span class=nv>$p</span>/comm 2&gt;/dev/null<span class=k>)</span><span class=s2> </span><span class=si>${</span><span class=nv>p</span><span class=p>#/proc/</span><span class=si>}</span><span class=s2>&#34;</span>
+</span></span><span class=line><span class=cl><span class=k>done</span> <span class=p>|</span> sort -rn <span class=p>|</span> head
+</span></span><span class=line><span class=cl><span class=c1># 24312 myapp 1234        &lt;- 2 万多个 fd，明显异常</span>
+</span></span></code></pre></div><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># ② 看 fd 的类型分布 —— 这一步直接指向问题</span>
+</span></span><span class=line><span class=cl>ls -l /proc/1234/fd/ <span class=p>|</span> awk <span class=s1>&#39;{print $NF}&#39;</span> <span class=p>|</span> sed <span class=s1>&#39;s/:\[.*//&#39;</span> <span class=p>|</span> sort <span class=p>|</span> uniq -c <span class=p>|</span> sort -rn
+</span></span><span class=line><span class=cl><span class=c1>#  23890 socket</span>
+</span></span><span class=line><span class=cl><span class=c1>#    412 /var/log/app.log</span>
+</span></span><span class=line><span class=cl><span class=c1>#      8 pipe</span>
+</span></span><span class=line><span class=cl><span class=c1>#      2 /dev/null</span>
+</span></span><span class=line><span class=cl><span class=c1>#        ^^^^^^^^^^ 2 万多个 socket -&gt; socket 泄漏，不是文件句柄泄漏</span>
+</span></span></code></pre></div><p><strong>这两步就能把方向分成两类</strong>：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>socket 占大头     -&gt; 连接泄漏，继续用 ss 看状态分布（见下）
+</span></span><span class=line><span class=cl>普通文件占大头     -&gt; 文件句柄泄漏，看是哪些路径，通常是日志或临时文件没关
+</span></span></code></pre></div><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># ③ socket 泄漏时，看连接状态</span>
+</span></span><span class=line><span class=cl>ss -tanp <span class=p>|</span> grep <span class=s2>&#34;pid=1234&#34;</span> <span class=p>|</span> awk <span class=s1>&#39;{print $1}&#39;</span> <span class=p>|</span> sort <span class=p>|</span> uniq -c
+</span></span><span class=line><span class=cl><span class=c1>#  23880 CLOSE-WAIT          &lt;- 应用漏了 close()</span>
+</span></span><span class=line><span class=cl><span class=c1>#     10 ESTAB</span>
+</span></span></code></pre></div><p><strong><code>CLOSE-WAIT</code> 堆积是纯粹的应用 bug</strong>——对端已关闭但本地没调用 <code>close()</code>，而且没有任何超时机制，调内核参数完全无效。它与 <code>TIME-WAIT</code> 的完整区分见 <a href=../linux_13_%e7%bd%91%e7%bb%9c%e9%85%8d%e7%bd%ae%e4%b8%8e%e6%8e%92%e6%9f%a5/ rel>Linux-13 §3.2</a>，一个真实的排查案例见 <a href=../linux_20_%e7%ba%bf%e4%b8%8a%e9%97%ae%e9%a2%98%e6%8e%92%e6%9f%a5%e5%ae%9e%e6%88%98/ rel>Linux-20 §5</a>。</p><h1 id=9-实战确认磁盘是不是瓶颈>9. 实战：确认磁盘是不是瓶颈</h1><p>把本篇的判读方法串成一个最小流程。<strong>这里只演示「怎么确认是磁盘问题、是谁造成的」</strong>——完整的案例复盘（含根因分析、止血、长期改进）见 <a href=../linux_20_%e7%ba%bf%e4%b8%8a%e9%97%ae%e9%a2%98%e6%8e%92%e6%9f%a5%e5%ae%9e%e6%88%98/ rel>Linux-20 §3</a>。</p><p><strong>现象</strong>：订单服务 P99 从 80ms 涨到 4s，同机的其他服务也变慢。</p><p><strong>① 先确认瓶颈在 IO 而不是 CPU</strong></p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>vmstat <span class=m>1</span> <span class=m>3</span>
+</span></span><span class=line><span class=cl><span class=c1># procs -----------io---- -system-- ------cpu-----</span>
+</span></span><span class=line><span class=cl><span class=c1>#  r  b     bi     bo   in   cs us sy id wa st</span>
+</span></span><span class=line><span class=cl><span class=c1>#  1 22   4096 189234 3421 5623  3  4  6 87  0</span>
+</span></span><span class=line><span class=cl><span class=c1>#    ^^ 22 个进程阻塞在 D 状态</span>
+</span></span><span class=line><span class=cl><span class=c1>#                                          ^^ wa 87%，而 r 列只有 1</span>
+</span></span></code></pre></div><p><code>r</code> 小、<code>b</code> 大、<code>wa</code> 高 → CPU 不排队，瓶颈在磁盘（判读规则见第 7 篇 §6）。</p><p><strong>② 用三条件确认磁盘真饱和</strong></p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>iostat -xz <span class=m>1</span> <span class=m>3</span>
+</span></span><span class=line><span class=cl><span class=c1># Device   w/s    wkB/s  r_await w_await aqu-sz wareq-sz %util</span>
+</span></span><span class=line><span class=cl><span class=c1># nvme0n1 3200.0 204800.0   1.20   28.45  92.31     64.0  99.90</span>
+</span></span><span class=line><span class=cl><span class=c1>#                                          ^^^^^ 28ms，是 NVMe 基准的 28 倍</span>
+</span></span><span class=line><span class=cl><span class=c1>#                                                  ^^^^^ 队列 92，远大于 1</span>
+</span></span></code></pre></div><p><code>await</code> 超基准数倍 + <code>aqu-sz > 1</code> + 吞吐接近上限，三者同时成立才是真饱和（§6.2）。<strong>只有 <code>%util</code> 高不算</strong>。</p><p><strong>③ 定位到进程</strong></p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>pidstat -d <span class=m>1</span> <span class=m>3</span> <span class=p>|</span> sort -k5 -rn <span class=p>|</span> head -3
+</span></span><span class=line><span class=cl><span class=c1># UID  PID   kB_rd/s   kB_wr/s kB_ccwr/s iodelay  Command</span>
+</span></span><span class=line><span class=cl><span class=c1>#   0 8821      0.00 178234.00      0.00    8923  mysqld</span>
+</span></span><span class=line><span class=cl><span class=c1>#                      ^^^^^^^^^ 写了 178MB/s，占绝大部分</span>
+</span></span></code></pre></div><p>到这一步，排查就从「系统层」转入「应用层」了——接下来要查的是 MySQL 里在跑什么。</p><p><strong>规律：<code>wa</code> 高 + <code>b</code> 列高 + <code>await</code> 超基准数倍 + <code>aqu-sz > 1</code> = 确定的磁盘瓶颈。然后用 <code>pidstat -d</code> 定位到进程，再往应用层查根因。</strong></p><h1 id=命令附录文件系统与磁盘命令>命令附录：文件系统与磁盘命令</h1><h2 id=名称与参数速查>名称与参数速查</h2><table><thead><tr><th>命令</th><th>名字怎么记</th><th>主要用途</th><th>高频选项的英文原词</th></tr></thead><tbody><tr><td><code>lsblk</code></td><td><strong>list block devices</strong></td><td>树状查看磁盘、分区和挂载点</td><td><code>-f/--fs</code>、<code>-o/--output</code>、<code>-p/--paths</code>、<code>-J/--json</code></td></tr><tr><td><code>blkid</code></td><td><strong>block device ID</strong></td><td>查看 UUID、文件系统类型等块设备属性</td><td><code>-s/--match-tag</code>、<code>-o/--output</code></td></tr><tr><td><code>mount</code> / <code>umount</code></td><td>mount / <strong>unmount</strong></td><td>挂载 / 卸载文件系统</td><td><code>mount -t/--types</code>、<code>-o/--options</code>；<code>umount -l/--lazy</code>、<code>-f/--force</code></td></tr><tr><td><code>findmnt</code></td><td><strong>find mounts</strong></td><td>查看挂载树、查询挂载点、验证 fstab</td><td><code>-R/--submounts</code>、<code>-t/--types</code>、<code>--verify</code></td></tr><tr><td><code>fuser</code></td><td>可记作 <strong>file user</strong></td><td>找出正在使用文件或挂载点的进程</td><td><code>-m/--mount</code>、<code>-v/--verbose</code></td></tr><tr><td><code>df</code> / <code>du</code></td><td><strong>disk free / disk usage</strong></td><td>看文件系统分配情况 / 统计目录项可达文件用量</td><td><code>-h/--human-readable</code>、<code>df -i/--inodes</code>、<code>du -s/--summarize</code></td></tr><tr><td><code>iostat</code></td><td><strong>input/output statistics</strong></td><td>查看设备吞吐、延迟、队列和利用率</td><td><code>-x</code> extended、<code>-d</code> devices、<code>-p</code> partitions、<code>-z</code> omit zero-activity devices</td></tr><tr><td><code>ulimit</code></td><td><strong>user limit</strong></td><td>查看 / 设置当前 Shell 及其子进程资源限制</td><td><code>-n</code> open files、<code>-u</code> user processes、<code>-c</code> core size；是 Shell 内建命令</td></tr><tr><td><code>lsof</code></td><td><strong>list open files</strong></td><td>按进程、文件、端口查看已打开对象</td><td><code>-p</code> PID、<code>-u</code> user、<code>-i</code> Internet、<code>+L1</code> link count 小于 1</td></tr></tbody></table><h2 id=df-与-du-的观察层次><code>df</code> 与 <code>du</code> 的观察层次</h2><p><code>df</code> 问文件系统“块分配了多少”，<code>du</code> 沿目录树问“当前还能走到哪些文件”。已删除但仍打开的文件会被 <code>df</code> 计入，却不会被 <code>du</code> 找到。</p><h1 id=10-面试题>10. 面试题</h1><p><strong>Q：VFS 是什么？为什么 <code>read()</code> 既能读文件又能读 socket？</strong></p><p>VFS（Virtual File System）是内核的统一抽象层，它定义了一套标准接口（<code>file_operations</code> 结构体，含 <code>read</code>/<code>write</code>/<code>open</code> 等函数指针），各种具体实现——ext4、xfs、tmpfs、procfs、socket、管道、设备——都实现这套接口。应用调用 <code>read(fd, ...)</code> 时，VFS 根据 fd 找到对应的 <code>file</code> 对象，再调用它挂载的 <code>f_op->read</code>，从而分发到具体实现。这就是「一切皆文件」的落地方式。VFS 的四个核心对象是 <code>superblock</code>（文件系统整体）、<code>inode</code>（文件元数据）、<code>dentry</code>（路径名到 inode 的缓存）、<code>file</code>（已打开的文件，含读写偏移量）。</p><p><strong>Q：<code>iostat</code> 里 <code>%util</code> 达到 100%，磁盘是不是已经满载了？</strong></p><p><strong>在 SSD 上不是</strong>。<code>%util</code> 的定义是「设备至少有一个请求在处理的时间占比」，这个定义源自机械盘时代——机械盘只有一个磁头，同一时刻只能处理一个请求，所以 100% 确实等于饱和。但 NVMe/SSD 有几十到上千个并行队列，<code>%util=100%</code> 只说明「一直有请求在处理」，可能只用了 5% 的实际能力。判断 SSD 真饱和要看三个条件同时成立：① <code>r_await</code>/<code>w_await</code> 超过设备基准的 3~5 倍（NVMe 基准 &lt; 1ms）；② <code>aqu-sz > 1</code> 且持续增长（请求在排队）；③ IOPS 或吞吐接近设备标称上限。<strong>规律：SSD 时代看 <code>await</code> 和 <code>aqu-sz</code>，不看 <code>%util</code>。</strong></p><p><strong>Q：改了 <code>/etc/security/limits.conf</code>，<code>ulimit -n</code> 也显示 65535，服务还是报 Too many open files，为什么？</strong></p><p>因为 <code>limits.conf</code> 是 <strong>PAM 机制</strong>（<code>pam_limits.so</code>），只在「用户登录」时被应用。systemd 启动服务时不经过 PAM，完全不读这个文件，所以服务进程继承的还是 systemd 的默认值（通常 1024）。而 <code>ulimit -n</code> 显示的是<strong>你当前登录 shell</strong> 的限制，与服务进程无关。正确做法是在 systemd unit 里写 <code>LimitNOFILE=65535</code>，或在 <code>/etc/systemd/system.conf</code> 里设 <code>DefaultLimitNOFILE</code>。<strong>唯一可信的验证方式是 <code>cat /proc/&lt;pid>/limits</code></strong>——这是进程真实生效的限制，其他任何地方看到的都可能是假象。</p><p><strong>Q：进程 fd 数量异常增长，怎么定位是哪一类泄漏？</strong></p><p>先看 <code>/proc/PID/limits</code> 确认限制是否真的生效（不看 <code>ulimit -n</code>，那只是当前 shell 的值）。然后关键一步是<strong>看 fd 的类型分布</strong>：<code>ls -l /proc/PID/fd | awk '{print $NF}' | sed 's/:\[.*//' | sort | uniq -c | sort -rn</code>。socket 占大头是<strong>连接泄漏</strong>，继续用 <code>ss -tanp | grep pid=</code> 看状态——<code>CLOSE-WAIT</code> 堆积说明应用漏了 <code>close()</code>（纯代码 bug，调内核参数无效，详见 <a href=../linux_13_%e7%bd%91%e7%bb%9c%e9%85%8d%e7%bd%ae%e4%b8%8e%e6%8e%92%e6%9f%a5/ rel>第 13 篇 §3.2</a>）；普通文件占大头是<strong>文件句柄泄漏</strong>，看具体路径通常能直接认出是日志还是临时文件。<strong>注意</strong>：<code>lsof</code> 在 fd 极多时会很慢，直接读 <code>/proc/PID/fd</code> 更快。</p><p><strong>Q：ext4 和 xfs 怎么选？</strong></p><p>关键差异有三点。① <strong>inode 分配</strong>：ext4 的 inode 总数在 <code>mkfs</code> 时固定，<strong>事后无法增加</strong>，海量小文件场景可能空间还有但 inode 耗尽（<code>df -i</code> 看 100%）；xfs 动态分配 inode，没这个问题。② <strong>能否缩容</strong>：ext4 可以缩小（需先卸载），xfs <strong>只能扩大不能缩小</strong>。③ <strong>并发写</strong>：xfs 用 AG（Allocation Group）分组，多线程写不争同一把锁，大文件和高并发写性能更好。所以：数据库、大文件、高并发写选 xfs；需要缩容能力或海量小文件选 ext4；不确定就跟随发行版默认（RHEL 系默认 xfs，Debian 系默认 ext4）。<strong>规划时宁可先给小一点，因为扩容容易缩容难。</strong></p><p><strong>Q：怎么在不停机的情况下给一个已经写满的分区扩容？</strong></p><p>前提是用了 LVM。步骤：① 云上挂载新盘后 <code>pvcreate /dev/vdc</code> 做成物理卷；② <code>vgextend vg_data /dev/vdc</code> 加进现有卷组；③ <code>lvextend -l +100%FREE /dev/vg_data/lv_data</code> 扩展逻辑卷；④ 扩展文件系统——<strong>ext4 用 <code>resize2fs /dev/vg_data/lv_data</code>，xfs 用 <code>xfs_growfs /data</code>（参数是挂载点不是设备）</strong>。全程不需要卸载，业务无感知。如果没用 LVM，只能加新盘挂到别的目录、或者停机迁移数据。<strong>另外 <code>/etc/fstab</code> 必须用 UUID 而不是 <code>/dev/vdb1</code></strong>——加盘后设备名可能漂移导致系统起不来，同时给数据盘加 <code>nofail</code> 让挂载失败不阻塞启动。</p><p><strong>Q：<code>df</code> 显示磁盘 100%，<code>du</code> 加起来却对不上，有哪几种原因？</strong></p><p>三种。① <strong>被删但仍被进程持有</strong>（最常见）：文件已 unlink 但进程还持有 fd，inode 未释放，<code>du</code> 数不到而 <code>df</code> 仍算。用 <code>lsof +L1</code> 定位（<code>NLINK=0</code> 的就是），让持有它的进程 reload 或重启。② <strong>被挂载点遮盖的文件</strong>：先在 <code>/data</code> 目录下写了大量文件，后来挂载新盘到 <code>/data</code>，那些文件仍在原分区上但被遮住了。排查方法是 <code>mount --bind / /mnt/tmp</code> 然后看 <code>du -sh /mnt/tmp/data</code>。③ <strong>ext4 的预留块</strong>：默认给 root 预留 5%，500GB 盘就是 25GB，纯数据盘可以用 <code>tune2fs -m 1</code> 调到 1%。</p><p><strong>Q：IO 调度器该怎么选？网上说的 <code>deadline</code> 还能用吗？</strong></p><p><code>cfq</code>、<code>deadline</code>、<code>noop</code> 这些<strong>单队列调度器在 5.0+ 内核已被移除</strong>，全部换成了 multi-queue 版本，所以网上「改成 deadline」的老文章已经过时——现在应该看有没有 <code>mq-</code> 前缀。现代选型：<strong>NVMe SSD 用 <code>none</code></strong>（SSD 没有寻道，排序和合并纯属浪费 CPU，内核默认就是 none）；SATA SSD 和云盘用 <code>none</code> 或 <code>mq-deadline</code>；机械盘用 <code>mq-deadline</code> 或 <code>bfq</code>；<strong>虚拟机和容器里用 <code>none</code></strong>（宿主机已经调度过一遍了，再调度是重复劳动）。另外两个更值得调的参数是 <code>read_ahead_kb</code>——顺序读大文件时加大（512KB），随机读为主的数据库反而应该减小（16KB）避免读入无用数据。</p><p><strong>Q：<code>/proc/&lt;pid>/io</code> 里的 <code>rchar</code> 和 <code>read_bytes</code> 有什么区别？</strong></p><p><code>rchar</code> 是应用层通过 <code>read()</code> 系统调用读取的总字节数，<strong>包含从 page cache 命中的部分</strong>；<code>read_bytes</code> 是<strong>真正从块设备读上来</strong>的字节数。两者的差值就是 page cache 的贡献，所以 <code>(rchar - read_bytes) / rchar</code> 是一个直接可算的<strong>缓存命中率</strong>。这是评估 page cache 效果最方便的方法——如果命中率很低（比如低于 50%），说明工作集远大于可用内存，加内存会有明显收益。同理 <code>wchar</code> 和 <code>write_bytes</code> 的差值反映了写合并和延迟写的效果。</p><hr><p>上一篇：<a href=../linux_10_%e5%86%85%e5%ad%98%e7%ae%a1%e7%90%86/ rel>Linux-10 内存管理</a> ｜ 下一篇：<a href=../linux_12_IO%e6%a8%a1%e5%9e%8b%e4%b8%8eepoll/ rel>Linux-12 IO 模型与 epoll</a></p></div><div class=post-footer id=post-footer><div class=post-info><div class=post-info-line><div class=post-info-mod><span>更新于 2026-08-11</span></div><div class=post-info-license></div></div><div class=post-info-line><div class=post-info-md></div><div class=post-info-share><span></span></div></div></div><div class=post-info-more><section class=post-tags><i class="fas fa-tags fa-fw"></i>&nbsp;<a href=/tags/linux/>linux</a></section><section><span><a href=javascript:void(0); onclick=window.history.back()>返回</a></span>&nbsp;|&nbsp;<span><a href=/>主页</a></span></section></div><div class=post-nav><a href=/posts/linux/linux_12_IO%E6%A8%A1%E5%9E%8B%E4%B8%8Eepoll/ class=prev rel=prev title="Linux-12 IO 模型与 epoll"><i class="fas fa-angle-left fa-fw"></i>Linux-12 IO 模型与 epoll</a>
+<a href=/posts/linux/linux_10_%E5%86%85%E5%AD%98%E7%AE%A1%E7%90%86/ class=next rel=next title="Linux-10 内存管理">Linux-10 内存管理<i class="fas fa-angle-right fa-fw"></i></a></div></div><div id=comments><div id=gitalk class=comment></div><noscript>Please enable JavaScript to view the comments powered by <a href=https://github.com/gitalk/gitalk></a>Gitalk</a>.</noscript></div></article></div></main><footer class=footer><div class=footer-container><div class=footer-line>由 <a href=https://gohugo.io/ target=_blank rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href=https://github.com/dillonzq/LoveIt target=_blank rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a></div><div class=footer-line><i class="far fa-copyright fa-fw"></i><span itemprop=copyrightYear>2026</span><span class=author itemprop=copyrightHolder>&nbsp;<a href=https://xingliuhua/github.com.io target=_blank>xingliuhua</a></span></div></div></footer></div><div id=fixed-buttons><a href=# id=back-to-top class=fixed-button title=回到顶部><i class="fas fa-arrow-up fa-fw"></i>
+</a><a href=# id=view-comments class=fixed-button title=查看评论><i class="fas fa-comment fa-fw"></i></a></div><link rel=stylesheet href=/lib/gitalk/gitalk.min.css><link rel=stylesheet href=/lib/lightgallery/lightgallery.min.css><script type=text/javascript src=/lib/gitalk/gitalk.min.js></script><script type=text/javascript src=/lib/smooth-scroll/smooth-scroll.min.js></script><script type=text/javascript src=/lib/autocomplete/autocomplete.min.js></script><script type=text/javascript src=/lib/lunr/lunr.min.js></script><script type=text/javascript src=/lib/lunr/lunr.stemmer.support.min.js></script><script type=text/javascript src=/lib/lunr/lunr.zh.min.js></script><script type=text/javascript src=/lib/lazysizes/lazysizes.min.js></script><script type=text/javascript src=/lib/lightgallery/lightgallery.min.js></script><script type=text/javascript src=/lib/lightgallery/lg-thumbnail.min.js></script><script type=text/javascript src=/lib/lightgallery/lg-zoom.min.js></script><script type=text/javascript src=/lib/clipboard/clipboard.min.js></script><script type=text/javascript>window.config={code:{copyTitle:"复制到剪贴板",maxShownLines:15},comment:{gitalk:{admin:["xingliuhua"],clientID:"c0161bf1d93ccdd5f765",clientSecret:"3782f9a39ee0849148faa2ec75bb19d9964dda16",id:"2026-08-06T18:00:00+08:00",owner:"xingliuhua",repo:"xingliuhua.github.io",title:"Linux-11 文件系统与磁盘 IO"}},lightGallery:{actualSize:!1,exThumbImage:"data-thumbnail",hideBarsDelay:2e3,selector:".lightgallery",speed:400,thumbContHeight:80,thumbWidth:80,thumbnail:!0},search:{highlightTag:"em",lunrIndexURL:"/index.json",lunrLanguageCode:"zh",lunrSegmentitURL:"/lib/lunr/lunr.segmentit.js",maxResultLength:10,noResultsFound:"没有找到结果",snippetLength:50,type:"lunr"}}</script><script type=text/javascript src=/js/theme.min.js></script><script type=text/javascript src=/js/toc-collapse.min.js></script></body></html>

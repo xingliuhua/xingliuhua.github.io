@@ -1,0 +1,1993 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>Linux-13 进程与作业控制：ps 每一列、D 状态为什么杀不掉、nohup 与 setsid 的区别 - xingliuhua博客</title><meta name="Description" content="VSZ 与 RSS 的区别、进程状态 D 为什么连 kill -9 都无效、僵尸进程占不占资源、nohup/setsid/disown 到底差在哪、load average 为什么会在 CPU 空闲时飙高、/proc/pid 能告诉你的一切。附 CPU 打满与 fd 泄漏的排查路径。"><meta property="og:title" content="Linux-13 进程与作业控制：ps 每一列、D 状态为什么杀不掉、nohup 与 setsid 的区别" />
+<meta property="og:description" content="VSZ 与 RSS 的区别、进程状态 D 为什么连 kill -9 都无效、僵尸进程占不占资源、nohup/setsid/disown 到底差在哪、load average 为什么会在 CPU 空闲时飙高、/proc/pid 能告诉你的一切。附 CPU 打满与 fd 泄漏的排查路径。" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/linux/linux_13_%E8%BF%9B%E7%A8%8B%E4%B8%8E%E4%BD%9C%E4%B8%9A%E6%8E%A7%E5%88%B6/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2026-08-12T17:30:00+08:00" />
+<meta property="article:modified_time" content="2026-08-12T17:30:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="Linux-13 进程与作业控制：ps 每一列、D 状态为什么杀不掉、nohup 与 setsid 的区别"/>
+<meta name="twitter:description" content="VSZ 与 RSS 的区别、进程状态 D 为什么连 kill -9 都无效、僵尸进程占不占资源、nohup/setsid/disown 到底差在哪、load average 为什么会在 CPU 空闲时飙高、/proc/pid 能告诉你的一切。附 CPU 打满与 fd 泄漏的排查路径。"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/linux/linux_13_%E8%BF%9B%E7%A8%8B%E4%B8%8E%E4%BD%9C%E4%B8%9A%E6%8E%A7%E5%88%B6/" /><link rel="prev" href="https://xingliuhua.github.io/posts/linux/linux_14_systemd%E4%B8%8E%E5%AE%9A%E6%97%B6%E4%BB%BB%E5%8A%A1/" /><link rel="next" href="https://xingliuhua.github.io/posts/linux/linux_12_%E5%BD%92%E6%A1%A3%E5%8E%8B%E7%BC%A9%E4%B8%8Ersync/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Linux-13 进程与作业控制：ps 每一列、D 状态为什么杀不掉、nohup 与 setsid 的区别",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_13_%E8%BF%9B%E7%A8%8B%E4%B8%8E%E4%BD%9C%E4%B8%9A%E6%8E%A7%E5%88%B6\/"
+        },"genre": "posts","keywords": "linux","wordcount":  16620 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_13_%E8%BF%9B%E7%A8%8B%E4%B8%8E%E4%BD%9C%E4%B8%9A%E6%8E%A7%E5%88%B6\/","datePublished": "2026-08-12T17:30:00+08:00","dateModified": "2026-08-12T17:30:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "VSZ 与 RSS 的区别、进程状态 D 为什么连 kill -9 都无效、僵尸进程占不占资源、nohup/setsid/disown 到底差在哪、load average 为什么会在 CPU 空闲时飙高、/proc/pid 能告诉你的一切。附 CPU 打满与 fd 泄漏的排查路径。"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">Linux-13 进程与作业控制：ps 每一列、D 状态为什么杀不掉、nohup 与 setsid 的区别</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2026-08-12">2026-08-12</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 16620 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 34 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-进程的身份与关系">1. 进程的身份与关系</a>
+      <ol>
+        <li><a href="#11-四个-id">1.1 四个 ID</a></li>
+        <li><a href="#12-进程树">1.2 进程树</a></li>
+        <li><a href="#13-孤儿进程与-pid-1">1.3 孤儿进程与 PID 1</a></li>
+      </ol>
+    </li>
+    <li><a href="#2-ps读懂每一列">2. ps：读懂每一列</a>
+      <ol>
+        <li><a href="#21-三套语法">2.1 三套语法</a></li>
+        <li><a href="#22-ps-aux-每列详解">2.2 <code>ps aux</code> 每列详解</a></li>
+        <li><a href="#23-开篇第一问vsz-vs-rss-vs-pss">2.3 开篇第一问：VSZ vs RSS vs PSS</a></li>
+        <li><a href="#24-stat-状态码">2.4 STAT 状态码</a></li>
+        <li><a href="#25-开篇第二问d-状态为什么杀不掉">2.5 开篇第二问：D 状态为什么杀不掉</a></li>
+        <li><a href="#26-ps-常用配方">2.6 ps 常用配方</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-进程状态机与僵尸">3. 进程状态机与僵尸</a>
+      <ol>
+        <li><a href="#31-状态转换">3.1 状态转换</a></li>
+        <li><a href="#32-开篇第四问僵尸进程">3.2 开篇第四问：僵尸进程</a></li>
+      </ol>
+    </li>
+    <li><a href="#4-top-与-load-average">4. top 与 load average</a>
+      <ol>
+        <li><a href="#41-top-的输出">4.1 top 的输出</a></li>
+        <li><a href="#42-开篇第五问load-average-的真实含义">4.2 开篇第五问：load average 的真实含义</a></li>
+        <li><a href="#43-top-的交互键">4.3 top 的交互键</a></li>
+        <li><a href="#44-htop-与其他替代">4.4 htop 与其他替代</a></li>
+      </ol>
+    </li>
+    <li><a href="#5-信号与-kill">5. 信号与 kill</a>
+      <ol>
+        <li><a href="#51-常用信号">5.1 常用信号</a></li>
+        <li><a href="#52-kill-系列命令">5.2 kill 系列命令</a></li>
+        <li><a href="#53-sigterm-vs-sigkill为什么不该随手--9">5.3 SIGTERM vs SIGKILL：为什么不该随手 -9</a></li>
+      </ol>
+    </li>
+    <li><a href="#6-作业控制与后台运行">6. 作业控制与后台运行</a>
+      <ol>
+        <li><a href="#61-前台后台挂起">6.1 前台、后台、挂起</a></li>
+        <li><a href="#62-开篇第三问关掉终端为什么进程会死">6.2 开篇第三问：关掉终端为什么进程会死</a></li>
+        <li><a href="#63-huponexit-与-ssh-的行为">6.3 huponexit 与 ssh 的行为</a></li>
+      </ol>
+    </li>
+    <li><a href="#7-procltpidgt进程的一切">7. /proc/&lt;pid&gt;：进程的一切</a></li>
+    <li><a href="#8-资源限制与优先级">8. 资源限制与优先级</a>
+      <ol>
+        <li><a href="#81-ulimit">8.1 ulimit</a></li>
+        <li><a href="#82-nice--renicecpu-优先级">8.2 nice / renice：CPU 优先级</a></li>
+        <li><a href="#83-ioniceio-优先级">8.3 ionice：IO 优先级</a></li>
+        <li><a href="#84-用-systemd-做资源控制推荐">8.4 用 systemd 做资源控制（推荐）</a></li>
+      </ol>
+    </li>
+    <li><a href="#9-实战排查">9. 实战排查</a>
+      <ol>
+        <li><a href="#91-cpu-打满">9.1 CPU 打满</a></li>
+        <li><a href="#92-进程卡死">9.2 进程「卡死」</a></li>
+        <li><a href="#93-进程数线程数爆掉">9.3 进程数/线程数爆掉</a></li>
+      </ol>
+    </li>
+    <li><a href="#10-知识点扩展">10. 知识点扩展</a>
+      <ol>
+        <li><a href="#101-命令速查">10.1 命令速查</a></li>
+        <li><a href="#102-与-go-服务相关的对照">10.2 与 Go 服务相关的对照</a></li>
+      </ol>
+    </li>
+    <li><a href="#11-面试题">11. 面试题</a></li>
+    <li><a href="#小结">小结</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><p>进程是操作系统最核心的抽象。这一篇讲怎么看进程、怎么控制进程、以及那些「看起来杀不掉」的进程到底怎么了。</p>
+<p>先看五个问题：</p>
+<ol>
+<li><code>ps aux</code> 里的 <code>VSZ</code> 和 <code>RSS</code> 有什么区别？为什么 <code>VSZ</code> 常常大得离谱（几十 GB）？</li>
+<li>进程状态 <code>D</code> 是什么意思？为什么连 <code>kill -9</code> 都杀不掉它？</li>
+<li><code>cmd &amp;</code>、<code>nohup cmd &amp;</code>、<code>setsid cmd</code>、<code>disown</code> 有什么区别？关掉终端后哪些能活下来？</li>
+<li>僵尸进程为什么杀不掉？它占资源吗？</li>
+<li><code>load average</code> 是 8，但 CPU 使用率只有 20%，怎么解释？</li>
+</ol>
+<h1 id="1-进程的身份与关系">1. 进程的身份与关系</h1>
+<h2 id="11-四个-id">1.1 四个 ID</h2>
+<p>每个进程有四个身份标识，理解它们是理解「后台运行」和「关终端进程为什么会死」的前提：</p>
+<pre tabindex="0"><code>   PID  (Process ID)          进程自己的编号
+   PPID (Parent PID)          父进程的编号
+   PGID (Process Group ID)    进程组 ID —— 一条管道里的所有进程属于同一组
+   SID  (Session ID)          会话 ID —— 一个终端登录对应一个会话
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">ps -o pid,ppid,pgid,sid,tty,comm -p <span class="nv">$$</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   PID  PPID  PGID   SID TT       COMMAND</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#  1234  1200  1234  1234 pts/0    bash</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 一条管道里的三个进程：同一个 PGID，不同 PID</span>
+</span></span><span class="line"><span class="cl">sleep <span class="m">100</span> <span class="p">|</span> sleep <span class="m">200</span> <span class="p">|</span> sleep <span class="m">300</span> <span class="p">&amp;</span>
+</span></span><span class="line"><span class="cl">ps -o pid,ppid,pgid,sid,comm --ppid <span class="nv">$$</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   PID  PPID  PGID   SID COMMAND</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#  5001  1234  5001  1234 sleep</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#  5002  1234  5001  1234 sleep         &lt;- PGID 都是 5001</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#  5003  1234  5001  1234 sleep</span>
+</span></span></code></pre></div><p><strong>层次关系</strong>：</p>
+<pre tabindex="0"><code>   会话 (Session)  ← 一次登录（一个终端）
+   +--------------------------------------------------+
+   |  控制终端: pts/0        会话首进程: bash (SID=1234) |
+   |                                                  |
+   |  +----------------------+  +------------------+  |
+   |  | 前台进程组 PGID=5001  |  | 后台进程组 5010   |  |
+   |  |  sleep | sleep|sleep |  |  长任务 &amp;         |  |
+   |  +----------------------+  +------------------+  |
+   |    ^ 只有前台组能读终端输入、能收到 Ctrl-C          |
+   +--------------------------------------------------+
+
+   关键规则：
+   - 一个会话最多有一个「控制终端」
+   - 一个会话里最多有一个「前台进程组」
+   - Ctrl-C / Ctrl-Z 只发给【前台进程组】
+   - 终端关闭时，内核给会话里的进程发 SIGHUP  ← 这是第 6 章的核心
+</code></pre><h2 id="12-进程树">1.2 进程树</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">pstree                          <span class="c1"># 树形显示所有进程</span>
+</span></span><span class="line"><span class="cl">pstree -p                       <span class="c1"># 带 PID</span>
+</span></span><span class="line"><span class="cl">pstree -pa                      <span class="c1"># 带 PID 和完整命令行参数</span>
+</span></span><span class="line"><span class="cl">pstree -s <span class="m">1234</span>                  <span class="c1"># 显示某进程的【所有祖先】  ← 排查&#34;谁启动了它&#34;</span>
+</span></span><span class="line"><span class="cl">pstree -u                       <span class="c1"># 显示用户切换</span>
+</span></span><span class="line"><span class="cl">pstree -T                       <span class="c1"># 不显示线程（默认会把线程也显示出来）</span>
+</span></span><span class="line"><span class="cl">pstree lhx                      <span class="c1"># 只看某用户的</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">pstree -ps <span class="m">1234</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># systemd(1)───sshd(800)───sshd(1200)───bash(1234)───myapp(5000)</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ 完整的祖先链</span>
+</span></span></code></pre></div><h2 id="13-孤儿进程与-pid-1">1.3 孤儿进程与 PID 1</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 父进程先死了，子进程会怎样？</span>
+</span></span><span class="line"><span class="cl">bash -c <span class="s1">&#39;sleep 300 &amp; echo &#34;子进程 PID: $!&#34;; exit&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 子进程 PID: 6001</span>
+</span></span><span class="line"><span class="cl">ps -o pid,ppid,comm -p <span class="m">6001</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   PID  PPID COMMAND</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#  6001     1 sleep            &lt;- PPID 变成了 1！</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 内核的规则：父进程退出时，它的子进程被「托孤」给 PID 1（init/systemd）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 目的：保证每个进程都有父进程来回收它（否则会永久变成僵尸）</span>
+</span></span></code></pre></div><p><strong>容器里的重要推论</strong>：容器的 PID 1 是你的应用（而不是 systemd），如果它不处理子进程回收，容器里就会积累僵尸进程。这是为什么很多镜像会用 <code>tini</code> 或 <code>--init</code> 作为 PID 1（第 21 篇细讲）。</p>
+<h1 id="2-ps读懂每一列">2. ps：读懂每一列</h1>
+<h2 id="21-三套语法">2.1 三套语法</h2>
+<p><code>ps</code> 有个特殊之处：它同时支持三套互不兼容的参数风格，这是 BSD 和 System V 两大 Unix 分支融合的产物。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">ps aux                <span class="c1"># BSD 风格（参数【不带】横杠）</span>
+</span></span><span class="line"><span class="cl">ps -ef                <span class="c1"># UNIX/SysV 风格（参数带横杠）</span>
+</span></span><span class="line"><span class="cl">ps --forest           <span class="c1"># GNU 长选项风格</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 所以这三个都是对的，输出的列不同：</span>
+</span></span><span class="line"><span class="cl">ps aux <span class="p">|</span> head -2
+</span></span><span class="line"><span class="cl"><span class="c1"># USER  PID %CPU %MEM    VSZ   RSS TTY   STAT START   TIME COMMAND</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># root    1  0.0  0.1 168404 12996 ?     Ss   08:00   0:03 /sbin/init</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">ps -ef <span class="p">|</span> head -2
+</span></span><span class="line"><span class="cl"><span class="c1"># UID   PID  PPID  C STIME TTY          TIME CMD</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># root    1     0  0 08:00 ?        00:00:03 /sbin/init</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#             ^^^^ -ef 有 PPID，aux 没有</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ⚠️ 混用会有意外行为</span>
+</span></span><span class="line"><span class="cl">ps -aux               <span class="c1"># 严格来说是错的（多了横杠），GNU ps 会警告但仍按 BSD 解释</span>
+</span></span></code></pre></div><p><strong>记忆</strong>：<code>ps aux</code> 看资源占用（有 %CPU、%MEM、VSZ、RSS），<code>ps -ef</code> 看进程关系（有 PPID）。</p>
+<h2 id="22-ps-aux-每列详解">2.2 <code>ps aux</code> 每列详解</h2>
+<pre tabindex="0"><code>USER   PID  %CPU %MEM    VSZ   RSS TTY   STAT START   TIME COMMAND
+app   5000  12.3  4.5 2145678 412340 ?   Ssl  08:00  12:34 /usr/local/bin/myapp
+</code></pre><table>
+<thead>
+<tr>
+<th>列</th>
+<th>含义</th>
+<th>要点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>USER</code></td>
+<td>进程的<strong>有效</strong>用户</td>
+<td>不是启动它的用户，是当前 euid 对应的用户</td>
+</tr>
+<tr>
+<td><code>PID</code></td>
+<td>进程 ID</td>
+<td>—</td>
+</tr>
+<tr>
+<td><strong><code>%CPU</code></strong></td>
+<td>CPU 使用率</td>
+<td><strong>是「进程生命周期内的平均值」，不是瞬时值</strong>！刚启动的进程可能显示很高</td>
+</tr>
+<tr>
+<td><code>%MEM</code></td>
+<td>RSS 占物理内存总量的比例</td>
+<td>—</td>
+</tr>
+<tr>
+<td><strong><code>VSZ</code></strong></td>
+<td><strong>虚拟内存</strong>大小（KB）</td>
+<td>进程「申请/映射」的地址空间总量，<strong>包括没真正用的</strong></td>
+</tr>
+<tr>
+<td><strong><code>RSS</code></strong></td>
+<td><strong>常驻内存</strong>（KB）</td>
+<td>真正占用的物理内存，<strong>但共享库被重复计算</strong></td>
+</tr>
+<tr>
+<td><code>TTY</code></td>
+<td>控制终端</td>
+<td><code>?</code> 表示<strong>没有控制终端</strong>（守护进程）</td>
+</tr>
+<tr>
+<td><strong><code>STAT</code></strong></td>
+<td>进程状态</td>
+<td>见 2.4，<strong>最有信息量的一列</strong></td>
+</tr>
+<tr>
+<td><code>START</code></td>
+<td>启动时间</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>TIME</code></td>
+<td>累计占用的 <strong>CPU 时间</strong></td>
+<td>不是运行时长！一个跑了 10 天但空闲的进程可能只有 0:01</td>
+</tr>
+<tr>
+<td><code>COMMAND</code></td>
+<td>命令行</td>
+<td><code>[方括号]</code> 表示<strong>内核线程</strong>（不是真进程）</td>
+</tr>
+</tbody>
+</table>
+<h2 id="23-开篇第一问vsz-vs-rss-vs-pss">2.3 开篇第一问：VSZ vs RSS vs PSS</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">ps -o pid,vsz,rss,comm -p <span class="k">$(</span>pgrep -f myapp<span class="k">)</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   PID    VSZ   RSS COMMAND</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#  5000 2145678 412340 myapp</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#       ^^^^^^^ 2.1 GB 虚拟    ^^^^^^ 412 MB 物理</span>
+</span></span></code></pre></div><p><strong>为什么 VSZ 大得离谱？</strong></p>
+<pre tabindex="0"><code>VSZ 统计的是「虚拟地址空间」，包含：
+   ✓ 真正在用的物理内存
+   ✓ 申请了但还没写入的内存（内核用 overcommit 机制先记账，不真给页）
+   ✓ 映射进来但没读过的文件（mmap 一个 10GB 文件，VSZ 就 +10GB）
+   ✓ 所有链接的共享库的完整地址空间
+   ✓ 线程栈的预留空间（每个线程默认预留 8MB！500 个线程 = 4GB VSZ）
+   ✓ Go runtime 启动时会预留一大块虚拟地址空间（所以 Go 程序 VSZ 常有 1~2GB）
+
+所以：VSZ 高【几乎没有意义】，不要用它判断内存问题。要看 RSS。
+</code></pre><p><strong>RSS 的问题：共享库被重复计算</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 10 个 nginx worker，每个 RSS 显示 50MB</span>
+</span></span><span class="line"><span class="cl">ps aux <span class="p">|</span> grep nginx <span class="p">|</span> awk <span class="s1">&#39;{sum+=$6} END {print sum/1024 &#34; MB&#34;}&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 500 MB          &lt;- 但实际物理内存占用远小于此，因为它们共享同一份代码和库</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ PSS（Proportional Set Size）才是准确的：共享内存按份额分摊</span>
+</span></span><span class="line"><span class="cl">sudo awk <span class="s1">&#39;/^Pss:/ {sum+=$2} END {print sum/1024 &#34; MB&#34;}&#39;</span> /proc/5000/smaps
+</span></span><span class="line"><span class="cl"><span class="c1"># 或者用工具</span>
+</span></span><span class="line"><span class="cl">sudo smem -k -P nginx             <span class="c1"># 需要安装 smem</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># PID User  Command    Swap  USS  PSS  RSS</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 5001 www  nginx: wo    0K  8M   12M  50M</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                            ^^^  ^^^  ^^^</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                            独占  分摊后 含共享的全部</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 单个进程的详细构成</span>
+</span></span><span class="line"><span class="cl">sudo grep -E <span class="s1">&#39;^(Rss|Pss|Shared_Clean|Shared_Dirty|Private_Clean|Private_Dirty|Swap):&#39;</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>     /proc/5000/smaps_rollup
+</span></span><span class="line"><span class="cl"><span class="c1"># Rss:              412340 kB</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Pss:              398120 kB      &lt;- 按份额分摊后的真实占用</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Shared_Clean:      18432 kB      &lt;- 共享的干净页（如共享库代码）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Private_Dirty:    391860 kB      &lt;- 【进程独占的脏页】= 杀掉它能释放的内存</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Swap:               1024 kB</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 按 PSS 排序找出真正的内存大户</span>
+</span></span><span class="line"><span class="cl">sudo bash -c <span class="s1">&#39;for p in /proc/[0-9]*; do
+</span></span></span><span class="line"><span class="cl"><span class="s1">  [[ -r $p/smaps_rollup ]] || continue
+</span></span></span><span class="line"><span class="cl"><span class="s1">  pss=$(awk &#34;/^Pss:/{print \$2}&#34; $p/smaps_rollup 2&gt;/dev/null)
+</span></span></span><span class="line"><span class="cl"><span class="s1">  [[ -n $pss ]] &amp;&amp; echo &#34;$pss ${p##*/} $(cat $p/comm)&#34;
+</span></span></span><span class="line"><span class="cl"><span class="s1">done | sort -rn | head -10&#39;</span>
+</span></span></code></pre></div><table>
+<thead>
+<tr>
+<th>指标</th>
+<th>含义</th>
+<th>什么时候看</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>VSZ</strong></td>
+<td>虚拟地址空间</td>
+<td>几乎不用看（除了排查地址空间耗尽/mmap 泄漏）</td>
+</tr>
+<tr>
+<td><strong>RSS</strong></td>
+<td>常驻物理内存（共享部分重复计算）</td>
+<td>快速判断单个进程的量级</td>
+</tr>
+<tr>
+<td><strong>PSS</strong></td>
+<td>共享部分按份额分摊</td>
+<td><strong>多进程同源服务（nginx/php-fpm）的准确统计</strong></td>
+</tr>
+<tr>
+<td><strong>USS</strong></td>
+<td>进程独占的部分</td>
+<td><strong>「杀掉它能释放多少内存」</strong></td>
+</tr>
+</tbody>
+</table>
+<h2 id="24-stat-状态码">2.4 STAT 状态码</h2>
+<p>这是 <code>ps</code> 输出里信息量最大的一列，由「主状态 + 修饰符」组成：</p>
+<p><strong>主状态</strong>（第一个字母）：</p>
+<table>
+<thead>
+<tr>
+<th>码</th>
+<th>名称</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong><code>R</code></strong></td>
+<td>Running / Runnable</td>
+<td>正在 CPU 上跑，<strong>或在运行队列里等 CPU</strong></td>
+</tr>
+<tr>
+<td><strong><code>S</code></strong></td>
+<td>Interruptible Sleep</td>
+<td><strong>可中断睡眠</strong>：等 IO、等锁、等信号（<strong>绝大多数进程都是这个</strong>）</td>
+</tr>
+<tr>
+<td><strong><code>D</code></strong></td>
+<td><strong>Uninterruptible Sleep</strong></td>
+<td><strong>不可中断睡眠</strong>：通常在等磁盘/网络 IO 完成，<strong>信号都不响应</strong></td>
+</tr>
+<tr>
+<td><strong><code>Z</code></strong></td>
+<td>Zombie</td>
+<td><strong>僵尸</strong>：已退出但父进程还没回收它的退出状态</td>
+</tr>
+<tr>
+<td><code>T</code></td>
+<td>Stopped</td>
+<td>被信号停止（<code>Ctrl-Z</code> / <code>SIGSTOP</code>）</td>
+</tr>
+<tr>
+<td><code>t</code></td>
+<td>Tracing stop</td>
+<td>被调试器（gdb/strace）暂停</td>
+</tr>
+<tr>
+<td><code>X</code></td>
+<td>Dead</td>
+<td>即将销毁（几乎看不到）</td>
+</tr>
+<tr>
+<td><code>I</code></td>
+<td>Idle</td>
+<td>内核线程空闲（内核 4.14+，把大量空闲内核线程从 D/S 里分离出来）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>修饰符</strong>（后面的字符）：</p>
+<table>
+<thead>
+<tr>
+<th>码</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong><code>s</code></strong></td>
+<td><strong>会话首进程</strong>（session leader）</td>
+</tr>
+<tr>
+<td><strong><code>l</code></strong></td>
+<td><strong>多线程</strong>（multi-threaded）—— Go/Java 服务都会有这个</td>
+</tr>
+<tr>
+<td><strong><code>+</code></strong></td>
+<td>在<strong>前台进程组</strong>里</td>
+</tr>
+<tr>
+<td><code>&lt;</code></td>
+<td>高优先级（nice &lt; 0）</td>
+</tr>
+<tr>
+<td><code>N</code></td>
+<td>低优先级（nice &gt; 0）</td>
+</tr>
+<tr>
+<td><code>L</code></td>
+<td>有页被锁在内存里（<code>mlock</code>）</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">ps aux <span class="p">|</span> awk <span class="s1">&#39;NR==1 || $8 ~ /^[DZ]/&#39;</span>      <span class="c1"># 找出所有 D 和 Z 状态的进程</span>
+</span></span><span class="line"><span class="cl">ps -eo stat,pid,comm <span class="p">|</span> sort <span class="p">|</span> uniq -c -w4 <span class="p">|</span> sort -rn   <span class="c1"># 统计各状态的进程数</span>
+</span></span></code></pre></div><p><strong>常见组合的解读</strong>：</p>
+<pre tabindex="0"><code>Ss    会话首进程 + 睡眠            典型的守护进程（sshd、systemd）
+Ssl   会话首 + 睡眠 + 多线程        典型的 Go/Java 服务
+S+    睡眠 + 前台                  你在终端里跑的普通命令
+R+    运行 + 前台                  正在算的前台命令
+Ds    不可中断睡眠 + 会话首         ⚠️ IO 卡住了
+Z     僵尸                         ⚠️ 父进程没回收
+T     停止                         被 Ctrl-Z 挂起的任务
+</code></pre><h2 id="25-开篇第二问d-状态为什么杀不掉">2.5 开篇第二问：D 状态为什么杀不掉</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">ps aux <span class="p">|</span> grep <span class="s1">&#39; D&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># root  8123  0.0  0.0  4288  1024 ?  D  10:23  0:00 dd if=/dev/nfs/x of=/dev/null</span>
+</span></span><span class="line"><span class="cl">sudo <span class="nb">kill</span> -9 <span class="m">8123</span>
+</span></span><span class="line"><span class="cl">ps -p <span class="m">8123</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 还在！                    &lt;- kill -9 也无效</span>
+</span></span></code></pre></div><p><strong>原因</strong>：<code>D</code> = <strong>Uninterruptible Sleep</strong>（不可中断睡眠）。进程在内核态执行某个操作（通常是磁盘或网络 IO）时，会把自己设为 <code>TASK_UNINTERRUPTIBLE</code> 状态睡下去，等待硬件完成。</p>
+<p><strong>这个状态下内核不检查信号队列</strong>，所以任何信号（包括 <code>SIGKILL</code>）都只是被挂在待处理队列里，等进程醒来才会处理。而它醒来的唯一条件是<strong>那个 IO 操作完成或超时</strong>。</p>
+<p><strong>为什么要设计成不可中断？</strong> 因为这些操作正处于<strong>不能被打断的临界区</strong>——比如已经向磁盘控制器提交了 DMA 请求，内核数据结构处于中间状态。如果此时被信号打断跳出去，会导致内核数据结构不一致或内存损坏。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 怎么排查 D 状态进程卡在哪</span>
+</span></span><span class="line"><span class="cl">sudo cat /proc/8123/stack               <span class="c1"># ✅ 内核栈：能看到卡在哪个内核函数</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># [&lt;0&gt;] nfs_wait_bit_killable+0x2e/0x40</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># [&lt;0&gt;] nfs4_run_open_task+0x11a/0x1b0</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#       ^^^ 一眼看出是 NFS 卡住了</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">sudo cat /proc/8123/wchan               <span class="c1"># 等待的内核函数名（更简短）</span>
+</span></span><span class="line"><span class="cl">ps -eo pid,stat,wchan:30,comm <span class="p">|</span> awk <span class="s1">&#39;$2 ~ /D/&#39;</span>
+</span></span><span class="line"><span class="cl">sudo cat /proc/8123/syscall             <span class="c1"># 当前正在执行的系统调用号与参数</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 常见的 D 状态原因（排查顺序）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ① NFS/CIFS 服务器失联              -&gt; mount -o soft,timeo=X 或 umount -f -l</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ② 磁盘故障 / 坏道                  -&gt; dmesg | grep -iE &#39;I/O error|ata|scsi&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ③ 磁盘满 / IO 队列积压              -&gt; iostat -xz 1 看 %util 和 await</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ④ 内核 bug 或驱动问题              -&gt; dmesg 看有没有 hung_task 警告</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ⑤ 大量脏页回写（fsync 阻塞）        -&gt; grep -E &#39;Dirty|Writeback&#39; /proc/meminfo</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 内核会主动报告长时间 D 状态的进程</span>
+</span></span><span class="line"><span class="cl">dmesg <span class="p">|</span> grep -A20 <span class="s1">&#39;hung_task&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># INFO: task dd:8123 blocked for more than 120 seconds.</span>
+</span></span><span class="line"><span class="cl">cat /proc/sys/kernel/hung_task_timeout_secs      <span class="c1"># 120（默认阈值）</span>
+</span></span></code></pre></div><p><strong>唯一的处理办法</strong>：解决底层 IO 问题（恢复 NFS、换盘），或者<strong>重启机器</strong>。<code>kill -9</code> 不会有任何效果。</p>
+<p><strong>D 状态还有一个重要影响：它会算进 load average</strong>（第 4 章）。</p>
+<h2 id="26-ps-常用配方">2.6 ps 常用配方</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ── 按资源排序（最高频）──</span>
+</span></span><span class="line"><span class="cl">ps aux --sort<span class="o">=</span>-%cpu <span class="p">|</span> head -11             <span class="c1"># CPU 前 10（注意减号表示降序）</span>
+</span></span><span class="line"><span class="cl">ps aux --sort<span class="o">=</span>-rss <span class="p">|</span> head -11              <span class="c1"># 内存前 10</span>
+</span></span><span class="line"><span class="cl">ps -eo pid,ppid,user,%cpu,%mem,rss,stat,start,cmd --sort<span class="o">=</span>-rss <span class="p">|</span> head
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 自定义列（-o）──</span>
+</span></span><span class="line"><span class="cl">ps -eo pid,ppid,pgid,sid,tty,stat,nice,pri,psr,nlwp,rss,etime,comm
+</span></span><span class="line"><span class="cl"><span class="c1">#                                              ^^^ 绑在哪个 CPU 上</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                                                  ^^^^ 线程数（nlwp = number of light-weight processes）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                                                            ^^^^^ 已运行时长</span>
+</span></span><span class="line"><span class="cl">ps -eo pid,comm,etimes --sort<span class="o">=</span>-etimes <span class="p">|</span> head       <span class="c1"># 运行最久的进程（etimes = 秒数）</span>
+</span></span><span class="line"><span class="cl">ps -eo pid,comm,nlwp --sort<span class="o">=</span>-nlwp <span class="p">|</span> head           <span class="c1"># 线程最多的进程  ← 排查线程泄漏</span>
+</span></span><span class="line"><span class="cl">ps -o pid,rss,vsz,cmd -C nginx                     <span class="c1"># 按命令名筛选</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 树形 ──</span>
+</span></span><span class="line"><span class="cl">ps -ejH                                    <span class="c1"># 树形（缩进表示层级）</span>
+</span></span><span class="line"><span class="cl">ps auxf                                    <span class="c1"># BSD 风格的树形</span>
+</span></span><span class="line"><span class="cl">ps -eo pid,ppid,cmd --forest
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 线程 ──</span>
+</span></span><span class="line"><span class="cl">ps -eLf                                    <span class="c1"># 显示所有线程（L = threads）</span>
+</span></span><span class="line"><span class="cl">ps -Lf -p <span class="m">5000</span>                             <span class="c1"># 某进程的所有线程</span>
+</span></span><span class="line"><span class="cl">ps -eLo pid,tid,pcpu,stat,comm --sort<span class="o">=</span>-pcpu <span class="p">|</span> head   <span class="c1"># 哪个线程在吃 CPU</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#              ^^^ TID 才能定位到具体线程</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 按条件筛选 ──</span>
+</span></span><span class="line"><span class="cl">ps -u app                                  <span class="c1"># 某用户的进程</span>
+</span></span><span class="line"><span class="cl">ps -p 1234,5678                            <span class="c1"># 指定 PID</span>
+</span></span><span class="line"><span class="cl">ps --ppid <span class="m">1234</span>                             <span class="c1"># 某进程的直接子进程</span>
+</span></span><span class="line"><span class="cl">ps -C myapp                                <span class="c1"># 按命令名（精确匹配）</span>
+</span></span><span class="line"><span class="cl">ps -e -o pid,cmd <span class="p">|</span> grep <span class="s1">&#39;[m]yapp&#39;</span>          <span class="c1"># 用 [] 技巧避免 grep 自己出现在结果里</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 完整命令行（长命令被截断时）──</span>
+</span></span><span class="line"><span class="cl">ps -eo pid,args --width <span class="m">500</span>                <span class="c1"># 加宽输出</span>
+</span></span><span class="line"><span class="cl">ps auxww                                   <span class="c1"># ww 表示不截断</span>
+</span></span><span class="line"><span class="cl">cat /proc/5000/cmdline <span class="p">|</span> tr <span class="s1">&#39;\0&#39;</span> <span class="s1">&#39; &#39;</span>        <span class="c1"># ✅ 最可靠的方式</span>
+</span></span></code></pre></div><h1 id="3-进程状态机与僵尸">3. 进程状态机与僵尸</h1>
+<h2 id="31-状态转换">3.1 状态转换</h2>
+<pre tabindex="0"><code>                    fork()
+                      |
+                      v
+              +----------------+
+     +-------&gt;|  R  Runnable   |&lt;-------+   被调度器选中 -&gt; 上 CPU 执行
+     |        |  (就绪/运行)    |        |   时间片用完 -&gt; 回到就绪队列
+     |        +----------------+        |
+     |            |        |            |
+     |   等待事件  |        | 等待 IO    | IO 完成 / 事件到达
+     |   (可被信号 |        | (不可打断) |
+     |    唤醒)   v        v            |
+     |   +-----------+  +-----------+   |
+     +---|  S 睡眠   |  |  D 睡眠   |---+
+         | (可中断)   |  | (不可中断) |
+         +-----------+  +-----------+
+              |               ^
+    SIGSTOP   |               | 【信号在这里不起作用】
+    Ctrl-Z    v               
+         +-----------+
+         |  T 停止   |  &lt;---- SIGCONT / fg / bg 恢复
+         +-----------+
+              |
+              | exit() 或被信号杀死
+              v
+         +-----------+
+         |  Z 僵尸   |  ---- 父进程调用 wait() ----&gt; 彻底销毁
+         +-----------+
+</code></pre><h2 id="32-开篇第四问僵尸进程">3.2 开篇第四问：僵尸进程</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">ps aux <span class="p">|</span> awk <span class="s1">&#39;$8 ~ /Z/&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># app  7001  0.0  0.0      0     0 ?  Z  10:00  0:00 [myworker] &lt;defunct&gt;</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                          ^      ^                              ^^^^^^^^^</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                          VSZ 和 RSS 都是 0                      标记</span>
+</span></span></code></pre></div><p><strong>僵尸是什么</strong>：进程已经执行完毕、内存和文件描述符都已释放，但<strong>内核还保留着它的进程表项</strong>（PCB），因为里面存着<strong>退出状态码</strong>，等父进程来取。</p>
+<p><strong>为什么必须存在这个状态？</strong> 因为父进程有权知道子进程是怎么结束的（正常退出？退出码几？被哪个信号杀的？）。如果子进程一退出就彻底消失，这个信息就丢了。所以内核保留一个「尸体」，等父进程 <code>wait()</code> 领取后才清理。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 亲手造一个僵尸</span>
+</span></span><span class="line"><span class="cl">cat &gt; /tmp/zombie.c <span class="s">&lt;&lt;&#39;EOF&#39;
+</span></span></span><span class="line"><span class="cl"><span class="s">#include &lt;unistd.h&gt;
+</span></span></span><span class="line"><span class="cl"><span class="s">int main() {
+</span></span></span><span class="line"><span class="cl"><span class="s">    if (fork() == 0) return 42;    // 子进程立即退出
+</span></span></span><span class="line"><span class="cl"><span class="s">    sleep(300);                     // 父进程【不调用 wait】，睡着
+</span></span></span><span class="line"><span class="cl"><span class="s">    return 0;
+</span></span></span><span class="line"><span class="cl"><span class="s">}
+</span></span></span><span class="line"><span class="cl"><span class="s">EOF</span>
+</span></span><span class="line"><span class="cl">gcc -o /tmp/zombie /tmp/zombie.c <span class="o">&amp;&amp;</span> /tmp/zombie <span class="p">&amp;</span>
+</span></span><span class="line"><span class="cl">ps aux <span class="p">|</span> grep defunct
+</span></span><span class="line"><span class="cl"><span class="c1"># 能看到一个 Z 状态的进程</span>
+</span></span></code></pre></div><p><strong>三个关键结论</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ① 僵尸【杀不掉】，因为它已经死了</span>
+</span></span><span class="line"><span class="cl">sudo <span class="nb">kill</span> -9 <span class="m">7001</span>            <span class="c1"># 无效，进程已经不存在了，只剩一条记录</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ② 僵尸【几乎不占资源】——只占一个进程表项（几 KB 内核内存）+ 一个 PID</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    所以偶尔出现几个僵尸【不是问题】，不需要处理</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ③ 真正的问题是【大量僵尸】：它耗尽 PID 号，导致无法创建新进程</span>
+</span></span><span class="line"><span class="cl">cat /proc/sys/kernel/pid_max              <span class="c1"># 32768 或 4194304</span>
+</span></span><span class="line"><span class="cl">ps aux <span class="p">|</span> awk <span class="s1">&#39;$8 ~ /Z/&#39;</span> <span class="p">|</span> wc -l           <span class="c1"># 数一下有多少</span>
+</span></span></code></pre></div><p><strong>处理方式</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ✅ 正确做法：处理【父进程】，不是僵尸自己</span>
+</span></span><span class="line"><span class="cl">ps -o <span class="nv">ppid</span><span class="o">=</span> -p <span class="m">7001</span>                       <span class="c1"># 找出父进程</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 6999</span>
+</span></span><span class="line"><span class="cl">sudo <span class="nb">kill</span> -HUP <span class="m">6999</span>                       <span class="c1"># 让父进程重新读配置/重启（可能会去 wait）</span>
+</span></span><span class="line"><span class="cl">sudo <span class="nb">kill</span> <span class="m">6999</span>                            <span class="c1"># 或者杀掉父进程</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 父进程死后，僵尸会被托孤给 PID 1，而 systemd 会立即 wait 掉它们  ✅</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ❌ 无效做法</span>
+</span></span><span class="line"><span class="cl">sudo <span class="nb">kill</span> -9 &lt;僵尸PID&gt;                     <span class="c1"># 对已死的进程发信号毫无意义</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 根治：修代码</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># C:  在 SIGCHLD 处理函数里调用 waitpid()，或 signal(SIGCHLD, SIG_IGN)</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Go: 用 cmd.Wait() 而不是只 cmd.Start()</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// Go 里的正确姿势
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">cmd</span> <span class="o">:=</span> <span class="nx">exec</span><span class="p">.</span><span class="nf">Command</span><span class="p">(</span><span class="s">&#34;worker&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="k">if</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">cmd</span><span class="p">.</span><span class="nf">Start</span><span class="p">();</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span> <span class="o">...</span> <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="c1">// ❌ 只 Start 不 Wait -&gt; 子进程退出后变僵尸
+</span></span></span><span class="line"><span class="cl"><span class="c1">// ✅ 必须 Wait（它内部会调 wait4 回收）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">go</span> <span class="kd">func</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">cmd</span><span class="p">.</span><span class="nf">Wait</span><span class="p">();</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">log</span><span class="p">.</span><span class="nf">Printf</span><span class="p">(</span><span class="s">&#34;worker exited: %v&#34;</span><span class="p">,</span> <span class="nx">err</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}()</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// 如果完全不关心子进程结果，也必须 Wait 来回收
+</span></span></span><span class="line"><span class="cl"><span class="c1">// Go 的 os/exec 没有 &#34;fire and forget&#34; 模式，这是有意的设计
+</span></span></span></code></pre></div><p><strong>容器场景的特殊性</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 容器里 PID 1 是你的应用，如果它不回收孤儿进程，僵尸会一直积累</span>
+</span></span><span class="line"><span class="cl">docker run --init myimage             <span class="c1"># ✅ --init 注入 tini 作为 PID 1，负责回收</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 或者在 Dockerfile 里</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ENTRYPOINT [&#34;/sbin/tini&#34;, &#34;--&#34;, &#34;/app/myapp&#34;]</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># K8s 里</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># spec.shareProcessNamespace: true 时要特别注意</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 或者用支持 reaping 的 init（如 dumb-init、tini）</span>
+</span></span></code></pre></div><h1 id="4-top-与-load-average">4. top 与 load average</h1>
+<h2 id="41-top-的输出">4.1 top 的输出</h2>
+<pre tabindex="0"><code>top - 17:30:01 up 12 days,  3:42,  2 users,  load average: 8.12, 6.45, 4.20
+Tasks: 312 total,   3 running, 308 sleeping,   0 stopped,   1 zombie
+%Cpu(s): 25.3 us,  4.1 sy,  0.0 ni, 60.2 id,  9.8 wa,  0.0 hi,  0.6 si,  0.0 st
+MiB Mem :  15884.0 total,    231.5 free,   4321.2 used,  11331.3 buff/cache
+MiB Swap:   2048.0 total,   2048.0 free,      0.0 used.  10234.5 avail Mem
+
+  PID USER   PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND
+ 5000 app    20   0 2145678 412340  18432 S  98.7   2.5   1:23.45 myapp
+</code></pre><p><strong>第三行 <code>%Cpu(s)</code> 是排查性能问题最重要的一行</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>全称</th>
+<th>含义</th>
+<th>高了说明什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong><code>us</code></strong></td>
+<td>user</td>
+<td><strong>用户态</strong> CPU</td>
+<td>应用自己在算（正常的忙）</td>
+</tr>
+<tr>
+<td><strong><code>sy</code></strong></td>
+<td>system</td>
+<td><strong>内核态</strong> CPU</td>
+<td>系统调用频繁：大量 IO、大量小包网络、频繁进程创建</td>
+</tr>
+<tr>
+<td><code>ni</code></td>
+<td>nice</td>
+<td>低优先级进程的用户态</td>
+<td>—</td>
+</tr>
+<tr>
+<td><strong><code>id</code></strong></td>
+<td>idle</td>
+<td><strong>空闲</strong></td>
+<td>—</td>
+</tr>
+<tr>
+<td><strong><code>wa</code></strong></td>
+<td><strong>iowait</strong></td>
+<td><strong>等待 IO 的时间</strong></td>
+<td><strong>磁盘是瓶颈</strong>（配合 <code>iostat -xz 1</code> 确认）</td>
+</tr>
+<tr>
+<td><code>hi</code></td>
+<td>hardware irq</td>
+<td>硬中断</td>
+<td>网卡/磁盘中断风暴</td>
+</tr>
+<tr>
+<td><strong><code>si</code></strong></td>
+<td>software irq</td>
+<td><strong>软中断</strong></td>
+<td><strong>网络包处理</strong>（高 PPS 场景，看 <code>/proc/softirqs</code>）</td>
+</tr>
+<tr>
+<td><strong><code>st</code></strong></td>
+<td><strong>steal</strong></td>
+<td><strong>被 hypervisor 抢走的时间</strong></td>
+<td><strong>云主机上邻居在抢 CPU</strong>，或你超卖了</td>
+</tr>
+</tbody>
+</table>
+<p><strong>两个云上特有的排查点</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ① st（steal）高：说明你的 vCPU 被宿主机分给别人了</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    表现：应用什么都没干但响应变慢，us 不高但吞吐下降</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    处理：换实例类型（独享型 CPU）、换可用区、向云厂商反馈</span>
+</span></span><span class="line"><span class="cl">mpstat -P ALL <span class="m">1</span>                    <span class="c1"># 每个核的详细情况，看 %steal</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ② si（软中断）高：通常是网络包处理占用</span>
+</span></span><span class="line"><span class="cl">cat /proc/softirqs <span class="p">|</span> head -5       <span class="c1"># 看 NET_RX 的增长</span>
+</span></span><span class="line"><span class="cl">sar -n DEV <span class="m">1</span>                       <span class="c1"># 每秒收发包数</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 处理：开启 RPS/RFS 把软中断分散到多核、用 XDP/DPDK、升级网卡驱动</span>
+</span></span></code></pre></div><h2 id="42-开篇第五问load-average-的真实含义">4.2 开篇第五问：load average 的真实含义</h2>
+<pre tabindex="0"><code>load average: 8.12, 6.45, 4.20
+              ^^^^  ^^^^  ^^^^
+              1分钟  5分钟  15分钟的指数移动平均
+</code></pre><p><strong>最常见的误解是「load average 是 CPU 使用率」。它不是。</strong></p>
+<p>Linux 的 load average 统计的是**「运行队列长度 + 处于 D 状态（不可中断睡眠）的进程数」**的移动平均。</p>
+<pre tabindex="0"><code>load = 正在 CPU 上跑的进程数
+     + 在运行队列里等 CPU 的进程数
+     + 【处于 D 状态等 IO 的进程数】      ← 关键！这是 Linux 特有的
+</code></pre><p><strong>所以「load 8 但 CPU 只用 20%」有一个标准答案：大量进程卡在 D 状态等 IO。</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 验证：数一下 R 和 D 状态的进程</span>
+</span></span><span class="line"><span class="cl">ps -eo stat <span class="p">|</span> grep -c <span class="s1">&#39;^R&#39;</span>         <span class="c1"># 运行中</span>
+</span></span><span class="line"><span class="cl">ps -eo stat <span class="p">|</span> grep -c <span class="s1">&#39;^D&#39;</span>         <span class="c1"># 等 IO 的  ← 如果这个数很大，就是 IO 瓶颈</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 交叉验证</span>
+</span></span><span class="line"><span class="cl">top                                <span class="c1"># 看 wa（iowait）是否很高</span>
+</span></span><span class="line"><span class="cl">iostat -xz <span class="m">1</span>                       <span class="c1"># 看 %util 是否接近 100%、await 是否很大</span>
+</span></span><span class="line"><span class="cl">vmstat <span class="m">1</span>                           <span class="c1"># 看 b 列（blocked 进程数）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># procs -----------memory---------- ---swap-- -----io---- -system-- ------cpu-----</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#  r  b   swpd   free   buff  cache   si   so    bi    bo   in   cs us sy id wa st</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#  1  7      0 236892  12345 1234567   0    0  4096   512  800 1200 20  4 66 10  0</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#     ^ b=7 有 7 个进程在等 IO</span>
+</span></span></code></pre></div><p><strong>怎么判断 load 高不高</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">nproc                              <span class="c1"># 8（逻辑 CPU 数）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 经验规则：</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   load &lt; nproc          -&gt; 健康</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   load ≈ nproc          -&gt; 饱和（刚好用满）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   load &gt; nproc × 2      -&gt; 明显过载，需要排查</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 但一定要结合 %wa 和 D 状态进程数判断是 CPU 瓶颈还是 IO 瓶颈</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 一行判断</span>
+</span></span><span class="line"><span class="cl">awk -v <span class="nv">c</span><span class="o">=</span><span class="k">$(</span>nproc<span class="k">)</span> <span class="s1">&#39;{printf &#34;load1=%.2f  cores=%d  ratio=%.2f\n&#34;, $1, c, $1/c}&#39;</span> /proc/loadavg
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 三个数字的趋势含义</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 8.12, 6.45, 4.20   -&gt; 递减顺序 = 负载【正在上升】  ← 要关注</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 4.20, 6.45, 8.12   -&gt; 递增顺序 = 负载【正在下降】  ← 高峰已过</span>
+</span></span></code></pre></div><p><strong>Linux 与其他 Unix 的差异</strong>：其他 Unix（如 Solaris）的 load 只算 CPU 运行队列，<strong>不含 D 状态</strong>。所以「Linux 的 load 会因为磁盘慢而飙高」是 Linux 特有的行为，这个设计当年也有争议（它把两种不同的瓶颈混在了一个指标里）。</p>
+<h2 id="43-top-的交互键">4.3 top 的交互键</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">top
+</span></span><span class="line"><span class="cl"><span class="c1"># 排序</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   P     按 CPU 排序（默认）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   M     按内存排序</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   T     按累计 CPU 时间排序</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   N     按 PID 排序</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 显示</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   1     【展开每个 CPU 核心的单独统计】← 排查单核打满时必用</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   H     显示线程而不是进程</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   c     显示完整命令行</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   V     树形显示</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   m / t 切换内存/CPU 的显示样式（图形条）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   E / e 切换内存单位（KB/MB/GB）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   x / y 高亮排序列 / 高亮运行中的进程</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 过滤</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   u     只看某个用户</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   o     按条件过滤（如 %CPU&gt;10）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   -p    启动时指定 PID：top -p 1234,5678</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 操作</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   k     kill 一个进程（会问 PID 和信号）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   r     renice 改优先级</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   d/s   改刷新间隔</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   W     保存当前配置到 ~/.toprc</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   q     退出</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 批处理模式（脚本/日志采集用）</span>
+</span></span><span class="line"><span class="cl">top -bn1 <span class="p">|</span> head -20                <span class="c1"># b=batch n1=只刷新一次</span>
+</span></span><span class="line"><span class="cl">top -bn1 -o %CPU <span class="p">|</span> head -15        <span class="c1"># 按 CPU 排序</span>
+</span></span><span class="line"><span class="cl">top -bd <span class="m">5</span> -n <span class="m">12</span> &gt; top.log          <span class="c1"># 每 5 秒采样一次，共 12 次，写日志</span>
+</span></span></code></pre></div><h2 id="44-htop-与其他替代">4.4 htop 与其他替代</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">sudo apt install htop
+</span></span><span class="line"><span class="cl">htop
+</span></span><span class="line"><span class="cl"><span class="c1"># 优势：彩色、鼠标可点、树形（F5）、搜索（F3）、过滤（F4）、</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#      直接看到每核使用率、可视化的内存条、更容易 kill（F9）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 常用键：F5 树形  F6 排序  F9 kill  F4 过滤  / 搜索  u 选用户  H 隐藏线程</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 其他现代工具</span>
+</span></span><span class="line"><span class="cl">btop                    <span class="c1"># 更漂亮，带图表</span>
+</span></span><span class="line"><span class="cl">glances                 <span class="c1"># 一屏看 CPU/内存/磁盘/网络/容器</span>
+</span></span><span class="line"><span class="cl">atop                    <span class="c1"># ✅ 会【记录历史】，能回看昨天某时刻的进程状态（事后排查神器）</span>
+</span></span><span class="line"><span class="cl">sudo atop -r /var/log/atop/atop_20260812 -b 14:00
+</span></span><span class="line"><span class="cl">nmon                    <span class="c1"># 交互式性能监控</span>
+</span></span><span class="line"><span class="cl">pidstat <span class="m">1</span>               <span class="c1"># 每秒输出每个进程的 CPU/IO/内存（sysstat 包）</span>
+</span></span><span class="line"><span class="cl">pidstat -d <span class="m">1</span>            <span class="c1"># 只看 IO</span>
+</span></span><span class="line"><span class="cl">pidstat -t -p <span class="m">5000</span> <span class="m">1</span>    <span class="c1"># 看线程级</span>
+</span></span></code></pre></div><h1 id="5-信号与-kill">5. 信号与 kill</h1>
+<p>信号的完整机制（为什么是异步的、不可靠信号的历史、信号与线程）留给<strong>第 29 篇</strong>，这里只讲操作。</p>
+<h2 id="51-常用信号">5.1 常用信号</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="nb">kill</span> -l                            <span class="c1"># 列出所有信号</span>
+</span></span></code></pre></div><table>
+<thead>
+<tr>
+<th>号</th>
+<th>名称</th>
+<th>默认行为</th>
+<th>用途</th>
+<th>能否被捕获</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>1</strong></td>
+<td><code>SIGHUP</code></td>
+<td>终止</td>
+<td><strong>终端挂断</strong>；守护进程约定用它「重载配置」</td>
+<td>✅</td>
+</tr>
+<tr>
+<td><strong>2</strong></td>
+<td><code>SIGINT</code></td>
+<td>终止</td>
+<td><strong><code>Ctrl-C</code></strong></td>
+<td>✅</td>
+</tr>
+<tr>
+<td>3</td>
+<td><code>SIGQUIT</code></td>
+<td>终止 + core</td>
+<td><code>Ctrl-\</code>；<strong>Go 程序收到它会打印所有 goroutine 栈</strong></td>
+<td>✅</td>
+</tr>
+<tr>
+<td><strong>9</strong></td>
+<td><code>SIGKILL</code></td>
+<td><strong>强制终止</strong></td>
+<td><strong>不可捕获、不可忽略</strong>，内核直接干掉</td>
+<td>❌</td>
+</tr>
+<tr>
+<td>11</td>
+<td><code>SIGSEGV</code></td>
+<td>终止 + core</td>
+<td>段错误（非法内存访问）</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>13</td>
+<td><code>SIGPIPE</code></td>
+<td>终止</td>
+<td>往已关闭的管道写（09 篇 3.5）</td>
+<td>✅</td>
+</tr>
+<tr>
+<td><strong>15</strong></td>
+<td><code>SIGTERM</code></td>
+<td>终止</td>
+<td><strong>默认的 <code>kill</code></strong>，礼貌地请求退出</td>
+<td>✅</td>
+</tr>
+<tr>
+<td><strong>17</strong></td>
+<td><code>SIGCHLD</code></td>
+<td>忽略</td>
+<td>子进程状态改变（<strong>回收僵尸的触发点</strong>）</td>
+<td>✅</td>
+</tr>
+<tr>
+<td><strong>18</strong></td>
+<td><code>SIGCONT</code></td>
+<td>继续</td>
+<td>恢复被停止的进程</td>
+<td>✅</td>
+</tr>
+<tr>
+<td><strong>19</strong></td>
+<td><code>SIGSTOP</code></td>
+<td><strong>停止</strong></td>
+<td><strong>不可捕获</strong>，强制暂停</td>
+<td>❌</td>
+</tr>
+<tr>
+<td>20</td>
+<td><code>SIGTSTP</code></td>
+<td>停止</td>
+<td><strong><code>Ctrl-Z</code></strong>（可捕获，所以能自定义处理）</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>10 / 12</td>
+<td><code>SIGUSR1</code> / <code>SIGUSR2</code></td>
+<td>终止</td>
+<td><strong>留给应用自定义</strong>（nginx 用 USR1 重开日志）</td>
+<td>✅</td>
+</tr>
+</tbody>
+</table>
+<h2 id="52-kill-系列命令">5.2 kill 系列命令</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ── kill：按 PID ──</span>
+</span></span><span class="line"><span class="cl"><span class="nb">kill</span> <span class="m">1234</span>                          <span class="c1"># 默认发 SIGTERM（15）</span>
+</span></span><span class="line"><span class="cl"><span class="nb">kill</span> -15 <span class="m">1234</span>                      <span class="c1"># 显式</span>
+</span></span><span class="line"><span class="cl"><span class="nb">kill</span> -TERM <span class="m">1234</span>                    <span class="c1"># 用名字</span>
+</span></span><span class="line"><span class="cl"><span class="nb">kill</span> -9 <span class="m">1234</span>                       <span class="c1"># SIGKILL</span>
+</span></span><span class="line"><span class="cl"><span class="nb">kill</span> -HUP <span class="m">1234</span>                     <span class="c1"># 重载配置</span>
+</span></span><span class="line"><span class="cl"><span class="nb">kill</span> -0 <span class="m">1234</span>                       <span class="c1"># 【不发信号】，只测试进程是否存在 + 有无权限</span>
+</span></span><span class="line"><span class="cl">                                   <span class="c1"># 退出码 0 = 存在  1 = 不存在</span>
+</span></span><span class="line"><span class="cl"><span class="nb">kill</span> -- -5001                      <span class="c1"># 【负数 = 整个进程组】（注意 -- 分隔）</span>
+</span></span><span class="line"><span class="cl"><span class="nb">kill</span> %1                            <span class="c1"># 按作业号（见第 6 章）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── pkill / pgrep：按名字与属性 ──</span>
+</span></span><span class="line"><span class="cl">pgrep myapp                        <span class="c1"># 列出匹配的 PID</span>
+</span></span><span class="line"><span class="cl">pgrep -l myapp                     <span class="c1"># 带名字</span>
+</span></span><span class="line"><span class="cl">pgrep -a myapp                     <span class="c1"># 带完整命令行</span>
+</span></span><span class="line"><span class="cl">pgrep -f <span class="s1">&#39;myapp --config&#39;</span>          <span class="c1"># ✅ -f 匹配【完整命令行】而不只是进程名</span>
+</span></span><span class="line"><span class="cl">pgrep -u app myapp                 <span class="c1"># 限定用户</span>
+</span></span><span class="line"><span class="cl">pgrep -n myapp                     <span class="c1"># newest：最新启动的那个</span>
+</span></span><span class="line"><span class="cl">pgrep -o myapp                     <span class="c1"># oldest：最早启动的</span>
+</span></span><span class="line"><span class="cl">pgrep -c myapp                     <span class="c1"># 只输出数量</span>
+</span></span><span class="line"><span class="cl">pgrep -P <span class="m">1234</span>                      <span class="c1"># 某进程的子进程</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">pkill myapp                        <span class="c1"># 杀掉匹配的（默认 TERM）</span>
+</span></span><span class="line"><span class="cl">pkill -9 -f <span class="s1">&#39;myapp --config&#39;</span>       <span class="c1"># 强杀，按完整命令行匹配</span>
+</span></span><span class="line"><span class="cl">pkill -u app                       <span class="c1"># 杀掉某用户的所有进程  ⚠️ 危险</span>
+</span></span><span class="line"><span class="cl">pkill -HUP nginx                   <span class="c1"># 给 nginx 发 HUP</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ⚠️ pkill/pgrep 的模式是【正则】且默认只匹配进程名前 15 个字符</span>
+</span></span><span class="line"><span class="cl">pgrep myverylongprocessname        <span class="c1"># 可能匹配不到！</span>
+</span></span><span class="line"><span class="cl">pgrep -f myverylongprocessname     <span class="c1"># ✅ 用 -f</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── killall：按精确的名字 ──</span>
+</span></span><span class="line"><span class="cl">killall myapp                      <span class="c1"># 精确匹配进程名（不是正则）</span>
+</span></span><span class="line"><span class="cl">killall -i myapp                   <span class="c1"># 交互确认</span>
+</span></span><span class="line"><span class="cl">killall -u app                     <span class="c1"># 某用户的</span>
+</span></span><span class="line"><span class="cl">killall -e myverylongname          <span class="c1"># -e 要求完全匹配长名字</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ⚠️ 在 Solaris 上 killall 的含义是「杀掉所有进程」，跨平台脚本别用它</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 给进程组/会话发信号 ──</span>
+</span></span><span class="line"><span class="cl"><span class="nb">kill</span> -TERM -<span class="k">$(</span>ps -o <span class="nv">pgid</span><span class="o">=</span> -p <span class="m">1234</span> <span class="p">|</span> tr -d <span class="s1">&#39; &#39;</span><span class="k">)</span>     <span class="c1"># 整个进程组</span>
+</span></span><span class="line"><span class="cl">pkill -g <span class="m">5001</span>                                       <span class="c1"># 按 PGID</span>
+</span></span><span class="line"><span class="cl">pkill -s <span class="m">1234</span>                                       <span class="c1"># 按会话 ID</span>
+</span></span></code></pre></div><h2 id="53-sigterm-vs-sigkill为什么不该随手--9">5.3 SIGTERM vs SIGKILL：为什么不该随手 -9</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="nb">kill</span> -15 <span class="m">1234</span>       <span class="c1"># SIGTERM：进程【可以捕获】，执行清理后自行退出</span>
+</span></span><span class="line"><span class="cl"><span class="nb">kill</span> -9 <span class="m">1234</span>        <span class="c1"># SIGKILL：内核直接销毁，进程【没有任何机会】做清理</span>
+</span></span></code></pre></div><p><strong><code>kill -9</code> 的后果</strong>：</p>
+<pre tabindex="0"><code>✗ 不会 flush 缓冲区    -&gt; 日志丢失、写入的数据丢失
+✗ 不会关闭连接         -&gt; 客户端看到 connection reset，数据库留下未提交事务
+✗ 不会删除临时文件     -&gt; /tmp 里留垃圾、pid 文件残留导致下次启动失败
+✗ 不会释放锁           -&gt; 分布式锁、文件锁残留，其他实例无法接管
+✗ 子进程不会被通知     -&gt; 留下孤儿进程继续跑（&#34;僵尸服务&#34;）
+</code></pre><p><strong>正确的关闭顺序</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 手动</span>
+</span></span><span class="line"><span class="cl"><span class="nb">kill</span> -TERM <span class="m">1234</span>
+</span></span><span class="line"><span class="cl">sleep <span class="m">10</span>                            <span class="c1"># 给它时间清理</span>
+</span></span><span class="line"><span class="cl"><span class="nb">kill</span> -0 <span class="m">1234</span> 2&gt;/dev/null <span class="o">&amp;&amp;</span> <span class="nb">kill</span> -9 <span class="m">1234</span>    <span class="c1"># 还活着才强杀</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 一行版</span>
+</span></span><span class="line"><span class="cl">timeout <span class="m">10</span> sh -c <span class="s1">&#39;kill -TERM 1234; while kill -0 1234 2&gt;/dev/null; do sleep 0.5; done&#39;</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  <span class="o">||</span> <span class="nb">kill</span> -9 <span class="m">1234</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 用 systemd 管（它内置了这套逻辑）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># [Service]</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># KillSignal=SIGTERM          先发这个</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># TimeoutStopSec=30           等 30 秒</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># KillMode=mixed              主进程发 TERM，剩余的发 KILL</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># SendSIGKILL=yes             超时后发 KILL（默认 yes）</span>
+</span></span><span class="line"><span class="cl">systemctl stop myapp                <span class="c1"># 自动走完整流程</span>
+</span></span></code></pre></div><p><strong>Go 服务必须处理 SIGTERM</strong>（否则 K8s 滚动更新时会丢请求）：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">main</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">srv</span> <span class="o">:=</span> <span class="o">&amp;</span><span class="nx">http</span><span class="p">.</span><span class="nx">Server</span><span class="p">{</span><span class="nx">Addr</span><span class="p">:</span> <span class="s">&#34;:8080&#34;</span><span class="p">,</span> <span class="nx">Handler</span><span class="p">:</span> <span class="nx">router</span><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="k">go</span> <span class="kd">func</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">srv</span><span class="p">.</span><span class="nf">ListenAndServe</span><span class="p">();</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="o">&amp;&amp;</span> <span class="nx">err</span> <span class="o">!=</span> <span class="nx">http</span><span class="p">.</span><span class="nx">ErrServerClosed</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">log</span><span class="p">.</span><span class="nf">Fatalf</span><span class="p">(</span><span class="s">&#34;listen: %v&#34;</span><span class="p">,</span> <span class="nx">err</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}()</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// 捕获 SIGTERM 和 SIGINT
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">quit</span> <span class="o">:=</span> <span class="nb">make</span><span class="p">(</span><span class="kd">chan</span> <span class="nx">os</span><span class="p">.</span><span class="nx">Signal</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">signal</span><span class="p">.</span><span class="nf">Notify</span><span class="p">(</span><span class="nx">quit</span><span class="p">,</span> <span class="nx">syscall</span><span class="p">.</span><span class="nx">SIGTERM</span><span class="p">,</span> <span class="nx">syscall</span><span class="p">.</span><span class="nx">SIGINT</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="o">&lt;-</span><span class="nx">quit</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">log</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="s">&#34;收到退出信号，开始优雅关闭…&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// 给 30 秒处理完存量请求（要小于 K8s 的 terminationGracePeriodSeconds）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">ctx</span><span class="p">,</span> <span class="nx">cancel</span> <span class="o">:=</span> <span class="nx">context</span><span class="p">.</span><span class="nf">WithTimeout</span><span class="p">(</span><span class="nx">context</span><span class="p">.</span><span class="nf">Background</span><span class="p">(),</span> <span class="mi">30</span><span class="o">*</span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">defer</span> <span class="nf">cancel</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">srv</span><span class="p">.</span><span class="nf">Shutdown</span><span class="p">(</span><span class="nx">ctx</span><span class="p">);</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>      <span class="c1">// 停止接受新连接，等存量请求完成
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="nx">log</span><span class="p">.</span><span class="nf">Printf</span><span class="p">(</span><span class="s">&#34;强制关闭: %v&#34;</span><span class="p">,</span> <span class="nx">err</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// 这里还要做：关闭数据库连接池、flush 日志、注销服务发现、等待后台 goroutine
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">db</span><span class="p">.</span><span class="nf">Close</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">logger</span><span class="p">.</span><span class="nf">Sync</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">log</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="s">&#34;已退出&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><strong>配套要注意的两点</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ① 容器 entrypoint 必须用 exec（09 篇 2.4）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    否则 SIGTERM 发给了 shell，你的程序根本收不到</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ② K8s 的 preStop hook + terminationGracePeriodSeconds</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># spec:</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   terminationGracePeriodSeconds: 45      # 要大于你代码里的 30 秒</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   containers:</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   - lifecycle:</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#       preStop:</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#         exec:</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#           command: [&#34;sleep&#34;, &#34;5&#34;]        # 等 Service 的 endpoint 摘除生效</span>
+</span></span></code></pre></div><p><strong>一个调试技巧</strong>：<code>SIGQUIT</code> 让 Go 程序打印所有 goroutine 的栈，排查死锁和 goroutine 泄漏极其有用：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="nb">kill</span> -QUIT <span class="m">1234</span>                    <span class="c1"># Go 程序会把所有 goroutine 栈打到 stderr 然后退出</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 想不退出只 dump 栈，用 pprof：</span>
+</span></span><span class="line"><span class="cl">curl localhost:6060/debug/pprof/goroutine?debug<span class="o">=</span><span class="m">2</span>
+</span></span></code></pre></div><h1 id="6-作业控制与后台运行">6. 作业控制与后台运行</h1>
+<h2 id="61-前台后台挂起">6.1 前台、后台、挂起</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">sleep <span class="m">300</span>                          <span class="c1"># 前台运行：占着终端</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Ctrl-Z                           # 挂起（发 SIGTSTP），进程变成 T 状态</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># [1]+  Stopped                 sleep 300</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="nb">jobs</span>                               <span class="c1"># 查看本 shell 的作业</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># [1]+  Stopped                 sleep 300</span>
+</span></span><span class="line"><span class="cl"><span class="nb">jobs</span> -l                            <span class="c1"># 带 PID</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># [1]+  7001 Stopped              sleep 300</span>
+</span></span><span class="line"><span class="cl"><span class="nb">jobs</span> -p                            <span class="c1"># 只输出 PID</span>
+</span></span><span class="line"><span class="cl"><span class="nb">jobs</span> -r                            <span class="c1"># 只看运行中的</span>
+</span></span><span class="line"><span class="cl"><span class="nb">jobs</span> -s                            <span class="c1"># 只看停止的</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="nb">bg</span>                                 <span class="c1"># 让它在【后台继续】（发 SIGCONT）</span>
+</span></span><span class="line"><span class="cl"><span class="nb">bg</span> %1                              <span class="c1"># 指定作业号</span>
+</span></span><span class="line"><span class="cl"><span class="nb">fg</span>                                 <span class="c1"># 拿回【前台】</span>
+</span></span><span class="line"><span class="cl"><span class="nb">fg</span> %1
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">sleep <span class="m">300</span> <span class="p">&amp;</span>                        <span class="c1"># 直接放后台启动</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># [2] 7002</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="nv">$!</span>                            <span class="c1"># 最后一个后台进程的 PID</span>
+</span></span><span class="line"><span class="cl"><span class="nb">wait</span>                               <span class="c1"># 等所有后台作业结束</span>
+</span></span><span class="line"><span class="cl"><span class="nb">wait</span> %1                            <span class="c1"># 等指定作业</span>
+</span></span><span class="line"><span class="cl"><span class="nb">wait</span> <span class="nv">$PID</span>                          <span class="c1"># 等指定 PID</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="nb">kill</span> %1                            <span class="c1"># 按作业号杀</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 作业号引用：%1 %2 / %+ 或 %% 当前作业 / %- 上一个作业 / %sleep 按名字前缀</span>
+</span></span></code></pre></div><h2 id="62-开篇第三问关掉终端为什么进程会死">6.2 开篇第三问：关掉终端为什么进程会死</h2>
+<p><strong>机制</strong>：终端关闭（或 ssh 断开）时，内核给<strong>会话里的所有进程</strong>发送 <code>SIGHUP</code>（hang up，源自电话挂断）。<code>SIGHUP</code> 的默认行为是终止进程。</p>
+<pre tabindex="0"><code>   ssh 断开
+       |
+       v
+   内核给会话首进程（bash）发 SIGHUP
+       |
+       ├─ bash 收到后，转发 SIGHUP 给它的所有【作业】
+       |      |
+       |      v
+       |   后台的 sleep 300 收到 SIGHUP -&gt; 默认行为终止 -&gt; 死了
+       |
+       └─ bash 自己也退出
+</code></pre><p><strong>四种让进程活下来的方式</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>方式</th>
+<th>原理</th>
+<th>能扛住关终端</th>
+<th>能扛住 ssh 断开</th>
+<th>输出去哪</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>cmd &amp;</code></td>
+<td>只是放后台，仍在同一会话</td>
+<td>❌</td>
+<td>❌</td>
+<td>终端</td>
+</tr>
+<tr>
+<td><strong><code>nohup cmd &amp;</code></strong></td>
+<td><strong>忽略 SIGHUP</strong></td>
+<td>✅</td>
+<td>✅</td>
+<td><code>nohup.out</code></td>
+</tr>
+<tr>
+<td><code>cmd &amp; disown</code></td>
+<td>从 shell 的作业表里移除，bash 不再转发 SIGHUP</td>
+<td>✅</td>
+<td>✅</td>
+<td>终端（终端消失后写入失败）</td>
+</tr>
+<tr>
+<td><strong><code>setsid cmd</code></strong></td>
+<td><strong>创建新会话</strong>，脱离原终端</td>
+<td>✅</td>
+<td>✅</td>
+<td>终端（同上）</td>
+</tr>
+<tr>
+<td><strong><code>tmux</code>/<code>screen</code></strong></td>
+<td>进程在另一个持久会话里</td>
+<td>✅</td>
+<td>✅</td>
+<td>可随时重连查看</td>
+</tr>
+<tr>
+<td><strong>systemd 服务</strong></td>
+<td>由 PID 1 管理，与终端无关</td>
+<td>✅</td>
+<td>✅</td>
+<td>journald</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ── nohup：忽略 SIGHUP ──</span>
+</span></span><span class="line"><span class="cl">nohup ./myapp <span class="p">&amp;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># nohup: ignoring input and appending output to &#39;nohup.out&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#        ^^ 自动把 stdout/stderr 重定向到 nohup.out（因为终端可能消失）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">nohup ./myapp &gt; /var/log/myapp.log 2&gt;<span class="p">&amp;</span><span class="m">1</span> <span class="p">&amp;</span>      <span class="c1"># ✅ 显式指定日志位置</span>
+</span></span><span class="line"><span class="cl">nohup ./myapp &gt; /var/log/myapp.log 2&gt;<span class="p">&amp;</span><span class="m">1</span> &lt; /dev/null <span class="p">&amp;</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                                     ^^^^^^^^^^^^^ 连 stdin 也断开，更彻底</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── disown：从作业表移除 ──</span>
+</span></span><span class="line"><span class="cl">./myapp <span class="p">&amp;</span>
+</span></span><span class="line"><span class="cl"><span class="nb">disown</span>                             <span class="c1"># 移除最后一个作业</span>
+</span></span><span class="line"><span class="cl"><span class="nb">disown</span> %1                          <span class="c1"># 移除指定作业</span>
+</span></span><span class="line"><span class="cl"><span class="nb">disown</span> -a                          <span class="c1"># 移除所有</span>
+</span></span><span class="line"><span class="cl"><span class="nb">disown</span> -h %1                       <span class="c1"># 不移除，只标记「不发 SIGHUP」</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ⚠️ disown 是【事后补救】：进程已经启动了才想起来要保护它</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ⚠️ 它不重定向输出，终端关闭后进程往已关闭的 fd 写会报错甚至崩溃</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── setsid：新建会话 ──</span>
+</span></span><span class="line"><span class="cl">setsid ./myapp &gt; /var/log/myapp.log 2&gt;<span class="p">&amp;</span><span class="m">1</span> <span class="p">&amp;</span>
+</span></span><span class="line"><span class="cl">ps -o pid,ppid,sid,tty,comm -p <span class="k">$(</span>pgrep myapp<span class="k">)</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   PID  PPID   SID TT       COMMAND</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#  8001     1  8001 ?        myapp</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#            ^^^      ^^^^^^ 没有控制终端，PPID 直接是 1</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 这是最&#34;干净&#34;的方式：进程完全脱离原会话</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── tmux（推荐用于交互式长任务）──</span>
+</span></span><span class="line"><span class="cl">tmux new -s work                   <span class="c1"># 创建会话</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ... 跑你的任务 ...</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Ctrl-B 然后 D                     # detach（分离，任务继续跑）</span>
+</span></span><span class="line"><span class="cl">tmux ls                            <span class="c1"># 列出会话</span>
+</span></span><span class="line"><span class="cl">tmux attach -t work                <span class="c1"># 重新连上</span>
+</span></span><span class="line"><span class="cl">tmux kill-session -t work
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 优势：能随时回来看输出、能开多窗格、断线自动保留</span>
+</span></span></code></pre></div><p><strong>生产环境的正确答案是 systemd</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># nohup/setsid/tmux 都是「临时」手段，生产服务应该用 systemd（第 14 篇细讲）</span>
+</span></span><span class="line"><span class="cl">sudo tee /etc/systemd/system/myapp.service &gt; /dev/null <span class="s">&lt;&lt;&#39;EOF&#39;
+</span></span></span><span class="line"><span class="cl"><span class="s">[Unit]
+</span></span></span><span class="line"><span class="cl"><span class="s">Description=My App
+</span></span></span><span class="line"><span class="cl"><span class="s">After=network-online.target
+</span></span></span><span class="line"><span class="cl"><span class="s">
+</span></span></span><span class="line"><span class="cl"><span class="s">[Service]
+</span></span></span><span class="line"><span class="cl"><span class="s">Type=simple
+</span></span></span><span class="line"><span class="cl"><span class="s">User=myapp
+</span></span></span><span class="line"><span class="cl"><span class="s">ExecStart=/usr/local/bin/myapp
+</span></span></span><span class="line"><span class="cl"><span class="s">Restart=always                    # ✅ 崩溃自动重启（nohup 做不到）
+</span></span></span><span class="line"><span class="cl"><span class="s">RestartSec=5
+</span></span></span><span class="line"><span class="cl"><span class="s">StandardOutput=journal            # ✅ 日志进 journald（不会写爆某个文件）
+</span></span></span><span class="line"><span class="cl"><span class="s">StandardError=journal
+</span></span></span><span class="line"><span class="cl"><span class="s">
+</span></span></span><span class="line"><span class="cl"><span class="s">[Install]
+</span></span></span><span class="line"><span class="cl"><span class="s">WantedBy=multi-user.target
+</span></span></span><span class="line"><span class="cl"><span class="s">EOF</span>
+</span></span><span class="line"><span class="cl">sudo systemctl daemon-reload <span class="o">&amp;&amp;</span> sudo systemctl <span class="nb">enable</span> --now myapp
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># systemd 相对 nohup 的优势</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ✓ 崩溃自动重启、启动失败告警</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ✓ 开机自启</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ✓ 日志统一管理与轮转</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ✓ 资源限制（CPU/内存配额）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ✓ 依赖关系（等数据库就绪）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ✓ 优雅停止（TERM -&gt; 等待 -&gt; KILL）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ✓ 安全加固（沙箱选项，见 10 篇第 8 章）</span>
+</span></span></code></pre></div><h2 id="63-huponexit-与-ssh-的行为">6.3 huponexit 与 ssh 的行为</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="nb">shopt</span> <span class="p">|</span> grep huponexit
+</span></span><span class="line"><span class="cl"><span class="c1"># huponexit      off               &lt;- Ubuntu/Debian 默认关闭</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 关闭时：bash 正常 exit 【不会】给后台作业发 SIGHUP</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#        但 ssh 【异常断开】（网络掉线）时，内核仍会发 SIGHUP</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="nb">shopt</span> -s huponexit                 <span class="c1"># 打开：连正常 exit 也发 SIGHUP</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 所以有个容易困惑的现象：</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># - 你 exit 退出 ssh，后台任务还活着（因为 huponexit=off）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># - 但网络掉线导致 ssh 断开，后台任务死了（内核发的 SIGHUP）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 结论：不要依赖 huponexit 的默认值，重要任务一律 nohup / tmux / systemd</span>
+</span></span></code></pre></div><h1 id="7-procltpidgt进程的一切">7. /proc/&lt;pid&gt;：进程的一切</h1>
+<p>这是排查进程问题最强的工具，因为它是<strong>内核数据的直接视图</strong>。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="nv">PID</span><span class="o">=</span><span class="m">5000</span>
+</span></span><span class="line"><span class="cl">ls /proc/<span class="nv">$PID</span>/
+</span></span></code></pre></div><table>
+<thead>
+<tr>
+<th>路径</th>
+<th>内容</th>
+<th>典型用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>cmdline</code></td>
+<td>完整命令行（<code>\0</code> 分隔）</td>
+<td><strong>看真实启动参数</strong>（ps 会截断）</td>
+</tr>
+<tr>
+<td><code>comm</code></td>
+<td>进程名（可被程序修改）</td>
+<td>—</td>
+</tr>
+<tr>
+<td><strong><code>exe</code></strong></td>
+<td>指向可执行文件的软链接</td>
+<td><strong>程序被删了也能看到</strong>（<code>(deleted)</code> 标记）</td>
+</tr>
+<tr>
+<td><strong><code>cwd</code></strong></td>
+<td>当前工作目录</td>
+<td>排查相对路径问题</td>
+</tr>
+<tr>
+<td><code>root</code></td>
+<td>进程的根目录</td>
+<td>chroot / 容器场景</td>
+</tr>
+<tr>
+<td><strong><code>environ</code></strong></td>
+<td>环境变量（<code>\0</code> 分隔）</td>
+<td><strong>排查「配置没生效」</strong></td>
+</tr>
+<tr>
+<td><strong><code>fd/</code></strong></td>
+<td>所有打开的文件描述符</td>
+<td><strong>fd 泄漏、已删除文件、端口</strong></td>
+</tr>
+<tr>
+<td><code>fdinfo/</code></td>
+<td>每个 fd 的详情（偏移量、标志）</td>
+<td>看读写位置</td>
+</tr>
+<tr>
+<td><strong><code>status</code></strong></td>
+<td>状态汇总（人类可读）</td>
+<td><strong>一站式查看：内存、线程数、uid、信号掩码</strong></td>
+</tr>
+<tr>
+<td><code>stat</code> / <code>statm</code></td>
+<td>同上但机器可读</td>
+<td>脚本解析</td>
+</tr>
+<tr>
+<td><strong><code>limits</code></strong></td>
+<td>资源限制的实际值</td>
+<td><strong>排查 too many open files</strong></td>
+</tr>
+<tr>
+<td><strong><code>stack</code></strong></td>
+<td>内核栈</td>
+<td><strong>D 状态卡在哪个内核函数</strong></td>
+</tr>
+<tr>
+<td><code>wchan</code></td>
+<td>等待的内核函数名</td>
+<td>同上，更简短</td>
+</tr>
+<tr>
+<td><code>syscall</code></td>
+<td>当前系统调用</td>
+<td>卡在哪个 syscall</td>
+</tr>
+<tr>
+<td><code>maps</code> / <code>smaps</code></td>
+<td>内存映射区域</td>
+<td>内存泄漏、看加载了哪些库</td>
+</tr>
+<tr>
+<td><strong><code>smaps_rollup</code></strong></td>
+<td>内存汇总（含 PSS）</td>
+<td><strong>准确的内存占用</strong></td>
+</tr>
+<tr>
+<td><strong><code>task/</code></strong></td>
+<td>每个线程一个子目录</td>
+<td><strong>线程级排查</strong></td>
+</tr>
+<tr>
+<td><code>sched</code> / <code>schedstat</code></td>
+<td>调度统计</td>
+<td>等待 CPU 的时间</td>
+</tr>
+<tr>
+<td><code>io</code></td>
+<td>IO 统计（读写字节数）</td>
+<td>哪个进程在读写</td>
+</tr>
+<tr>
+<td><code>net/</code></td>
+<td>网络统计（<strong>是所在 netns 的</strong>）</td>
+<td>容器网络排查</td>
+</tr>
+<tr>
+<td><code>oom_score</code> / <code>oom_score_adj</code></td>
+<td>OOM 评分与调整值</td>
+<td>防止关键进程被 OOM 杀</td>
+</tr>
+<tr>
+<td><code>mountinfo</code></td>
+<td>挂载表</td>
+<td>容器的挂载视图</td>
+</tr>
+<tr>
+<td><code>ns/</code></td>
+<td>各命名空间的引用</td>
+<td>判断进程在哪个 namespace</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ── 实战配方 ──</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 完整启动命令（ps 截断时）</span>
+</span></span><span class="line"><span class="cl">tr <span class="s1">&#39;\0&#39;</span> <span class="s1">&#39; &#39;</span> &lt; /proc/<span class="nv">$PID</span>/cmdline<span class="p">;</span> <span class="nb">echo</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 环境变量（排查配置没生效）</span>
+</span></span><span class="line"><span class="cl">sudo tr <span class="s1">&#39;\0&#39;</span> <span class="s1">&#39;\n&#39;</span> &lt; /proc/<span class="nv">$PID</span>/environ <span class="p">|</span> sort
+</span></span><span class="line"><span class="cl">sudo tr <span class="s1">&#39;\0&#39;</span> <span class="s1">&#39;\n&#39;</span> &lt; /proc/<span class="nv">$PID</span>/environ <span class="p">|</span> grep -i <span class="s1">&#39;GOMEMLIMIT\|DATABASE&#39;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 程序真实路径（即使二进制被删了/被替换了）</span>
+</span></span><span class="line"><span class="cl">sudo ls -l /proc/<span class="nv">$PID</span>/exe
+</span></span><span class="line"><span class="cl"><span class="c1"># lrwxrwxrwx ... /proc/5000/exe -&gt; /usr/local/bin/myapp (deleted)</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                                                       ^^^^^^^^^ 二进制已被删除，</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                                                       说明部署时替换了文件但没重启服务</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># fd 数量与内容（fd 泄漏排查）</span>
+</span></span><span class="line"><span class="cl">sudo ls /proc/<span class="nv">$PID</span>/fd <span class="p">|</span> wc -l                        <span class="c1"># 当前打开的 fd 数</span>
+</span></span><span class="line"><span class="cl">sudo cat /proc/<span class="nv">$PID</span>/limits <span class="p">|</span> grep <span class="s1">&#39;open files&#39;</span>       <span class="c1"># 上限</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Max open files            1024      4096</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                           ^^^^ soft  ^^^^ hard</span>
+</span></span><span class="line"><span class="cl">sudo ls -l /proc/<span class="nv">$PID</span>/fd <span class="p">|</span> awk <span class="s1">&#39;{print $NF}&#39;</span> <span class="p">|</span> sort <span class="p">|</span> uniq -c <span class="p">|</span> sort -rn <span class="p">|</span> head
+</span></span><span class="line"><span class="cl"><span class="c1">#                                              ^^ 统计打开最多的是什么类型</span>
+</span></span><span class="line"><span class="cl">sudo ls -l /proc/<span class="nv">$PID</span>/fd <span class="p">|</span> grep -c socket            <span class="c1"># socket 数量</span>
+</span></span><span class="line"><span class="cl">sudo ls -l /proc/<span class="nv">$PID</span>/fd <span class="p">|</span> grep deleted              <span class="c1"># 已删除但仍占空间的文件</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 状态汇总（最有用的单个文件）</span>
+</span></span><span class="line"><span class="cl">grep -E <span class="s1">&#39;^(Name|State|Pid|PPid|Threads|VmRSS|VmSize|VmSwap|voluntary_ctxt|nonvoluntary_ctxt)&#39;</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>     /proc/<span class="nv">$PID</span>/status
+</span></span><span class="line"><span class="cl"><span class="c1"># Name:   myapp</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># State:  S (sleeping)</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Threads:        24                          &lt;- 线程数（排查线程泄漏）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># VmRSS:     412340 kB                        &lt;- 常驻内存</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># VmSwap:      1024 kB                        &lt;- 被换出的部分</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># nonvoluntary_ctxt_switches: 123456          &lt;- 被抢占的次数（高说明 CPU 竞争激烈）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 线程级排查</span>
+</span></span><span class="line"><span class="cl">ls /proc/<span class="nv">$PID</span>/task/                                  <span class="c1"># 每个 TID 一个目录</span>
+</span></span><span class="line"><span class="cl"><span class="k">for</span> t in /proc/<span class="nv">$PID</span>/task/*<span class="p">;</span> <span class="k">do</span>
+</span></span><span class="line"><span class="cl">  <span class="nb">echo</span> <span class="s2">&#34;</span><span class="k">$(</span>basename <span class="nv">$t</span><span class="k">)</span><span class="s2"> </span><span class="k">$(</span>cat <span class="nv">$t</span>/comm<span class="k">)</span><span class="s2"> </span><span class="k">$(</span>cat <span class="nv">$t</span>/stat <span class="p">|</span> awk <span class="s1">&#39;{print $3}&#39;</span><span class="k">)</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="k">done</span> <span class="p">|</span> head -20                                       <span class="c1"># TID、名字、状态</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># IO 统计</span>
+</span></span><span class="line"><span class="cl">cat /proc/<span class="nv">$PID</span>/io
+</span></span><span class="line"><span class="cl"><span class="c1"># read_bytes: 1234567890          &lt;- 从块设备真实读取的字节数</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># write_bytes: 987654321          &lt;- 真实写入的</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># cancelled_write_bytes: 0</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 防止关键进程被 OOM 杀掉</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> -1000 <span class="p">|</span> sudo tee /proc/<span class="nv">$PID</span>/oom_score_adj        <span class="c1"># -1000 = 几乎不会被选中</span>
+</span></span><span class="line"><span class="cl">cat /proc/<span class="nv">$PID</span>/oom_score                              <span class="c1"># 当前评分（0~1000）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># systemd 里配：OOMScoreAdjust=-500</span>
+</span></span></code></pre></div><h1 id="8-资源限制与优先级">8. 资源限制与优先级</h1>
+<h2 id="81-ulimit">8.1 ulimit</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="nb">ulimit</span> -a                          <span class="c1"># 查看当前 shell 的所有限制</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># core file size          (blocks, -c) 0</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># data seg size           (kbytes, -d) unlimited</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># file size               (blocks, -f) unlimited</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># pending signals                 (-i) 62841</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># max locked memory       (kbytes, -l) 8192</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># open files                      (-n) 1024        &lt;- 最常需要调的</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># pipe size            (512 bytes, -p) 8</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># stack size              (kbytes, -s) 8192</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># cpu time               (seconds, -t) unlimited</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># max user processes              (-u) 62841       &lt;- 防 fork 炸弹</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># virtual memory          (kbytes, -v) unlimited</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="nb">ulimit</span> -n                          <span class="c1"># 只看 open files 的 soft limit</span>
+</span></span><span class="line"><span class="cl"><span class="nb">ulimit</span> -Hn                         <span class="c1"># hard limit（上限，普通用户只能降不能升）</span>
+</span></span><span class="line"><span class="cl"><span class="nb">ulimit</span> -Sn                         <span class="c1"># soft limit（实际生效值）</span>
+</span></span><span class="line"><span class="cl"><span class="nb">ulimit</span> -n <span class="m">65535</span>                    <span class="c1"># 临时提升（不能超过 hard limit）</span>
+</span></span></code></pre></div><p><strong>soft 与 hard 的关系</strong>：soft 是实际生效值，hard 是 soft 的上限。<strong>普通用户只能降低 hard limit，只有 root 能提高</strong>。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 持久化：/etc/security/limits.conf（对【登录会话】生效，走 PAM）</span>
+</span></span><span class="line"><span class="cl">sudo tee -a /etc/security/limits.d/99-myapp.conf &gt; /dev/null <span class="s">&lt;&lt;&#39;EOF&#39;
+</span></span></span><span class="line"><span class="cl"><span class="s">myapp  soft  nofile  65535
+</span></span></span><span class="line"><span class="cl"><span class="s">myapp  hard  nofile  65535
+</span></span></span><span class="line"><span class="cl"><span class="s">myapp  soft  nproc   4096
+</span></span></span><span class="line"><span class="cl"><span class="s">myapp  hard  nproc   8192
+</span></span></span><span class="line"><span class="cl"><span class="s">*      soft  core    0
+</span></span></span><span class="line"><span class="cl"><span class="s">EOF</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 字段：&lt;域&gt; &lt;类型&gt; &lt;项目&gt; &lt;值&gt;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 域：用户名 / @组名 / * 通配 / uid 范围</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ⚠️ 必须【重新登录】才生效；且它【不影响 systemd 启动的服务】！</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ systemd 服务要在 unit 里设（这是最常见的坑）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># [Service]</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># LimitNOFILE=65535</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># LimitNPROC=4096</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># LimitCORE=infinity</span>
+</span></span><span class="line"><span class="cl">systemctl show myapp -p LimitNOFILE          <span class="c1"># 验证实际生效值</span>
+</span></span><span class="line"><span class="cl">cat /proc/<span class="k">$(</span>pgrep -o myapp<span class="k">)</span>/limits           <span class="c1"># ✅ 最可靠：看进程真实的限制</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 系统级的全局上限</span>
+</span></span><span class="line"><span class="cl">cat /proc/sys/fs/file-max                    <span class="c1"># 整个系统能打开的 fd 总数</span>
+</span></span><span class="line"><span class="cl">sysctl fs.file-nr                            <span class="c1"># 已分配 / 已用 / 上限</span>
+</span></span><span class="line"><span class="cl">sudo sysctl -w fs.file-max<span class="o">=</span><span class="m">2097152</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s1">&#39;fs.file-max=2097152&#39;</span> <span class="p">|</span> sudo tee /etc/sysctl.d/99-limits.conf
+</span></span></code></pre></div><p><strong>「too many open files」的完整排查链</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ① 确认是哪个进程</span>
+</span></span><span class="line"><span class="cl">sudo lsof <span class="p">|</span> awk <span class="s1">&#39;{print $2}&#39;</span> <span class="p">|</span> sort <span class="p">|</span> uniq -c <span class="p">|</span> sort -rn <span class="p">|</span> head    <span class="c1"># 慢但全面</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 更快的方式</span>
+</span></span><span class="line"><span class="cl"><span class="k">for</span> p in /proc/<span class="o">[</span>0-9<span class="o">]</span>*<span class="p">;</span> <span class="k">do</span> <span class="nb">echo</span> <span class="s2">&#34;</span><span class="k">$(</span>ls <span class="nv">$p</span>/fd 2&gt;/dev/null <span class="p">|</span> wc -l<span class="k">)</span><span class="s2"> </span><span class="si">${</span><span class="nv">p</span><span class="p">##*/</span><span class="si">}</span><span class="s2">&#34;</span><span class="p">;</span> <span class="k">done</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  <span class="p">|</span> sort -rn <span class="p">|</span> head
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ② 看它的限制与当前用量</span>
+</span></span><span class="line"><span class="cl"><span class="nv">PID</span><span class="o">=</span><span class="m">5000</span>
+</span></span><span class="line"><span class="cl">sudo ls /proc/<span class="nv">$PID</span>/fd <span class="p">|</span> wc -l                 <span class="c1"># 当前</span>
+</span></span><span class="line"><span class="cl">grep <span class="s1">&#39;open files&#39;</span> /proc/<span class="nv">$PID</span>/limits           <span class="c1"># 上限</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ③ 看 fd 都是什么（判断是泄漏还是真的需要这么多）</span>
+</span></span><span class="line"><span class="cl">sudo ls -l /proc/<span class="nv">$PID</span>/fd <span class="p">|</span> awk <span class="s1">&#39;{print $NF}&#39;</span> <span class="p">|</span> sed <span class="s1">&#39;s/[0-9]*$//&#39;</span> <span class="p">|</span> sort <span class="p">|</span> uniq -c <span class="p">|</span> sort -rn
+</span></span><span class="line"><span class="cl"><span class="c1"># 大量 socket -&gt; 连接没关闭（HTTP client 没 Close Body、连接池配置错）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 大量同一个文件 -&gt; 文件句柄泄漏</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 大量 pipe -&gt; 子进程管道没关</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ④ 提升限额（如果确实需要）+ 修代码（如果是泄漏）</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// Go 里最常见的 fd 泄漏：HTTP 响应体没关
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">resp</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">http</span><span class="p">.</span><span class="nf">Get</span><span class="p">(</span><span class="nx">url</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="k">if</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span> <span class="k">return</span> <span class="nx">err</span> <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="k">defer</span> <span class="nx">resp</span><span class="p">.</span><span class="nx">Body</span><span class="p">.</span><span class="nf">Close</span><span class="p">()</span>          <span class="c1">// ✅ 必须，否则连接不会归还池、fd 不释放
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">io</span><span class="p">.</span><span class="nf">Copy</span><span class="p">(</span><span class="nx">io</span><span class="p">.</span><span class="nx">Discard</span><span class="p">,</span> <span class="nx">resp</span><span class="p">.</span><span class="nx">Body</span><span class="p">)</span>   <span class="c1">// ✅ 还要读完，否则连接无法复用
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl"><span class="c1">// 另一个：没设超时导致连接堆积
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">client</span> <span class="o">:=</span> <span class="o">&amp;</span><span class="nx">http</span><span class="p">.</span><span class="nx">Client</span><span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">Timeout</span><span class="p">:</span> <span class="mi">10</span> <span class="o">*</span> <span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">,</span>   <span class="c1">// ✅ 整体超时
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">Transport</span><span class="p">:</span> <span class="o">&amp;</span><span class="nx">http</span><span class="p">.</span><span class="nx">Transport</span><span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">MaxIdleConns</span><span class="p">:</span>        <span class="mi">100</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">MaxIdleConnsPerHost</span><span class="p">:</span> <span class="mi">10</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">IdleConnTimeout</span><span class="p">:</span>     <span class="mi">90</span> <span class="o">*</span> <span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="p">},</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><h2 id="82-nice--renicecpu-优先级">8.2 nice / renice：CPU 优先级</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">nice -n <span class="m">10</span> ./batch_job             <span class="c1"># 以低优先级启动（nice 值越大优先级越低）</span>
+</span></span><span class="line"><span class="cl">nice -n -5 ./important             <span class="c1"># 高优先级（需要 root）</span>
+</span></span><span class="line"><span class="cl">renice -n <span class="m">10</span> -p <span class="m">1234</span>               <span class="c1"># 改已运行进程的优先级</span>
+</span></span><span class="line"><span class="cl">renice -n <span class="m">5</span> -u app                 <span class="c1"># 改某用户所有进程的</span>
+</span></span><span class="line"><span class="cl">renice -n <span class="m">10</span> -g <span class="m">5001</span>               <span class="c1"># 改整个进程组的</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">ps -eo pid,ni,pri,comm <span class="p">|</span> head
+</span></span><span class="line"><span class="cl"><span class="c1">#   PID  NI PRI COMMAND</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#  1234   0  19 bash</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#         ^^ nice 值范围 -20（最高优先级）到 19（最低）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#             ^^^ 内核内部的优先级（与 nice 反向）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ⚠️ nice 只影响【CPU 时间的分配比例】，不影响：</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    - 内存分配</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    - IO 优先级（那是 ionice）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    - 在 CPU 空闲时的执行（低优先级进程照样能跑满）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 所以它只在【CPU 竞争】时起作用</span>
+</span></span></code></pre></div><h2 id="83-ioniceio-优先级">8.3 ionice：IO 优先级</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">ionice -c <span class="m">3</span> ./backup_job           <span class="c1"># class 3 = idle：只在磁盘空闲时才做 IO</span>
+</span></span><span class="line"><span class="cl">ionice -c <span class="m">2</span> -n <span class="m">7</span> ./job             <span class="c1"># class 2 = best-effort，级别 0~7（7 最低）</span>
+</span></span><span class="line"><span class="cl">ionice -c <span class="m">1</span> -n <span class="m">0</span> ./critical        <span class="c1"># class 1 = realtime（需要 root，谨慎）</span>
+</span></span><span class="line"><span class="cl">ionice -p <span class="m">1234</span>                     <span class="c1"># 查看某进程的 IO 优先级</span>
+</span></span><span class="line"><span class="cl">ionice -c <span class="m">3</span> -p <span class="m">1234</span>                <span class="c1"># 改已运行进程的</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 典型用法：让备份/压缩任务不影响线上服务</span>
+</span></span><span class="line"><span class="cl">ionice -c <span class="m">3</span> nice -n <span class="m">19</span> tar -czf backup.tar.gz /data
+</span></span><span class="line"><span class="cl"><span class="c1">#                                  ^^ CPU 和 IO 都降到最低</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ⚠️ ionice 只对 CFQ/BFQ 调度器有效，对 none/mq-deadline（NVMe 常用）基本无效</span>
+</span></span><span class="line"><span class="cl">cat /sys/block/sda/queue/scheduler
+</span></span></code></pre></div><h2 id="84-用-systemd-做资源控制推荐">8.4 用 systemd 做资源控制（推荐）</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 比 ulimit/nice 强得多：底层是 cgroup（第 36 篇细讲）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># [Service]</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># CPUQuota=50%                     # 最多用 0.5 核</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># CPUWeight=100                    # 相对权重（竞争时的份额）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># MemoryMax=2G                     # 内存硬限制（超了就 OOM）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># MemoryHigh=1.5G                  # 软限制（超了开始激进回收）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># TasksMax=4096                    # 最大进程/线程数</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># IOWeight=100                     # IO 权重</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># IOReadBandwidthMax=/dev/sda 50M  # IO 带宽限制</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># LimitNOFILE=65535                # fd 上限</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Nice=10                          # CPU nice 值</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># OOMScoreAdjust=-500              # 降低被 OOM 杀的概率</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">systemctl show myapp <span class="p">|</span> grep -E <span class="s1">&#39;CPUQuota|MemoryMax|TasksMax|LimitNOFILE&#39;</span>
+</span></span><span class="line"><span class="cl">systemd-cgtop                      <span class="c1"># ✅ 按 cgroup 看资源占用（哪个服务在吃资源）</span>
+</span></span><span class="line"><span class="cl">systemctl status myapp             <span class="c1"># 输出里有 CPU/Memory/Tasks 的当前用量</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 临时给一个命令加限制（不用写 unit）</span>
+</span></span><span class="line"><span class="cl">systemd-run --scope -p <span class="nv">MemoryMax</span><span class="o">=</span>1G -p <span class="nv">CPUQuota</span><span class="o">=</span>50% ./myapp
+</span></span></code></pre></div><h1 id="9-实战排查">9. 实战排查</h1>
+<h2 id="91-cpu-打满">9.1 CPU 打满</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ① 定位进程</span>
+</span></span><span class="line"><span class="cl">top -bn1 -o %CPU <span class="p">|</span> head -15
+</span></span><span class="line"><span class="cl">ps aux --sort<span class="o">=</span>-%cpu <span class="p">|</span> head -5
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ② 定位【线程】（%CPU 100% 但机器有 8 核 -&gt; 可能是单线程死循环）</span>
+</span></span><span class="line"><span class="cl">top -H -p <span class="nv">$PID</span>                     <span class="c1"># H = 显示线程</span>
+</span></span><span class="line"><span class="cl">ps -eLo pid,tid,pcpu,stat,comm --sort<span class="o">=</span>-pcpu -p <span class="nv">$PID</span> <span class="p">|</span> head
+</span></span><span class="line"><span class="cl"><span class="c1">#             ^^^ TID</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ③ 看它在干什么</span>
+</span></span><span class="line"><span class="cl">sudo strace -c -p <span class="nv">$PID</span> -f          <span class="c1"># 统计系统调用（-c 汇总，-f 含线程）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 按 Ctrl-C 结束后会给出各 syscall 的次数与耗时排名</span>
+</span></span><span class="line"><span class="cl">sudo strace -p <span class="nv">$PID</span> -f -e <span class="nv">trace</span><span class="o">=</span>network      <span class="c1"># 只看网络相关</span>
+</span></span><span class="line"><span class="cl">sudo perf top -p <span class="nv">$PID</span>              <span class="c1"># ✅ 采样看哪个函数在吃 CPU（最有用）</span>
+</span></span><span class="line"><span class="cl">sudo perf record -F <span class="m">99</span> -p <span class="nv">$PID</span> -g -- sleep <span class="m">30</span> <span class="o">&amp;&amp;</span> sudo perf report
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ④ Go 服务：直接用 pprof（比 perf 更准确，有符号信息）</span>
+</span></span><span class="line"><span class="cl">curl -o cpu.prof <span class="s1">&#39;http://localhost:6060/debug/pprof/profile?seconds=30&#39;</span>
+</span></span><span class="line"><span class="cl">go tool pprof -http<span class="o">=</span>:8080 cpu.prof
+</span></span><span class="line"><span class="cl"><span class="c1"># 或者看当前所有 goroutine（排查死锁、goroutine 泄漏）</span>
+</span></span><span class="line"><span class="cl">curl <span class="s1">&#39;http://localhost:6060/debug/pprof/goroutine?debug=2&#39;</span> <span class="p">|</span> head -50
+</span></span><span class="line"><span class="cl">curl <span class="s1">&#39;http://localhost:6060/debug/pprof/goroutine?debug=1&#39;</span> <span class="p">|</span> head -20   <span class="c1"># 汇总视图</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ⑤ 区分是 us 还是 sy 高</span>
+</span></span><span class="line"><span class="cl">top                                <span class="c1"># 看 %Cpu(s) 那一行</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># us 高 -&gt; 应用在算（业务逻辑、GC、正则回溯、序列化）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># sy 高 -&gt; 系统调用频繁（大量小 IO、频繁 fork、大量小包网络、锁竞争进内核）</span>
+</span></span><span class="line"><span class="cl">sudo strace -c -p <span class="nv">$PID</span> -f          <span class="c1"># sy 高时用它找出是哪个 syscall</span>
+</span></span></code></pre></div><h2 id="92-进程卡死">9.2 进程「卡死」</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ① 先看状态</span>
+</span></span><span class="line"><span class="cl">ps -o pid,stat,wchan:30,comm -p <span class="nv">$PID</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># STAT=D -&gt; IO 卡住（见 2.5）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># STAT=S -&gt; 在等什么（正常等待，还是死锁？）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># STAT=T -&gt; 被停止了（谁发的 SIGSTOP？）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># STAT=Z -&gt; 已经死了（僵尸）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># STAT=R 但没进展 -&gt; 死循环</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ② D 状态：看内核栈</span>
+</span></span><span class="line"><span class="cl">sudo cat /proc/<span class="nv">$PID</span>/stack
+</span></span><span class="line"><span class="cl">dmesg <span class="p">|</span> grep -i <span class="s1">&#39;hung task&#39;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ③ S 状态：看它在等什么</span>
+</span></span><span class="line"><span class="cl">sudo cat /proc/<span class="nv">$PID</span>/wchan<span class="p">;</span> <span class="nb">echo</span>
+</span></span><span class="line"><span class="cl">sudo cat /proc/<span class="nv">$PID</span>/syscall        <span class="c1"># 当前的系统调用</span>
+</span></span><span class="line"><span class="cl">sudo strace -p <span class="nv">$PID</span>                <span class="c1"># 挂上去看（如果完全没输出，说明真的卡在某个 syscall）</span>
+</span></span><span class="line"><span class="cl">sudo lsof -p <span class="nv">$PID</span> <span class="p">|</span> tail -20       <span class="c1"># 打开了什么（等某个文件？等某个 socket？）</span>
+</span></span><span class="line"><span class="cl">ss -tnp <span class="p">|</span> grep <span class="nv">$PID</span>                <span class="c1"># 网络连接状态（等对端响应？）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ④ 看线程级（多线程程序某个线程死锁）</span>
+</span></span><span class="line"><span class="cl">ps -Lo pid,tid,stat,wchan:25,comm -p <span class="nv">$PID</span>
+</span></span><span class="line"><span class="cl"><span class="k">for</span> t in /proc/<span class="nv">$PID</span>/task/*<span class="p">;</span> <span class="k">do</span>
+</span></span><span class="line"><span class="cl">  <span class="nb">echo</span> <span class="s2">&#34;TID </span><span class="k">$(</span>basename <span class="nv">$t</span><span class="k">)</span><span class="s2">: </span><span class="k">$(</span>cat <span class="nv">$t</span>/stat <span class="p">|</span> awk <span class="s1">&#39;{print $3}&#39;</span><span class="k">)</span><span class="s2"> </span><span class="k">$(</span>cat <span class="nv">$t</span>/wchan 2&gt;/dev/null<span class="k">)</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="k">done</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ⑤ Go 服务死锁：SIGQUIT 打印所有 goroutine 栈</span>
+</span></span><span class="line"><span class="cl"><span class="nb">kill</span> -QUIT <span class="nv">$PID</span>                    <span class="c1"># 会退出并打印栈</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 不想退出就用 pprof</span>
+</span></span><span class="line"><span class="cl">curl <span class="s1">&#39;http://localhost:6060/debug/pprof/goroutine?debug=2&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 找 &#34;chan receive&#34;、&#34;sync.Mutex.Lock&#34;、&#34;select&#34; 卡了很久的 goroutine</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 输出里的 &#34;goroutine 123 [chan receive, 25 minutes]&#34; —— 括号里的时间是关键线索</span>
+</span></span></code></pre></div><h2 id="93-进程数线程数爆掉">9.3 进程数/线程数爆掉</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ① fork 失败：resource temporarily unavailable</span>
+</span></span><span class="line"><span class="cl"><span class="nb">ulimit</span> -u                                    <span class="c1"># 用户最大进程数</span>
+</span></span><span class="line"><span class="cl">ps -eo user <span class="p">|</span> sort <span class="p">|</span> uniq -c <span class="p">|</span> sort -rn <span class="p">|</span> head        <span class="c1"># 哪个用户开的进程最多</span>
+</span></span><span class="line"><span class="cl">cat /proc/sys/kernel/pid_max                 <span class="c1"># 系统 PID 上限</span>
+</span></span><span class="line"><span class="cl">ps -eLf <span class="p">|</span> wc -l                              <span class="c1"># 系统总线程数</span>
+</span></span><span class="line"><span class="cl">cat /proc/sys/kernel/threads-max             <span class="c1"># 线程数上限</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ② 线程泄漏</span>
+</span></span><span class="line"><span class="cl">ps -eo pid,nlwp,comm --sort<span class="o">=</span>-nlwp <span class="p">|</span> head     <span class="c1"># 线程最多的进程</span>
+</span></span><span class="line"><span class="cl">watch -n5 <span class="s1">&#39;ps -o nlwp= -p 5000&#39;</span>              <span class="c1"># 观察是否持续增长</span>
+</span></span><span class="line"><span class="cl">cat /proc/5000/status <span class="p">|</span> grep Threads
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># Go 里的线程数异常通常源于：</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   - 大量阻塞的 cgo 调用（每个阻塞的 cgo 调用会占一个 OS 线程）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   - 大量阻塞的系统调用</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   - runtime.LockOSThread 使用不当</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 上限由 runtime.SetMaxThreads 控制（默认 10000，超了直接 panic）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ③ goroutine 泄漏（不是 OS 线程，但会吃内存）</span>
+</span></span><span class="line"><span class="cl">curl <span class="s1">&#39;http://localhost:6060/debug/pprof/goroutine?debug=1&#39;</span> <span class="p">|</span> head -5
+</span></span><span class="line"><span class="cl"><span class="c1"># goroutine profile: total 152847</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                          ^^^^^^ 数量异常增长就是泄漏</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 常见原因：channel 无人接收、context 没传导致 goroutine 永久阻塞、</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#          time.Ticker 没 Stop、HTTP 请求没设超时</span>
+</span></span></code></pre></div><h1 id="10-知识点扩展">10. 知识点扩展</h1>
+<h2 id="101-命令速查">10.1 命令速查</h2>
+<table>
+<thead>
+<tr>
+<th>命令</th>
+<th>用途</th>
+<th>关键参数/技巧</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ps aux</code></td>
+<td>看资源占用</td>
+<td><code>--sort=-%cpu</code> / <code>--sort=-rss</code></td>
+</tr>
+<tr>
+<td><code>ps -ef</code></td>
+<td>看进程关系（有 PPID）</td>
+<td><code>-ejH</code> 树形</td>
+</tr>
+<tr>
+<td><code>ps -eo</code></td>
+<td>自定义列</td>
+<td><code>pid,ppid,stat,nlwp,etimes,wchan,psr,comm</code></td>
+</tr>
+<tr>
+<td><code>ps -eLf</code></td>
+<td>显示<strong>线程</strong></td>
+<td><code>-Lo pid,tid,pcpu</code></td>
+</tr>
+<tr>
+<td><code>pstree -ps PID</code></td>
+<td>看祖先链</td>
+<td>排查「谁启动了它」</td>
+</tr>
+<tr>
+<td><code>top</code></td>
+<td>实时监控</td>
+<td><code>1</code> 展开每核 / <code>H</code> 线程 / <code>-bn1</code> 批处理</td>
+</tr>
+<tr>
+<td><code>htop</code></td>
+<td>交互式 top</td>
+<td><code>F5</code> 树形 <code>F9</code> kill</td>
+</tr>
+<tr>
+<td><code>atop</code></td>
+<td><strong>能回看历史</strong></td>
+<td><code>atop -r /var/log/atop/atop_YYYYMMDD -b 14:00</code></td>
+</tr>
+<tr>
+<td><code>pidstat 1</code></td>
+<td>每进程的 CPU/IO</td>
+<td><code>-d</code> 只看 IO <code>-t</code> 线程级</td>
+</tr>
+<tr>
+<td><code>vmstat 1</code></td>
+<td>系统级概况</td>
+<td>看 <code>r</code>（运行队列）<code>b</code>（阻塞数）<code>wa</code></td>
+</tr>
+<tr>
+<td><code>mpstat -P ALL 1</code></td>
+<td>每核 CPU</td>
+<td>看 <code>%steal</code>（云上被抢）</td>
+</tr>
+<tr>
+<td><code>iostat -xz 1</code></td>
+<td>磁盘 IO</td>
+<td>看 <code>%util</code>、<code>await</code></td>
+</tr>
+<tr>
+<td><code>pgrep -af PAT</code></td>
+<td>按命令行找进程</td>
+<td><strong><code>-f</code> 匹配完整命令行</strong></td>
+</tr>
+<tr>
+<td><code>pkill -f PAT</code></td>
+<td>按命令行杀</td>
+<td>危险，先用 <code>pgrep</code> 确认</td>
+</tr>
+<tr>
+<td><code>kill -0 PID</code></td>
+<td><strong>测试进程是否存在</strong></td>
+<td>不发信号，看退出码</td>
+</tr>
+<tr>
+<td><code>kill -QUIT PID</code></td>
+<td><strong>Go 打印所有 goroutine 栈</strong></td>
+<td>调试死锁</td>
+</tr>
+<tr>
+<td><code>lsof -p PID</code></td>
+<td>进程打开的一切</td>
+<td><code>+L1</code> 已删除文件 <code>-i</code> 网络</td>
+</tr>
+<tr>
+<td><code>nice</code>/<code>renice</code></td>
+<td>CPU 优先级</td>
+<td><code>-20</code>(高) ~ <code>19</code>(低)</td>
+</tr>
+<tr>
+<td><code>ionice -c 3</code></td>
+<td>IO 降到 idle</td>
+<td>备份任务用</td>
+</tr>
+<tr>
+<td><code>ulimit -a</code></td>
+<td>资源限制</td>
+<td><code>-n</code> fd 上限 <code>-u</code> 进程数</td>
+</tr>
+<tr>
+<td><code>taskset -c 0-3 cmd</code></td>
+<td>绑定 CPU 核</td>
+<td><code>-p PID</code> 改运行中的</td>
+</tr>
+<tr>
+<td><code>systemd-cgtop</code></td>
+<td>按服务看资源</td>
+<td>比 top 更适合看「哪个服务在吃资源」</td>
+</tr>
+<tr>
+<td><code>timeout 10 cmd</code></td>
+<td>超时自动杀</td>
+<td><code>-s KILL</code> 指定信号</td>
+</tr>
+<tr>
+<td><code>nohup</code>/<code>setsid</code>/<code>disown</code></td>
+<td>后台常驻</td>
+<td>见 6.2 对比表</td>
+</tr>
+<tr>
+<td><code>tmux</code>/<code>screen</code></td>
+<td>可重连的会话</td>
+<td>交互式长任务</td>
+</tr>
+</tbody>
+</table>
+<h2 id="102-与-go-服务相关的对照">10.2 与 Go 服务相关的对照</h2>
+<table>
+<thead>
+<tr>
+<th>现象</th>
+<th>排查命令</th>
+<th>常见原因</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>CPU 100%</td>
+<td><code>top -H -p PID</code> + pprof CPU profile</td>
+<td>死循环、GC 压力、正则回溯</td>
+</tr>
+<tr>
+<td>内存持续涨</td>
+<td><code>smaps_rollup</code> 看 PSS/Private_Dirty + pprof heap</td>
+<td>堆内泄漏 / <strong>堆外（cgo、mmap）</strong></td>
+</tr>
+<tr>
+<td>RSS 涨但 heap 不涨</td>
+<td><code>runtime.MemStats</code> 的 <code>Sys</code> vs <code>HeapAlloc</code></td>
+<td><strong>cgo 内存、goroutine 栈、mmap</strong></td>
+</tr>
+<tr>
+<td>fd 耗尽</td>
+<td><code>ls /proc/PID/fd | wc -l</code> + <code>/proc/PID/limits</code></td>
+<td><code>resp.Body</code> 没 Close、无超时</td>
+</tr>
+<tr>
+<td>线程数暴涨</td>
+<td><code>ps -o nlwp -p PID</code></td>
+<td>阻塞的 cgo 调用</td>
+</tr>
+<tr>
+<td>goroutine 泄漏</td>
+<td><code>pprof/goroutine?debug=1</code> 看 total</td>
+<td>channel 阻塞、无 context</td>
+</tr>
+<tr>
+<td>卡死不响应</td>
+<td><code>kill -QUIT</code> 或 <code>pprof/goroutine?debug=2</code></td>
+<td>死锁、mutex 竞争</td>
+</tr>
+<tr>
+<td>被 OOMKilled</td>
+<td><code>dmesg | grep -i oom</code> + 容器退出码 137</td>
+<td>没设 <code>GOMEMLIMIT</code></td>
+</tr>
+<tr>
+<td>容器 CPU 抢占</td>
+<td><code>mpstat</code> 看 <code>%steal</code> + cgroup throttled</td>
+<td><code>GOMAXPROCS</code> 未适配 cgroup</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># Go 服务应该暴露 pprof（生产上绑内网端口或加认证）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># import _ &#34;net/http/pprof&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># go func() { log.Println(http.ListenAndServe(&#34;127.0.0.1:6060&#34;, nil)) }()</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">curl localhost:6060/debug/pprof/                          <span class="c1"># 索引页</span>
+</span></span><span class="line"><span class="cl">curl -o heap.prof localhost:6060/debug/pprof/heap         <span class="c1"># 堆</span>
+</span></span><span class="line"><span class="cl">curl -o cpu.prof <span class="s1">&#39;localhost:6060/debug/pprof/profile?seconds=30&#39;</span>
+</span></span><span class="line"><span class="cl">curl <span class="s1">&#39;localhost:6060/debug/pprof/goroutine?debug=2&#39;</span>       <span class="c1"># 所有 goroutine 栈</span>
+</span></span><span class="line"><span class="cl">curl localhost:6060/debug/pprof/mutex                     <span class="c1"># 锁竞争（需先 SetMutexProfileFraction）</span>
+</span></span><span class="line"><span class="cl">curl localhost:6060/debug/pprof/block                     <span class="c1"># 阻塞（需先 SetBlockProfileRate）</span>
+</span></span><span class="line"><span class="cl">go tool pprof -http<span class="o">=</span>:8080 heap.prof                       <span class="c1"># 可视化</span>
+</span></span></code></pre></div><h1 id="11-面试题">11. 面试题</h1>
+<p><strong>Q：<code>ps aux</code> 里的 VSZ 和 RSS 有什么区别？为什么 VSZ 常常大得离谱？</strong></p>
+<p><strong>VSZ 是虚拟地址空间大小，RSS 是实际占用的物理内存。</strong></p>
+<p>VSZ 高几乎没有意义，因为它包含了：申请了但还没写入的内存（overcommit 只记账不给页）、<code>mmap</code> 进来但没读过的文件、所有共享库的完整地址空间、<strong>每个线程预留的 8MB 栈空间</strong>（500 个线程就 4GB）、以及 Go runtime 启动时预留的一大块地址空间。所以 Go 程序 VSZ 有 1~2GB 是正常的。</p>
+<p>RSS 的问题是<strong>共享部分被重复计算</strong> —— 10 个 nginx worker 各显示 50MB，加起来 500MB，但它们共享同一份代码和库，实际远小于此。</p>
+<p>准确的指标是：<strong>PSS</strong>（共享部分按份额分摊，多进程同源服务用它）和 <strong>USS</strong>（进程独占部分，等于「杀掉它能释放多少」）。从 <code>/proc/PID/smaps_rollup</code> 读，或用 <code>smem</code>。排查内存泄漏时最该看的是 <strong><code>Private_Dirty</code></strong>。</p>
+<p><strong>Q：进程状态 <code>D</code> 是什么？为什么 <code>kill -9</code> 也杀不掉？</strong></p>
+<p><code>D</code> = <strong>不可中断睡眠</strong>（<code>TASK_UNINTERRUPTIBLE</code>）。进程在内核态执行某个不能被打断的操作（通常是已提交给硬件的磁盘/网络 IO），此时<strong>内核不检查信号队列</strong>，所以 <code>SIGKILL</code> 只是被挂在待处理队列里，等进程醒来才处理 —— 而它醒来的唯一条件是那个 IO 完成或超时。</p>
+<p><strong>为什么要这样设计</strong>：这些操作正处于临界区（比如已经向控制器提交了 DMA 请求，内核数据结构处于中间状态），被信号打断跳出去会导致数据结构不一致或内存损坏。</p>
+<p>排查用 <strong><code>cat /proc/PID/stack</code></strong>（内核栈，能直接看出卡在 NFS 还是块设备）和 <code>/proc/PID/wchan</code>。常见原因：NFS/CIFS 服务器失联、磁盘故障、IO 队列积压、大量脏页回写。内核还会主动报告：<code>dmesg | grep hung_task</code>（默认 120 秒阈值）。</p>
+<p><strong>唯一的办法是解决底层 IO 问题或重启机器。</strong> 另外 <strong>D 状态会算进 load average</strong>，这是下一题的答案。</p>
+<p><strong>Q：<code>load average</code> 是 8 但 CPU 只用了 20%，怎么解释？</strong></p>
+<p>因为 <strong>Linux 的 load average 不是 CPU 使用率</strong>，它统计的是「<strong>运行队列长度 + 处于 D 状态（不可中断睡眠）的进程数</strong>」的指数移动平均。</p>
+<p>所以标准答案是：<strong>大量进程卡在 D 状态等 IO</strong>。验证方式是 <code>ps -eo stat | grep -c '^D'</code> 数一下、<code>top</code> 看 <code>%wa</code>（iowait）、<code>vmstat 1</code> 看 <code>b</code>（blocked）列、<code>iostat -xz 1</code> 看 <code>%util</code> 和 <code>await</code>。</p>
+<p>判断 load 高不高要对比核数（<code>nproc</code>）：<code>load &lt; nproc</code> 健康，<code>&gt; nproc × 2</code> 明显过载。三个数字的顺序也有信息：递减（8, 6, 4）表示负载<strong>正在上升</strong>，递增表示高峰已过。</p>
+<p>补充一个知识点：<strong>其他 Unix（如 Solaris）的 load 只算 CPU 运行队列，不含 D 状态</strong> —— 「磁盘慢导致 load 飙高」是 Linux 特有的行为，这个设计当年也有争议（把两种瓶颈混进了一个指标）。</p>
+<p><strong>Q：僵尸进程是什么？占资源吗？怎么清理？</strong></p>
+<p>僵尸是<strong>已经退出、内存和 fd 都已释放，但内核还保留着进程表项</strong>的进程。保留的原因是里面存着<strong>退出状态码</strong>，等父进程 <code>wait()</code> 来取 —— 父进程有权知道子进程是正常退出还是被信号杀的。</p>
+<p>三个关键结论：</p>
+<ol>
+<li><strong>僵尸杀不掉</strong>，因为它已经死了，对它发任何信号都没意义</li>
+<li><strong>僵尸几乎不占资源</strong> —— 只占一个进程表项（几 KB 内核内存）+ 一个 PID。所以偶尔几个僵尸<strong>不是问题</strong></li>
+<li>真正的问题是<strong>大量僵尸耗尽 PID 号</strong>，导致无法创建新进程</li>
+</ol>
+<p>清理方式是<strong>处理父进程</strong>（不是僵尸自己）：<code>kill -HUP</code> 让它重载、或直接杀掉它 —— 父进程死后僵尸被托孤给 PID 1，systemd 会立即 <code>wait</code> 掉。根治要修代码：Go 里必须 <code>cmd.Wait()</code> 而不是只 <code>cmd.Start()</code>。</p>
+<p><strong>容器场景要特别注意</strong>：容器的 PID 1 是你的应用，如果它不回收孤儿进程，僵尸会一直积累 —— 所以要用 <code>docker run --init</code> 或把 <code>tini</code>/<code>dumb-init</code> 作为 ENTRYPOINT。</p>
+<p><strong>Q：<code>cmd &amp;</code>、<code>nohup cmd &amp;</code>、<code>setsid cmd</code>、<code>disown</code> 有什么区别？</strong></p>
+<p>先讲机制：终端关闭或 ssh 断开时，内核给<strong>会话里的所有进程</strong>发 <code>SIGHUP</code>，默认行为是终止。</p>
+<table>
+<thead>
+<tr>
+<th>方式</th>
+<th>原理</th>
+<th>扛住关终端</th>
+<th>输出去哪</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>cmd &amp;</code></td>
+<td>只是放后台，仍在同一会话</td>
+<td>❌</td>
+<td>终端</td>
+</tr>
+<tr>
+<td><code>nohup cmd &amp;</code></td>
+<td><strong>忽略 SIGHUP</strong></td>
+<td>✅</td>
+<td><code>nohup.out</code></td>
+</tr>
+<tr>
+<td><code>cmd &amp; disown</code></td>
+<td>从 shell 作业表移除，bash 不再转发</td>
+<td>✅</td>
+<td>终端（<strong>终端消失后写入失败</strong>）</td>
+</tr>
+<tr>
+<td><code>setsid cmd</code></td>
+<td><strong>创建新会话</strong>，彻底脱离终端</td>
+<td>✅</td>
+<td>终端（同上）</td>
+</tr>
+<tr>
+<td><code>tmux</code>/<code>screen</code></td>
+<td>进程在另一个持久会话里</td>
+<td>✅</td>
+<td><strong>可随时重连查看</strong></td>
+</tr>
+</tbody>
+</table>
+<p><code>nohup</code> 会自动把输出重定向到 <code>nohup.out</code>（因为终端可能消失），推荐显式写 <code>nohup cmd &gt; /var/log/x.log 2&gt;&amp;1 &lt; /dev/null &amp;</code>。<code>disown</code> 是<strong>事后补救</strong>（进程已启动才想起要保护）。<code>setsid</code> 最干净（PPID 直接变 1、无控制终端）。</p>
+<p><strong>但生产环境的正确答案是 systemd</strong> —— 它额外提供了崩溃自动重启、开机自启、日志轮转、资源限制、依赖管理、优雅停止（TERM→等待→KILL）、安全沙箱，这些 <code>nohup</code> 一个都做不到。</p>
+<p><strong>Q：为什么不该随手 <code>kill -9</code>？</strong></p>
+<p><code>SIGKILL</code> 不可捕获，进程<strong>没有任何机会做清理</strong>，后果是：不 flush 缓冲区（<strong>日志和数据丢失</strong>）、不关闭连接（客户端看到 connection reset、数据库留下未提交事务）、不删临时文件（pid 文件残留导致下次启动失败）、<strong>不释放锁</strong>（其他实例无法接管）、子进程不被通知（留下孤儿进程继续跑）。</p>
+<p>正确顺序是 <strong>先 <code>SIGTERM</code>、等一段时间、还活着才 <code>SIGKILL</code></strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="nb">kill</span> -TERM <span class="nv">$PID</span><span class="p">;</span> sleep 10<span class="p">;</span> <span class="nb">kill</span> -0 <span class="nv">$PID</span> 2&gt;/dev/null <span class="o">&amp;&amp;</span> <span class="nb">kill</span> -9 <span class="nv">$PID</span>
+</span></span></code></pre></div><p>systemd 内置了这套逻辑（<code>KillSignal=SIGTERM</code> + <code>TimeoutStopSec=30</code> + <code>SendSIGKILL=yes</code>），所以用 <code>systemctl stop</code> 最省事。</p>
+<p>Go 服务必须 <code>signal.Notify(quit, syscall.SIGTERM)</code> 然后 <code>srv.Shutdown(ctx)</code>，否则 K8s 滚动更新时会丢正在处理的请求。配套注意两点：<strong>容器 entrypoint 要用 <code>exec</code></strong>（否则信号发给了 shell）、<strong><code>terminationGracePeriodSeconds</code> 要大于代码里的超时</strong>。</p>
+<p><strong>Q：<code>too many open files</code> 怎么排查？</strong></p>
+<p>四步：</p>
+<ol>
+<li><strong>找出是哪个进程</strong>：<code>for p in /proc/[0-9]*; do echo &quot;$(ls $p/fd 2&gt;/dev/null|wc -l) ${p##*/}&quot;; done | sort -rn | head</code></li>
+<li><strong>看限制与用量</strong>：<code>ls /proc/PID/fd | wc -l</code> 对比 <code>grep 'open files' /proc/PID/limits</code></li>
+<li><strong>看 fd 都是什么</strong>（判断泄漏还是真需要）：<code>ls -l /proc/PID/fd | awk '{print $NF}' | sort | uniq -c | sort -rn</code> —— 大量 socket 说明连接没关，大量同一文件说明句柄泄漏</li>
+<li><strong>提限额 + 修代码</strong></li>
+</ol>
+<p>提限额有个大坑：<strong><code>/etc/security/limits.conf</code> 走 PAM，只对登录会话生效，不影响 systemd 启动的服务</strong>。systemd 服务必须在 unit 里写 <code>LimitNOFILE=65535</code>。验证要看 <code>cat /proc/PID/limits</code> 而不是 <code>ulimit -n</code>。</p>
+<p>Go 里最常见的泄漏是 <strong><code>resp.Body</code> 没 <code>Close()</code></strong>（而且还要读完，否则连接无法复用），以及 <code>http.Client</code> 没设 <code>Timeout</code> 导致连接堆积。</p>
+<hr>
+<h1 id="小结">小结</h1>
+<ul>
+<li><strong>四个 ID</strong>（PID/PPID/PGID/SID）与会话模型，是理解「Ctrl-C 发给谁」「关终端为什么进程会死」的基础</li>
+<li><strong><code>ps aux</code> 看资源、<code>ps -ef</code> 看关系</strong>（BSD 与 SysV 两套语法的遗产）</li>
+<li><strong>VSZ 几乎没有意义</strong>（含预留、mmap、线程栈），看 <strong>RSS</strong>；准确要看 <strong>PSS/USS</strong>（<code>smaps_rollup</code>）</li>
+<li><strong><code>D</code> 状态 <code>kill -9</code> 无效</strong> —— 内核在临界区不检查信号，只能解决底层 IO 或重启；<code>/proc/PID/stack</code> 看卡在哪</li>
+<li><strong>load average 含 D 状态进程</strong>，所以「load 高但 CPU 空闲」= IO 瓶颈（Linux 特有行为）</li>
+<li><strong>僵尸不占资源也杀不掉</strong>，要处理父进程；容器里要用 <code>tini</code>/<code>--init</code> 回收</li>
+<li><strong><code>nohup</code> 忽略 SIGHUP、<code>setsid</code> 新建会话、<code>disown</code> 是事后补救</strong> —— 但生产用 systemd</li>
+<li><strong>别随手 <code>kill -9</code></strong>：不 flush、不关连接、不释放锁、留孤儿进程</li>
+<li><strong><code>/proc/&lt;pid&gt;/</code></strong> 是排查金矿：<code>cmdline</code>/<code>environ</code>/<code>fd</code>/<code>limits</code>/<code>stack</code>/<code>smaps_rollup</code>/<code>task</code></li>
+<li><strong><code>limits.conf</code> 不影响 systemd 服务</strong>，要在 unit 里写 <code>LimitNOFILE</code></li>
+</ul>
+<p>下一篇讲 <strong>systemd 与定时任务</strong>：unit 文件的每个字段在解决什么问题、<code>Type=simple/forking/notify</code> 该选哪个、<code>systemctl</code> 与 <code>journalctl</code> 的完整用法、以及 systemd timer 相比 cron 的优势（和 cron 那个「手动跑正常、放进 cron 就失败」的经典坑）。</p>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2026-08-12</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/linux/">linux</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/linux/linux_14_systemd%E4%B8%8E%E5%AE%9A%E6%97%B6%E4%BB%BB%E5%8A%A1/" class="prev" rel="prev" title="Linux-14 systemd 与定时任务：写一个生产级 unit、Type 怎么选、cron 的经典坑"><i class="fas fa-angle-left fa-fw"></i>Linux-14 systemd 与定时任务：写一个生产级 unit、Type 怎么选、cron 的经典坑</a>
+            <a href="/posts/linux/linux_12_%E5%BD%92%E6%A1%A3%E5%8E%8B%E7%BC%A9%E4%B8%8Ersync/" class="next" rel="next" title="Linux-12 归档、压缩与 rsync：tar 的古怪参数、压缩算法选型与危险的 --delete">Linux-12 归档、压缩与 rsync：tar 的古怪参数、压缩算法选型与危险的 --delete<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2026-08-12T17:30:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Linux-13 进程与作业控制：ps 每一列、D 状态为什么杀不掉、nohup 与 setsid 的区别"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

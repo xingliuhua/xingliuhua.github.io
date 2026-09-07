@@ -1,0 +1,1532 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>Linux-39 线上排查实战案例集：从症状到证据链 - xingliuhua博客</title><meta name="Description" content="用 CPU quota、内存 OOM、fsync 抖动、网络重传、DNS、连接池、锁竞争、fd 泄漏、MTU 与日志风暴案例演示如何按现象—假设—证据—反证—修复—验证建立事故证据链，并把 Linux 指标、Go profile、eBPF、变更记录和业务语义放到同一时间轴。"><meta property="og:title" content="Linux-39 线上排查实战案例集：从症状到证据链" />
+<meta property="og:description" content="用 CPU quota、内存 OOM、fsync 抖动、网络重传、DNS、连接池、锁竞争、fd 泄漏、MTU 与日志风暴案例演示如何按现象—假设—证据—反证—修复—验证建立事故证据链，并把 Linux 指标、Go profile、eBPF、变更记录和业务语义放到同一时间轴。" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/linux/linux_39_%E7%BA%BF%E4%B8%8A%E6%8E%92%E6%9F%A5%E5%AE%9E%E6%88%98%E6%A1%88%E4%BE%8B%E9%9B%86/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2026-08-12T04:30:00+08:00" />
+<meta property="article:modified_time" content="2026-08-12T04:30:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="Linux-39 线上排查实战案例集：从症状到证据链"/>
+<meta name="twitter:description" content="用 CPU quota、内存 OOM、fsync 抖动、网络重传、DNS、连接池、锁竞争、fd 泄漏、MTU 与日志风暴案例演示如何按现象—假设—证据—反证—修复—验证建立事故证据链，并把 Linux 指标、Go profile、eBPF、变更记录和业务语义放到同一时间轴。"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/linux/linux_39_%E7%BA%BF%E4%B8%8A%E6%8E%92%E6%9F%A5%E5%AE%9E%E6%88%98%E6%A1%88%E4%BE%8B%E9%9B%86/" /><link rel="prev" href="https://xingliuhua.github.io/posts/linux/linux_40_Linux%E9%9D%A2%E8%AF%95%E9%A2%98%E4%B8%8E%E7%B3%BB%E7%BB%9F%E8%AE%BE%E8%AE%A1%E9%A2%98%E6%B1%87%E6%80%BB/" /><link rel="next" href="https://xingliuhua.github.io/posts/linux/linux_38_%E8%A7%82%E6%B5%8B%E4%BD%93%E7%B3%BB%E7%9A%84%E8%AE%BE%E8%AE%A1%E4%B8%8EeBPF/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Linux-39 线上排查实战案例集：从症状到证据链",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_39_%E7%BA%BF%E4%B8%8A%E6%8E%92%E6%9F%A5%E5%AE%9E%E6%88%98%E6%A1%88%E4%BE%8B%E9%9B%86\/"
+        },"genre": "posts","keywords": "linux","wordcount":  18094 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_39_%E7%BA%BF%E4%B8%8A%E6%8E%92%E6%9F%A5%E5%AE%9E%E6%88%98%E6%A1%88%E4%BE%8B%E9%9B%86\/","datePublished": "2026-08-12T04:30:00+08:00","dateModified": "2026-08-12T04:30:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "用 CPU quota、内存 OOM、fsync 抖动、网络重传、DNS、连接池、锁竞争、fd 泄漏、MTU 与日志风暴案例演示如何按现象—假设—证据—反证—修复—验证建立事故证据链，并把 Linux 指标、Go profile、eBPF、变更记录和业务语义放到同一时间轴。"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">Linux-39 线上排查实战案例集：从症状到证据链</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2026-08-12">2026-08-12</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 18094 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 37 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-一套不会因工具变化而失效的方法">1. 一套不会因工具变化而失效的方法</a>
+      <ol>
+        <li><a href="#11-先定义用户影响">1.1 先定义用户影响</a></li>
+        <li><a href="#12-建立共同时间轴">1.2 建立共同时间轴</a></li>
+        <li><a href="#13-区分事实假设与结论">1.3 区分事实、假设与结论</a></li>
+        <li><a href="#14-先收集易失证据">1.4 先收集易失证据</a></li>
+        <li><a href="#15-每次只改变可解释的变量">1.5 每次只改变可解释的变量</a></li>
+        <li><a href="#16-修复必须有验证指标">1.6 修复必须有验证指标</a></li>
+      </ol>
+    </li>
+    <li><a href="#2-第一分钟安全快照与分层判断">2. 第一分钟：安全快照与分层判断</a>
+      <ol>
+        <li><a href="#21-应用与流量">2.1 应用与流量</a></li>
+        <li><a href="#22-主机和-cgroup">2.2 主机和 cgroup</a></li>
+        <li><a href="#23-进程与-socket">2.3 进程与 socket</a></li>
+        <li><a href="#24-go-快照">2.4 Go 快照</a></li>
+        <li><a href="#25-内核和服务日志">2.5 内核和服务日志</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-案例一平均-cpu-只有两核p99-却每-100ms-跳一次">3. 案例一：平均 CPU 只有两核，P99 却每 100ms 跳一次</a>
+      <ol>
+        <li><a href="#31-现象">3.1 现象</a></li>
+        <li><a href="#32-假设">3.2 假设</a></li>
+        <li><a href="#33-证据">3.3 证据</a></li>
+        <li><a href="#34-反证">3.4 反证</a></li>
+        <li><a href="#35-止血">3.5 止血</a></li>
+        <li><a href="#36-长期修复">3.6 长期修复</a></li>
+        <li><a href="#37-验证">3.7 验证</a></li>
+      </ol>
+    </li>
+    <li><a href="#4-案例二go-heap-只有-600mb1gib-容器却-oomkilled">4. 案例二：Go heap 只有 600MB，1GiB 容器却 OOMKilled</a>
+      <ol>
+        <li><a href="#41-现象">4.1 现象</a></li>
+        <li><a href="#42-假设">4.2 假设</a></li>
+        <li><a href="#43-证据">4.3 证据</a></li>
+        <li><a href="#44-反证">4.4 反证</a></li>
+        <li><a href="#45-根因">4.5 根因</a></li>
+        <li><a href="#46-止血">4.6 止血</a></li>
+        <li><a href="#47-长期修复">4.7 长期修复</a></li>
+        <li><a href="#48-验证">4.8 验证</a></li>
+      </ol>
+    </li>
+    <li><a href="#5-案例三数据库-commit-p99-抖动但磁盘-util-只有-40">5. 案例三：数据库 commit P99 抖动，但磁盘 <code>%util</code> 只有 40%</a>
+      <ol>
+        <li><a href="#51-现象">5.1 现象</a></li>
+        <li><a href="#52-假设">5.2 假设</a></li>
+        <li><a href="#53-证据">5.3 证据</a></li>
+        <li><a href="#54-反证">5.4 反证</a></li>
+        <li><a href="#55-止血">5.5 止血</a></li>
+        <li><a href="#56-长期修复">5.6 长期修复</a></li>
+        <li><a href="#57-验证">5.7 验证</a></li>
+      </ol>
+    </li>
+    <li><a href="#6-案例四网络-p99-高服务端-cpu-与-handler-都正常">6. 案例四：网络 P99 高，服务端 CPU 与 handler 都正常</a>
+      <ol>
+        <li><a href="#61-现象">6.1 现象</a></li>
+        <li><a href="#62-假设">6.2 假设</a></li>
+        <li><a href="#63-证据">6.3 证据</a></li>
+        <li><a href="#64-反证">6.4 反证</a></li>
+        <li><a href="#65-止血">6.5 止血</a></li>
+        <li><a href="#66-长期修复">6.6 长期修复</a></li>
+        <li><a href="#67-验证">6.7 验证</a></li>
+      </ol>
+    </li>
+    <li><a href="#7-案例五只有域名请求慢直接访问-ip-正常">7. 案例五：只有域名请求慢，直接访问 IP 正常</a>
+      <ol>
+        <li><a href="#71-现象">7.1 现象</a></li>
+        <li><a href="#72-假设">7.2 假设</a></li>
+        <li><a href="#73-证据">7.3 证据</a></li>
+        <li><a href="#74-反证">7.4 反证</a></li>
+        <li><a href="#75-止血">7.5 止血</a></li>
+        <li><a href="#76-长期修复">7.6 长期修复</a></li>
+        <li><a href="#77-验证">7.7 验证</a></li>
+      </ol>
+    </li>
+    <li><a href="#8-案例六连接池已满数据库却很空闲">8. 案例六：连接池“已满”，数据库却很空闲</a>
+      <ol>
+        <li><a href="#81-现象">8.1 现象</a></li>
+        <li><a href="#82-假设">8.2 假设</a></li>
+        <li><a href="#83-证据">8.3 证据</a></li>
+        <li><a href="#84-反证">8.4 反证</a></li>
+        <li><a href="#85-根因">8.5 根因</a></li>
+        <li><a href="#86-止血">8.6 止血</a></li>
+        <li><a href="#87-长期修复">8.7 长期修复</a></li>
+        <li><a href="#88-验证">8.8 验证</a></li>
+      </ol>
+    </li>
+    <li><a href="#9-案例七cpu-profile-正常吞吐下降一半">9. 案例七：CPU profile 正常，吞吐下降一半</a>
+      <ol>
+        <li><a href="#91-现象">9.1 现象</a></li>
+        <li><a href="#92-假设">9.2 假设</a></li>
+        <li><a href="#93-证据">9.3 证据</a></li>
+        <li><a href="#94-反证">9.4 反证</a></li>
+        <li><a href="#95-止血">9.5 止血</a></li>
+        <li><a href="#96-长期修复">9.6 长期修复</a></li>
+        <li><a href="#97-验证">9.7 验证</a></li>
+      </ol>
+    </li>
+    <li><a href="#10-案例八服务报-too-many-open-files但连接数并不高">10. 案例八：服务报 too many open files，但连接数并不高</a>
+      <ol>
+        <li><a href="#101-现象">10.1 现象</a></li>
+        <li><a href="#102-假设">10.2 假设</a></li>
+        <li><a href="#103-证据">10.3 证据</a></li>
+        <li><a href="#104-反证">10.4 反证</a></li>
+        <li><a href="#105-止血">10.5 止血</a></li>
+        <li><a href="#106-修复">10.6 修复</a></li>
+        <li><a href="#107-验证">10.7 验证</a></li>
+      </ol>
+    </li>
+    <li><a href="#11-案例九内存不断涨但不是-go-对象泄漏">11. 案例九：内存不断涨，但不是 Go 对象泄漏</a>
+      <ol>
+        <li><a href="#111-现象">11.1 现象</a></li>
+        <li><a href="#112-假设">11.2 假设</a></li>
+        <li><a href="#113-证据">11.3 证据</a></li>
+        <li><a href="#114-反证">11.4 反证</a></li>
+        <li><a href="#115-止血与修复">11.5 止血与修复</a></li>
+        <li><a href="#116-验证">11.6 验证</a></li>
+      </ol>
+    </li>
+    <li><a href="#12-案例十日志系统故障拖垮业务">12. 案例十：日志系统故障拖垮业务</a>
+      <ol>
+        <li><a href="#121-现象">12.1 现象</a></li>
+        <li><a href="#122-假设">12.2 假设</a></li>
+        <li><a href="#123-证据">12.3 证据</a></li>
+        <li><a href="#124-反证">12.4 反证</a></li>
+        <li><a href="#125-止血">12.5 止血</a></li>
+        <li><a href="#126-长期修复">12.6 长期修复</a></li>
+        <li><a href="#127-验证">12.7 验证</a></li>
+      </ol>
+    </li>
+    <li><a href="#13-案例十一time_wait-很多但真正问题是重试风暴">13. 案例十一：TIME_WAIT 很多，但真正问题是重试风暴</a>
+      <ol>
+        <li><a href="#131-现象">13.1 现象</a></li>
+        <li><a href="#132-假设">13.2 假设</a></li>
+        <li><a href="#133-证据">13.3 证据</a></li>
+        <li><a href="#134-反证">13.4 反证</a></li>
+        <li><a href="#135-修复">13.5 修复</a></li>
+        <li><a href="#136-验证">13.6 验证</a></li>
+      </ol>
+    </li>
+    <li><a href="#14-案例十二应用随机卡死实际是锁顺序死锁">14. 案例十二：应用“随机”卡死，实际是锁顺序死锁</a>
+      <ol>
+        <li><a href="#141-现象">14.1 现象</a></li>
+        <li><a href="#142-假设">14.2 假设</a></li>
+        <li><a href="#143-证据">14.3 证据</a></li>
+        <li><a href="#144-反证">14.4 反证</a></li>
+        <li><a href="#145-止血">14.5 止血</a></li>
+        <li><a href="#146-修复">14.6 修复</a></li>
+        <li><a href="#147-验证">14.7 验证</a></li>
+      </ol>
+    </li>
+    <li><a href="#15-案例十三服务频繁重启根因不是应用崩溃">15. 案例十三：服务频繁重启，根因不是应用崩溃</a>
+      <ol>
+        <li><a href="#151-现象">15.1 现象</a></li>
+        <li><a href="#152-假设">15.2 假设</a></li>
+        <li><a href="#153-证据">15.3 证据</a></li>
+        <li><a href="#154-反证">15.4 反证</a></li>
+        <li><a href="#155-修复">15.5 修复</a></li>
+        <li><a href="#156-验证">15.6 验证</a></li>
+      </ol>
+    </li>
+    <li><a href="#16-案例十四数据删除后磁盘空间没有回来">16. 案例十四：数据删除后磁盘空间没有回来</a>
+      <ol>
+        <li><a href="#161-现象">16.1 现象</a></li>
+        <li><a href="#162-假设">16.2 假设</a></li>
+        <li><a href="#163-证据">16.3 证据</a></li>
+        <li><a href="#164-反证">16.4 反证</a></li>
+        <li><a href="#165-止血与修复">16.5 止血与修复</a></li>
+        <li><a href="#166-验证">16.6 验证</a></li>
+      </ol>
+    </li>
+    <li><a href="#17-案例十五一次优化关闭了零拷贝cpu-反而升高">17. 案例十五：一次“优化”关闭了零拷贝，CPU 反而升高</a>
+      <ol>
+        <li><a href="#171-现象">17.1 现象</a></li>
+        <li><a href="#172-假设">17.2 假设</a></li>
+        <li><a href="#173-证据">17.3 证据</a></li>
+        <li><a href="#174-反证">17.4 反证</a></li>
+        <li><a href="#175-修复">17.5 修复</a></li>
+        <li><a href="#176-验证">17.6 验证</a></li>
+      </ol>
+    </li>
+    <li><a href="#18-常见误判与反证清单">18. 常见误判与反证清单</a>
+      <ol>
+        <li><a href="#181-cpu-高">18.1 CPU 高</a></li>
+        <li><a href="#182-cpu-低但慢">18.2 CPU 低但慢</a></li>
+        <li><a href="#183-内存高">18.3 内存高</a></li>
+        <li><a href="#184-磁盘util高低">18.4 磁盘util高/低</a></li>
+        <li><a href="#185-time_wait-多">18.5 TIME_WAIT 多</a></li>
+        <li><a href="#186-大量-goroutine">18.6 大量 goroutine</a></li>
+        <li><a href="#187-重传增加">18.7 重传增加</a></li>
+        <li><a href="#188-重启恢复">18.8 重启恢复</a></li>
+      </ol>
+    </li>
+    <li><a href="#19-止血动作的风险矩阵">19. 止血动作的风险矩阵</a></li>
+    <li><a href="#20-故障期间如何使用高开销工具">20. 故障期间如何使用高开销工具</a>
+      <ol>
+        <li><a href="#201-从低到高">20.1 从低到高</a></li>
+        <li><a href="#202-预先定义采集配方">20.2 预先定义采集配方</a></li>
+        <li><a href="#203-profile-代表窗口不代表永恒">20.3 Profile 代表窗口，不代表永恒</a></li>
+        <li><a href="#204-抓包最小化">20.4 抓包最小化</a></li>
+        <li><a href="#205-ebpf-要有-drop-和-kill-switch">20.5 eBPF 要有 drop 和 kill switch</a></li>
+      </ol>
+    </li>
+    <li><a href="#21-从事故到容量模型">21. 从事故到容量模型</a>
+      <ol>
+        <li><a href="#211-找到饱和前拐点">21.1 找到饱和前拐点</a></li>
+        <li><a href="#212-有界队列与过载保护">21.2 有界队列与过载保护</a></li>
+        <li><a href="#213-容量按最稀缺资源">21.3 容量按最稀缺资源</a></li>
+        <li><a href="#214-灰度必须包含资源回归">21.4 灰度必须包含资源回归</a></li>
+      </ol>
+    </li>
+    <li><a href="#22-复盘从人犯错转成系统改进">22. 复盘：从“人犯错”转成系统改进</a>
+      <ol>
+        <li><a href="#221-一份有用的时间线">22.1 一份有用的时间线</a></li>
+        <li><a href="#222-根因不是最后一个报错">22.2 根因不是最后一个报错</a></li>
+        <li><a href="#223-action-item-必须可验收">22.3 Action item 必须可验收</a></li>
+        <li><a href="#224-删除无效告警">22.4 删除无效告警</a></li>
+        <li><a href="#225-演练恢复而非只写文档">22.5 演练恢复而非只写文档</a></li>
+      </ol>
+    </li>
+    <li><a href="#23-通用-runbook-模板">23. 通用 Runbook 模板</a>
+      <ol>
+        <li><a href="#231-入口">23.1 入口</a></li>
+        <li><a href="#232-前五分钟">23.2 前五分钟</a></li>
+        <li><a href="#233-假设表">23.3 假设表</a></li>
+        <li><a href="#234-动作记录">23.4 动作记录</a></li>
+        <li><a href="#235-结束条件">23.5 结束条件</a></li>
+      </ol>
+    </li>
+    <li><a href="#24-常用命令知识点扩展">24. 常用命令知识点扩展</a></li>
+    <li><a href="#25-面试题">25. 面试题</a></li>
+    <li><a href="#小结">小结</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><p>前 38 篇已经分别拆开 CPU、内存、调度、锁、文件系统、网络、容器、systemd 和 eBPF。这一篇不再按机制讲，而是把它们重新放回事故现场：<strong>用户只告诉你“接口慢了”，你如何避免看到一个异常指标就宣布根因？</strong></p>
+<p>线上排查最危险的不是不会命令，而是过早形成故事：CPU 高就扩容、TIME_WAIT 多就改内核参数、容器 OOM 就加内存、DNS 慢就换 resolver。一个现象可能由多个层次产生；一个异常也可能只是结果。可靠方法是不断区分：观察到的事实、尚待验证的假设、能推翻假设的反证，以及修复后的因果验证。</p>
+<p>本文所有案例使用统一结构：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">现象 -&gt; 影响范围 -&gt; 时间线 -&gt; 假设
+</span></span><span class="line"><span class="cl">     -&gt; 证据与反证 -&gt; 根因
+</span></span><span class="line"><span class="cl">     -&gt; 止血 -&gt; 长期修复 -&gt; 验证 -&gt; 防复发
+</span></span></code></pre></div><p>案例中的地址、数值和服务名均为教学示例。生产执行抓包、ptrace、eBPF、配置修改、重启或流量切换前，应遵循授权、变更、隐私和回滚流程。</p>
+<p>先看五个问题：</p>
+<ol>
+<li>第一分钟应该收集什么，才能在止血后仍保留故障证据？</li>
+<li>“相关”怎样升级成“因果”？修复后为什么还需要对照和反证？</li>
+<li>CPU 平均值、Go heap、磁盘利用率、丢包率这些指标为何经常指向错误层？</li>
+<li>什么情况下先止血，什么情况下继续观察？怎样避免排障动作扩大事故？</li>
+<li>复盘应留下哪些可执行改进，而不是“加强监控、提高稳定性”？</li>
+</ol>
+<hr>
+<h1 id="1-一套不会因工具变化而失效的方法">1. 一套不会因工具变化而失效的方法</h1>
+<h2 id="11-先定义用户影响">1.1 先定义用户影响</h2>
+<p>不要从机器指标开始。先问：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">谁受影响：全部用户、某区域、某租户、某版本？
+</span></span><span class="line"><span class="cl">什么失败：超时、错误、数据错、吞吐下降、连接失败？
+</span></span><span class="line"><span class="cl">何时开始：绝对时间、持续还是周期？
+</span></span><span class="line"><span class="cl">多严重：请求量、错误预算、收入/数据风险？
+</span></span><span class="line"><span class="cl">是否仍在扩大：流量、队列、资源和重试趋势？
+</span></span></code></pre></div><p>同样是 CPU 100%，若请求正常可能只是高效满载；CPU 20%但所有请求卡住，可能是锁、quota、IO或下游。事故等级由用户影响和恢复风险决定，不由某资源颜色决定。</p>
+<h2 id="12-建立共同时间轴">1.2 建立共同时间轴</h2>
+<p>记录：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">T-30m 最近部署/配置/流量/证书/DNS/节点变化
+</span></span><span class="line"><span class="cl">T0    告警首次触发
+</span></span><span class="line"><span class="cl">T+3m  症状扩大到哪些维度
+</span></span><span class="line"><span class="cl">T+8m  执行了什么动作
+</span></span><span class="line"><span class="cl">T+10m 指标如何变化
+</span></span></code></pre></div><p>机器 wall clock要确认同步；内核 monotonic事件需带 boot ID转换。dashboard聚合窗口会让峰值看起来比实际晚，日志 ingestion也有延迟。事件时间与接收时间不要混为一谈。</p>
+<h2 id="13-区分事实假设与结论">1.3 区分事实、假设与结论</h2>
+<p>示例：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">事实：12:01-12:06 P99 每约100ms出现台阶，cpu.stat throttled_usec增长。
+</span></span><span class="line"><span class="cl">假设：cgroup CPU quota导致请求等待下一period。
+</span></span><span class="line"><span class="cl">待验证：Go G是否runnable、OS thread是否因quota未运行。
+</span></span><span class="line"><span class="cl">反证：若提高quota后P99不变，或throttle只发生在非关键sidecar，假设不成立。
+</span></span></code></pre></div><p>“CPU quota导致延迟”在验证前不是事实。事故频道中显式标注 <code>[FACT]</code>、<code>[HYPOTHESIS]</code>、<code>[ACTION]</code> 能减少故事被转述成结论。</p>
+<h2 id="14-先收集易失证据">1.4 先收集易失证据</h2>
+<p>重启会清空：</p>
+<ul>
+<li>进程 stack、goroutine、heap与fd状态</li>
+<li>cgroup目录及其累计 events</li>
+<li>socket队列、conntrack和临时端口分布</li>
+<li><code>/proc/PID</code> 数据</li>
+<li>内核/应用内存中的短时 trace buffer</li>
+</ul>
+<p>在不延误必要止血的前提下，先抓短快照：状态、关键 counters、profile、最近日志和配置版本。若正在数据损坏或安全事件，隔离优先，不应为“证据完整”继续放任影响。</p>
+<h2 id="15-每次只改变可解释的变量">1.5 每次只改变可解释的变量</h2>
+<p>同时重启、扩容、调 timeout、改 DNS、关防火墙，即使恢复也不知道哪个动作有效，还可能掩盖根因。紧急时不得不做组合动作，也要逐项记录并在事后受控复现。</p>
+<h2 id="16-修复必须有验证指标">1.6 修复必须有验证指标</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">修复前：P99=800ms, throttled=40%, throughput=10k/s
+</span></span><span class="line"><span class="cl">动作：quota 2CPU -&gt; 4CPU
+</span></span><span class="line"><span class="cl">预期：throttle显著下降，P99台阶消失，throughput不降
+</span></span><span class="line"><span class="cl">副作用：节点CPU与成本上升
+</span></span><span class="line"><span class="cl">观察窗：30m peak + next daily peak
+</span></span><span class="line"><span class="cl">回滚条件：error/CPU/noise neighbor恶化
+</span></span></code></pre></div><p>“重启后好了”只是恢复事实，不是根因证明。</p>
+<hr>
+<h1 id="2-第一分钟安全快照与分层判断">2. 第一分钟：安全快照与分层判断</h1>
+<h2 id="21-应用与流量">2.1 应用与流量</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">request rate / success / timeout / reject
+</span></span><span class="line"><span class="cl">latency histogram而非只看平均
+</span></span><span class="line"><span class="cl">按region/version/route/tenant的有限维度
+</span></span><span class="line"><span class="cl">in-flight / queue / pool wait
+</span></span><span class="line"><span class="cl">最近部署、feature flag、配置变更
+</span></span></code></pre></div><p>先找受影响维度能大幅缩小系统范围：只有新版本、单节点、单upstream或大请求，假设不同。</p>
+<h2 id="22-主机和-cgroup">2.2 主机和 cgroup</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">date -Ins
+</span></span><span class="line"><span class="cl">uptime
+</span></span><span class="line"><span class="cl">vmstat <span class="m">1</span> <span class="m">5</span>
+</span></span><span class="line"><span class="cl">mpstat -P ALL <span class="m">1</span> <span class="m">5</span>
+</span></span><span class="line"><span class="cl">pidstat -u -w -d -p <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span> <span class="m">1</span> <span class="m">5</span>
+</span></span><span class="line"><span class="cl">cat /proc/pressure/<span class="o">{</span>cpu,memory,io<span class="o">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="nv">CG</span><span class="o">=</span>/sys/fs/cgroup/path/to/workload
+</span></span><span class="line"><span class="cl">cat <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/cpu.max&#34;</span> <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/cpu.stat&#34;</span> <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/cpu.pressure&#34;</span>
+</span></span><span class="line"><span class="cl">cat <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/memory.current&#34;</span> <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/memory.max&#34;</span> <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/memory.events&#34;</span>
+</span></span><span class="line"><span class="cl">cat <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/io.stat&#34;</span> <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/io.pressure&#34;</span>
+</span></span><span class="line"><span class="cl">cat <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/pids.current&#34;</span> <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/pids.max&#34;</span>
+</span></span></code></pre></div><p>命令路径需按实际 cgroup层级。采集结果要附 host/container/cgroup ID和时间。</p>
+<h2 id="23-进程与-socket">2.3 进程与 socket</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">ls /proc/<span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span>/fd <span class="p">|</span> wc -l
+</span></span><span class="line"><span class="cl">cat /proc/<span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span>/limits
+</span></span><span class="line"><span class="cl">ss -s
+</span></span><span class="line"><span class="cl">ss -ltnp
+</span></span><span class="line"><span class="cl">ss -tinp
+</span></span></code></pre></div><p>高 fd、TIME_WAIT、Recv-Q/Send-Q都只是线索。需要看增长速度、状态分布、对应remote和业务连接池。</p>
+<h2 id="24-go-快照">2.4 Go 快照</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">curl -m <span class="m">35</span> -o cpu.pprof <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  <span class="s1">&#39;http://127.0.0.1:6060/debug/pprof/profile?seconds=30&#39;</span>
+</span></span><span class="line"><span class="cl">curl -m <span class="m">10</span> -o heap.pprof <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  <span class="s1">&#39;http://127.0.0.1:6060/debug/pprof/heap&#39;</span>
+</span></span><span class="line"><span class="cl">curl -m <span class="m">10</span> -o goroutines.txt <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  <span class="s1">&#39;http://127.0.0.1:6060/debug/pprof/goroutine?debug=2&#39;</span>
+</span></span></code></pre></div><p>只在已授权管理接口执行，并限制并发/持续时间。CPU已极端饱和时，30秒 profile可能加剧影响；可先5–10秒或在一个canary实例采集。</p>
+<h2 id="25-内核和服务日志">2.5 内核和服务日志</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">journalctl -u api.service --since <span class="s1">&#39;-15 min&#39;</span> --no-pager
+</span></span><span class="line"><span class="cl">journalctl -k --since <span class="s1">&#39;-15 min&#39;</span> --no-pager
+</span></span><span class="line"><span class="cl">systemctl status api.service --no-pager -l
+</span></span></code></pre></div><p>查 OOM、I/O error、NETDEV watchdog、conntrack full、segfault、restart、start-limit。日志没有结果也要检查 journald/exporter drop。</p>
+<hr>
+<h1 id="3-案例一平均-cpu-只有两核p99-却每-100ms-跳一次">3. 案例一：平均 CPU 只有两核，P99 却每 100ms 跳一次</h1>
+<h2 id="31-现象">3.1 现象</h2>
+<p>Go API运行在64核节点，容器限制2 CPU。午间流量增加后：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">平均CPU：约2 cores，未超过limit
+</span></span><span class="line"><span class="cl">P50：20ms
+</span></span><span class="line"><span class="cl">P99：周期性落在100/200ms附近
+</span></span><span class="line"><span class="cl">数据库和缓存span正常
+</span></span><span class="line"><span class="cl">错误率不高，但客户端开始hedge/retry
+</span></span></code></pre></div><p>值班最初认为“CPU没满，可能网络抖动”。</p>
+<h2 id="32-假设">3.2 假设</h2>
+<p>候选：</p>
+<ol>
+<li>cgroup CFS bandwidth quota提前耗尽</li>
+<li>Go GC stop-the-world恰好约100ms</li>
+<li>下游每100ms批量flush</li>
+<li>客户端/代理的100ms timer</li>
+<li>节点CPU steal或softirq</li>
+</ol>
+<h2 id="33-证据">3.3 证据</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">cat <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/cpu.max&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 200000 100000</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">watch -n <span class="m">1</span> cat <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/cpu.stat&#34;</span>
+</span></span></code></pre></div><p>故障窗口：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">nr_periods      +300
+</span></span><span class="line"><span class="cl">nr_throttled    +287
+</span></span><span class="line"><span class="cl">throttled_usec  快速增长
+</span></span></code></pre></div><p>Go启动日志：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">NumCPU=64 GOMAXPROCS=64
+</span></span></code></pre></div><p>Go trace显示大量 goroutine runnable；CPU profile没有100ms函数。调度采样显示多个M并行运行约数十毫秒后，整个cgroup长时间不上CPU。</p>
+<p>机制：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">quota=200ms CPU / period=100ms
+</span></span><span class="line"><span class="cl">8个线程并行运行25ms
+</span></span><span class="line"><span class="cl">-&gt; 已消费200ms CPU time
+</span></span><span class="line"><span class="cl">-&gt; 剩余约75ms wall time被throttle
+</span></span></code></pre></div><h2 id="34-反证">3.4 反证</h2>
+<ul>
+<li>数据库span在慢请求中仍短</li>
+<li>GC pause只有亚毫秒到数毫秒，不匹配100ms台阶</li>
+<li>同节点无quota的canary没有该周期</li>
+<li>网络重传和RTT无同步变化</li>
+</ul>
+<h2 id="35-止血">3.5 止血</h2>
+<p>将受影响实例 CPU limit临时从2提高到4，并限制入口并发，避免重试继续放大。修改前确认节点容量和邻居影响。</p>
+<h2 id="36-长期修复">3.6 长期修复</h2>
+<ul>
+<li>使用能感知容器额度的Go版本/自动设置GOMAXPROCS，或显式按quota配置</li>
+<li>减少无界并行worker和突发分配</li>
+<li>为CPU-bound服务使用合理request/limit；评估weight替代过紧硬quota</li>
+<li>客户端retry budget和jitter</li>
+<li>告警关联P99、<code>nr_throttled</code>比例而非只看平均CPU</li>
+</ul>
+<h2 id="37-验证">3.7 验证</h2>
+<p>负载回放下比较：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">P99台阶消失
+</span></span><span class="line"><span class="cl">throttled_usec接近0
+</span></span><span class="line"><span class="cl">throughput保持
+</span></span><span class="line"><span class="cl">GC CPU未显著恶化
+</span></span><span class="line"><span class="cl">node CPU仍有安全余量
+</span></span></code></pre></div><p>结论不是“所有quota都不好”，而是并行度与period额度不匹配。</p>
+<hr>
+<h1 id="4-案例二go-heap-只有-600mb1gib-容器却-oomkilled">4. 案例二：Go heap 只有 600MB，1GiB 容器却 OOMKilled</h1>
+<h2 id="41-现象">4.1 现象</h2>
+<p>文件代理服务每隔数小时被重启：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">container status: OOMKilled
+</span></span><span class="line"><span class="cl">memory.max: 1GiB
+</span></span><span class="line"><span class="cl">pprof heap inuse: 600MiB
+</span></span><span class="line"><span class="cl">Go GC正常，live heap无持续增长
+</span></span></code></pre></div><p>团队怀疑“内核误杀”或Go内存泄漏。</p>
+<h2 id="42-假设">4.2 假设</h2>
+<ol>
+<li>cgo/native分配未被heap profile记录</li>
+<li>page cache/socket/kernel memory占用</li>
+<li>同Pod sidecar共享父上限</li>
+<li>Go RSS归还延迟</li>
+<li>父cgroup先达到memory.max</li>
+<li>临时大buffer峰值恰好没被pprof捕获</li>
+</ol>
+<h2 id="43-证据">4.3 证据</h2>
+<p>在旧容器销毁前持续采集：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">cat <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/memory.current&#34;</span>
+</span></span><span class="line"><span class="cl">cat <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/memory.events&#34;</span>
+</span></span><span class="line"><span class="cl">cat <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/memory.stat&#34;</span>
+</span></span><span class="line"><span class="cl">cat <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/memory.swap.current&#34;</span> <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/memory.swap.max&#34;</span>
+</span></span></code></pre></div><p>事故前：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">memory.current ≈ 1024MiB
+</span></span><span class="line"><span class="cl">memory.events: max/oom/oom_kill增长
+</span></span><span class="line"><span class="cl">anon          ≈ 650MiB
+</span></span><span class="line"><span class="cl">file          ≈ 80MiB
+</span></span><span class="line"><span class="cl">sock          ≈ 180MiB
+</span></span><span class="line"><span class="cl">kernel/slab   其余
+</span></span></code></pre></div><p><code>ss -m</code> 与应用指标显示数千慢客户端，每条连接有较大发送队列；服务不断读取上游文件并向慢下游写，用户态pending buffer和socket send memory同时增长。</p>
+<h2 id="44-反证">4.4 反证</h2>
+<ul>
+<li>heap profile按连接对象聚合后基本稳定，不是经典永久泄漏</li>
+<li>sidecar内存小，父cgroup未先触限</li>
+<li>没有显著cgo分配</li>
+<li>删除page cache不能解释高sock与pending bytes</li>
+</ul>
+<h2 id="45-根因">4.5 根因</h2>
+<p>缺少慢客户端背压：handler持续从上游读取并把数据排入用户态/内核发送队列。Go heap快照只看到部分用户buffer，memcg还记账socket与其他内存；瞬时总和触发OOM。</p>
+<h2 id="46-止血">4.6 止血</h2>
+<ul>
+<li>降低每实例并发下载数</li>
+<li>暂时缩小单连接用户态buffer/队列上限</li>
+<li>对最慢客户端设置写deadline并关闭</li>
+<li>在容量允许下暂增memory limit，避免重启风暴</li>
+</ul>
+<p>增内存只是恢复手段，不是根治。</p>
+<h2 id="47-长期修复">4.7 长期修复</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">per-connection pending bytes high watermark
+</span></span><span class="line"><span class="cl">-&gt; 暂停上游读取
+</span></span><span class="line"><span class="cl">-&gt; 等下游flush到low watermark
+</span></span><span class="line"><span class="cl">-&gt; 超过deadline/总量则中止
+</span></span></code></pre></div><p>同时按连接跟踪 user pending、socket queue、吞吐和关闭原因；<code>GOMEMLIMIT</code>为非Go内存留余量。</p>
+<h2 id="48-验证">4.8 验证</h2>
+<p>慢速客户端压测下：memory.current形成平台而非线性增长；超过限额的连接被有界关闭；正常用户P99不受慢用户拖累；memory.events不再增长。</p>
+<hr>
+<h1 id="5-案例三数据库-commit-p99-抖动但磁盘-util-只有-40">5. 案例三：数据库 commit P99 抖动，但磁盘 <code>%util</code> 只有 40%</h1>
+<h2 id="51-现象">5.1 现象</h2>
+<p>订单服务每5秒出现一次commit延迟峰：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">transaction P99: 10ms -&gt; 300ms
+</span></span><span class="line"><span class="cl">CPU正常
+</span></span><span class="line"><span class="cl">磁盘吞吐和%util不高
+</span></span><span class="line"><span class="cl">应用log显示fsync偶发慢
+</span></span></code></pre></div><p>“磁盘没满”让调查一度转向数据库锁。</p>
+<h2 id="52-假设">5.2 假设</h2>
+<ol>
+<li>WAL fsync等待设备flush/journal</li>
+<li>cgroup IO throttle</li>
+<li>writeback/dirty page周期压力</li>
+<li>数据库group commit锁竞争</li>
+<li>云盘burst credit或宿主噪声</li>
+<li>文件系统错误/设备重试</li>
+</ol>
+<h2 id="53-证据">5.3 证据</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">iostat -xz <span class="m">1</span>
+</span></span><span class="line"><span class="cl">pidstat -d -p <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span> <span class="m">1</span>
+</span></span><span class="line"><span class="cl">cat <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/io.stat&#34;</span> <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/io.pressure&#34;</span>
+</span></span><span class="line"><span class="cl">grep -E <span class="s1">&#39;^(Dirty|Writeback):&#39;</span> /proc/meminfo
+</span></span></code></pre></div><p>短时过滤 syscall：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">sudo timeout 20s strace -ff -ttT -p <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  -e <span class="nv">trace</span><span class="o">=</span>fsync,fdatasync,pwrite64
+</span></span></code></pre></div><p>结果：峰值时多个事务都卡同一个 <code>fdatasync</code>；block issue/complete trace显示设备请求本身大多&lt;10ms，但每5秒文件系统journal commit/flush出现长等待。云盘指标显示flush latency与burst credit下降同步。</p>
+<h2 id="54-反证">5.4 反证</h2>
+<ul>
+<li>mutex profile中WAL lock等待是结果：leader在fsync，followers等group commit</li>
+<li>提高DB worker数不改善</li>
+<li>page cache命中与普通write吞吐正常，不代表flush正常</li>
+<li><code>%util</code> 聚合无法表达flush尾延迟和设备内部credit</li>
+</ul>
+<h2 id="55-止血">5.5 止血</h2>
+<ul>
+<li>临时切换到有余量的存储/提高云盘性能等级</li>
+<li>在业务容许的durability边界内增加group commit批量</li>
+<li>限制非关键后台写和checkpoint并发</li>
+</ul>
+<p>不能直接删除fsync；那会改变订单提交的抗崩溃承诺。</p>
+<h2 id="56-长期修复">5.6 长期修复</h2>
+<ul>
+<li>为WAL选具有稳定flush latency的存储</li>
+<li>监控fsync histogram、cloud credit、journal/IO pressure</li>
+<li>调整checkpoint避免与峰值重叠</li>
+<li>容量测试包含sync write而非只测顺序吞吐</li>
+<li>明确数据库事务durability，不用mount参数“偷性能”</li>
+</ul>
+<h2 id="57-验证">5.7 验证</h2>
+<p>故障负载和断电/进程kill恢复测试同时通过：commit P99稳定，吞吐满足，WAL恢复无已确认事务丢失。</p>
+<hr>
+<h1 id="6-案例四网络-p99-高服务端-cpu-与-handler-都正常">6. 案例四：网络 P99 高，服务端 CPU 与 handler 都正常</h1>
+<h2 id="61-现象">6.1 现象</h2>
+<p>只有一个可用区客户端访问API变慢：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">server handler duration正常
+</span></span><span class="line"><span class="cl">client observed latency高
+</span></span><span class="line"><span class="cl">server error少
+</span></span><span class="line"><span class="cl">TCP retransmission上升
+</span></span><span class="line"><span class="cl">同区域小请求影响轻，大响应影响重
+</span></span></code></pre></div><h2 id="62-假设">6.2 假设</h2>
+<ol>
+<li>路径丢包/拥塞</li>
+<li>MTU/PMTUD black hole</li>
+<li>服务端Send-Q和慢客户端</li>
+<li>NIC RX/TX drop</li>
+<li>跨区路由变化</li>
+<li>TLS record/代理buffer</li>
+</ol>
+<h2 id="63-证据">6.3 证据</h2>
+<p>服务端：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">ss -tinp <span class="s1">&#39;( sport = :443 )&#39;</span>
+</span></span><span class="line"><span class="cl">nstat -az TcpRetransSegs
+</span></span><span class="line"><span class="cl">ip -s link show dev eth0
+</span></span><span class="line"><span class="cl">ethtool -S eth0
+</span></span></code></pre></div><p>双端窄抓包发现：SYN、TLS小record正常；服务端发送接近MTU的大segment后重复重传，路径没有返回预期ACK，也看不到ICMP Packet Too Big。受影响区新部署overlay封装增加50字节，但Pod MTU仍1500。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">inner 1500 + overlay 50 &gt; underlay 1500
+</span></span><span class="line"><span class="cl">DF set
+</span></span><span class="line"><span class="cl">ICMP too-big 被中间策略丢弃
+</span></span></code></pre></div><h2 id="64-反证">6.4 反证</h2>
+<ul>
+<li>NIC drop计数不增</li>
+<li>服务端Send-Q增长是重传/无ACK结果，不是handler写过快根因</li>
+<li>关闭TLS后大payload仍失败</li>
+<li>小payload成功排除DNS/connect/listener</li>
+</ul>
+<h2 id="65-止血">6.5 止血</h2>
+<p>将受影响节点/Pod MTU改为与overlay匹配的1450（按实际header计算），或临时调整路由/策略允许必要ICMP。变更网络时先canary并准备回滚。</p>
+<h2 id="66-长期修复">6.6 长期修复</h2>
+<ul>
+<li>CNI按underlay与encapsulation统一计算MTU</li>
+<li>保留ICMP too-big控制报文</li>
+<li>部署前做跨区大包/IPv4/IPv6 PMTU测试</li>
+<li>监控retrans、MSS、ICMP和按区域SLO</li>
+</ul>
+<h2 id="67-验证">6.7 验证</h2>
+<p>不同payload、TLS certificate、大response和长连接均通过；抓包不再重传；客户端与服务端duration差值恢复。</p>
+<hr>
+<h1 id="7-案例五只有域名请求慢直接访问-ip-正常">7. 案例五：只有域名请求慢，直接访问 IP 正常</h1>
+<h2 id="71-现象">7.1 现象</h2>
+<p>Go服务向依赖发请求：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">curl https://10.0.8.12 偶尔正常
+</span></span><span class="line"><span class="cl">通过 service.example.local 经常2s超时
+</span></span><span class="line"><span class="cl">应用错误：lookup ... i/o timeout
+</span></span><span class="line"><span class="cl">CPU/网络接口正常
+</span></span></code></pre></div><h2 id="72-假设">7.2 假设</h2>
+<ol>
+<li>DNS resolver过载</li>
+<li>search/ndots产生多次查询</li>
+<li>UDP/53可达但TCP/53被阻断</li>
+<li>容器 <code>/etc/resolv.conf</code> 指向错误loopback</li>
+<li>conntrack/UDP表压力</li>
+<li>Go纯resolver与cgo/NSS行为差异</li>
+</ol>
+<h2 id="73-证据">7.3 证据</h2>
+<p>在与应用相同network + mount namespace：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">cat /etc/resolv.conf
+</span></span><span class="line"><span class="cl">getent ahosts service.example.local
+</span></span></code></pre></div><p>抓包按resolver过滤，看到每次短名先尝试多个search suffix，部分大DNS响应带TC flag，客户端随后发TCP/53但network policy只允许UDP/53。Go日志把这些阶段统一包装成lookup timeout。</p>
+<h2 id="74-反证">7.4 反证</h2>
+<ul>
+<li>目标IP connect/TLS正常</li>
+<li>UDP小响应域名稳定，只有较大/特定记录失败</li>
+<li>CoreDNS CPU并未饱和</li>
+<li>增大应用HTTP timeout不改变lookup阶段</li>
+</ul>
+<h2 id="75-止血">7.5 止血</h2>
+<p>放行到受信resolver的TCP/53；使用完整FQDN减少不必要search；必要时降低异常记录集或切换健康resolver。</p>
+<h2 id="76-长期修复">7.6 长期修复</h2>
+<ul>
+<li>DNS policy同时考虑UDP/TCP</li>
+<li>合理<code>ndots/search</code>，避免请求放大</li>
+<li>按resolver/result记录DNS latency与错误</li>
+<li>CoreDNS/上游cache容量与负载测试包含TCP fallback</li>
+<li>Go版本/解析模式变化纳入发布验证</li>
+</ul>
+<h2 id="77-验证">7.7 验证</h2>
+<p>强制查询可产生截断的大记录，确认TCP fallback成功；DNS P99和查询放大下降，HTTP timeout恢复。</p>
+<hr>
+<h1 id="8-案例六连接池已满数据库却很空闲">8. 案例六：连接池“已满”，数据库却很空闲</h1>
+<h2 id="81-现象">8.1 现象</h2>
+<p>API超时增多：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">DB CPU 20%
+</span></span><span class="line"><span class="cl">DB active sessions不高
+</span></span><span class="line"><span class="cl">Go sql.DB WaitCount/WaitDuration快速增长
+</span></span><span class="line"><span class="cl">MaxOpenConns=100
+</span></span><span class="line"><span class="cl">请求goroutine数暴涨
+</span></span></code></pre></div><p>第一反应是把池从100调到500。</p>
+<h2 id="82-假设">8.2 假设</h2>
+<ol>
+<li>连接泄漏：Rows/Tx未关闭</li>
+<li>少数慢query长期占连接</li>
+<li>下游连接半断开，健康检查等待</li>
+<li>transaction内调用外部RPC</li>
+<li>pool设置过小</li>
+<li>请求并发缺少上限</li>
+</ol>
+<h2 id="83-证据">8.3 证据</h2>
+<p>Goroutine dump大量栈停在 <code>database/sql.(*DB).conn</code> 等待；少数goroutine持有transaction并调用外部HTTP。trace显示外部服务P99 5s，事务从查询前开始，到HTTP返回后才commit。</p>
+<p>数据库看到真正执行SQL的时间很短，所以active低；连接却被应用transaction owner持有。</p>
+<h2 id="84-反证">8.4 反证</h2>
+<ul>
+<li>Rows/Tx最终都defer Close/Rollback，没有永久引用泄漏</li>
+<li>SQL server query latency正常</li>
+<li>临时把池调500仅短时缓解，随后更多连接同时被占，外部服务压力更大</li>
+<li>连接建立没有明显延迟</li>
+</ul>
+<h2 id="85-根因">8.5 根因</h2>
+<p>事务边界过宽，把不需要数据库原子性的外部RPC放在事务中；慢依赖消耗稀缺连接，等待goroutine又提高内存和超时重试。</p>
+<h2 id="86-止血">8.6 止血</h2>
+<ul>
+<li>限制该route并发</li>
+<li>对外部RPC设置更短deadline/熔断</li>
+<li>在语义允许时提前结束事务</li>
+<li>小幅增加池仅作为有上限缓冲</li>
+</ul>
+<h2 id="87-长期修复">8.7 长期修复</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">read/validate outside transaction
+</span></span><span class="line"><span class="cl">-&gt; begin tx
+</span></span><span class="line"><span class="cl">-&gt; minimal DB operations
+</span></span><span class="line"><span class="cl">-&gt; commit
+</span></span><span class="line"><span class="cl">-&gt; external side effect via outbox/idempotent workflow
+</span></span></code></pre></div><p>按operation暴露pool wait、in-use、idle、transaction duration，给慢事务采样stack/trace。</p>
+<h2 id="88-验证">8.8 验证</h2>
+<p>外部服务故障注入时，DB transaction duration仍短，pool wait有界，入口快速降级而不产生goroutine海啸。</p>
+<hr>
+<h1 id="9-案例七cpu-profile-正常吞吐下降一半">9. 案例七：CPU profile 正常，吞吐下降一半</h1>
+<h2 id="91-现象">9.1 现象</h2>
+<p>部署新版本后：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">CPU利用率约60%，无明显热点变化
+</span></span><span class="line"><span class="cl">吞吐下降45%
+</span></span><span class="line"><span class="cl">P99升高
+</span></span><span class="line"><span class="cl">Go mutex profile显示某锁等待增加
+</span></span><span class="line"><span class="cl">context switch增加
+</span></span></code></pre></div><h2 id="92-假设">9.2 假设</h2>
+<ol>
+<li>全局锁竞争/lock convoy</li>
+<li>false sharing/cache line bouncing</li>
+<li>GC assist</li>
+<li>logging同步锁</li>
+<li>cgroup quota</li>
+<li>scheduler migration/NUMA</li>
+</ol>
+<h2 id="93-证据">9.3 证据</h2>
+<p>新版本把每请求统计写入一个全局map并在同一mutex下更新多个label。CPU profile只采on-CPU；大量goroutine off-CPU等mutex。mutex profile的阻塞栈指向metrics helper，lock holder在格式化动态label并可能扩容map。</p>
+<p>perf显示cache misses/context switches增长；禁用该实验metric的canary吞吐恢复。</p>
+<h2 id="94-反证">9.4 反证</h2>
+<ul>
+<li>cpu.stat无throttle</li>
+<li>GC频率与assist没有足够变化</li>
+<li>下游latency正常</li>
+<li>日志量未增加</li>
+<li>单线程benchmark差异小，多核并发才恶化，符合共享锁</li>
+</ul>
+<h2 id="95-止血">9.5 止血</h2>
+<p>关闭feature flag/回滚metric；不能为保留观测而牺牲服务可用性。</p>
+<h2 id="96-长期修复">9.6 长期修复</h2>
+<ul>
+<li>metric label白名单和预注册</li>
+<li>使用库的并发安全counter，不在热路径构建动态series</li>
+<li>per-shard/per-CPU聚合并周期合并</li>
+<li>contention benchmark覆盖目标核数</li>
+<li>mutex/block profile按需动态开启</li>
+</ul>
+<h2 id="97-验证">9.7 验证</h2>
+<p>多核负载下吞吐、P99、mutex wait、context switch和series cardinality均回到预算；确认指标仍语义正确。</p>
+<hr>
+<h1 id="10-案例八服务报-too-many-open-files但连接数并不高">10. 案例八：服务报 too many open files，但连接数并不高</h1>
+<h2 id="101-现象">10.1 现象</h2>
+<p>运行三天后：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">accept: too many open files
+</span></span><span class="line"><span class="cl">HTTP连接只有约5k
+</span></span><span class="line"><span class="cl">LimitNOFILE=65536
+</span></span><span class="line"><span class="cl">/proc/PID/fd数量接近65536并持续增长
+</span></span><span class="line"><span class="cl">重启立即恢复
+</span></span></code></pre></div><h2 id="102-假设">10.2 假设</h2>
+<ol>
+<li>socket连接泄漏</li>
+<li>打开文件未close</li>
+<li>inotify/eventfd/epollfd泄漏</li>
+<li>TLS/HTTP response body未close导致连接不复用</li>
+<li>debug/profile文件泄漏</li>
+<li>fork子进程继承fd</li>
+</ol>
+<h2 id="103-证据">10.3 证据</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">ls -l /proc/<span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span>/fd <span class="p">|</span> head
+</span></span><span class="line"><span class="cl">lsof -nP -p <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span> <span class="p">|</span> awk <span class="s1">&#39;{print $5}&#39;</span> <span class="p">|</span> sort <span class="p">|</span> uniq -c
+</span></span></code></pre></div><p>大多数fd指向 regular files under <code>/tmp/export-*</code>。代码路径为每次导出创建临时文件，在成功路径defer Close，错误路径在设置defer前return。磁盘上部分文件已unlink但fd仍打开：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">lsof +L1 -p <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span>
+</span></span></code></pre></div><p>Go goroutine数量和TCP socket数稳定。</p>
+<h2 id="104-反证">10.4 反证</h2>
+<ul>
+<li>提高NOFILE只延长故障时间</li>
+<li>HTTP transport idle连接未接近上限</li>
+<li>fd类型分布明确指向临时文件而非socket</li>
+<li>epoll/eventfd数量稳定</li>
+</ul>
+<h2 id="105-止血">10.5 止血</h2>
+<p>滚动重启释放fd；限流/关闭导出功能；保留一个实例现场用于证据，不在全部实例同时重启前丢失线索。</p>
+<h2 id="106-修复">10.6 修复</h2>
+<p>获取资源后立即建立close责任：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="nx">f</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">os</span><span class="p">.</span><span class="nf">CreateTemp</span><span class="p">(</span><span class="nx">dir</span><span class="p">,</span> <span class="s">&#34;export-*&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="k">if</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="nx">err</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="k">defer</span> <span class="kd">func</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">_</span> <span class="p">=</span> <span class="nx">f</span><span class="p">.</span><span class="nf">Close</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">_</span> <span class="p">=</span> <span class="nx">os</span><span class="p">.</span><span class="nf">Remove</span><span class="p">(</span><span class="nx">f</span><span class="p">.</span><span class="nf">Name</span><span class="p">())</span>
+</span></span><span class="line"><span class="cl"><span class="p">}()</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">if</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nf">prepare</span><span class="p">(</span><span class="nx">f</span><span class="p">);</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="nx">err</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>若循环中大量文件，不能把defer累积到外层函数结束，应抽小函数或显式close并检查错误。</p>
+<h2 id="107-验证">10.7 验证</h2>
+<p>错误注入覆盖每个return路径；fd数量在长期soak中围绕并发平台波动，deleted-open不增长；fd使用率提前告警并按类型采样。</p>
+<hr>
+<h1 id="11-案例九内存不断涨但不是-go-对象泄漏">11. 案例九：内存不断涨，但不是 Go 对象泄漏</h1>
+<h2 id="111-现象">11.1 现象</h2>
+<p>图像服务：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Go heap after GC稳定在400MiB
+</span></span><span class="line"><span class="cl">RSS从500MiB涨到4GiB
+</span></span><span class="line"><span class="cl">容器memory.current同步增长
+</span></span><span class="line"><span class="cl">heap profile无大对象增长
+</span></span></code></pre></div><h2 id="112-假设">11.2 假设</h2>
+<ol>
+<li>cgo C库malloc未释放</li>
+<li>mmap映射未unmap</li>
+<li>Go idle span未归还</li>
+<li>page cache</li>
+<li>thread stack增长</li>
+<li>allocator fragmentation</li>
+</ol>
+<h2 id="113-证据">11.3 证据</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">cat /proc/<span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span>/smaps_rollup
+</span></span><span class="line"><span class="cl">cat <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/memory.stat&#34;</span>
+</span></span><span class="line"><span class="cl">pmap -x <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span> <span class="p">|</span> tail
+</span></span></code></pre></div><p>anon RSS高，file cache不大；每次处理图像调用C库创建context，成功路径destroy，解码错误路径漏掉。用受控故障输入复现，native allocation随错误请求增长；Go heap不变。</p>
+<h2 id="114-反证">11.4 反证</h2>
+<ul>
+<li><code>debug.FreeOSMemory</code>不能释放该内存</li>
+<li>降低Go GC目标只增加CPU，不改变RSS斜率</li>
+<li>无大量线程</li>
+<li>smaps显示匿名映射归属于native allocator区域</li>
+</ul>
+<h2 id="115-止血与修复">11.5 止血与修复</h2>
+<p>限制错误图像并发/大小，滚动重启；在C资源创建后立即defer封装destroy，使用RAII式Go wrapper和finalizer仅作告警而非主要回收；升级修复后的native库。</p>
+<h2 id="116-验证">11.6 验证</h2>
+<p>native fault test和长时间fuzz/soak下RSS平台稳定；监控Go managed、process RSS、memcg anon分别展示，防止再次只看heap。</p>
+<hr>
+<h1 id="12-案例十日志系统故障拖垮业务">12. 案例十：日志系统故障拖垮业务</h1>
+<h2 id="121-现象">12.1 现象</h2>
+<p>集中日志后端不可用后：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">API P99上升
+</span></span><span class="line"><span class="cl">磁盘写和空间快速增长
+</span></span><span class="line"><span class="cl">应用CPU用于JSON logging
+</span></span><span class="line"><span class="cl">错误日志每请求重复数十条
+</span></span><span class="line"><span class="cl">最终节点磁盘满，数据库也受影响
+</span></span></code></pre></div><h2 id="122-假设">12.2 假设</h2>
+<ol>
+<li>同步日志 exporter阻塞请求</li>
+<li>本地队列无界</li>
+<li>error retry无退避</li>
+<li>日志采集agent反复读取/写临时文件</li>
+<li>高基数索引导致后端拒绝</li>
+<li>journald rate limit/drop</li>
+</ol>
+<h2 id="123-证据">12.3 证据</h2>
+<p>block/mutex profile显示请求goroutine等待logger queue mutex；queue length无上限。后端429后每条日志立即重试并追加本地spool，同一错误含request body和stack。磁盘<code>/var</code>与数据库共享。</p>
+<h2 id="124-反证">12.4 反证</h2>
+<ul>
+<li>业务依赖本身正常</li>
+<li>关闭debug/error重复日志的canary立即恢复</li>
+<li>磁盘IO由log spool进程/文件占主导</li>
+<li>网络带宽未满，问题是后端拒绝与本地策略</li>
+</ul>
+<h2 id="125-止血">12.5 止血</h2>
+<ul>
+<li>降低非关键日志级别/采样</li>
+<li>暂停无界重试，保留drop计数</li>
+<li>限制spool容量并保护业务磁盘</li>
+<li>对敏感request body停止采集</li>
+<li>恢复/切换日志后端但避免积压瞬间洪峰回放</li>
+</ul>
+<h2 id="126-长期修复">12.6 长期修复</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">业务线程 -&gt; 有界非阻塞queue
+</span></span><span class="line"><span class="cl">queue满 -&gt; 按优先级drop + metric
+</span></span><span class="line"><span class="cl">export -&gt; batch + backoff + jitter + retry budget
+</span></span><span class="line"><span class="cl">local spool -&gt; 独立quota/filesystem + max age/size
+</span></span></code></pre></div><p>审计日志若必须可靠，使用独立有保证通道，不与普通debug telemetry混合。</p>
+<h2 id="127-验证">12.7 验证</h2>
+<p>断开日志后端故障注入：业务SLO基本不受影响，queue/spool有界，drop告警触发，恢复后发送速率受控且无敏感泄漏。</p>
+<hr>
+<h1 id="13-案例十一time_wait-很多但真正问题是重试风暴">13. 案例十一：TIME_WAIT 很多，但真正问题是重试风暴</h1>
+<h2 id="131-现象">13.1 现象</h2>
+<p>客户端节点：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">TIME_WAIT 20万
+</span></span><span class="line"><span class="cl">connect EADDRNOTAVAIL
+</span></span><span class="line"><span class="cl">上游CPU不高
+</span></span><span class="line"><span class="cl">新连接率突然10倍
+</span></span></code></pre></div><p>团队准备启用激进TIME_WAIT复用参数。</p>
+<h2 id="132-假设">13.2 假设</h2>
+<ol>
+<li>HTTP keep-alive失效</li>
+<li>上游主动关闭</li>
+<li>客户端transport每请求新建</li>
+<li>DNS轮转导致pool key碎片</li>
+<li>retry无预算</li>
+<li>临时端口范围过窄</li>
+</ol>
+<h2 id="133-证据">13.3 证据</h2>
+<p>部署变更把自定义<code>http.Transport</code>从进程级移进请求函数，每次创建并在请求后丢弃；连接无法复用。另一个feature把超时请求最多立即重试3次。连接建立率和TIME_WAIT同步增长，源端口对单一目标耗尽。</p>
+<h2 id="134-反证">13.4 反证</h2>
+<ul>
+<li>上游没有主动大量FIN，主动关闭主要在客户端</li>
+<li>扩大端口范围延后失败但新建率不变</li>
+<li>网络RTT稳定</li>
+<li>恢复共享transport的canary连接复用率恢复</li>
+</ul>
+<h2 id="135-修复">13.5 修复</h2>
+<ul>
+<li>复用进程级<code>http.Client/Transport</code></li>
+<li>设置合理MaxIdleConns/PerHost、idle timeout</li>
+<li>有界retry + backoff/jitter/幂等</li>
+<li>监控new connection rate、reuse、pool wait和端口使用</li>
+</ul>
+<h2 id="136-验证">13.6 验证</h2>
+<p>连接新建率下降数量级，TIME_WAIT自然回落，端口错误消失。未通过削弱TCP安全语义“清理状态”。</p>
+<hr>
+<h1 id="14-案例十二应用随机卡死实际是锁顺序死锁">14. 案例十二：应用“随机”卡死，实际是锁顺序死锁</h1>
+<h2 id="141-现象">14.1 现象</h2>
+<p>服务仍存活：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">CPU接近0
+</span></span><span class="line"><span class="cl">健康检查超时
+</span></span><span class="line"><span class="cl">连接仍accept但handler不完成
+</span></span><span class="line"><span class="cl">goroutine从几千涨到几十万
+</span></span><span class="line"><span class="cl">无panic/error
+</span></span></code></pre></div><h2 id="142-假设">14.2 假设</h2>
+<ol>
+<li>全局deadlock</li>
+<li>下游无限等待</li>
+<li>channel无消费者</li>
+<li>fd耗尽</li>
+<li>runtime scheduler问题</li>
+<li>STW/内核D状态</li>
+</ol>
+<h2 id="143-证据">14.3 证据</h2>
+<p>goroutine dump显示：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">路径A：持有 cache.mu -&gt; 等 config.mu
+</span></span><span class="line"><span class="cl">路径B：持有 config.mu -&gt; 等 cache.mu
+</span></span><span class="line"><span class="cl">其他请求排队等两把锁
+</span></span></code></pre></div><p>Go runtime没有报“all goroutines asleep”，因为网络poller、timer和后台goroutine仍可运行。mutex profile在死锁后也不一定给出完整持有者因果，dump和代码锁顺序才是关键。</p>
+<h2 id="144-反证">14.4 反证</h2>
+<ul>
+<li>下游无请求增加</li>
+<li>fd、CPU quota、memory正常</li>
+<li>OS threads未处D状态</li>
+<li>强制关闭网络不能让已死锁路径前进</li>
+</ul>
+<h2 id="145-止血">14.5 止血</h2>
+<p>从负载均衡摘除，保留dump/trace后重启实例；逐个滚动，避免全服务同时失去容量。若写操作可能部分完成，按业务协议确认一致性。</p>
+<h2 id="146-修复">14.6 修复</h2>
+<ul>
+<li>定义全局锁顺序：config -&gt; cache</li>
+<li>重构避免同时持两锁，复制不可变快照后在锁外工作</li>
+<li>禁止锁内网络/磁盘调用</li>
+<li>并发测试、race detector、故障调度</li>
+<li>watchdog关注请求进展而非仅进程存活</li>
+</ul>
+<h2 id="147-验证">14.7 验证</h2>
+<p>定向并发测试重复旧交错数百万次；线上canary启用短时mutex/block profile，锁等待保持预算；健康检查包含关键事件循环progress。</p>
+<hr>
+<h1 id="15-案例十三服务频繁重启根因不是应用崩溃">15. 案例十三：服务频繁重启，根因不是应用崩溃</h1>
+<h2 id="151-现象">15.1 现象</h2>
+<p>systemd service每隔30秒重启：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">application log最后一行正常
+</span></span><span class="line"><span class="cl">没有panic
+</span></span><span class="line"><span class="cl">systemctl status: result=timeout / signal=KILL
+</span></span><span class="line"><span class="cl">restart count增长
+</span></span></code></pre></div><h2 id="152-假设">15.2 假设</h2>
+<ol>
+<li><code>Type=notify</code>未发READY导致TimeoutStartSec</li>
+<li>watchdog未喂</li>
+<li>memory OOM</li>
+<li>stop timeout被SIGKILL</li>
+<li>health manager主动重启</li>
+<li>ExecStart包装shell main PID错误</li>
+</ol>
+<h2 id="153-证据">15.3 证据</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">systemctl show api.service <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  -p Type -p Result -p ExecMainCode -p ExecMainStatus <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  -p WatchdogUSec -p TimeoutStartUSec -p NRestarts
+</span></span><span class="line"><span class="cl">journalctl -u api.service -b -o short-monotonic
+</span></span><span class="line"><span class="cl">systemctl cat api.service
+</span></span></code></pre></div><p>unit被改为<code>Type=notify</code>，应用版本尚未实现sd_notify；systemd等30秒判定启动超时，发送TERM/KILL，<code>Restart=always</code>再启动。应用本身一直能临时接流量，造成周期断连。</p>
+<h2 id="154-反证">15.4 反证</h2>
+<ul>
+<li>memory.events无oom</li>
+<li>core/panic不存在</li>
+<li>每次KILL精确匹配TimeoutStartSec</li>
+<li>改回Type=simple的canary稳定</li>
+</ul>
+<h2 id="155-修复">15.5 修复</h2>
+<p>短期改回<code>Type=exec/simple</code>；长期在应用完成listener和必要初始化后正确发送READY，增加unit集成测试。StartLimit避免配置错误无限重启。</p>
+<h2 id="156-验证">15.6 验证</h2>
+<p><code>ActiveState=active</code>、启动时间符合预期；故意不发READY时测试环境能按timeout失败；正常SIGTERM graceful流程通过。</p>
+<hr>
+<h1 id="16-案例十四数据删除后磁盘空间没有回来">16. 案例十四：数据删除后磁盘空间没有回来</h1>
+<h2 id="161-现象">16.1 现象</h2>
+<p>日志目录已删除数百GB：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">du -sh /var/log/app: 10G
+</span></span><span class="line"><span class="cl">df -h /var: 95% used
+</span></span><span class="line"><span class="cl">应用仍写日志
+</span></span></code></pre></div><h2 id="162-假设">16.2 假设</h2>
+<ol>
+<li>deleted-open文件</li>
+<li>filesystem snapshot</li>
+<li>hidden mount</li>
+<li>reserved blocks/metadata</li>
+<li>sparse file统计差异</li>
+<li>容器overlay writable layer</li>
+</ol>
+<h2 id="163-证据">16.3 证据</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">lsof +L1
+</span></span><span class="line"><span class="cl">ls -l /proc/<span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span>/fd <span class="p">|</span> grep deleted
+</span></span><span class="line"><span class="cl">df -h /var
+</span></span><span class="line"><span class="cl">du -xsh /var/*
+</span></span><span class="line"><span class="cl">findmnt -T /var/log/app
+</span></span></code></pre></div><p>应用logger在logrotate后仍持有旧inode并继续写，目录项已unlink但fd引用让blocks无法回收。</p>
+<h2 id="164-反证">16.4 反证</h2>
+<ul>
+<li>无snapshot增长</li>
+<li>mount topology正常</li>
+<li><code>lsof +L1</code>大小恰好解释df-du差额</li>
+<li>重启应用后空间立即释放</li>
+</ul>
+<h2 id="165-止血与修复">16.5 止血与修复</h2>
+<p>向应用发送已支持的reopen信号/API，或滚动重启；不要用<code>&gt; /proc/PID/fd/N</code>随意截断未知文件，可能破坏应用与审计。配置logrotate使用正确postrotate，或让应用写stdout交给日志系统；监控deleted-open。</p>
+<h2 id="166-验证">16.6 验证</h2>
+<p>轮转演练后新fd指向新inode，旧fd关闭，df空间回收，日志无丢失/重复。</p>
+<hr>
+<h1 id="17-案例十五一次优化关闭了零拷贝cpu-反而升高">17. 案例十五：一次“优化”关闭了零拷贝，CPU 反而升高</h1>
+<h2 id="171-现象">17.1 现象</h2>
+<p>静态文件服务加入统一metrics wrapper后：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">吞吐相同
+</span></span><span class="line"><span class="cl">CPU增加70%
+</span></span><span class="line"><span class="cl">perf出现copy/memmove和TLS外额外开销
+</span></span><span class="line"><span class="cl">strace不再看到sendfile
+</span></span></code></pre></div><h2 id="172-假设">17.2 假设</h2>
+<ol>
+<li>wrapper破坏Go <code>io.ReaderFrom/WriterTo</code>优化分派</li>
+<li>TLS路径本来就不走sendfile</li>
+<li>buffer变小</li>
+<li>page cache miss</li>
+<li>syscall数量增加</li>
+</ol>
+<h2 id="173-证据">17.3 证据</h2>
+<p>plain HTTP路径原来是 <code>*os.File -&gt; *net.TCPConn</code>，<code>io.Copy</code>可走sendfile。新wrapper只实现<code>Write</code>，把具体<code>TCPConn</code>隐藏，<code>io.Copy</code>退回用户态buffer循环。HTTPS本来就走用户态TLS，变化主要在plain internal流量。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">sudo timeout 10s strace -ff -p <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  -e <span class="nv">trace</span><span class="o">=</span>sendfile,read,write
+</span></span></code></pre></div><h2 id="174-反证">17.4 反证</h2>
+<ul>
+<li>page faults/cache命中相近</li>
+<li>文件大小/流量组成不变</li>
+<li>移除wrapper的canary恢复sendfile和CPU</li>
+<li>增大buffer仅部分改善，不恢复原路径</li>
+</ul>
+<h2 id="175-修复">17.5 修复</h2>
+<p>让wrapper在语义正确时透传<code>ReaderFrom</code>/专用接口，或把metrics放在不破坏动态类型的层；测试plain/TLS/限速/压缩各路径。不要为了“强制零拷贝”绕过需要修改字节的TLS/压缩。</p>
+<h2 id="176-验证">17.6 验证</h2>
+<p>strace/perf确认目标路径恢复，字节/错误metrics仍准确；吞吐、CPU、RSS、慢客户端内存均满足。</p>
+<hr>
+<h1 id="18-常见误判与反证清单">18. 常见误判与反证清单</h1>
+<h2 id="181-cpu-高">18.1 CPU 高</h2>
+<p>可能：真实计算、spin、GC、softirq、logging、profile、steal补偿。反证问题：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">on-CPU stack是什么？
+</span></span><span class="line"><span class="cl">user/system/softirq分别多少？
+</span></span><span class="line"><span class="cl">是否quota/affinity？
+</span></span><span class="line"><span class="cl">吞吐是否同步增长？
+</span></span></code></pre></div><h2 id="182-cpu-低但慢">18.2 CPU 低但慢</h2>
+<p>可能：锁、IO、网络、下游、run queue、quota、线程池/连接池。看off-CPU、PSI、queue和trace，不要因CPU低就扩实例。</p>
+<h2 id="183-内存高">18.3 内存高</h2>
+<p>可能：live heap、native、page cache、socket、slab、fragmentation、同cgroup邻居。看<code>memory.stat</code>、smaps、语言heap和时间趋势。</p>
+<h2 id="184-磁盘util高低">18.4 磁盘util高/低</h2>
+<p>高可能是健康顺序吞吐；低也可能flush尾延迟、单队列、cgroup throttle或文件系统锁。看await、queue、operation类型、fsync、PSI与应用语义。</p>
+<h2 id="185-time_wait-多">18.5 TIME_WAIT 多</h2>
+<p>它是主动关闭后的协议状态，不等于泄漏。看新建率、主动关闭方、连接池、端口压力和实际错误。</p>
+<h2 id="186-大量-goroutine">18.6 大量 goroutine</h2>
+<p>可能是健康长连接，也可能pool wait、channel、无deadline、死锁。按stack状态和生命周期增长率分类，不能只设固定数量阈值。</p>
+<h2 id="187-重传增加">18.7 重传增加</h2>
+<p>可能真实网络丢包、MTU、接收端CPU/队列、拥塞、虚拟网络drop。双端抓包与接口/softirq指标找丢失边界。</p>
+<h2 id="188-重启恢复">18.8 重启恢复</h2>
+<p>可能释放泄漏、清cache/队列/锁/连接、迁移节点，也可能恰逢外部恢复。重启证明“状态相关”，不证明状态来源。</p>
+<hr>
+<h1 id="19-止血动作的风险矩阵">19. 止血动作的风险矩阵</h1>
+<table>
+<thead>
+<tr>
+<th>动作</th>
+<th>可能收益</th>
+<th>风险/丢失证据</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>重启单实例</td>
+<td>快速清理进程状态</td>
+<td>丢heap/fd/stack，未知请求结果</td>
+</tr>
+<tr>
+<td>扩容</td>
+<td>降低单实例压力</td>
+<td>加剧DB/DNS/下游连接风暴</td>
+</tr>
+<tr>
+<td>提高timeout</td>
+<td>减少表面超时</td>
+<td>队列/内存更大，用户等更久</td>
+</tr>
+<tr>
+<td>增加buffer</td>
+<td>吸收突发</td>
+<td>排队延迟和内存上升</td>
+</tr>
+<tr>
+<td>增加连接池</td>
+<td>降低pool wait</td>
+<td>压垮数据库，扩大事务并发</td>
+</tr>
+<tr>
+<td>关闭日志/采样</td>
+<td>降低观测开销</td>
+<td>丢诊断/审计，需分级</td>
+</tr>
+<tr>
+<td>调大limit</td>
+<td>恢复容量</td>
+<td>把压力转给节点/邻居</td>
+</tr>
+<tr>
+<td>回滚</td>
+<td>消除变更</td>
+<td>数据/schema/feature兼容风险</td>
+</tr>
+<tr>
+<td>切流</td>
+<td>隔离故障域</td>
+<td>目标区域容量与缓存冷启动</td>
+</tr>
+</tbody>
+</table>
+<p>选择原则：优先可逆、blast radius小、预期明确的动作；设观察和回滚条件；一人执行、一人复核；不要多人同时改同一系统。</p>
+<hr>
+<h1 id="20-故障期间如何使用高开销工具">20. 故障期间如何使用高开销工具</h1>
+<h2 id="201-从低到高">20.1 从低到高</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">已有metrics/counters
+</span></span><span class="line"><span class="cl">-&gt; /proc/ss/iostat/pidstat短快照
+</span></span><span class="line"><span class="cl">-&gt; Go pprof低频采样
+</span></span><span class="line"><span class="cl">-&gt; filtered strace/perf
+</span></span><span class="line"><span class="cl">-&gt; targeted BPF/tracepoint
+</span></span><span class="line"><span class="cl">-&gt; packet capture/full execution trace
+</span></span></code></pre></div><p>不是每次都走到底。上一层已经得到强证据就停止增加风险。</p>
+<h2 id="202-预先定义采集配方">20.2 预先定义采集配方</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="cp">#!/usr/bin/env bash
+</span></span></span><span class="line"><span class="cl"><span class="cp"></span><span class="nb">set</span> -euo pipefail
+</span></span><span class="line"><span class="cl"><span class="nv">out</span><span class="o">=</span><span class="s2">&#34;incident-</span><span class="k">$(</span>date +%Y%m%dT%H%M%S%z<span class="k">)</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl">mkdir -m <span class="m">0700</span> <span class="s2">&#34;</span><span class="nv">$out</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">date -Ins &gt;<span class="s2">&#34;</span><span class="nv">$out</span><span class="s2">/time.txt&#34;</span>
+</span></span><span class="line"><span class="cl">uptime &gt;<span class="s2">&#34;</span><span class="nv">$out</span><span class="s2">/uptime.txt&#34;</span>
+</span></span><span class="line"><span class="cl">vmstat <span class="m">1</span> <span class="m">5</span> &gt;<span class="s2">&#34;</span><span class="nv">$out</span><span class="s2">/vmstat.txt&#34;</span>
+</span></span><span class="line"><span class="cl">ss -s &gt;<span class="s2">&#34;</span><span class="nv">$out</span><span class="s2">/ss-summary.txt&#34;</span>
+</span></span></code></pre></div><p>生产脚本还应：验证PID/host、timeout每个命令、限制文件大小、脱敏、记录失败、不执行配置更改，并由安全/运维review。本文不建议把未知环境数据自动打包上传外部。</p>
+<h2 id="203-profile-代表窗口不代表永恒">20.3 Profile 代表窗口，不代表永恒</h2>
+<p>30秒CPU profile只描述那30秒on-CPU样本；事故若有1秒尖峰，可能被平均。用告警触发flight recorder、连续profile或多个短窗口；报告附采集时间和流量。</p>
+<h2 id="204-抓包最小化">20.4 抓包最小化</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">sudo timeout 30s tcpdump -ni eth0 <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  -s <span class="m">128</span> -c <span class="m">100000</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  <span class="s1">&#39;host 203.0.113.20 and tcp port 443&#39;</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  -w incident.pcap
+</span></span></code></pre></div><p><code>snaplen=128</code>可能足够看header且减少payload隐私，但协议/VLAN/IPv6扩展头可能需要更多；根据目的选择。pcap本身是敏感资产，限制权限和保留。</p>
+<h2 id="205-ebpf-要有-drop-和-kill-switch">20.5 eBPF 要有 drop 和 kill switch</h2>
+<p>任何临时BPF工具应限定PID/cgroup、map size、采样率、持续时间，监控lost/drop；使用<code>timeout</code>/link生命周期确保detach。不要在生产运行无界<code>printf</code>或按用户值创建map key。</p>
+<hr>
+<h1 id="21-从事故到容量模型">21. 从事故到容量模型</h1>
+<h2 id="211-找到饱和前拐点">21.1 找到饱和前拐点</h2>
+<p>压测逐步提高arrival rate，记录：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">throughput
+</span></span><span class="line"><span class="cl">P50/P95/P99 + timeout/reject
+</span></span><span class="line"><span class="cl">in-flight/queue
+</span></span><span class="line"><span class="cl">CPU quota/throttle/PSI
+</span></span><span class="line"><span class="cl">memory/GC
+</span></span><span class="line"><span class="cl">pool/DB/network/IO
+</span></span></code></pre></div><p>当吞吐不再线性增长而queue与latency陡升，就是饱和拐点。容量应留故障、发布、节点迁移和流量偏斜余量，而非运行在实验最大值。</p>
+<h2 id="212-有界队列与过载保护">21.2 有界队列与过载保护</h2>
+<p>无界队列把过载转换成高延迟和OOM；有界队列能尽早reject并保护已接请求：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">arrival &gt; service rate
+</span></span><span class="line"><span class="cl">-&gt; queue reaches bound
+</span></span><span class="line"><span class="cl">-&gt; reject/load shed
+</span></span><span class="line"><span class="cl">-&gt; client receives explicit retryable result
+</span></span></code></pre></div><p>客户端也要retry budget，否则reject转成重试风暴。</p>
+<h2 id="213-容量按最稀缺资源">21.3 容量按最稀缺资源</h2>
+<p>CPU服务看cycles/request；内存服务看bytes/in-flight；数据库看connection/transaction/WAL；网络代理看pps、bandwidth、socket memory。不能统一用QPS表示所有容量。</p>
+<h2 id="214-灰度必须包含资源回归">21.4 灰度必须包含资源回归</h2>
+<p>功能正确的canary也可能：alloc/request +30%、syscall翻倍、连接复用消失、metric series暴增。发布门槛应包括SLO、CPU/request、memory/in-flight、connection rate、IO与telemetry成本。</p>
+<hr>
+<h1 id="22-复盘从人犯错转成系统改进">22. 复盘：从“人犯错”转成系统改进</h1>
+<h2 id="221-一份有用的时间线">22.1 一份有用的时间线</h2>
+<p>记录客观事件、信息当时可见性和决策依据：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">12:00 deploy 10%
+</span></span><span class="line"><span class="cl">12:07 first latency alert
+</span></span><span class="line"><span class="cl">12:10 operator sees CPU average normal
+</span></span><span class="line"><span class="cl">12:14 throttle hypothesis
+</span></span><span class="line"><span class="cl">12:18 captures cpu.stat/Go trace
+</span></span><span class="line"><span class="cl">12:22 raises quota on one canary
+</span></span><span class="line"><span class="cl">12:24 canary recovers
+</span></span><span class="line"><span class="cl">12:30 rollout fix
+</span></span></code></pre></div><p>不要用事后知识评价12:10为何没立即知道根因。</p>
+<h2 id="222-根因不是最后一个报错">22.2 根因不是最后一个报错</h2>
+<p>可以分层：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">trigger：新版本并行worker从8增到64
+</span></span><span class="line"><span class="cl">mechanism：2CPU quota在period早期耗尽
+</span></span><span class="line"><span class="cl">amplifier：客户端立即重试、无并发限制
+</span></span><span class="line"><span class="cl">missing guardrail：canary未检查throttling与P99周期
+</span></span><span class="line"><span class="cl">organizational：CPU limit由模板固定且owner不明确
+</span></span></code></pre></div><p>“CPU quota”只是机制；完整改进要处理触发和放大器。</p>
+<h2 id="223-action-item-必须可验收">22.3 Action item 必须可验收</h2>
+<p>差：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">加强监控
+</span></span><span class="line"><span class="cl">提高代码质量
+</span></span><span class="line"><span class="cl">谨慎发布
+</span></span></code></pre></div><p>好：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">在2026-09-01前，由Platform团队：
+</span></span><span class="line"><span class="cl">- 为所有Go服务导出cpu.stat throttle ratio
+</span></span><span class="line"><span class="cl">- 当P99 burn与throttle同时触发时链接runbook
+</span></span><span class="line"><span class="cl">- canary门禁验证GOMAXPROCS &lt;= effective CPU policy
+</span></span><span class="line"><span class="cl">- 用故障注入证明2CPU quota下100ms台阶告警可发现
+</span></span></code></pre></div><p>要有owner、期限、验收测试和优先级。</p>
+<h2 id="224-删除无效告警">22.4 删除无效告警</h2>
+<p>事故中没人使用、不可行动或重复的告警应修/删。增加十个dashboard不是默认改进；真正缺的是某个分层证据、基数维度、保留窗口或owner。</p>
+<h2 id="225-演练恢复而非只写文档">22.5 演练恢复而非只写文档</h2>
+<p>runbook会过期。定期演练：单实例OOM、DNS TCP fallback、日志后端断开、CPU throttle、磁盘满、优雅shutdown、连接池耗尽。演练在隔离/授权环境进行，限定blast radius和停止条件，不能拿生产用户做未授权破坏测试。</p>
+<hr>
+<h1 id="23-通用-runbook-模板">23. 通用 Runbook 模板</h1>
+<h2 id="231-入口">23.1 入口</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">告警名称/SLO：
+</span></span><span class="line"><span class="cl">服务与owner：
+</span></span><span class="line"><span class="cl">用户影响：
+</span></span><span class="line"><span class="cl">最近变更链接：
+</span></span><span class="line"><span class="cl">仪表盘/日志/trace/profile入口：
+</span></span></code></pre></div><h2 id="232-前五分钟">23.2 前五分钟</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">[ ] 确认告警不是采集缺失
+</span></span><span class="line"><span class="cl">[ ] 确认影响维度和错误预算
+</span></span><span class="line"><span class="cl">[ ] 建立事件时间线与指挥/沟通角色
+</span></span><span class="line"><span class="cl">[ ] 保存易失状态快照
+</span></span><span class="line"><span class="cl">[ ] 检查近期部署/配置/流量/基础设施变化
+</span></span><span class="line"><span class="cl">[ ] 判断是否需要立即止血
+</span></span></code></pre></div><h2 id="233-假设表">23.3 假设表</h2>
+<table>
+<thead>
+<tr>
+<th>假设</th>
+<th>支持证据</th>
+<th>反证</th>
+<th>下一测试</th>
+<th>风险</th>
+<th>状态</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>CPU quota</td>
+<td>throttle增长</td>
+<td>待查</td>
+<td>canary提高quota</td>
+<td>节点容量</td>
+<td>open</td>
+</tr>
+<tr>
+<td>DB慢</td>
+<td>trace DB span</td>
+<td>DB P99正常</td>
+<td>查pool wait</td>
+<td>低</td>
+<td>rejected</td>
+</tr>
+</tbody>
+</table>
+<p>保持多个候选，按可区分信息增益排序测试。</p>
+<h2 id="234-动作记录">23.4 动作记录</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">时间：
+</span></span><span class="line"><span class="cl">执行人/复核人：
+</span></span><span class="line"><span class="cl">动作与命令/变更ID：
+</span></span><span class="line"><span class="cl">预期指标：
+</span></span><span class="line"><span class="cl">风险/回滚：
+</span></span><span class="line"><span class="cl">实际结果：
+</span></span></code></pre></div><h2 id="235-结束条件">23.5 结束条件</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">用户SLO恢复并持续观察窗口
+</span></span><span class="line"><span class="cl">队列/资源回到安全范围
+</span></span><span class="line"><span class="cl">重试/积压已消化且无二次洪峰
+</span></span><span class="line"><span class="cl">临时变更已记录/回收
+</span></span><span class="line"><span class="cl">证据安全保存
+</span></span><span class="line"><span class="cl">安排复盘与owner
+</span></span></code></pre></div><hr>
+<h1 id="24-常用命令知识点扩展">24. 常用命令知识点扩展</h1>
+<table>
+<thead>
+<tr>
+<th>命令</th>
+<th>关注点</th>
+<th>不能单独证明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>uptime</code></td>
+<td>load average、运行时间</td>
+<td>CPU必然饱和</td>
+</tr>
+<tr>
+<td><code>vmstat 1</code></td>
+<td>run queue、swap、CPU、block概览</td>
+<td>具体调用栈</td>
+</tr>
+<tr>
+<td><code>mpstat -P ALL 1</code></td>
+<td>每CPU与softirq分布</td>
+<td>cgroup内部公平</td>
+</tr>
+<tr>
+<td><code>pidstat -u -w -d</code></td>
+<td>进程CPU、切换、IO</td>
+<td>用户请求因果</td>
+</tr>
+<tr>
+<td><code>iostat -xz 1</code></td>
+<td>设备IOPS、await、queue</td>
+<td>page cache/应用锁</td>
+</tr>
+<tr>
+<td><code>ss -tinp</code></td>
+<td>TCP队列、RTT、重传线索</td>
+<td>L7处理成功</td>
+</tr>
+<tr>
+<td><code>lsof +L1</code></td>
+<td>deleted-open文件</td>
+<td>全部df/du差异</td>
+</tr>
+<tr>
+<td><code>perf record</code></td>
+<td>on-CPU采样栈</td>
+<td>off-CPU原因</td>
+</tr>
+<tr>
+<td><code>strace -T</code></td>
+<td>syscall wall duration</td>
+<td>内核CPU执行时间</td>
+</tr>
+<tr>
+<td><code>journalctl -k</code></td>
+<td>内核日志事件</td>
+<td>无日志即无故障</td>
+</tr>
+</tbody>
+</table>
+<p>组合配方：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># CPU quota</span>
+</span></span><span class="line"><span class="cl">cat <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/cpu.max&#34;</span> <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/cpu.stat&#34;</span> <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/cpu.pressure&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># memcg OOM</span>
+</span></span><span class="line"><span class="cl">cat <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/memory.current&#34;</span> <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/memory.max&#34;</span>
+</span></span><span class="line"><span class="cl">cat <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/memory.events&#34;</span> <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/memory.stat&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># fd泄漏</span>
+</span></span><span class="line"><span class="cl">ls /proc/<span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span>/fd <span class="p">|</span> wc -l
+</span></span><span class="line"><span class="cl">lsof -nP -p <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl">lsof +L1 -p <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 网络路径</span>
+</span></span><span class="line"><span class="cl">ss -tinp
+</span></span><span class="line"><span class="cl">nstat -az <span class="p">|</span> grep -E <span class="s1">&#39;Retrans|Listen|Syncookie&#39;</span>
+</span></span><span class="line"><span class="cl">ip -s link
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># Go现场</span>
+</span></span><span class="line"><span class="cl">go tool pprof -top cpu.pprof
+</span></span><span class="line"><span class="cl">go tool pprof -top heap.pprof
+</span></span></code></pre></div><hr>
+<h1 id="25-面试题">25. 面试题</h1>
+<p><strong>Q：线上故障排查的第一步是什么？</strong></p>
+<p>先定义用户影响、范围、开始时间和是否扩大，再建立共同时间轴；不是先SSH看CPU。资源指标只有放进受影响请求、版本、区域和变更上下文才有意义。随后在止血前尽量保存易失证据。</p>
+<p><strong>Q：如何区分事实与假设？</strong></p>
+<p>事实是可复现观测及其时间/范围，例如<code>cpu.stat throttled_usec在故障窗增长</code>；“quota导致P99”是解释，需由调度等待、period周期、canary变更等验证。为假设写可推翻的反证，避免只找支持材料。</p>
+<p><strong>Q：相关性怎样升级为因果证据？</strong></p>
+<p>要求时间顺序、符合机制、排除主要替代解释，并通过受控干预得到预期变化；最好还可在测试环境复现、恢复变量后重现。一次重启同时改变太多状态，只提供弱因果证据。</p>
+<p><strong>Q：为什么CPU平均值低仍可能被CPU限制？</strong></p>
+<p>cgroup quota按period计CPU time，多线程可在period前段耗尽额度，后段整体throttle；平均仍等于limit。cpuset、单核热点和run queue也会在总CPU空闲时造成等待。需看每CPU、cpu.stat、PSI和调度延迟。</p>
+<p><strong>Q：为什么Go heap小于容器内存仍会OOM？</strong></p>
+<p>memcg还记账native/mmap、线程栈、page cache、socket和部分kernel memory、同cgroup其他进程；瞬时峰值也可能不在heap快照中。看memory.stat/events、smaps、socket队列和父cgroup，而非只看pprof。</p>
+<p><strong>Q：磁盘%util不高为什么fsync仍可能慢？</strong></p>
+<p>%util是聚合忙碌线索，无法表达flush尾延迟、journal等待、云盘credit、cgroup throttle或单请求barrier。fsync语义要求稳定介质确认，普通buffered吞吐低也可能偶发数百毫秒；需追syscall、filesystem、block和设备层。</p>
+<p><strong>Q：连接池满而数据库空闲可能是什么原因？</strong></p>
+<p>连接可能被应用transaction持有却在等待外部RPC、锁或业务计算，数据库只看到短SQL所以CPU/active低。也可能Rows/Tx未关闭或健康检查卡住。看pool wait、transaction lifetime、goroutine和trace，不要先放大池。</p>
+<p><strong>Q：大量TIME_WAIT是否应修改内核参数？</strong></p>
+<p>先找主动关闭方、连接新建率、复用率和是否真有端口错误。TIME_WAIT提供最后ACK重传和旧报文隔离；常见根因是每请求新transport或重试风暴。优先连接池/keepalive/幂等退避，而非削弱协议状态。</p>
+<p><strong>Q：CPU profile为何可能看不到锁竞争？</strong></p>
+<p>普通CPU profile只采正在CPU上执行的栈；等mutex的goroutine/线程处于off-CPU。使用mutex/block profile、goroutine dump和off-CPU调度观测，再检查lock holder。CPU低加吞吐低尤其应查等待。</p>
+<p><strong>Q：fd泄漏为何不能只看TCP连接数？</strong></p>
+<p>fd还可指向regular file、pipe、eventfd、epoll、inotify、Unix socket等。按<code>/proc/PID/fd</code>和lsof类型分类、看增长路径；deleted-open文件还会同时占fd和磁盘空间。提高NOFILE只延后失败。</p>
+<p><strong>Q：重启恢复说明了什么？</strong></p>
+<p>说明故障与该实例可清除状态或节点迁移相关，例如泄漏、锁、连接、cache、cgroup或外部时机；不说明具体根因。重启会销毁关键证据，应在可行时先抓profile/fd/events，并通过复现或单变量实验继续验证。</p>
+<p><strong>Q：为什么增加timeout常会恶化事故？</strong></p>
+<p>服务率不足时，更长timeout让请求在队列/内存/连接池占位更久，降低取消速度；客户端还可能并发重试。它减少表面timeout却增加Little&rsquo;s Law中的在途量。应优先有界队列、load shedding和修复服务能力。</p>
+<p><strong>Q：为什么扩容可能压垮下游？</strong></p>
+<p>更多实例带来更多连接池、并行请求、cache miss、DNS和重试；若瓶颈在数据库/依赖，入口能力提高会把更大流量推给它。扩容前识别瓶颈，限制全局并发并监控下游。</p>
+<p><strong>Q：排障时怎样控制strace、perf和eBPF风险？</strong></p>
+<p>按PID/cgroup和事件过滤，低频/短时间，使用timeout，限制buffer/map和输出，记录lost/drop与开销；先canary或staging验证。抓包和syscall参数还涉及隐私。必须有权限、审计和自动detach。</p>
+<p><strong>Q：什么是好的止血动作？</strong></p>
+<p>可逆、blast radius小、预期指标明确、有回滚条件并不会破坏数据语义。例如摘除单个坏实例或canary提高quota；直接删fsync、关闭安全策略或全局调内核参数风险高。紧急动作也要记录执行人与结果。</p>
+<p><strong>Q：如何验证修复不是巧合？</strong></p>
+<p>修复前定义机制预期和副作用；只改变目标变量，看领先/结果指标按预期变化；使用canary/对照，经过足够业务周期，并在测试环境复现旧故障、应用修复后消失。必要时恢复旧配置验证可重现，但不能在生产制造破坏。</p>
+<p><strong>Q：复盘的根因应如何分层？</strong></p>
+<p>区分trigger、failure mechanism、amplifier、missing guardrail和组织/流程条件。例如并行度变更触发、quota机制形成100ms等待、重试放大、canary没看throttle、limit模板无owner。只写“CPU不足”无法防复发。</p>
+<p><strong>Q：可执行action item应包含什么？</strong></p>
+<p>具体改动、owner、截止日期、优先级和可验证验收标准；最好有测试/演练。比如“为Go服务导出throttle ratio并在SLO burn时关联告警”，而不是“加强监控”。</p>
+<p><strong>Q：为什么要监控排障工具和telemetry自身？</strong></p>
+<p>采集可能drop、延迟、限流或改变系统。没有profile lost、BPF ring drop、log queue、scrape失败等指标，“没有观测到”无法区分没有事件和采集失效。观测平台故障也不应同步阻塞业务。</p>
+<hr>
+<h1 id="小结">小结</h1>
+<ul>
+<li>排查从用户影响、范围和时间线开始；机器指标是证据，不是事故等级</li>
+<li>显式区分事实、假设、反证和结论；相关性需要机制、时间顺序、替代解释与受控干预才能升级为因果</li>
+<li>止血前尽量保存进程、cgroup、socket和短时trace等易失证据，但数据损坏/安全风险时应优先隔离</li>
+<li>CPU平均低仍可能因quota period、cpuset或run queue变慢；Go heap小仍可能因native/socket/cache/父cgroup触发OOM</li>
+<li>磁盘吞吐和util无法代替fsync尾延迟；网络重传要从双端与多接口找丢失边界，MTU故障常呈现小包好、大包坏</li>
+<li>DNS、连接池、锁和fd问题都可能表现为“请求超时”，需按阶段、资源owner和off-CPU栈区分</li>
+<li>TIME_WAIT、Recv-Q、goroutine数量和重启恢复都只是线索；不结合速率、生命周期与业务语义不能下结论</li>
+<li>日志和观测系统也会锁竞争、填满磁盘、制造重试风暴；telemetry必须有界、可降级并暴露drop</li>
+<li>止血动作要可逆、范围小、有预期/回滚；扩容、加timeout、加buffer和调limit都可能把压力移到下游</li>
+<li>高开销工具按低到高逐级使用，限定scope、时间、数据和权限，记录observer effect与丢失</li>
+<li>修复验证应包括对照、足够窗口、故障复现和副作用；“重启后好了”不是根因</li>
+<li>复盘要拆trigger、mechanism、amplifier和guardrail，action item必须有owner、期限与可验收测试</li>
+</ul>
+<p>下一篇是系列收官：<strong>Linux 面试题与系统设计题汇总</strong> —— 不再按命令背答案，而是从进程、内存、调度、文件系统、网络、容器、systemd和观测中抽出跨层问题，并用约束、机制、权衡、故障与验证组织完整回答。</p>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2026-08-12</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/linux/">linux</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/linux/linux_40_Linux%E9%9D%A2%E8%AF%95%E9%A2%98%E4%B8%8E%E7%B3%BB%E7%BB%9F%E8%AE%BE%E8%AE%A1%E9%A2%98%E6%B1%87%E6%80%BB/" class="prev" rel="prev" title="Linux-40 Linux 面试题与系统设计题汇总：从机制到取舍"><i class="fas fa-angle-left fa-fw"></i>Linux-40 Linux 面试题与系统设计题汇总：从机制到取舍</a>
+            <a href="/posts/linux/linux_38_%E8%A7%82%E6%B5%8B%E4%BD%93%E7%B3%BB%E7%9A%84%E8%AE%BE%E8%AE%A1%E4%B8%8EeBPF/" class="next" rel="next" title="Linux-38 观测体系的设计与 eBPF：看见系统而不压垮系统">Linux-38 观测体系的设计与 eBPF：看见系统而不压垮系统<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2026-08-12T04:30:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Linux-39 线上排查实战案例集：从症状到证据链"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

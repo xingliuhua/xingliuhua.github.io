@@ -1,0 +1,872 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>Linux-22 凭证模型：内核为什么只认数字，四套 uid 从哪来 - xingliuhua博客</title><meta name="Description" content="为什么需要 ruid/euid/suid/fsuid 四套 uid、setuid() 的语义为什么不对称、历史上因为不检查返回值造成的漏洞、setgroups 忘了清空附加组的后果、capabilities 把 root 拆成 40 多个能力却没能取代 SUID 的原因、user namespace 如何让容器里的 root 成立。"><meta property="og:title" content="Linux-22 凭证模型：内核为什么只认数字，四套 uid 从哪来" />
+<meta property="og:description" content="为什么需要 ruid/euid/suid/fsuid 四套 uid、setuid() 的语义为什么不对称、历史上因为不检查返回值造成的漏洞、setgroups 忘了清空附加组的后果、capabilities 把 root 拆成 40 多个能力却没能取代 SUID 的原因、user namespace 如何让容器里的 root 成立。" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/linux/linux_22_%E5%87%AD%E8%AF%81%E6%A8%A1%E5%9E%8B%E5%86%85%E6%A0%B8%E4%B8%BA%E4%BB%80%E4%B9%88%E5%8F%AA%E8%AE%A4%E6%95%B0%E5%AD%97/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2026-08-12T13:00:00+08:00" />
+<meta property="article:modified_time" content="2026-08-12T13:00:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="Linux-22 凭证模型：内核为什么只认数字，四套 uid 从哪来"/>
+<meta name="twitter:description" content="为什么需要 ruid/euid/suid/fsuid 四套 uid、setuid() 的语义为什么不对称、历史上因为不检查返回值造成的漏洞、setgroups 忘了清空附加组的后果、capabilities 把 root 拆成 40 多个能力却没能取代 SUID 的原因、user namespace 如何让容器里的 root 成立。"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/linux/linux_22_%E5%87%AD%E8%AF%81%E6%A8%A1%E5%9E%8B%E5%86%85%E6%A0%B8%E4%B8%BA%E4%BB%80%E4%B9%88%E5%8F%AA%E8%AE%A4%E6%95%B0%E5%AD%97/" /><link rel="prev" href="https://xingliuhua.github.io/posts/linux/linux_23_%E6%9D%83%E9%99%90%E4%B8%8E%E6%8E%88%E6%9D%83%E7%9A%84%E6%BC%94%E8%BF%9B%E5%8F%B2/" /><link rel="next" href="https://xingliuhua.github.io/posts/linux/linux_21_%E8%BF%9B%E7%A8%8B%E7%9A%84%E8%AF%9E%E7%94%9Ffork%E4%B8%BA%E4%BB%80%E4%B9%88%E6%98%AFfork/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Linux-22 凭证模型：内核为什么只认数字，四套 uid 从哪来",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_22_%E5%87%AD%E8%AF%81%E6%A8%A1%E5%9E%8B%E5%86%85%E6%A0%B8%E4%B8%BA%E4%BB%80%E4%B9%88%E5%8F%AA%E8%AE%A4%E6%95%B0%E5%AD%97\/"
+        },"genre": "posts","keywords": "linux","wordcount":  10432 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_22_%E5%87%AD%E8%AF%81%E6%A8%A1%E5%9E%8B%E5%86%85%E6%A0%B8%E4%B8%BA%E4%BB%80%E4%B9%88%E5%8F%AA%E8%AE%A4%E6%95%B0%E5%AD%97\/","datePublished": "2026-08-12T13:00:00+08:00","dateModified": "2026-08-12T13:00:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "为什么需要 ruid/euid/suid/fsuid 四套 uid、setuid() 的语义为什么不对称、历史上因为不检查返回值造成的漏洞、setgroups 忘了清空附加组的后果、capabilities 把 root 拆成 40 多个能力却没能取代 SUID 的原因、user namespace 如何让容器里的 root 成立。"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">Linux-22 凭证模型：内核为什么只认数字，四套 uid 从哪来</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2026-08-12">2026-08-12</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 10432 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 21 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-凭证是进程的属性">1. 凭证是进程的属性</a>
+      <ol>
+        <li><a href="#11-内核里的-cred">1.1 内核里的 cred</a></li>
+        <li><a href="#12-权限检查的实际代码">1.2 权限检查的实际代码</a></li>
+      </ol>
+    </li>
+    <li><a href="#2-为什么需要四套-uid">2. 为什么需要四套 uid</a>
+      <ol>
+        <li><a href="#21-一套-uid-的世界">2.1 一套 uid 的世界</a></li>
+        <li><a href="#22-两套还不够临时降权的需求">2.2 两套还不够：临时降权的需求</a></li>
+        <li><a href="#23-状态转换">2.3 状态转换</a></li>
+        <li><a href="#24-第四套fsuid-的历史来源">2.4 第四套：fsuid 的历史来源</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-setuid-家族的语义地狱">3. setuid 家族的语义地狱</a>
+      <ol>
+        <li><a href="#31-开篇第二问setuid-为什么不对称">3.1 开篇第二问：setuid 为什么不对称</a></li>
+        <li><a href="#32-后来的补救更明确的接口">3.2 后来的补救：更明确的接口</a></li>
+        <li><a href="#33-顺序陷阱必须先-setgid">3.3 顺序陷阱：必须先 setgid</a></li>
+        <li><a href="#34-开篇第四问不检查返回值的历史漏洞">3.4 开篇第四问：不检查返回值的历史漏洞</a></li>
+      </ol>
+    </li>
+    <li><a href="#4-组凭证与-setgroups">4. 组凭证与 setgroups</a>
+      <ol>
+        <li><a href="#41-忘记-setgroups-的漏洞">4.1 忘记 setgroups 的漏洞</a></li>
+        <li><a href="#42-降权检查清单">4.2 降权检查清单</a></li>
+      </ol>
+    </li>
+    <li><a href="#5-capabilities把-root-拆开">5. capabilities：把 root 拆开</a>
+      <ol>
+        <li><a href="#51-动机suid-太粗">5.1 动机：SUID 太粗</a></li>
+        <li><a href="#52-重要的几个">5.2 重要的几个</a></li>
+        <li><a href="#53-五个集合为什么这么复杂">5.3 五个集合：为什么这么复杂</a></li>
+        <li><a href="#54-实操给-go-服务加-cap_net_bind_service">5.4 实操：给 Go 服务加 CAP_NET_BIND_SERVICE</a></li>
+        <li><a href="#55-开篇第三问为什么没取代-suid">5.5 开篇第三问：为什么没取代 SUID</a></li>
+      </ol>
+    </li>
+    <li><a href="#6-user-namespace重新定义-root">6. user namespace：重新定义 root</a>
+      <ol>
+        <li><a href="#61-开篇第五问容器里的-root">6.1 开篇第五问：容器里的 root</a></li>
+        <li><a href="#62-rootless-容器与安全影响">6.2 rootless 容器与安全影响</a></li>
+      </ol>
+    </li>
+    <li><a href="#7-三道额外的防线">7. 三道额外的防线</a>
+      <ol>
+        <li><a href="#71-no_new_privs禁止提权">7.1 no_new_privs：禁止提权</a></li>
+        <li><a href="#72-seccomp限制系统调用">7.2 seccomp：限制系统调用</a></li>
+        <li><a href="#73-lsm在-dac-之上加-mac">7.3 LSM：在 DAC 之上加 MAC</a></li>
+      </ol>
+    </li>
+    <li><a href="#8-面试题">8. 面试题</a></li>
+    <li><a href="#小结">小结</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><p>10 篇讲了 uid/gid 的操作，这一篇讲<strong>它们为什么长成这样</strong> —— 特别是那个让无数人困惑的问题：<strong>为什么一个进程需要四套 uid？</strong></p>
+<p>先看五个问题：</p>
+<ol>
+<li>为什么需要 <code>ruid</code>/<code>euid</code>/<code>suid</code>/<code>fsuid</code> <strong>四套</strong> uid？两套不够吗？</li>
+<li><code>setuid()</code> 的语义为什么这么怪 —— <strong>root 调用和非 root 调用的行为完全不同</strong>？</li>
+<li><code>capabilities</code> 把 root 拆成了 40 多个能力，为什么<strong>没能取代 SUID</strong>？</li>
+<li>为什么 <code>setuid()</code> 的返回值<strong>必须</strong>检查？历史上有什么著名漏洞？</li>
+<li>容器里的 root 和宿主机的 root 是同一个吗？</li>
+</ol>
+<h1 id="1-凭证是进程的属性">1. 凭证是进程的属性</h1>
+<h2 id="11-内核里的-cred">1.1 内核里的 cred</h2>
+<p>10 篇说过「内核只认数字」。在内核里这些数字装在一个叫 <code>cred</code> 的结构体里，<strong>它属于进程，不属于用户</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="c1">// include/linux/cred.h（简化）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">struct</span> <span class="n">cred</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="n">kuid_t</span>  <span class="n">uid</span><span class="p">;</span>        <span class="c1">// real uid        —— 我本来是谁
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">kgid_t</span>  <span class="n">gid</span><span class="p">;</span>        <span class="c1">// real gid
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">kuid_t</span>  <span class="n">suid</span><span class="p">;</span>       <span class="c1">// saved uid       —— 我曾经合法拥有过谁的身份
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">kgid_t</span>  <span class="n">sgid</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="n">kuid_t</span>  <span class="n">euid</span><span class="p">;</span>       <span class="c1">// effective uid   —— ✅ 权限检查【实际用】的就是它
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">kgid_t</span>  <span class="n">egid</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="n">kuid_t</span>  <span class="n">fsuid</span><span class="p">;</span>      <span class="c1">// fs uid          —— 文件系统访问专用
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">kgid_t</span>  <span class="n">fsgid</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="n">kernel_cap_t</span> <span class="n">cap_inheritable</span><span class="p">;</span>   <span class="c1">// ┐
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">kernel_cap_t</span> <span class="n">cap_permitted</span><span class="p">;</span>     <span class="c1">// ├─ capabilities 的五个集合（第 5 章）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">kernel_cap_t</span> <span class="n">cap_effective</span><span class="p">;</span>     <span class="c1">// │
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">kernel_cap_t</span> <span class="n">cap_bset</span><span class="p">;</span>          <span class="c1">// │
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">kernel_cap_t</span> <span class="n">cap_ambient</span><span class="p">;</span>       <span class="c1">// ┘
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">struct</span> <span class="n">user_namespace</span> <span class="o">*</span><span class="n">user_ns</span><span class="p">;</span> <span class="c1">// ✅ 属于哪个 user namespace（第 6 章）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">struct</span> <span class="n">group_info</span> <span class="o">*</span><span class="n">group_info</span><span class="p">;</span>  <span class="c1">// 附加组列表
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="p">...</span>
+</span></span><span class="line"><span class="cl"><span class="p">};</span>
+</span></span></code></pre></div><p><strong><code>cred</code> 是 RCU 保护的不可变对象</strong>：变更凭证时内核会<strong>创建一份新的 <code>cred</code> 然后原子替换指针</strong>，而不是就地修改 —— 这样其他 CPU 上正在做权限检查的代码不会看到「改了一半」的凭证。</p>
+<h2 id="12-权限检查的实际代码">1.2 权限检查的实际代码</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="c1">// fs/namei.c —— 「文件权限检查」的核心（03/10 篇讲的三选一规则）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">static</span> <span class="kt">int</span> <span class="nf">acl_permission_check</span><span class="p">(</span><span class="k">struct</span> <span class="n">mnt_idmap</span> <span class="o">*</span><span class="n">idmap</span><span class="p">,</span> <span class="k">struct</span> <span class="n">inode</span> <span class="o">*</span><span class="n">inode</span><span class="p">,</span> <span class="kt">int</span> <span class="n">mask</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="kt">unsigned</span> <span class="kt">int</span> <span class="n">mode</span> <span class="o">=</span> <span class="n">inode</span><span class="o">-&gt;</span><span class="n">i_mode</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="p">(</span><span class="n">likely</span><span class="p">(</span><span class="n">uid_eq</span><span class="p">(</span><span class="n">current_fsuid</span><span class="p">(),</span> <span class="n">i_uid_into_vfsuid</span><span class="p">(...))))</span>
+</span></span><span class="line"><span class="cl">        <span class="c1">//          ^^^^^^^^^^^^^^^^ 注意：用的是 fsuid，不是 euid！
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="n">mode</span> <span class="o">&gt;&gt;=</span> <span class="mi">6</span><span class="p">;</span>                     <span class="c1">// ① 属主匹配 -&gt; 用 user 那 3 位，结束
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">else</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="p">(</span><span class="n">in_group_p</span><span class="p">(...))</span>
+</span></span><span class="line"><span class="cl">            <span class="n">mode</span> <span class="o">&gt;&gt;=</span> <span class="mi">3</span><span class="p">;</span>                 <span class="c1">// ② 属组匹配 -&gt; 用 group 那 3 位
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="p">}</span>                                   <span class="c1">// ③ 否则用 other 那 3 位
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">if</span> <span class="p">((</span><span class="n">mask</span> <span class="o">&amp;</span> <span class="o">~</span><span class="n">mode</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">MAY_READ</span><span class="o">|</span><span class="n">MAY_WRITE</span><span class="o">|</span><span class="n">MAY_EXEC</span><span class="p">))</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="mi">0</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="o">-</span><span class="n">EACCES</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// root 的「特殊通道」在现代内核里是这样实现的：
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kt">int</span> <span class="nf">generic_permission</span><span class="p">(...)</span>
+</span></span><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="p">...</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="p">(</span><span class="n">capable</span><span class="p">(</span><span class="n">CAP_DAC_OVERRIDE</span><span class="p">))</span>     <span class="c1">// ✅ 检查的是 capability，不是硬编码 uid == 0
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="k">return</span> <span class="mi">0</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="p">...</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><strong>两个重要细节</strong>：</p>
+<pre tabindex="0"><code>① 文件权限检查用的是 fsuid，不是 euid（见 2.4）
+② 「root 无视权限」在现代内核里是通过 CAP_DAC_OVERRIDE 实现的，
+   而不是硬编码的 uid == 0 判断 —— 这是 capabilities 改造的结果（第 5 章）
+   uid==0 的进程只是【默认拥有全部 capability】而已
+</code></pre><h1 id="2-为什么需要四套-uid">2. 为什么需要四套 uid</h1>
+<h2 id="21-一套-uid-的世界">2.1 一套 uid 的世界</h2>
+<p>假设进程只有一个 uid，看看会发生什么：</p>
+<pre tabindex="0"><code>   场景：passwd 程序（SUID root，10 篇 5.1）
+     ① 用户 lhx（uid=1000）执行 /usr/bin/passwd
+     ② SUID 生效，进程的 uid 变成 0
+     ③ 程序需要写 /etc/shadow            -&gt; ✅ 可以，因为 uid=0
+     ④ 但程序还需要知道「是谁在改密码」   -&gt; ❌ 原来的 1000 已经丢了！
+</code></pre><p><strong>第一个问题：需要记住「我本来是谁」。</strong> 于是有了两套：</p>
+<pre tabindex="0"><code>   ruid（real uid）      = 我本来是谁（1000）—— 用于审计与身份判断
+   euid（effective uid） = 我现在有什么权限（0）—— ✅ 权限检查用这个
+</code></pre><h2 id="22-两套还不够临时降权的需求">2.2 两套还不够：临时降权的需求</h2>
+<pre tabindex="0"><code>   场景：一个 SUID root 程序，大部分时间不需要特权
+     安全最佳实践是「用完就放弃特权」（最小权限原则）
+
+     ① 启动时 euid=0，做需要特权的事（绑定 80 端口、读密钥文件）
+     ② 降权 euid=1000                     -&gt; 之后的漏洞不会造成 root 级损害
+     ③ 但后面又需要一次特权操作（比如日志轮转后重新打开文件）
+     ④ 想把 euid 改回 0                     -&gt; ❌ 现在 euid=1000，凭什么让你改回 0？
+</code></pre><p><strong>核心矛盾</strong>：如果允许「euid=1000 的进程把 euid 改成 0」，那任何普通程序都能提权。但 SUID 程序确实需要这个能力。</p>
+<p><strong>解法：第三套 uid —— saved uid。</strong></p>
+<pre tabindex="0"><code>   suid（saved set-user-ID）= 我「曾经合法拥有过」的身份
+
+   规则：非特权进程可以把 euid 改成 ruid 或 suid 中的任意一个，但不能改成别的值。
+
+     ① exec SUID root 程序：ruid=1000, euid=0, suid=0
+        （内核把 euid 的值也存进 suid，作为「你合法拥有过 0」的凭据）
+     ② 临时降权 seteuid(1000)：ruid=1000, euid=1000, suid=0
+                                                      ^^^^^^ 保留着 0
+     ③ 需要时升回 seteuid(0)：✅ 允许，因为 suid==0
+     ④ 彻底放弃 setresuid(1000,1000,1000)：suid 也变成 1000
+        此后【永远无法】再变回 0  ← 这才是真正的「放弃特权」
+</code></pre><p><strong>这就是开篇第一问的核心</strong>：三套 uid 分别承担「身份记录」「权限判定」「可恢复的凭据」三个不同职责，缺一不可。</p>
+<h2 id="23-状态转换">2.3 状态转换</h2>
+<pre tabindex="0"><code>   exec 一个 SUID root 程序（文件属主 root + SUID 位）
+   +---------------------------------------------+
+   | ruid=1000  euid=0  suid=0                   |  &lt;- 完全特权
+   +---------------------------------------------+
+            |  seteuid(1000)  临时降权
+            v
+   +---------------------------------------------+
+   | ruid=1000  euid=1000  suid=0                |  &lt;- 暂时无权，但【可以回去】
+   +---------------------------------------------+
+            |  seteuid(0)  升回 ---------------------+
+            |                                       |  （可反复来回）
+            |  &lt;------------------------------------+
+            |
+            |  setresuid(1000,1000,1000)  永久放弃
+            v
+   +---------------------------------------------+
+   | ruid=1000  euid=1000  suid=1000              |  &lt;- ✅ 不可逆
+   +---------------------------------------------+
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 从用户态观察四套 uid</span>
+</span></span><span class="line"><span class="cl">grep -E <span class="s1">&#39;^(Uid|Gid|Groups)&#39;</span> /proc/self/status
+</span></span><span class="line"><span class="cl"><span class="c1"># Uid:    1000    1000    1000    1000</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#         ^^^^ real  ^^^^ effective  ^^^^ saved  ^^^^ fs</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Gid:    1000    1000    1000    1000</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Groups: 1000 27 999</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 看一个正在运行的 SUID 程序（sudo 会话）</span>
+</span></span><span class="line"><span class="cl">sudo cat /proc/<span class="k">$(</span>pgrep -n sudo<span class="k">)</span>/status 2&gt;/dev/null <span class="p">|</span> grep -E <span class="s1">&#39;^(Uid|Gid)&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Uid:    1000    0       0       0</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#         ^^^^ ruid 保留着调用者   ^^ euid/suid/fsuid 都是 0</span>
+</span></span></code></pre></div><h2 id="24-第四套fsuid-的历史来源">2.4 第四套：fsuid 的历史来源</h2>
+<p><code>fsuid</code> 是 <strong>Linux 特有的</strong>（不在 POSIX 里），它的存在纯属一个历史需求：</p>
+<pre tabindex="0"><code>   1990 年代用户态实现的 NFS 服务器：
+     它需要「以客户端用户的身份」访问文件（让内核按那个用户的权限检查），
+     但【不能真的把 euid 改成那个用户】——
+     因为 euid 还控制着「谁能给我发信号」「谁能 ptrace 我」。
+
+     如果 nfsd 把 euid 改成 1000 来访问文件，那么本地的 uid 1000 用户
+     就能给 nfsd 发信号甚至 ptrace 它（euid 相同即可）-&gt; 严重漏洞
+
+   解法：把「文件访问用的身份」单独拆出来 = fsuid
+     setfsuid(1000);      // 只影响文件权限检查，不影响信号/ptrace
+     // 打开客户端请求的文件
+     setfsuid(0);         // 改回来
+</code></pre><p><strong>今天 fsuid 基本没人显式用了</strong>（现代 NFS 在内核里实现），但它<strong>始终跟随 euid 变化</strong>（<code>setuid</code>/<code>seteuid</code> 都会同步修改它），所以你几乎感觉不到它的存在。</p>
+<p><strong>这是一个典型的「历史需求留下的永久接口」</strong> —— 18 篇讲的 ABI 承诺意味着它永远不会被删除。</p>
+<h1 id="3-setuid-家族的语义地狱">3. setuid 家族的语义地狱</h1>
+<h2 id="31-开篇第二问setuid-为什么不对称">3.1 开篇第二问：setuid 为什么不对称</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="kt">int</span> <span class="nf">setuid</span><span class="p">(</span><span class="n">uid_t</span> <span class="n">uid</span><span class="p">);</span>
+</span></span></code></pre></div><p><strong>这个函数的行为取决于调用者是否特权 —— 这是 Unix 里最反直觉的接口之一</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>调用者</th>
+<th><code>setuid(x)</code> 的效果</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>euid == 0（或有 <code>CAP_SETUID</code>）</strong></td>
+<td><strong>ruid、euid、suid 全部设为 x</strong> ← 不可逆的完全切换</td>
+</tr>
+<tr>
+<td>非特权</td>
+<td><strong>只改 euid</strong>，且 x 必须等于 ruid 或 suid 之一；ruid 与 suid 不变</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="c1">// 场景 A：特权进程（euid=0），初始 ruid=0 euid=0 suid=0
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">setuid</span><span class="p">(</span><span class="mi">1000</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="c1">// 结果：ruid=1000 euid=1000 suid=1000   ← 全变了，【永远回不去 root】
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl"><span class="c1">// 场景 B：SUID root 程序降权后，初始 ruid=1000 euid=0 suid=0
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">seteuid</span><span class="p">(</span><span class="mi">1000</span><span class="p">);</span>        <span class="c1">// ruid=1000 euid=1000 suid=0
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">setuid</span><span class="p">(</span><span class="mi">0</span><span class="p">);</span>            <span class="c1">// ✅ 允许（因为 suid==0），结果 ruid=1000 euid=0 suid=0
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>                      <span class="c1">//    只改了 euid
+</span></span></span></code></pre></div><p><strong>为什么设计成这样？</strong> 因为历史上 <code>setuid</code> 是<strong>唯一</strong>的接口，它必须同时满足两个矛盾的需求：</p>
+<pre tabindex="0"><code>   需求 A（守护进程）：我是 root，要【永久】变成 nobody 再也回不来
+   需求 B（SUID 程序）：我是 SUID root，要【临时】切换并且能切回来
+
+   于是靠「调用者是否特权」区分这两种语义 —— 一个接口两种行为。
+   这是典型的「接口过载」，也是无数安全漏洞的来源。
+</code></pre><h2 id="32-后来的补救更明确的接口">3.2 后来的补救：更明确的接口</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="kt">int</span> <span class="nf">seteuid</span><span class="p">(</span><span class="n">uid_t</span> <span class="n">euid</span><span class="p">);</span>                              <span class="c1">// 只改 euid
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kt">int</span> <span class="nf">setreuid</span><span class="p">(</span><span class="n">uid_t</span> <span class="n">ruid</span><span class="p">,</span> <span class="n">uid_t</span> <span class="n">euid</span><span class="p">);</span>                 <span class="c1">// 改两个（-1 表示不变）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kt">int</span> <span class="nf">setresuid</span><span class="p">(</span><span class="n">uid_t</span> <span class="n">ruid</span><span class="p">,</span> <span class="n">uid_t</span> <span class="n">euid</span><span class="p">,</span> <span class="n">uid_t</span> <span class="n">suid</span><span class="p">);</span>    <span class="c1">// ✅ 三个都显式指定
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kt">int</span> <span class="nf">getresuid</span><span class="p">(</span><span class="n">uid_t</span> <span class="o">*</span><span class="n">ruid</span><span class="p">,</span> <span class="n">uid_t</span> <span class="o">*</span><span class="n">euid</span><span class="p">,</span> <span class="n">uid_t</span> <span class="o">*</span><span class="n">suid</span><span class="p">);</span> <span class="c1">// 读取三个值
+</span></span></span></code></pre></div><p><strong>推荐一律用 <code>setresuid()</code></strong>：没有任何隐含行为，三个值全部显式写出，读代码的人一眼知道结果。</p>
+<h2 id="33-顺序陷阱必须先-setgid">3.3 顺序陷阱：必须先 setgid</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="c1">// ❌ 错误顺序
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">setuid</span><span class="p">(</span><span class="mi">1000</span><span class="p">);</span>        <span class="c1">// 先放弃了 root
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">setgid</span><span class="p">(</span><span class="mi">1000</span><span class="p">);</span>        <span class="c1">// ❌ 失败！非特权进程不能随意改 gid
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>                     <span class="c1">//    结果：uid 变了但 gid 还是 0 -&gt; 仍然拥有 root 组的权限
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl"><span class="c1">// ✅ 正确顺序
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">setgid</span><span class="p">(</span><span class="mi">1000</span><span class="p">);</span>        <span class="c1">// 先改组（此时还是 root，有权限）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">setgroups</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">);</span>  <span class="c1">// 清空附加组（见第 4 章）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">setuid</span><span class="p">(</span><span class="mi">1000</span><span class="p">);</span>        <span class="c1">// 最后改用户
+</span></span></span></code></pre></div><p><strong>记忆方法</strong>：<strong>先做需要权限的事（改组、清附加组），最后才放弃权限本身（改用户）。</strong></p>
+<h2 id="34-开篇第四问不检查返回值的历史漏洞">3.4 开篇第四问：不检查返回值的历史漏洞</h2>
+<p><strong><code>setuid()</code> 可能失败，而失败时进程仍然是 root</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="c1">// 💀 经典漏洞模式
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">setuid</span><span class="p">(</span><span class="n">getuid</span><span class="p">());</span>          <span class="c1">// 以为降权了
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">system</span><span class="p">(</span><span class="s">&#34;/bin/sh&#34;</span><span class="p">);</span>         <span class="c1">// 如果 setuid 失败，这是一个 root shell！
+</span></span></span></code></pre></div><p><strong><code>setuid</code> 会失败的真实原因</strong>：</p>
+<pre tabindex="0"><code>① RLIMIT_NPROC 限制（最著名的一类）
+   目标用户的进程数已达上限 -&gt; setuid 返回 EAGAIN
+   攻击者可以【故意】把自己的进程数打满，让 SUID 程序的降权失败
+   → 2000 年代有多个 CVE 是这个模式（sendmail、Apache suEXEC 等）
+
+② 缺少 CAP_SETUID（capabilities 模型下，即使 uid==0 也可能被剥夺了这个能力）
+③ user namespace 里 uid 未映射（第 6 章）-&gt; EINVAL
+④ LSM（SELinux/AppArmor）策略拒绝
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="c1">// ✅ 正确写法：检查返回值 + 二次验证
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">if</span> <span class="p">(</span><span class="n">setresuid</span><span class="p">(</span><span class="n">uid</span><span class="p">,</span> <span class="n">uid</span><span class="p">,</span> <span class="n">uid</span><span class="p">)</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="n">syslog</span><span class="p">(</span><span class="n">LOG_ERR</span><span class="p">,</span> <span class="s">&#34;降权失败: %m&#34;</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">    <span class="n">_exit</span><span class="p">(</span><span class="mi">1</span><span class="p">);</span>                       <span class="c1">// ✅ 必须退出，绝不能继续以 root 运行
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="n">uid_t</span> <span class="n">r</span><span class="p">,</span> <span class="n">e</span><span class="p">,</span> <span class="n">s</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="n">getresuid</span><span class="p">(</span><span class="o">&amp;</span><span class="n">r</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">e</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">s</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="k">if</span> <span class="p">(</span><span class="n">r</span> <span class="o">!=</span> <span class="n">uid</span> <span class="o">||</span> <span class="n">e</span> <span class="o">!=</span> <span class="n">uid</span> <span class="o">||</span> <span class="n">s</span> <span class="o">!=</span> <span class="n">uid</span><span class="p">)</span> <span class="n">_exit</span><span class="p">(</span><span class="mi">1</span><span class="p">);</span>   <span class="c1">// ✅ 确认三个都变了
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">if</span> <span class="p">(</span><span class="n">setuid</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span> <span class="n">_exit</span><span class="p">(</span><span class="mi">1</span><span class="p">);</span>                     <span class="c1">// ✅ 确认真的回不去了
+</span></span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 复现 RLIMIT_NPROC 导致失败的条件</span>
+</span></span><span class="line"><span class="cl"><span class="nb">ulimit</span> -u <span class="m">5</span>                       <span class="c1"># 把进程数限制设得很低，然后跑满</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 此时以该用户身份 setuid 会返回 EAGAIN</span>
+</span></span></code></pre></div><p><strong>Go 里的处理</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// ⚠️ 不要自己调 syscall.Setuid —— 它在多线程程序里语义有问题
+</span></span></span><span class="line"><span class="cl"><span class="c1">//    （POSIX 的 setuid 只作用于调用线程，而 Go 的 goroutine 会在线程间迁移；
+</span></span></span><span class="line"><span class="cl"><span class="c1">//      Go 1.16+ 会用信号让所有线程一起改，但仍然容易出错）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl"><span class="c1">// ✅ 正确做法：在 exec 时指定身份（21 篇的 SysProcAttr）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">cmd</span> <span class="o">:=</span> <span class="nx">exec</span><span class="p">.</span><span class="nf">Command</span><span class="p">(</span><span class="s">&#34;/usr/local/bin/worker&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="nx">cmd</span><span class="p">.</span><span class="nx">SysProcAttr</span> <span class="p">=</span> <span class="o">&amp;</span><span class="nx">syscall</span><span class="p">.</span><span class="nx">SysProcAttr</span><span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">Credential</span><span class="p">:</span> <span class="o">&amp;</span><span class="nx">syscall</span><span class="p">.</span><span class="nx">Credential</span><span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">Uid</span><span class="p">:</span> <span class="mi">1000</span><span class="p">,</span> <span class="nx">Gid</span><span class="p">:</span> <span class="mi">1000</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">Groups</span><span class="p">:</span> <span class="p">[]</span><span class="kt">uint32</span><span class="p">{},</span>        <span class="c1">// ✅ 显式清空附加组
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="p">},</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="c1">// 内核在 fork 后的子进程里（此时单线程）完成降权，然后 exec —— 安全且明确
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl"><span class="c1">// ✅ 或者根本不在程序里降权，交给 systemd（10 篇 8 章）：User=myapp
+</span></span></span></code></pre></div><h1 id="4-组凭证与-setgroups">4. 组凭证与 setgroups</h1>
+<h2 id="41-忘记-setgroups-的漏洞">4.1 忘记 setgroups 的漏洞</h2>
+<p>组也有四套（<code>gid</code>/<code>egid</code>/<code>sgid</code>/<code>fsgid</code>），外加一个<strong>附加组列表</strong>。而<strong>降权代码最常见的严重错误就是忘了清空附加组</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="c1">// ❌ 看起来完整的降权
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">setgid</span><span class="p">(</span><span class="mi">1000</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="n">setuid</span><span class="p">(</span><span class="mi">1000</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="c1">// 💀 但【附加组没有清空】！
+</span></span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 为什么这是严重问题</span>
+</span></span><span class="line"><span class="cl">ls -l /dev/sda /etc/shadow
+</span></span><span class="line"><span class="cl"><span class="c1"># brw-rw---- 1 root disk   8, 0 ... /dev/sda        &lt;- disk 组可读写整个磁盘</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># -rw-r----- 1 root shadow 1654 ... /etc/shadow      &lt;- shadow 组可读密码哈希</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># root 运行时的附加组可能包含 disk(6)、shadow(42)、docker(999)…</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 降权后 euid 是 1000，但【仍然在 disk 组里】</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   -&gt; dd if=/dev/sda 读走整个磁盘，完全绕过文件权限</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   -&gt; 在 docker 组里 = 等于 root（10 篇 7.5 讲过）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 检查一个进程的附加组</span>
+</span></span><span class="line"><span class="cl">grep Groups /proc/<span class="k">$(</span>pgrep -n myapp<span class="k">)</span>/status
+</span></span><span class="line"><span class="cl"><span class="c1"># Groups: 1000                    &lt;- ✅ 只有主组，正确</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Groups: 0 6 42 1000             &lt;- ❌ 残留了 root/disk/shadow</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="c1">// ✅ 完整正确的降权序列
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">if</span> <span class="p">(</span><span class="n">setgroups</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">)</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">)</span>        <span class="p">{</span> <span class="n">perror</span><span class="p">(</span><span class="s">&#34;setgroups&#34;</span><span class="p">);</span> <span class="n">_exit</span><span class="p">(</span><span class="mi">1</span><span class="p">);</span> <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="c1">//  ^^^^^^^^^^^^^^^^^ 必须在放弃 root 【之前】做（它需要 CAP_SETGID）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">if</span> <span class="p">(</span><span class="n">setresgid</span><span class="p">(</span><span class="n">gid</span><span class="p">,</span> <span class="n">gid</span><span class="p">,</span> <span class="n">gid</span><span class="p">)</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">)</span>  <span class="p">{</span> <span class="n">perror</span><span class="p">(</span><span class="s">&#34;setresgid&#34;</span><span class="p">);</span> <span class="n">_exit</span><span class="p">(</span><span class="mi">1</span><span class="p">);</span> <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="k">if</span> <span class="p">(</span><span class="n">setresuid</span><span class="p">(</span><span class="n">uid</span><span class="p">,</span> <span class="n">uid</span><span class="p">,</span> <span class="n">uid</span><span class="p">)</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">)</span>  <span class="p">{</span> <span class="n">perror</span><span class="p">(</span><span class="s">&#34;setresuid&#34;</span><span class="p">);</span> <span class="n">_exit</span><span class="p">(</span><span class="mi">1</span><span class="p">);</span> <span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// 或者按目标用户【应有】的组列表设置（更常见的需求）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">struct</span> <span class="n">passwd</span> <span class="o">*</span><span class="n">pw</span> <span class="o">=</span> <span class="n">getpwnam</span><span class="p">(</span><span class="s">&#34;myapp&#34;</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="k">if</span> <span class="p">(</span><span class="n">initgroups</span><span class="p">(</span><span class="n">pw</span><span class="o">-&gt;</span><span class="n">pw_name</span><span class="p">,</span> <span class="n">pw</span><span class="o">-&gt;</span><span class="n">pw_gid</span><span class="p">)</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">)</span> <span class="n">_exit</span><span class="p">(</span><span class="mi">1</span><span class="p">);</span>   <span class="c1">// 读 /etc/group
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">if</span> <span class="p">(</span><span class="n">setresgid</span><span class="p">(</span><span class="n">pw</span><span class="o">-&gt;</span><span class="n">pw_gid</span><span class="p">,</span> <span class="n">pw</span><span class="o">-&gt;</span><span class="n">pw_gid</span><span class="p">,</span> <span class="n">pw</span><span class="o">-&gt;</span><span class="n">pw_gid</span><span class="p">)</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">)</span> <span class="n">_exit</span><span class="p">(</span><span class="mi">1</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="k">if</span> <span class="p">(</span><span class="n">setresuid</span><span class="p">(</span><span class="n">pw</span><span class="o">-&gt;</span><span class="n">pw_uid</span><span class="p">,</span> <span class="n">pw</span><span class="o">-&gt;</span><span class="n">pw_uid</span><span class="p">,</span> <span class="n">pw</span><span class="o">-&gt;</span><span class="n">pw_uid</span><span class="p">)</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">)</span> <span class="n">_exit</span><span class="p">(</span><span class="mi">1</span><span class="p">);</span>
+</span></span></code></pre></div><h2 id="42-降权检查清单">4.2 降权检查清单</h2>
+<pre tabindex="0"><code>[ ] setgroups(0, NULL) 或 initgroups() —— 在放弃 root 之前
+[ ] setresgid() 三个值都设
+[ ] setresuid() 三个值都设
+[ ] 顺序：组 -&gt; 附加组 -&gt; 用户
+[ ] 每一步都检查返回值
+[ ] 事后用 getresuid/getgroups 二次验证
+[ ] 关闭不该继承的 fd（21 篇 2.2）
+[ ] 清理危险环境变量（LD_PRELOAD、LD_LIBRARY_PATH、PATH、IFS）
+</code></pre><h1 id="5-capabilities把-root-拆开">5. capabilities：把 root 拆开</h1>
+<h2 id="51-动机suid-太粗">5.1 动机：SUID 太粗</h2>
+<pre tabindex="0"><code>   问题：ping 需要发送 ICMP 原始包 -&gt; 只需要一个能力：CAP_NET_RAW
+        传统做法：给 ping 加 SUID root
+        后果：ping 运行时拥有【全部】root 权限 ——
+             它能读 /etc/shadow、改任何文件、加载内核模块……
+             一旦 ping 有漏洞（历史上确实有过），就是完整的 root 提权
+
+   核心矛盾：程序只需要一个特定能力，却被给了全部特权。
+</code></pre><p><strong>capabilities 的思路：把 root 的权限拆成独立的、可单独授予的能力。</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">grep Cap /proc/self/status
+</span></span><span class="line"><span class="cl"><span class="c1"># CapInh: 0000000000000000        Inheritable</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># CapPrm: 0000000000000000        Permitted</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># CapEff: 0000000000000000        Effective</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># CapBnd: 000001ffffffffff        Bounding</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># CapAmb: 0000000000000000        Ambient</span>
+</span></span><span class="line"><span class="cl">capsh --decode<span class="o">=</span>000001ffffffffff <span class="p">|</span> head -5      <span class="c1"># 解码成可读的名字</span>
+</span></span><span class="line"><span class="cl">grep -c <span class="s1">&#39;^#define CAP_&#39;</span> /usr/include/linux/capability.h    <span class="c1"># 40+ 个</span>
+</span></span></code></pre></div><h2 id="52-重要的几个">5.2 重要的几个</h2>
+<table>
+<thead>
+<tr>
+<th>capability</th>
+<th>允许做什么</th>
+<th>典型使用者</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong><code>CAP_NET_BIND_SERVICE</code></strong></td>
+<td><strong>绑定 &lt; 1024 的端口</strong></td>
+<td>nginx、Go 服务（10 篇 8 章用过）</td>
+</tr>
+<tr>
+<td><code>CAP_NET_RAW</code></td>
+<td>原始 socket（ICMP、抓包）</td>
+<td><code>ping</code>、<code>tcpdump</code></td>
+</tr>
+<tr>
+<td><code>CAP_NET_ADMIN</code></td>
+<td>配置网络（接口、路由、防火墙）</td>
+<td><code>ip</code>、<code>iptables</code></td>
+</tr>
+<tr>
+<td><strong><code>CAP_DAC_OVERRIDE</code></strong></td>
+<td><strong>无视文件读写权限</strong>（「root 能读所有文件」的来源）</td>
+<td>备份工具</td>
+</tr>
+<tr>
+<td><code>CAP_CHOWN</code> / <code>CAP_FOWNER</code></td>
+<td>改任意属主 / 无视「必须是属主」的检查</td>
+<td>—</td>
+</tr>
+<tr>
+<td><strong><code>CAP_SETUID</code> / <code>CAP_SETGID</code></strong></td>
+<td><strong>任意改变 uid/gid</strong></td>
+<td><code>login</code>、<code>su</code></td>
+</tr>
+<tr>
+<td><code>CAP_KILL</code></td>
+<td>给任意进程发信号</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>CAP_SYS_CHROOT</code></td>
+<td><code>chroot()</code></td>
+<td>容器运行时</td>
+</tr>
+<tr>
+<td><code>CAP_SYS_PTRACE</code></td>
+<td>ptrace 任意进程</td>
+<td><code>gdb</code>、<code>strace</code></td>
+</tr>
+<tr>
+<td><code>CAP_SYS_TIME</code></td>
+<td>改系统时间</td>
+<td><code>chrony</code></td>
+</tr>
+<tr>
+<td><code>CAP_SYS_MODULE</code></td>
+<td><strong>加载内核模块</strong>（≈ 完全 root）</td>
+<td><code>modprobe</code></td>
+</tr>
+<tr>
+<td><strong><code>CAP_SYS_ADMIN</code></strong></td>
+<td><strong>一大堆杂项</strong>（mount、setns、quota、swapon…）<strong>≈ 半个 root</strong></td>
+<td>容器运行时</td>
+</tr>
+<tr>
+<td><code>CAP_BPF</code> / <code>CAP_PERFMON</code></td>
+<td>eBPF / perf（5.8+ 从 <code>CAP_SYS_ADMIN</code> 拆出来的）</td>
+<td>观测工具（38 篇）</td>
+</tr>
+<tr>
+<td><code>CAP_SYS_NICE</code></td>
+<td>提高优先级、设实时调度</td>
+<td>低延迟应用</td>
+</tr>
+<tr>
+<td><code>CAP_IPC_LOCK</code></td>
+<td><code>mlock</code> 锁定内存</td>
+<td>数据库</td>
+</tr>
+</tbody>
+</table>
+<h2 id="53-五个集合为什么这么复杂">5.3 五个集合：为什么这么复杂</h2>
+<table>
+<thead>
+<tr>
+<th>集合</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong><code>Permitted</code>（P）</strong></td>
+<td>我「可以拥有」的能力上界 —— 能从这里往 Effective 加</td>
+</tr>
+<tr>
+<td><strong><code>Effective</code>（E）</strong></td>
+<td><strong>当前实际生效</strong>（内核检查的就是它）</td>
+</tr>
+<tr>
+<td><strong><code>Inheritable</code>（I）</strong></td>
+<td>exec 时可传给子进程（需配合<strong>文件</strong>的 Inheritable）</td>
+</tr>
+<tr>
+<td><strong><code>Bounding</code>（B）</strong></td>
+<td><strong>绝对上限</strong>，一旦移除<strong>任何方式都无法再获得</strong>（不可逆）</td>
+</tr>
+<tr>
+<td><strong><code>Ambient</code>（A）</strong></td>
+<td>Linux 4.3+ 新增，<strong>能跨 exec 保留而不需要文件 capability</strong></td>
+</tr>
+</tbody>
+</table>
+<p><strong>为什么需要五个？</strong> 因为 <code>exec</code> 时的传递规则必须同时满足几个矛盾的需求：</p>
+<pre tabindex="0"><code>   需求 1：SUID root 程序要能获得全部能力         -&gt; 需要「文件能授予能力」
+   需求 2：普通程序 exec 后不能凭空获得能力       -&gt; 需要「默认清空」
+   需求 3：容器要能限制「无论如何都不能有的能力」  -&gt; 需要 Bounding（不可逆上限）
+   需求 4：wrapper 脚本要能把能力传给子进程       -&gt; 需要 Inheritable
+   需求 5：但 Inheritable 必须配合文件标记，而【脚本文件不能带 capability】
+          -&gt; 于是 2015 年才加了 Ambient 来补这个洞
+</code></pre><p><strong>exec 时的计算规则</strong>（简化）：</p>
+<pre tabindex="0"><code>   P&#39; = (Bounding &amp; 文件_P) | (文件_I &amp; I) | A
+   E&#39; = 文件_E ? P&#39; : A
+   I&#39; = I
+   A&#39; = (文件有 caps || no_new_privs) ? 0 : A
+
+   → 这个公式的复杂度本身就说明了问题：capabilities 的可用性很差
+</code></pre><h2 id="54-实操给-go-服务加-cap_net_bind_service">5.4 实操：给 Go 服务加 CAP_NET_BIND_SERVICE</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 场景：Go 服务要监听 80 端口，但不想用 root 跑（10 篇 8 章提过）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 方案一：文件 capability ──</span>
+</span></span><span class="line"><span class="cl">sudo setcap <span class="s1">&#39;cap_net_bind_service=+ep&#39;</span> /usr/local/bin/myapp
+</span></span><span class="line"><span class="cl"><span class="c1">#                                  ^^^ e=effective p=permitted</span>
+</span></span><span class="line"><span class="cl">getcap /usr/local/bin/myapp
+</span></span><span class="line"><span class="cl"><span class="c1"># /usr/local/bin/myapp cap_net_bind_service=ep</span>
+</span></span><span class="line"><span class="cl">sudo -u myapp /usr/local/bin/myapp        <span class="c1"># ✅ 普通用户也能绑 80 端口</span>
+</span></span><span class="line"><span class="cl">sudo setcap -r /usr/local/bin/myapp       <span class="c1"># 移除</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ⚠️ 三个坑</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ① 文件 capability 存在【扩展属性】里，普通 cp 会丢失（04 篇讲过要 -a 才保留 xattr）</span>
+</span></span><span class="line"><span class="cl">getfattr -n security.capability /usr/local/bin/myapp
+</span></span><span class="line"><span class="cl">cp /usr/local/bin/myapp /tmp/ <span class="o">&amp;&amp;</span> getcap /tmp/myapp       <span class="c1"># 空的！</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ② 文件系统必须支持 xattr</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ③ 有 file capability 的程序被视为「特权程序」：</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    LD_PRELOAD/LD_LIBRARY_PATH 被忽略、ptrace 受限、core dump 默认关闭</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 方案二：systemd（推荐，不改文件属性）──</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># [Service]</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># AmbientCapabilities=CAP_NET_BIND_SERVICE</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># CapabilityBoundingSet=CAP_NET_BIND_SERVICE     ← ✅ 同时限制上界</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># NoNewPrivileges=yes</span>
+</span></span><span class="line"><span class="cl">systemctl show myapp -p AmbientCapabilities -p CapabilityBoundingSet
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 方案三：干脆不需要低端口 ──</span>
+</span></span><span class="line"><span class="cl">sudo sysctl -w net.ipv4.ip_unprivileged_port_start<span class="o">=</span><span class="m">80</span>   <span class="c1"># ✅ 最简单：降低门槛</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 或者服务听 8080，前面挂 nginx 反代</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 观察一个进程的能力</span>
+</span></span><span class="line"><span class="cl">sudo capsh --decode<span class="o">=</span><span class="k">$(</span>grep CapEff /proc/<span class="k">$(</span>pgrep -n myapp<span class="k">)</span>/status <span class="p">|</span> awk <span class="s1">&#39;{print $2}&#39;</span><span class="k">)</span>
+</span></span><span class="line"><span class="cl">sudo pscap <span class="p">|</span> head              <span class="c1"># libcap-ng-utils 包</span>
+</span></span></code></pre></div><h2 id="55-开篇第三问为什么没取代-suid">5.5 开篇第三问：为什么没取代 SUID</h2>
+<p>capabilities 在 1999 年（内核 2.2）就引入了，二十多年后 <strong>SUID 依然普遍存在</strong>。五个原因：</p>
+<pre tabindex="0"><code>① 生态惯性（18 篇讲的规律）
+   SUID 是 POSIX 的一部分，所有 Unix 都支持；capabilities 是 Linux 特有的。
+   跨平台软件不能依赖它。
+
+② 五个集合的规则太复杂
+   上面那个 exec 传递公式，绝大多数开发者理解不了也不想理解。
+   相比之下 chmod u+s 只需要一个动作。
+
+③ Ambient 集合来得太晚（2015，内核 4.3）
+   在此之前「让普通用户执行 wrapper 脚本并把能力传下去」几乎做不到 ——
+   因为 Inheritable 必须配合文件 capability，而【脚本文件不能带 capability】。
+   这个缺陷让 capabilities 在很多场景根本用不了。
+
+④ 有些 capability 本身就 ≈ root（拆分在这些能力上是名义上的）
+   CAP_SYS_ADMIN     垃圾桶：mount、setns、swapon、quota… 几十种操作
+   CAP_SYS_MODULE    能加载内核模块 = 完全控制内核
+   CAP_DAC_OVERRIDE  能读写任何文件 = 能改 /etc/shadow 和 /etc/sudoers
+   CAP_SYS_PTRACE    能 ptrace 任何进程 = 能往 root 进程注入代码
+
+⑤ 文件 capability 的运维负担
+   存在 xattr 里 -&gt; cp/tar/rsync 默认丢失、容器镜像层可能不保留、
+   包管理器升级后要重设 -&gt; 实践中很容易「悄悄失效」
+</code></pre><p><strong>今天的实际格局</strong>：</p>
+<pre tabindex="0"><code>   容器 / systemd 场景 -&gt; ✅ capabilities 用得很好（由运行时统一管理，不依赖文件 xattr）
+   传统 SUID 程序      -&gt; 仍是 passwd/sudo/su/mount 的实现方式
+   新写的服务          -&gt; 用 systemd 的 AmbientCapabilities，或干脆避免需要特权
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># Docker 默认丢弃了大部分危险 capability（比 root 少很多）</span>
+</span></span><span class="line"><span class="cl">docker run --rm --cap-drop<span class="o">=</span>ALL --cap-add<span class="o">=</span>NET_BIND_SERVICE myimage   <span class="c1"># ✅ 最小权限</span>
+</span></span><span class="line"><span class="cl">docker run --rm --privileged myimage    <span class="c1"># ❌ 全部 capability + 设备访问 = 等于宿主 root</span>
+</span></span></code></pre></div><h1 id="6-user-namespace重新定义-root">6. user namespace：重新定义 root</h1>
+<h2 id="61-开篇第五问容器里的-root">6.1 开篇第五问：容器里的 root</h2>
+<p><strong>没有 user namespace 时：容器里的 root 就是宿主机的 root。</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 10 篇 1.1 验证过的现象</span>
+</span></span><span class="line"><span class="cl">docker run --rm -v /tmp/x:/x alpine touch /x/f
+</span></span><span class="line"><span class="cl">ls -l /tmp/x/f
+</span></span><span class="line"><span class="cl"><span class="c1"># -rw-r--r-- 1 root root 0 ... /tmp/x/f      &lt;- 宿主机上属主是【真正的 root】</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 因为容器里的 uid 0 和宿主机的 uid 0 是同一个数字，而内核只认数字</span>
+</span></span></code></pre></div><p><strong>user namespace 引入了 uid 映射</strong>：</p>
+<pre tabindex="0"><code>   宿主机 uid 空间                容器内 uid 空间（新 namespace）
+   +-------------------+         +----------------------+
+   | 100000            | &lt;-----&gt; | 0   （容器里的 root） |
+   | 100001            | &lt;-----&gt; | 1                    |
+   | ...               |         | ...                  |
+   | 165535            | &lt;-----&gt; | 65535                |
+   +-------------------+         +----------------------+
+
+   容器里的进程认为自己是 uid 0（在该 ns 内有全部 capability），
+   但它在宿主机上实际是 uid 100000 —— 一个毫无特权的普通用户
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 手动创建一个 user namespace 验证</span>
+</span></span><span class="line"><span class="cl">unshare --user --map-root-user bash
+</span></span><span class="line"><span class="cl">id
+</span></span><span class="line"><span class="cl"><span class="c1"># uid=0(root) gid=0(root) groups=0(root)        &lt;- &#34;我是 root&#34;</span>
+</span></span><span class="line"><span class="cl">cat /proc/self/uid_map
+</span></span><span class="line"><span class="cl"><span class="c1">#          0       1000          1</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#     ^^^^^^ 容器内 uid   ^^^^^^ 宿主机 uid   ^^^ 映射长度</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 意思是：这个 namespace 里的 uid 0 = 宿主机的 uid 1000</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">touch /etc/newfile
+</span></span><span class="line"><span class="cl"><span class="c1"># touch: cannot touch &#39;/etc/newfile&#39;: Permission denied</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#        ^^ 因为在宿主机上你还是 uid 1000 —— 这个 root 是&#34;局部的&#34;</span>
+</span></span><span class="line"><span class="cl">capsh --print <span class="p">|</span> grep Current    <span class="c1"># 但在这个 ns 内确实有全部 capability</span>
+</span></span><span class="line"><span class="cl"><span class="nb">exit</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">cat /etc/subuid /etc/subgid      <span class="c1"># rootless 容器用的 uid 区间分配</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># lhx:100000:65536</span>
+</span></span></code></pre></div><h2 id="62-rootless-容器与安全影响">6.2 rootless 容器与安全影响</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># Podman 的 rootless 模式（不需要 root 就能跑容器）</span>
+</span></span><span class="line"><span class="cl">podman run --rm -it alpine sh          <span class="c1"># 容器里是 root，宿主机上是你自己</span>
+</span></span><span class="line"><span class="cl">podman unshare cat /proc/self/uid_map
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 安全收益：即使容器逃逸，攻击者拿到的只是一个普通用户的权限</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ⚠️ 代价：</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   - 默认不能绑定 &lt; 1024 端口（除非调 ip_unprivileged_port_start）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   - 需要 fuse-overlayfs / slirp4netns（性能略低）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   - 宿主机上看到的文件属主是 100000+ 这类奇怪的 uid</span>
+</span></span></code></pre></div><pre tabindex="0"><code>   ⚠️ user namespace 本身也扩大了内核攻击面：
+      在 ns 内，非特权用户获得了几乎全部 capability，
+      于是能触达大量原本只有 root 能走的内核代码路径（mount、网络配置、设备操作）
+      -&gt; 历史上有多个 CVE 是「利用 user namespace 提权」
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 有些发行版因此限制它</span>
+</span></span><span class="line"><span class="cl">sysctl kernel.unprivileged_userns_clone     <span class="c1"># Debian/Ubuntu（1 = 允许）</span>
+</span></span><span class="line"><span class="cl">sysctl user.max_user_namespaces             <span class="c1"># 上限（0 = 禁用）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># RHEL 7 曾默认禁用，后来因为 rootless 容器的需求而开放</span>
+</span></span></code></pre></div><h1 id="7-三道额外的防线">7. 三道额外的防线</h1>
+<p>capabilities 之后，内核又加了三层机制与凭证模型配合：</p>
+<h2 id="71-no_new_privs禁止提权">7.1 no_new_privs：禁止提权</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="n">prctl</span><span class="p">(</span><span class="n">PR_SET_NO_NEW_PRIVS</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="c1">// 效果：本进程及其【所有后代】永远无法通过 exec 获得新特权
+</span></span></span><span class="line"><span class="cl"><span class="c1">//   -&gt; SUID/SGID 位被忽略、文件 capability 被忽略
+</span></span></span><span class="line"><span class="cl"><span class="c1">//   -&gt; 这个标志【不可撤销】
+</span></span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 就是 systemd 的 NoNewPrivileges=yes（10 篇 8 章的加固项）</span>
+</span></span><span class="line"><span class="cl">grep NoNewPrivs /proc/<span class="k">$(</span>pgrep -n myapp<span class="k">)</span>/status      <span class="c1"># NoNewPrivs: 1</span>
+</span></span><span class="line"><span class="cl">docker run --security-opt no-new-privileges myimage
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 最简单有效的加固之一：即使容器里有 SUID 程序，也无法用它提权</span>
+</span></span></code></pre></div><h2 id="72-seccomp限制系统调用">7.2 seccomp：限制系统调用</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 凭证模型控制「你能对什么做操作」，seccomp 控制「你能调用哪些系统调用」</span>
+</span></span><span class="line"><span class="cl">grep Seccomp /proc/self/status          <span class="c1"># 0=关闭 1=strict 2=filter</span>
+</span></span><span class="line"><span class="cl">systemd-analyze syscall-filter @system-service <span class="p">|</span> head    <span class="c1"># 看这个集合包含什么</span>
+</span></span><span class="line"><span class="cl">docker run --rm alpine grep Seccomp /proc/self/status    <span class="c1"># Seccomp: 2（Docker 默认有 profile）</span>
+</span></span></code></pre></div><h2 id="73-lsm在-dac-之上加-mac">7.3 LSM：在 DAC 之上加 MAC</h2>
+<pre tabindex="0"><code>   DAC（自主访问控制）= 本篇讲的这一整套
+      特征：资源的【属主】可自行决定谁能访问（chmod/chown 是行使这个权力）
+      缺陷：进程一旦以某身份运行，就拥有该身份的【全部】权限
+            —— 被攻破的 web 服务器可以读走该用户的所有文件
+
+   MAC（强制访问控制）= SELinux / AppArmor
+      特征：策略由【管理员】统一制定，进程和资源都打标签，
+            即使 uid 匹配，标签不允许也不能访问
+      价值：把「nginx 只能读 /var/www、只能写 /var/log/nginx」固化成策略
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">cat /sys/kernel/security/lsm       <span class="c1"># 当前启用的 LSM</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># lockdown,capability,landlock,yama,apparmor</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">getenforce                          <span class="c1"># SELinux：Enforcing/Permissive/Disabled</span>
+</span></span><span class="line"><span class="cl">ls -Z /var/www/html/index.html      <span class="c1"># 文件的安全上下文</span>
+</span></span><span class="line"><span class="cl">ps -eZ <span class="p">|</span> grep nginx                 <span class="c1"># 进程的上下文</span>
+</span></span><span class="line"><span class="cl">sudo ausearch -m avc -ts recent     <span class="c1"># ✅ 查看被 SELinux 拒绝的操作（排查必用）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">sudo aa-status                      <span class="c1"># AppArmor</span>
+</span></span><span class="line"><span class="cl">sudo aa-complain /usr/sbin/nginx    <span class="c1"># 改成只告警不阻止（调试用）</span>
+</span></span></code></pre></div><p><strong>这就是 23 篇的主线</strong>：从 DAC 的缺陷出发，看权限模型如何一路演进到 MAC。</p>
+<h1 id="8-面试题">8. 面试题</h1>
+<p><strong>Q：为什么一个进程需要 ruid、euid、suid 三套 uid（外加 fsuid）？</strong></p>
+<p>三套各承担一个不可替代的职责：</p>
+<ul>
+<li><strong><code>ruid</code>（real）</strong>：记住「我本来是谁」。SUID 程序把 euid 变成 0 后，仍然需要知道是谁在调用它（审计、权限判断）</li>
+<li><strong><code>euid</code>（effective）</strong>：<strong>权限检查实际使用的值</strong></li>
+<li><strong><code>suid</code>（saved）</strong>：<strong>「我曾经合法拥有过的身份」的凭据</strong>。它解决的是「临时降权后还能升回来」这个需求 —— 规则是非特权进程可以把 euid 改成 ruid 或 suid 之一，但不能改成别的值。所以 SUID 程序 <code>seteuid(1000)</code> 降权后，因为 <code>suid</code> 还是 0，可以 <code>seteuid(0)</code> 升回；而 <code>setresuid(1000,1000,1000)</code> 把 suid 也改掉后就<strong>永久不可逆</strong>了 —— 这才是真正的「放弃特权」</li>
+</ul>
+<p><strong><code>fsuid</code></strong> 是 Linux 特有的历史产物：1990 年代用户态 NFS 服务需要「以客户端用户身份访问文件」，但不能真改 euid（因为 euid 还控制着「谁能给我发信号、谁能 ptrace 我」，改了会被本地同 uid 用户攻击）。所以把「文件访问用的身份」单独拆出来。今天它始终跟随 euid 变化，几乎感觉不到。</p>
+<p><strong>Q：<code>setuid()</code> 的语义为什么不对称？应该用什么替代？</strong></p>
+<p>因为历史上它是<strong>唯一</strong>的接口，必须同时满足两个矛盾需求：守护进程要「永久变成 nobody 再也回不来」，SUID 程序要「临时切换并能切回」。于是靠「调用者是否特权」区分：</p>
+<ul>
+<li><strong>euid == 0 时</strong>：<code>setuid(x)</code> 把 <strong>ruid、euid、suid 全部</strong>设为 x（不可逆）</li>
+<li><strong>非特权时</strong>：<strong>只改 euid</strong>，且 x 必须等于 ruid 或 suid 之一</li>
+</ul>
+<p>这是典型的「接口过载」。<strong>应该一律用 <code>setresuid(r, e, s)</code></strong> —— 三个值全部显式指定，没有任何隐含行为。</p>
+<p>还有两个配套要点：<strong>顺序必须是「改组 → 清附加组 → 改用户」</strong>（反了的话 <code>setgid</code> 会因为已经没有特权而失败，结果 uid 变了但 gid 还是 0）；以及<strong>每一步都要检查返回值</strong>。</p>
+<p><strong>Q：为什么 <code>setuid()</code> 的返回值必须检查？</strong></p>
+<p>因为它<strong>会失败，而失败时进程仍然是 root</strong>。经典漏洞模式是 <code>setuid(getuid()); system(&quot;/bin/sh&quot;);</code> —— 如果 <code>setuid</code> 失败，那就是一个 root shell。</p>
+<p>最著名的失败原因是 <strong><code>RLIMIT_NPROC</code></strong>：目标用户的进程数已达上限时 <code>setuid</code> 返回 <code>EAGAIN</code>，而<strong>攻击者可以故意把自己的进程数打满</strong>来触发它。2000 年代有多个 CVE 是这个模式（sendmail、Apache suEXEC）。其他原因：缺少 <code>CAP_SETUID</code>、user namespace 里 uid 未映射、LSM 策略拒绝。</p>
+<p>正确写法是检查返回值 + <strong>二次验证</strong>（<code>getresuid</code> 确认三个值都变了、<code>setuid(0)</code> 确认真的回不去了），失败就 <code>_exit(1)</code>。</p>
+<p>Go 里<strong>不要自己调 <code>syscall.Setuid</code></strong>（POSIX 语义只作用于调用线程，而 goroutine 会在线程间迁移），应该用 <code>exec.Command</code> + <code>SysProcAttr.Credential</code>（在 fork 后的单线程状态下降权），或者干脆交给 systemd 的 <code>User=</code>。</p>
+<p><strong>Q：降权时忘记 <code>setgroups()</code> 会有什么后果？</strong></p>
+<p><strong>附加组不会被自动清空</strong> —— 进程降权后 euid 是普通用户，但<strong>仍然在 root 原有的附加组里</strong>。</p>
+<p>后果很严重：如果附加组包含 <strong><code>disk</code></strong>（<code>/dev/sda</code> 是 <code>brw-rw---- root disk</code>），进程可以 <code>dd</code> 出整个磁盘，<strong>完全绕过文件权限</strong>；如果包含 <strong><code>shadow</code></strong>，能读密码哈希；如果包含 <strong><code>docker</code></strong>，等于 root（10 篇 7.5 讲过）。</p>
+<p>正确做法是 <strong><code>setgroups(0, NULL)</code> 必须在放弃 root 之前调用</strong>（它本身需要 <code>CAP_SETGID</code>），或者用 <code>initgroups()</code> 设置目标用户<strong>应有</strong>的组列表。验证方式是 <code>grep Groups /proc/&lt;pid&gt;/status</code> —— 应该只看到主组。</p>
+<p><strong>Q：capabilities 解决了什么问题？为什么二十多年了还没取代 SUID？</strong></p>
+<p>它解决的是 <strong>SUID 粒度太粗</strong>：<code>ping</code> 只需要 <code>CAP_NET_RAW</code>，但 SUID root 给了它全部特权，一个漏洞就是完整提权。capabilities 把 root 拆成 40 多个可单独授予的能力。</p>
+<p><strong>没能取代 SUID 的五个原因</strong>：</p>
+<ol>
+<li><strong>生态惯性</strong> —— SUID 是 POSIX，capabilities 是 Linux 特有，跨平台软件不能依赖</li>
+<li><strong>五个集合的规则太复杂</strong> —— Permitted/Effective/Inheritable/Bounding/Ambient 加上 exec 时的传递公式，绝大多数开发者不愿理解；而 <code>chmod u+s</code> 只需要一个动作</li>
+<li><strong>Ambient 来得太晚（2015）</strong> —— 在此之前「让 wrapper 脚本把能力传给子进程」几乎做不到，因为 Inheritable 必须配合文件 capability，而<strong>脚本文件不能带 capability</strong></li>
+<li><strong>有些能力本身就 ≈ root</strong> —— <code>CAP_SYS_ADMIN</code> 是垃圾桶（mount/setns/swapon/quota…）、<code>CAP_SYS_MODULE</code> 能加载内核模块、<code>CAP_DAC_OVERRIDE</code> 能改 <code>/etc/sudoers</code>、<code>CAP_SYS_PTRACE</code> 能往 root 进程注入代码</li>
+<li><strong>文件 capability 存在 xattr 里</strong> —— <code>cp</code>/<code>tar</code>/<code>rsync</code> 默认丢失、包升级后要重设，实践中容易悄悄失效</li>
+</ol>
+<p><strong>今天的格局</strong>：容器和 systemd 场景用得很好（由运行时统一管理，不依赖文件 xattr），传统 SUID 仍是 <code>passwd</code>/<code>sudo</code>/<code>mount</code> 的实现方式。新服务推荐 systemd 的 <code>AmbientCapabilities</code> + <code>CapabilityBoundingSet</code>，或者用 <code>ip_unprivileged_port_start</code> 这类办法<strong>避免需要特权</strong>。</p>
+<p><strong>Q：容器里的 root 和宿主机的 root 是同一个吗？</strong></p>
+<p><strong>取决于有没有开 user namespace。</strong></p>
+<p><strong>没开时是同一个</strong> —— <code>docker run -v /tmp/x:/x alpine touch /x/f</code> 创建的文件在宿主机上属主是<strong>真正的 root</strong>，因为「内核只认数字」，容器里的 uid 0 和宿主的 uid 0 是同一个数字。这就是为什么容器逃逸等于 root 沦陷。</p>
+<p><strong>user namespace 引入了 uid 映射</strong>：容器内的 uid 0 映射到宿主机的 uid 100000（一个毫无特权的普通用户）。容器里的进程认为自己是 root 且在该 namespace 内拥有全部 capability，但它对宿主机资源的任何操作都按 uid 100000 检查。可以用 <code>unshare --user --map-root-user bash</code> 手动验证：<code>id</code> 显示 root，但 <code>touch /etc/newfile</code> 仍然 Permission denied，<code>cat /proc/self/uid_map</code> 能看到映射关系。</p>
+<p>这是 <strong>rootless 容器</strong>（Podman、rootless Docker）的基础。代价是不能绑低端口、需要 fuse-overlayfs/slirp4netns（性能略低）、宿主机上文件属主显示为奇怪的高位 uid。</p>
+<p>⚠️ 但 user namespace <strong>本身也扩大了内核攻击面</strong> —— 非特权用户在 ns 内获得几乎全部 capability，能触达大量原本只有 root 能走的内核路径，历史上有多个 CVE 是利用它提权。所以有些发行版会用 <code>kernel.unprivileged_userns_clone</code> 或 <code>user.max_user_namespaces</code> 限制它。</p>
+<p><strong>Q：<code>NoNewPrivileges</code> 是什么？为什么说它是最简单有效的加固？</strong></p>
+<p>它对应内核的 <code>prctl(PR_SET_NO_NEW_PRIVS)</code>：<strong>本进程及其所有后代永远无法通过 exec 获得新特权</strong> —— SUID/SGID 位被忽略、文件 capability 被忽略，而且这个标志<strong>不可撤销</strong>。</p>
+<p>有效性在于它切断了<strong>提权的主要通路</strong>：即使容器镜像或文件系统里存在 SUID 程序（<code>passwd</code>、<code>sudo</code>、<code>mount</code>），被攻破的服务也无法利用它们提权。而成本几乎为零 —— 只要服务本身不依赖 SUID 程序，加上这一行就完事。</p>
+<p>对应配置：systemd 的 <code>NoNewPrivileges=yes</code>、Docker 的 <code>--security-opt no-new-privileges</code>。验证：<code>grep NoNewPrivs /proc/&lt;pid&gt;/status</code> 应为 1。</p>
+<p>它与 <strong>seccomp</strong>（限制能调用哪些系统调用）和 <strong>LSM</strong>（在 DAC 之上加强制访问控制）构成三道独立的防线 —— 凭证模型管「你是谁、能对什么做操作」，seccomp 管「你能用哪些系统调用」，MAC 管「策略允许你访问哪些标签的资源」。</p>
+<hr>
+<h1 id="小结">小结</h1>
+<ul>
+<li><strong>凭证是进程的属性，装在 RCU 保护的 <code>cred</code> 里</strong>；变更时创建新对象原子替换，而非就地修改</li>
+<li><strong>三套 uid 各有不可替代的职责</strong>：<code>ruid</code> 记身份、<code>euid</code> 判权限、<strong><code>suid</code> 是「可恢复凭据」</strong>（临时降权后能升回，改掉它才是永久放弃）</li>
+<li><strong><code>fsuid</code> 是用户态 NFS 留下的历史接口</strong> —— 因为 ABI 承诺，它永远不会被删除</li>
+<li><strong><code>setuid()</code> 的不对称是「接口过载」的后果</strong>（一个接口两种语义）；一律用 <code>setresuid()</code></li>
+<li><strong>降权的顺序、返回值检查、<code>setgroups(0, NULL)</code> 三件都不能少</strong> —— 忘了清附加组等于把 <code>disk</code>/<code>shadow</code>/<code>docker</code> 组的权限带了下来</li>
+<li><strong><code>setuid</code> 会因 <code>RLIMIT_NPROC</code> 失败</strong>，而攻击者可以主动触发它 —— 这是一类真实的 CVE 模式</li>
+<li><strong>capabilities 把 root 拆成 40 多个能力，但没能取代 SUID</strong>：生态惯性、五集合过于复杂、Ambient 来得太晚、部分能力本身≈root、xattr 易丢失</li>
+<li><strong>user namespace 通过 uid 映射重新定义 root</strong> —— rootless 容器的基础，但它本身也扩大了内核攻击面</li>
+<li><strong><code>NoNewPrivileges</code> 是性价比最高的加固</strong>；它与 seccomp、LSM 构成凭证模型之外的三道防线</li>
+</ul>
+<p>下一篇讲 <strong>权限与授权的演进史</strong> —— 把 10 篇的操作和本篇的模型串成一条完整的时间线：9 位权限的空间约束 → SUID 的发明与它的安全债 → ACL 为什么是后来补的 → sudo 的设计权衡 → PAM 的可插拔架构 → SELinux 为什么要在 DAC 之上再加一层 MAC。</p>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2026-08-12</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/linux/">linux</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/linux/linux_23_%E6%9D%83%E9%99%90%E4%B8%8E%E6%8E%88%E6%9D%83%E7%9A%84%E6%BC%94%E8%BF%9B%E5%8F%B2/" class="prev" rel="prev" title="Linux-23 权限与授权的演进史：从 9 位权限到 MAC"><i class="fas fa-angle-left fa-fw"></i>Linux-23 权限与授权的演进史：从 9 位权限到 MAC</a>
+            <a href="/posts/linux/linux_21_%E8%BF%9B%E7%A8%8B%E7%9A%84%E8%AF%9E%E7%94%9Ffork%E4%B8%BA%E4%BB%80%E4%B9%88%E6%98%AFfork/" class="next" rel="next" title="Linux-21 进程的诞生：fork 为什么是 fork">Linux-21 进程的诞生：fork 为什么是 fork<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2026-08-12T13:00:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Linux-22 凭证模型：内核为什么只认数字，四套 uid 从哪来"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

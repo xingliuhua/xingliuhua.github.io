@@ -1,0 +1,1356 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>Linux-38 观测体系的设计与 eBPF：看见系统而不压垮系统 - xingliuhua博客</title><meta name="Description" content="metrics、logs、traces、profiles 为什么回答不同问题，USE/RED 方法如何组织排查，/proc、perf、tracepoint 与 eBPF 各有什么能力边界，verifier、map、BTF、CO-RE 和 ring buffer 如何组成现代内核观测，以及高基数、采样偏差、时钟与探针开销为何决定可观测系统是否可信。"><meta property="og:title" content="Linux-38 观测体系的设计与 eBPF：看见系统而不压垮系统" />
+<meta property="og:description" content="metrics、logs、traces、profiles 为什么回答不同问题，USE/RED 方法如何组织排查，/proc、perf、tracepoint 与 eBPF 各有什么能力边界，verifier、map、BTF、CO-RE 和 ring buffer 如何组成现代内核观测，以及高基数、采样偏差、时钟与探针开销为何决定可观测系统是否可信。" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/linux/linux_38_%E8%A7%82%E6%B5%8B%E4%BD%93%E7%B3%BB%E7%9A%84%E8%AE%BE%E8%AE%A1%E4%B8%8EeBPF/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2026-08-12T05:00:00+08:00" />
+<meta property="article:modified_time" content="2026-08-12T05:00:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="Linux-38 观测体系的设计与 eBPF：看见系统而不压垮系统"/>
+<meta name="twitter:description" content="metrics、logs、traces、profiles 为什么回答不同问题，USE/RED 方法如何组织排查，/proc、perf、tracepoint 与 eBPF 各有什么能力边界，verifier、map、BTF、CO-RE 和 ring buffer 如何组成现代内核观测，以及高基数、采样偏差、时钟与探针开销为何决定可观测系统是否可信。"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/linux/linux_38_%E8%A7%82%E6%B5%8B%E4%BD%93%E7%B3%BB%E7%9A%84%E8%AE%BE%E8%AE%A1%E4%B8%8EeBPF/" /><link rel="prev" href="https://xingliuhua.github.io/posts/linux/linux_39_%E7%BA%BF%E4%B8%8A%E6%8E%92%E6%9F%A5%E5%AE%9E%E6%88%98%E6%A1%88%E4%BE%8B%E9%9B%86/" /><link rel="next" href="https://xingliuhua.github.io/posts/linux/linux_37_init%E4%B9%8B%E4%BA%89systemd%E4%B8%BA%E4%BB%80%E4%B9%88%E8%B5%A2%E4%B9%9F%E8%A2%AB%E9%AA%82/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Linux-38 观测体系的设计与 eBPF：看见系统而不压垮系统",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_38_%E8%A7%82%E6%B5%8B%E4%BD%93%E7%B3%BB%E7%9A%84%E8%AE%BE%E8%AE%A1%E4%B8%8EeBPF\/"
+        },"genre": "posts","keywords": "linux","wordcount":  20114 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_38_%E8%A7%82%E6%B5%8B%E4%BD%93%E7%B3%BB%E7%9A%84%E8%AE%BE%E8%AE%A1%E4%B8%8EeBPF\/","datePublished": "2026-08-12T05:00:00+08:00","dateModified": "2026-08-12T05:00:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "metrics、logs、traces、profiles 为什么回答不同问题，USE/RED 方法如何组织排查，/proc、perf、tracepoint 与 eBPF 各有什么能力边界，verifier、map、BTF、CO-RE 和 ring buffer 如何组成现代内核观测，以及高基数、采样偏差、时钟与探针开销为何决定可观测系统是否可信。"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">Linux-38 观测体系的设计与 eBPF：看见系统而不压垮系统</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2026-08-12">2026-08-12</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 20114 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 41 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-可观测性不是监控的同义词">1. 可观测性不是监控的同义词</a>
+      <ol>
+        <li><a href="#11-监控已知失败可观测性探索未知状态">1.1 监控已知失败，可观测性探索未知状态</a></li>
+        <li><a href="#12-telemetry-不是事实本身">1.2 telemetry 不是事实本身</a></li>
+        <li><a href="#13-信号必须能对应决策">1.3 信号必须能对应决策</a></li>
+      </ol>
+    </li>
+    <li><a href="#2-四种主信号metricslogstracesprofiles">2. 四种主信号：Metrics、Logs、Traces、Profiles</a>
+      <ol>
+        <li><a href="#21-metrics时间序列上的聚合">2.1 Metrics：时间序列上的聚合</a></li>
+        <li><a href="#22-logs离散事件及其上下文">2.2 Logs：离散事件及其上下文</a></li>
+        <li><a href="#23-traces一次请求跨组件的因果路径">2.3 Traces：一次请求跨组件的因果路径</a></li>
+        <li><a href="#24-profiles资源消耗按调用栈聚合">2.4 Profiles：资源消耗按调用栈聚合</a></li>
+        <li><a href="#25-四者如何协作">2.5 四者如何协作</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-metric-类型与常见数学陷阱">3. Metric 类型与常见数学陷阱</a>
+      <ol>
+        <li><a href="#31-counter-只累计">3.1 Counter 只累计</a></li>
+        <li><a href="#32-gauge-可升可降">3.2 Gauge 可升可降</a></li>
+        <li><a href="#33-histogram-保留分布近似">3.3 Histogram 保留分布近似</a></li>
+        <li><a href="#34-平均值隐藏双峰">3.4 平均值隐藏双峰</a></li>
+        <li><a href="#35-littles-law-连接并发与延迟">3.5 Little&rsquo;s Law 连接并发与延迟</a></li>
+      </ol>
+    </li>
+    <li><a href="#4-高基数最容易把观测平台打垮的设计">4. 高基数：最容易把观测平台打垮的设计</a>
+      <ol>
+        <li><a href="#41-每种-label-组合都是一条时间序列">4.1 每种 label 组合都是一条时间序列</a></li>
+        <li><a href="#42-路由模板而不是原始路径">4.2 路由模板而不是原始路径</a></li>
+        <li><a href="#43-tracelog-也有高基数成本">4.3 trace/log 也有高基数成本</a></li>
+        <li><a href="#44-cardinality-budget">4.4 cardinality budget</a></li>
+      </ol>
+    </li>
+    <li><a href="#5-从-red-与-use-建立排查入口">5. 从 RED 与 USE 建立排查入口</a>
+      <ol>
+        <li><a href="#51-red-面向请求服务">5.1 RED 面向请求服务</a></li>
+        <li><a href="#52-use-面向资源">5.2 USE 面向资源</a></li>
+        <li><a href="#53-从症状向下钻">5.3 从症状向下钻</a></li>
+        <li><a href="#54-告警应基于用户影响与预算">5.4 告警应基于用户影响与预算</a></li>
+      </ol>
+    </li>
+    <li><a href="#6-linux-原生观测先用已有计数器">6. Linux 原生观测：先用已有计数器</a>
+      <ol>
+        <li><a href="#61-proc-和-sys-是内核状态窗口">6.1 <code>/proc</code> 和 <code>/sys</code> 是内核状态窗口</a></li>
+        <li><a href="#62-累计计数要做差分">6.2 累计计数要做差分</a></li>
+        <li><a href="#63-sysstat-工具建立时间线">6.3 sysstat 工具建立时间线</a></li>
+        <li><a href="#64-基线比绝对标准值可靠">6.4 基线比绝对“标准值”可靠</a></li>
+      </ol>
+    </li>
+    <li><a href="#7-straceptrace看-syscall-的强工具与扰动">7. strace/ptrace：看 syscall 的强工具与扰动</a>
+      <ol>
+        <li><a href="#71-strace-回答用户态与内核边界">7.1 strace 回答用户态与内核边界</a></li>
+        <li><a href="#72-ptrace-会改变调度">7.2 ptrace 会改变调度</a></li>
+        <li><a href="#73-syscall-时间不等于内核子系统时间">7.3 syscall 时间不等于内核子系统时间</a></li>
+        <li><a href="#74-权限与敏感数据">7.4 权限与敏感数据</a></li>
+      </ol>
+    </li>
+    <li><a href="#8-perf硬件计数器采样与调用栈">8. perf：硬件计数器、采样与调用栈</a>
+      <ol>
+        <li><a href="#81-perf-stat-先回答-cpu-在做什么">8.1 perf stat 先回答 CPU 在做什么</a></li>
+        <li><a href="#82-perf-record-用采样近似热点">8.2 perf record 用采样近似热点</a></li>
+        <li><a href="#83-frequency-与-period">8.3 frequency 与 period</a></li>
+        <li><a href="#84-on-cpu-与-off-cpu">8.4 on-CPU 与 off-CPU</a></li>
+        <li><a href="#85-perf-权限">8.5 perf 权限</a></li>
+      </ol>
+    </li>
+    <li><a href="#9-ftracetracepointkprobe-与-uprobe">9. ftrace、tracepoint、kprobe 与 uprobe</a>
+      <ol>
+        <li><a href="#91-ftrace-最初为函数追踪而生">9.1 ftrace 最初为函数追踪而生</a></li>
+        <li><a href="#92-tracepoint-是相对稳定的显式-hook">9.2 tracepoint 是相对稳定的显式 hook</a></li>
+        <li><a href="#93-kprobe-动态挂内核函数">9.3 kprobe 动态挂内核函数</a></li>
+        <li><a href="#94-uprobe-观察用户态二进制">9.4 uprobe 观察用户态二进制</a></li>
+        <li><a href="#95-tracepoint-事件也会淹没消费者">9.5 tracepoint 事件也会淹没消费者</a></li>
+      </ol>
+    </li>
+    <li><a href="#10-ebpf-到底是什么">10. eBPF 到底是什么</a>
+      <ol>
+        <li><a href="#101-受限制程序在内核-hook-上运行">10.1 受限制程序在内核 hook 上运行</a></li>
+        <li><a href="#102-ebpf-与内核模块不同">10.2 eBPF 与内核模块不同</a></li>
+        <li><a href="#103-program-type-决定上下文与能力">10.3 program type 决定上下文与能力</a></li>
+        <li><a href="#104-helper-是受控系统调用面">10.4 helper 是受控系统调用面</a></li>
+      </ol>
+    </li>
+    <li><a href="#11-verifier为什么能进内核也为什么经常拒绝">11. Verifier：为什么能进内核，也为什么经常拒绝</a>
+      <ol>
+        <li><a href="#111-verifier-做静态状态探索">11.1 verifier 做静态状态探索</a></li>
+        <li><a href="#112-典型-null-check">11.2 典型 null check</a></li>
+        <li><a href="#113-循环必须可证明有界">11.3 循环必须可证明有界</a></li>
+        <li><a href="#114-verifier-log-是编译错误的一部分">11.4 verifier log 是编译错误的一部分</a></li>
+        <li><a href="#115-verifier-不能证明什么">11.5 verifier 不能证明什么</a></li>
+      </ol>
+    </li>
+    <li><a href="#12-mapsbpf-程序的状态与用户态接口">12. Maps：BPF 程序的状态与用户态接口</a>
+      <ol>
+        <li><a href="#121-为什么程序需要-map">12.1 为什么程序需要 map</a></li>
+        <li><a href="#122-per-cpu-map-避免热锁">12.2 per-CPU map 避免热锁</a></li>
+        <li><a href="#123-hash-map-的-cardinality-仍需限制">12.3 hash map 的 cardinality 仍需限制</a></li>
+        <li><a href="#124-map-pinning-延长生命周期">12.4 map pinning 延长生命周期</a></li>
+        <li><a href="#125-并发与一致性">12.5 并发与一致性</a></li>
+      </ol>
+    </li>
+    <li><a href="#13-从内核把事件送回用户态">13. 从内核把事件送回用户态</a>
+      <ol>
+        <li><a href="#131-每事件输出与内核聚合">13.1 每事件输出与内核聚合</a></li>
+        <li><a href="#132-perf-buffer">13.2 perf buffer</a></li>
+        <li><a href="#133-bpf-ring-buffer">13.3 BPF ring buffer</a></li>
+        <li><a href="#134-变长事件与隐私">13.4 变长事件与隐私</a></li>
+        <li><a href="#135-丢事件是数据的一部分">13.5 丢事件是数据的一部分</a></li>
+      </ol>
+    </li>
+    <li><a href="#14-btf-与-co-re跨内核版本的现实方案">14. BTF 与 CO-RE：跨内核版本的现实方案</a>
+      <ol>
+        <li><a href="#141-内核内部结构会变">14.1 内核内部结构会变</a></li>
+        <li><a href="#142-btf-提供类型元数据">14.2 BTF 提供类型元数据</a></li>
+        <li><a href="#143-co-re-在加载时重定位">14.3 CO-RE 在加载时重定位</a></li>
+        <li><a href="#144-fentryfexit">14.4 fentry/fexit</a></li>
+        <li><a href="#145-feature-probe-不要只看-uname">14.5 feature probe 不要只看 uname</a></li>
+      </ol>
+    </li>
+    <li><a href="#15-一个观测程序的典型设计">15. 一个观测程序的典型设计</a>
+      <ol>
+        <li><a href="#151-在-issue-时保存开始状态">15.1 在 issue 时保存开始状态</a></li>
+        <li><a href="#152-在-complete-时聚合">15.2 在 complete 时聚合</a></li>
+        <li><a href="#153-必须处理生命周期异常">15.3 必须处理生命周期异常</a></li>
+        <li><a href="#154-输出-schema">15.4 输出 schema</a></li>
+      </ol>
+    </li>
+    <li><a href="#16-调度观测慢请求为何没获得-cpu">16. 调度观测：慢请求为何没获得 CPU</a>
+      <ol>
+        <li><a href="#161-三种不在-cpu-上">16.1 三种“不在 CPU 上”</a></li>
+        <li><a href="#162-run-queue-latency">16.2 run queue latency</a></li>
+        <li><a href="#163-off-cpu-stack">16.3 off-CPU stack</a></li>
+        <li><a href="#164-wakerwakee-因果">16.4 waker/wakee 因果</a></li>
+        <li><a href="#165-go-调度与-linux-调度是两层">16.5 Go 调度与 Linux 调度是两层</a></li>
+      </ol>
+    </li>
+    <li><a href="#17-网络观测包socket-与请求三种层级">17. 网络观测：包、socket 与请求三种层级</a>
+      <ol>
+        <li><a href="#171-接口-counter">17.1 接口 counter</a></li>
+        <li><a href="#172-包级-capture">17.2 包级 capture</a></li>
+        <li><a href="#173-socket级-ebpf">17.3 socket级 eBPF</a></li>
+        <li><a href="#174-httpl7-自动观测的边界">17.4 HTTP/L7 自动观测的边界</a></li>
+        <li><a href="#175-xdp-统计的位置">17.5 XDP 统计的位置</a></li>
+      </ol>
+    </li>
+    <li><a href="#18-io-与文件系统观测">18. IO 与文件系统观测</a>
+      <ol>
+        <li><a href="#181-应用延迟与设备延迟不是一回事">18.1 应用延迟与设备延迟不是一回事</a></li>
+        <li><a href="#182-block-tracepoint">18.2 block tracepoint</a></li>
+        <li><a href="#183-vfsfilesystem-probes">18.3 VFS/filesystem probes</a></li>
+        <li><a href="#184-fsync-延迟要关联业务提交">18.4 fsync 延迟要关联业务提交</a></li>
+      </ol>
+    </li>
+    <li><a href="#19-go-服务的观测基线">19. Go 服务的观测基线</a>
+      <ol>
+        <li><a href="#191-runtime-metrics">19.1 Runtime metrics</a></li>
+        <li><a href="#192-pprof-要保护">19.2 pprof 要保护</a></li>
+        <li><a href="#193-mutexblock-profile-有采样率">19.3 Mutex/block profile 有采样率</a></li>
+        <li><a href="#194-execution-trace-分辨-go-调度">19.4 execution trace 分辨 Go 调度</a></li>
+        <li><a href="#195-trace-context-与-log关联">19.5 trace context 与 log关联</a></li>
+        <li><a href="#196-版本与部署维度">19.6 版本与部署维度</a></li>
+      </ol>
+    </li>
+    <li><a href="#20-采样成本与偏差的明确交换">20. 采样：成本与偏差的明确交换</a>
+      <ol>
+        <li><a href="#201-head-sampling">20.1 Head sampling</a></li>
+        <li><a href="#202-tail-sampling">20.2 Tail sampling</a></li>
+        <li><a href="#203-采样后不能直接数事件">20.3 采样后不能直接数事件</a></li>
+        <li><a href="#204-coordinated-omission">20.4 Coordinated omission</a></li>
+        <li><a href="#205-observer-effect">20.5 Observer effect</a></li>
+      </ol>
+    </li>
+    <li><a href="#21-时间没有共同时间轴就没有因果">21. 时间：没有共同时间轴就没有因果</a>
+      <ol>
+        <li><a href="#211-realtime-与-monotonic">21.1 realtime 与 monotonic</a></li>
+        <li><a href="#212-ntp-不保证完全相等">21.2 NTP 不保证完全相等</a></li>
+        <li><a href="#213-时钟回拨与-histogram">21.3 时钟回拨与 histogram</a></li>
+        <li><a href="#214-boot-id-与-pid复用">21.4 boot ID 与 PID复用</a></li>
+      </ol>
+    </li>
+    <li><a href="#22-ebpf-安全权限与供应链">22. eBPF 安全、权限与供应链</a>
+      <ol>
+        <li><a href="#221-加载-bpf-是高权限操作">22.1 加载 BPF 是高权限操作</a></li>
+        <li><a href="#222-unprivileged-bpf">22.2 unprivileged BPF</a></li>
+        <li><a href="#223-bpf-object也是供应链代码">22.3 BPF object也是供应链代码</a></li>
+        <li><a href="#224-bpffs-与-map权限">22.4 bpffs 与 map权限</a></li>
+        <li><a href="#225-观测与执行分离">22.5 观测与执行分离</a></li>
+      </ol>
+    </li>
+    <li><a href="#23-常用-ebpf-工具与使用边界">23. 常用 eBPF 工具与使用边界</a>
+      <ol>
+        <li><a href="#231-bpftrace">23.1 bpftrace</a></li>
+        <li><a href="#232-bcc-tools">23.2 BCC tools</a></li>
+        <li><a href="#233-libbpfbpftool">23.3 libbpf/bpftool</a></li>
+        <li><a href="#234-先问现成工具能否回答">23.4 先问现成工具能否回答</a></li>
+      </ol>
+    </li>
+    <li><a href="#24-一次完整调查p99-周期性跳到-100ms">24. 一次完整调查：P99 周期性跳到 100ms</a>
+      <ol>
+        <li><a href="#241-症状">24.1 症状</a></li>
+        <li><a href="#242-从-metrics-建假设">24.2 从 metrics 建假设</a></li>
+        <li><a href="#243-用-go-trace与调度观测验证">24.3 用 Go trace与调度观测验证</a></li>
+        <li><a href="#244-修复与验证">24.4 修复与验证</a></li>
+        <li><a href="#245-证据链的价值">24.5 证据链的价值</a></li>
+      </ol>
+    </li>
+    <li><a href="#25-建设可观测平台的原则">25. 建设可观测平台的原则</a>
+      <ol>
+        <li><a href="#251-默认低成本按需提高分辨率">25.1 默认低成本，按需提高分辨率</a></li>
+        <li><a href="#252-统一资源身份">25.2 统一资源身份</a></li>
+        <li><a href="#253-schema治理">25.3 Schema治理</a></li>
+        <li><a href="#254-保留原始证据的平衡">25.4 保留原始证据的平衡</a></li>
+        <li><a href="#255-观测系统也要降级">25.5 观测系统也要降级</a></li>
+      </ol>
+    </li>
+    <li><a href="#26-线上排查命令">26. 线上排查命令</a>
+      <ol>
+        <li><a href="#261-先建立一分钟系统快照">26.1 先建立一分钟系统快照</a></li>
+        <li><a href="#262-cpu-profile">26.2 CPU profile</a></li>
+        <li><a href="#263-syscall调查">26.3 syscall调查</a></li>
+        <li><a href="#264-bpf对象状态">26.4 BPF对象状态</a></li>
+        <li><a href="#265-tracepoint存在性">26.5 Tracepoint存在性</a></li>
+      </ol>
+    </li>
+    <li><a href="#27-常用命令知识点扩展">27. 常用命令知识点扩展</a></li>
+    <li><a href="#28-面试题">28. 面试题</a></li>
+    <li><a href="#小结">小结</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><p>上一篇讲 systemd 如何统一管理服务生命周期与日志。这一篇继续追问：<strong>服务已经运行，P99 突然升高，但 CPU 平均值正常、日志没有 error、重启后暂时恢复，怎样从“症状”走到“内核里真正发生了什么”？</strong></p>
+<p>可观测性不是安装一个 dashboard，也不是“把所有事件都记录下来”。系统每秒可能发生数百万次 syscall、调度、包处理和内存分配；无差别采集会改变被测对象、制造巨大成本，甚至成为新的故障。真正的设计目标是：用有界开销保留足够证据，在不知道故障答案之前仍能提出并验证假设。</p>
+<p>先看五个问题：</p>
+<ol>
+<li>metric、log、trace、profile 分别压缩了什么信息，为什么任何一种都不能单独回答所有问题？</li>
+<li><code>/proc</code>、sysstat、strace、perf、ftrace、tracepoint、kprobe 各自适合什么层级，观测会怎样扰动系统？</li>
+<li>eBPF 程序如何在内核 hook 上执行而不允许任意破坏内核？verifier 能证明什么、不能证明什么？</li>
+<li>map、per-CPU aggregate、ring buffer、BTF 与 CO-RE 如何让 BPF 程序跨事件保存状态并适应内核版本？</li>
+<li>高基数、采样偏差、时间同步、丢事件和探针本身 CPU 如何让一张“漂亮图”得出错误结论？</li>
+</ol>
+<hr>
+<h1 id="1-可观测性不是监控的同义词">1. 可观测性不是监控的同义词</h1>
+<h2 id="11-监控已知失败可观测性探索未知状态">1.1 监控已知失败，可观测性探索未知状态</h2>
+<p>监控通常从已知风险出发：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">CPU &gt; 90%
+</span></span><span class="line"><span class="cl">disk usage &gt; 85%
+</span></span><span class="line"><span class="cl">HTTP 5xx rate &gt; 1%
+</span></span><span class="line"><span class="cl">replication lag &gt; 30s
+</span></span></code></pre></div><p>它适合告警和自动化动作。可观测性更强调：仅凭系统输出，能否推断内部状态、回答事先未写好 dashboard 的问题，例如“只有某 NUMA node 上、携带特定 payload 大小、恰逢 cgroup throttle 的请求为何慢”。</p>
+<p>两者不是互斥。没有稳定监控，团队不知道何时调查；只有预设监控，未知故障会落在指标盲区。</p>
+<h2 id="12-telemetry-不是事实本身">1.2 telemetry 不是事实本身</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">真实系统行为
+</span></span><span class="line"><span class="cl">  -&gt; instrumentation / kernel counters
+</span></span><span class="line"><span class="cl">  -&gt; aggregation / sampling
+</span></span><span class="line"><span class="cl">  -&gt; queue / transport
+</span></span><span class="line"><span class="cl">  -&gt; storage / downsampling
+</span></span><span class="line"><span class="cl">  -&gt; query / visualization
+</span></span><span class="line"><span class="cl">  -&gt; 人的解释
+</span></span></code></pre></div><p>每层都可能丢失、延迟或改变信息。看到“0 errors”可能是确实为零，也可能是 exporter 挂了、label 改名、采样没命中、日志被 rate limit。可观测系统本身也需要自监控：采集成功率、drop、queue lag、存储拒绝、查询延迟和成本。</p>
+<h2 id="13-信号必须能对应决策">1.3 信号必须能对应决策</h2>
+<p>收集前问：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">谁会看？
+</span></span><span class="line"><span class="cl">用它判断什么？
+</span></span><span class="line"><span class="cl">判断后能采取什么动作？
+</span></span><span class="line"><span class="cl">需要多快、多细、多长保留？
+</span></span></code></pre></div><p>“以后可能有用”会把系统变成昂贵数据坟场。面向告警的指标可能保留 13 个月趋势；面向秒级内核事件的原始 trace 也许只在内存保留 30 秒；审计日志则有另一套不可篡改与合规周期。</p>
+<hr>
+<h1 id="2-四种主信号metricslogstracesprofiles">2. 四种主信号：Metrics、Logs、Traces、Profiles</h1>
+<h2 id="21-metrics时间序列上的聚合">2.1 Metrics：时间序列上的聚合</h2>
+<p>metric 通常是：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">name + labels + timestamp -&gt; value
+</span></span></code></pre></div><p>例如：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">http_requests_total{service=&#34;api&#34;,method=&#34;GET&#34;,code=&#34;200&#34;} 1289012
+</span></span><span class="line"><span class="cl">http_request_duration_seconds_bucket{service=&#34;api&#34;,le=&#34;0.5&#34;} 88230
+</span></span><span class="line"><span class="cl">process_resident_memory_bytes{service=&#34;api&#34;} 734003200
+</span></span></code></pre></div><p>优势：体积小、可长期保留、适合 rate/趋势/SLO/告警。代价：聚合后无法恢复单次事件；label 选择决定以后能切哪些维度。</p>
+<h2 id="22-logs离散事件及其上下文">2.2 Logs：离散事件及其上下文</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span><span class="nt">&#34;time&#34;</span><span class="p">:</span><span class="s2">&#34;...&#34;</span><span class="p">,</span><span class="nt">&#34;level&#34;</span><span class="p">:</span><span class="s2">&#34;error&#34;</span><span class="p">,</span><span class="nt">&#34;service&#34;</span><span class="p">:</span><span class="s2">&#34;api&#34;</span><span class="p">,</span><span class="nt">&#34;request_id&#34;</span><span class="p">:</span><span class="s2">&#34;r-123&#34;</span><span class="p">,</span><span class="nt">&#34;msg&#34;</span><span class="p">:</span><span class="s2">&#34;commit failed&#34;</span><span class="p">,</span><span class="nt">&#34;error&#34;</span><span class="p">:</span><span class="s2">&#34;context deadline exceeded&#34;</span><span class="p">}</span>
+</span></span></code></pre></div><p>日志能承载错误链、状态变化和少量业务上下文，适合解释“这次发生了什么”。它不是免费字符串：格式化、锁、序列化、磁盘/网络、索引都消耗资源。请求成功全量 debug 日志可能比业务本身更贵。</p>
+<p>日志应结构化且 schema 稳定；敏感 token、密码、完整请求体和个人数据不应因排障方便被写入。</p>
+<h2 id="23-traces一次请求跨组件的因果路径">2.3 Traces：一次请求跨组件的因果路径</h2>
+<p>分布式 trace 用 trace/span 表示操作树或图：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">trace r-123
+</span></span><span class="line"><span class="cl">  api HTTP server span        240ms
+</span></span><span class="line"><span class="cl">    auth RPC                   8ms
+</span></span><span class="line"><span class="cl">    database query           210ms
+</span></span><span class="line"><span class="cl">      connection pool wait   180ms
+</span></span></code></pre></div><p>它回答“时间花在哪个服务/阶段”，需要上下文随 RPC 传播。trace 中的父子关系是应用因果，不自动等于内核调度因果；一个 span 的 200ms 可能是 CPU、锁、网络、quota或等待下游。</p>
+<h2 id="24-profiles资源消耗按调用栈聚合">2.4 Profiles：资源消耗按调用栈聚合</h2>
+<p>CPU profile采样“CPU 正执行哪些栈”；heap profile聚合仍存活/累计分配；block/mutex profile记录同步等待事件的样本。典型输出是：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">stack -&gt; samples / bytes / delay
+</span></span></code></pre></div><p>profile擅长回答“哪个代码路径消耗最多资源”，通常没有每次请求的完整时序。continuous profiling把低频采样长期保留，可与部署/指标时间窗对齐。</p>
+<h2 id="25-四者如何协作">2.5 四者如何协作</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">metric：P99 从 80ms 升到 600ms，何时、范围多大？
+</span></span><span class="line"><span class="cl">trace：慢请求主要卡在连接池等待，哪些下游？
+</span></span><span class="line"><span class="cl">profile：等待期间 CPU/锁热点在哪个调用栈？
+</span></span><span class="line"><span class="cl">log：某次 pool reset 的错误和配置上下文是什么？
+</span></span><span class="line"><span class="cl">eBPF/kernel trace：线程为什么没运行、网络包/IO 在内核哪层等待？
+</span></span></code></pre></div><p>不是所有事故都需要全部信号。先用低成本广覆盖信号缩小范围，再临时启用高分辨率工具。</p>
+<hr>
+<h1 id="3-metric-类型与常见数学陷阱">3. Metric 类型与常见数学陷阱</h1>
+<h2 id="31-counter-只累计">3.1 Counter 只累计</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">requests_total
+</span></span><span class="line"><span class="cl">errors_total
+</span></span><span class="line"><span class="cl">bytes_sent_total
+</span></span></code></pre></div><p>进程重启会归零，查询应计算区间 rate/increase并处理 reset。直接告警 <code>requests_total &gt; N</code> 没有意义，因为它只会增长。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-promql" data-lang="promql"><span class="line"><span class="cl"><span class="kr">rate</span><span class="o">(</span><span class="nv">http_requests_total</span><span class="p">[</span><span class="s">5m</span><span class="p">]</span><span class="o">)</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="kr">rate</span><span class="o">(</span><span class="nv">http_requests_total</span><span class="p">{</span><span class="nl">code</span><span class="o">=~</span><span class="p">&#34;</span><span class="s">5..</span><span class="p">&#34;}[</span><span class="s">5m</span><span class="p">]</span><span class="o">)</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="o">/</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="kr">rate</span><span class="o">(</span><span class="nv">http_requests_total</span><span class="p">[</span><span class="s">5m</span><span class="p">]</span><span class="o">)</span><span class="w">
+</span></span></span></code></pre></div><p>低流量分母接近零时错误率剧烈波动，应同时设最小请求量或使用 burn-rate窗口。</p>
+<h2 id="32-gauge-可升可降">3.2 Gauge 可升可降</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">queue_depth
+</span></span><span class="line"><span class="cl">active_connections
+</span></span><span class="line"><span class="cl">memory_bytes
+</span></span><span class="line"><span class="cl">temperature
+</span></span></code></pre></div><p>gauge 适合当前状态，但 scrape之间的短峰可能完全看不到。每 30 秒采一次队列深度，峰值在 2 秒内形成又消失，dashboard仍显示正常。需要 histogram、high-water mark或事件采样保留短时信息。</p>
+<h2 id="33-histogram-保留分布近似">3.3 Histogram 保留分布近似</h2>
+<p>classic histogram用累计 bucket：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">le=0.1  800
+</span></span><span class="line"><span class="cl">le=0.5  980
+</span></span><span class="line"><span class="cl">le=1.0  995
+</span></span><span class="line"><span class="cl">+Inf    1000
+</span></span></code></pre></div><p>可跨实例合并 bucket后估算 quantile。bucket边界决定误差：若 SLO 是 300ms，只有 100ms和1s边界，很难判断 SLO附近变化。</p>
+<p>summary在客户端计算 quantile，通常不能把多个实例的 quantile再求平均。<strong>P99 的平均不是全局 P99。</strong> 选择取决于监控系统和聚合需求。</p>
+<h2 id="34-平均值隐藏双峰">3.4 平均值隐藏双峰</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">99% requests = 10ms
+</span></span><span class="line"><span class="cl">1% requests  = 10s
+</span></span><span class="line"><span class="cl">average       ≈ 110ms
+</span></span></code></pre></div><p>平均值看似还能接受，尾部用户已经严重失败。反过来 P99也隐藏最慢 1%内部规模；SLO应配合 error budget、直方图、最大/超时计数和请求量。</p>
+<h2 id="35-littles-law-连接并发与延迟">3.5 Little&rsquo;s Law 连接并发与延迟</h2>
+<p>稳态下：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">L = λ × W
+</span></span></code></pre></div><p>平均在途请求 L = 到达率 λ × 平均停留时间 W。吞吐不变而在途数上升，通常意味着延迟上升；连接池 queue depth与请求 rate能交叉验证。但系统非稳态、丢请求或队列有界时，不能机械套公式。</p>
+<hr>
+<h1 id="4-高基数最容易把观测平台打垮的设计">4. 高基数：最容易把观测平台打垮的设计</h1>
+<h2 id="41-每种-label-组合都是一条时间序列">4.1 每种 label 组合都是一条时间序列</h2>
+<p>假设：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">service 100
+</span></span><span class="line"><span class="cl">instance 1000
+</span></span><span class="line"><span class="cl">endpoint 200
+</span></span><span class="line"><span class="cl">status 20
+</span></span><span class="line"><span class="cl">user_id 1,000,000
+</span></span></code></pre></div><p>把 <code>user_id</code> 放 metric label 会产生近乎无界 series。内存索引、WAL、网络、查询 fan-out 和账单迅速膨胀。</p>
+<p>适合 metric label 的是有界、稳定、可聚合维度：service、region、method、规范化 route、status class。request ID、原始 URL、用户、订单号应放 trace/log，并受采样与访问控制。</p>
+<h2 id="42-路由模板而不是原始路径">4.2 路由模板而不是原始路径</h2>
+<p>错误：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">path=&#34;/users/184729/orders/99128&#34;
+</span></span></code></pre></div><p>正确维度：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">route=&#34;/users/{user_id}/orders/{order_id}&#34;
+</span></span></code></pre></div><p>还要防 404 随机路径、User-Agent、异常 header把 series打爆。instrumentation应在 schema层白名单 label，而不是把任意 tag自动提升为 metric。</p>
+<h2 id="43-tracelog-也有高基数成本">4.3 trace/log 也有高基数成本</h2>
+<p>日志索引 request_id、stacktrace全文或动态 JSON key，同样会扩大索引；trace attribute过多会增加 payload和查询成本。高基数不是“Prometheus 独有问题”，区别只是存储系统如何收费和退化。</p>
+<h2 id="44-cardinality-budget">4.4 cardinality budget</h2>
+<p>每个团队/metric应估算：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">series ≈ product(label cardinalities)
+</span></span><span class="line"><span class="cl">samples/day = series × 86400 / scrape_interval
+</span></span></code></pre></div><p>设 per-service series budget、拒绝未知 label、监控 churn与top metrics。上线前自动测试 instrumentation，在故障期间临时加维度也要有过期机制。</p>
+<hr>
+<h1 id="5-从-red-与-use-建立排查入口">5. 从 RED 与 USE 建立排查入口</h1>
+<h2 id="51-red-面向请求服务">5.1 RED 面向请求服务</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Rate：请求/消息速率
+</span></span><span class="line"><span class="cl">Errors：失败、超时、拒绝比例
+</span></span><span class="line"><span class="cl">Duration：延迟分布
+</span></span></code></pre></div><p>按 service、规范化 operation、result分类。它回答用户体验和 SLO，适合微服务入口。</p>
+<h2 id="52-use-面向资源">5.2 USE 面向资源</h2>
+<p>对每个资源检查：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Utilization：资源忙碌比例/使用量
+</span></span><span class="line"><span class="cl">Saturation：需求超过即时能力形成的队列/压力
+</span></span><span class="line"><span class="cl">Errors：硬件/内核/驱动错误
+</span></span></code></pre></div><p>资源包括 CPU、内存、磁盘、NIC、连接池、线程池、quota。CPU 40%但 run queue/CPU PSI高，可能是 cpuset只给少数核或 cgroup throttle；利用率必须和 saturation一起看。</p>
+<h2 id="53-从症状向下钻">5.3 从症状向下钻</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">RED：哪类请求慢/错？
+</span></span><span class="line"><span class="cl">  -&gt; dependency trace：时间在哪个边？
+</span></span><span class="line"><span class="cl">  -&gt; USE：对应资源是否饱和/报错？
+</span></span><span class="line"><span class="cl">  -&gt; profile：哪个调用栈消耗/等待？
+</span></span><span class="line"><span class="cl">  -&gt; kernel tools：调度、锁、IO、网络哪层？
+</span></span><span class="line"><span class="cl">  -&gt; targeted logs：状态变化与具体错误？
+</span></span></code></pre></div><p>这比“CPU、内存、磁盘 dashboard 从左到右扫一遍”更有因果方向。</p>
+<h2 id="54-告警应基于用户影响与预算">5.4 告警应基于用户影响与预算</h2>
+<p>CPU 90%可能是高效满载，也可能没有用户影响；HTTP SLO快速 burn才是紧急。资源告警适合预测硬边界和解释根因，但 page应围绕可行动的服务影响。</p>
+<p>多窗口 burn rate可同时发现快速大故障和慢性消耗，避免单一 5 分钟阈值抖动。每条告警应有 owner、runbook、去重和演练。</p>
+<hr>
+<h1 id="6-linux-原生观测先用已有计数器">6. Linux 原生观测：先用已有计数器</h1>
+<h2 id="61-proc-和-sys-是内核状态窗口">6.1 <code>/proc</code> 和 <code>/sys</code> 是内核状态窗口</h2>
+<p>常见来源：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">/proc/stat             CPU、上下文切换、进程等累计
+</span></span><span class="line"><span class="cl">/proc/meminfo          内存分类
+</span></span><span class="line"><span class="cl">/proc/PID/status       进程状态、namespace、内存
+</span></span><span class="line"><span class="cl">/proc/PID/smaps_rollup 映射内存汇总
+</span></span><span class="line"><span class="cl">/proc/net/*            网络协议状态
+</span></span><span class="line"><span class="cl">/proc/pressure/*       PSI
+</span></span><span class="line"><span class="cl">/sys/fs/cgroup/*       cgroup resource/events
+</span></span><span class="line"><span class="cl">/sys/class/net/*       接口属性与统计
+</span></span></code></pre></div><p>很多工具只是解析这些文件。优点是稳定、低成本、无需新探针；缺点是快照/累计聚合，通常没有具体调用栈或单次事件因果。</p>
+<h2 id="62-累计计数要做差分">6.2 累计计数要做差分</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">grep -E <span class="s1">&#39;ctxt|processes&#39;</span> /proc/stat
+</span></span><span class="line"><span class="cl">cat /proc/net/softnet_stat
+</span></span></code></pre></div><p>启动以来数值大不表示当前异常。记录时间窗口增量，再除以时间或事件量；同时识别 counter wrap/reset、CPU hotplug和进程重启。</p>
+<h2 id="63-sysstat-工具建立时间线">6.3 sysstat 工具建立时间线</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">vmstat <span class="m">1</span>
+</span></span><span class="line"><span class="cl">mpstat -P ALL <span class="m">1</span>
+</span></span><span class="line"><span class="cl">pidstat -u -w -d -p <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span> <span class="m">1</span>
+</span></span><span class="line"><span class="cl">iostat -xz <span class="m">1</span>
+</span></span><span class="line"><span class="cl">sar -n DEV <span class="m">1</span>
+</span></span></code></pre></div><p>它们适合快速确认 CPU、run queue、context switch、fault、块设备延迟、网络吞吐。采样间隔太长漏峰，太短本身增开销；<code>%util=100</code> 在现代多队列设备上也不能单独解释饱和，需结合 await、queue、IOPS和应用 latency。</p>
+<h2 id="64-基线比绝对标准值可靠">6.4 基线比绝对“标准值”可靠</h2>
+<p>上下文切换 10 万/s 在一台高并发机器可能正常，在低流量服务可能异常。应保留同硬件/同版本/同流量的健康基线，比较部署前后与故障前后，而不是套互联网固定阈值。</p>
+<hr>
+<h1 id="7-straceptrace看-syscall-的强工具与扰动">7. strace/ptrace：看 syscall 的强工具与扰动</h1>
+<h2 id="71-strace-回答用户态与内核边界">7.1 strace 回答用户态与内核边界</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">sudo strace -ff -ttT -p <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  -e <span class="nv">trace</span><span class="o">=</span>network,file,desc
+</span></span></code></pre></div><p>可以看到：</p>
+<ul>
+<li>调了什么 syscall、参数和返回 errno</li>
+<li>阻塞多久</li>
+<li>哪个线程反复 EAGAIN</li>
+<li>文件/地址是否错误</li>
+<li>进程是否陷入 open/retry loop</li>
+</ul>
+<p><code>-f</code> 跟踪 fork/clone，<code>-T</code> 显示 syscall耗时，<code>-tt</code> 增加时间戳，<code>-c</code> 汇总。</p>
+<h2 id="72-ptrace-会改变调度">7.2 ptrace 会改变调度</h2>
+<p>strace常基于 ptrace/seccomp辅助等机制，syscall entry/exit需要 tracer参与，可显著增加延迟和上下文切换。高频服务全量跟踪可能把轻微故障变成严重故障，也让竞态消失或出现。</p>
+<p>生产使用原则：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">先 -c/过滤/短时
+</span></span><span class="line"><span class="cl">只跟目标 PID/线程/syscall
+</span></span><span class="line"><span class="cl">设置 timeout
+</span></span><span class="line"><span class="cl">避免打印大 buffer/string
+</span></span><span class="line"><span class="cl">记录观测开始结束与影响
+</span></span></code></pre></div><h2 id="73-syscall-时间不等于内核子系统时间">7.3 syscall 时间不等于内核子系统时间</h2>
+<p>一次 <code>read</code> 100ms可能是线程睡眠等网络数据，不表示内核执行指令 100ms。strace显示 wall duration，不区分 runnable等待、IO、锁或信号。需结合 perf sched、off-CPU profile、网络/IO tracepoint。</p>
+<h2 id="74-权限与敏感数据">7.4 权限与敏感数据</h2>
+<p>syscall参数可能包含文件名、网络地址、命令参数和 buffer片段。ptrace权限受 UID、Yama、capability、namespace、dumpable状态控制。生产采集要授权并保护输出，不应为方便永久放宽 <code>ptrace_scope</code>。</p>
+<hr>
+<h1 id="8-perf硬件计数器采样与调用栈">8. perf：硬件计数器、采样与调用栈</h1>
+<h2 id="81-perf-stat-先回答-cpu-在做什么">8.1 perf stat 先回答 CPU 在做什么</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">perf stat -p <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span> -- sleep <span class="m">10</span>
+</span></span></code></pre></div><p>常见指标：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">cycles
+</span></span><span class="line"><span class="cl">instructions
+</span></span><span class="line"><span class="cl">branches / branch-misses
+</span></span><span class="line"><span class="cl">cache-references / cache-misses
+</span></span><span class="line"><span class="cl">context-switches
+</span></span><span class="line"><span class="cl">cpu-migrations
+</span></span><span class="line"><span class="cl">page-faults
+</span></span></code></pre></div><p>IPC = instructions/cycle 可作线索：低 IPC可能是内存 stall、branch miss，也可能是 workload本身。虚拟化、频率、混合 CPU、counter multiplexing会影响解释。</p>
+<h2 id="82-perf-record-用采样近似热点">8.2 perf record 用采样近似热点</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">sudo perf record -F <span class="m">99</span> -g -p <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span> -- sleep <span class="m">30</span>
+</span></span><span class="line"><span class="cl">sudo perf report
+</span></span></code></pre></div><p>每秒约 99 次采样，记录当前 instruction pointer/调用栈；某函数占 30% samples，近似它占 30% on-CPU时间。采样避免每次函数事件都记录，开销可控，但短暂稀有事件可能没命中。</p>
+<p><code>-g</code> 的栈质量取决于 frame pointer、DWARF、ORC、JIT symbol和构建参数。Go 二进制通常有符号，但内联、runtime和版本会影响展示。</p>
+<h2 id="83-frequency-与-period">8.3 frequency 与 period</h2>
+<p>频率模式按目标 samples/s动态调整；period模式每 N 个事件采样。频率越高分辨率越好、开销越大。跨机器比较要记录配置、lost samples和counter可用性。</p>
+<h2 id="84-on-cpu-与-off-cpu">8.4 on-CPU 与 off-CPU</h2>
+<p>普通 CPU profile只采正在运行的线程，看不到“为什么睡了 900ms”。off-CPU分析在 schedule-out/in记录等待时长与阻塞栈，可发现锁、futex、IO、poll、sleep。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">on-CPU profile：CPU 时间花在哪
+</span></span><span class="line"><span class="cl"> off-CPU profile：线程未运行的 wall time 从哪里阻塞
+</span></span></code></pre></div><p>两者相加仍需注意 runnable但没获得 CPU、cgroup throttle等状态分类。</p>
+<h2 id="85-perf-权限">8.5 perf 权限</h2>
+<p><code>kernel.perf_event_paranoid</code>、kptr限制、capability和容器策略控制访问。硬件 PMU是共享资源，也曾涉及侧信道风险。应使用最小权限观测 agent，不要给业务容器通用特权。</p>
+<hr>
+<h1 id="9-ftracetracepointkprobe-与-uprobe">9. ftrace、tracepoint、kprobe 与 uprobe</h1>
+<h2 id="91-ftrace-最初为函数追踪而生">9.1 ftrace 最初为函数追踪而生</h2>
+<p>tracefs 常挂载于：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">/sys/kernel/tracing
+</span></span></code></pre></div><p>可配置 function/function_graph tracer、events、filters和trace buffer。它适合内核开发与短时现场调查，但错误地开启全内核函数图会产生巨大开销。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">sudo ls /sys/kernel/tracing/events
+</span></span><span class="line"><span class="cl">sudo cat /sys/kernel/tracing/available_tracers
+</span></span></code></pre></div><h2 id="92-tracepoint-是相对稳定的显式-hook">9.2 tracepoint 是相对稳定的显式 hook</h2>
+<p>内核子系统在重要事件定义 tracepoint：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">sched:sched_switch
+</span></span><span class="line"><span class="cl">sched:sched_wakeup
+</span></span><span class="line"><span class="cl">syscalls:sys_enter_*
+</span></span><span class="line"><span class="cl">block:block_rq_issue
+</span></span><span class="line"><span class="cl">block:block_rq_complete
+</span></span><span class="line"><span class="cl">net/netif events
+</span></span></code></pre></div><p>其格式可从 tracefs 查看。相比 kprobe探内部函数，tracepoint是内核维护的观测 ABI意图，字段仍可能演进但通常更稳定。</p>
+<h2 id="93-kprobe-动态挂内核函数">9.3 kprobe 动态挂内核函数</h2>
+<p>kprobe/kretprobe可在许多内核函数入口/返回附加处理，无需预先 tracepoint，覆盖广；但函数名、签名、内联和内部结构随内核版本变化。优化/安全补丁后脚本可能失效或更危险地读错字段。</p>
+<p>优先级通常是：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">已有高层 metric/counter
+</span></span><span class="line"><span class="cl">-&gt; stable tracepoint
+</span></span><span class="line"><span class="cl">-&gt; BTF-enabled typed tracing/fentry
+</span></span><span class="line"><span class="cl">-&gt; kprobe as compatibility/fallback
+</span></span></code></pre></div><h2 id="94-uprobe-观察用户态二进制">9.4 uprobe 观察用户态二进制</h2>
+<p>uprobe/uretprobe可挂 ELF 文件某符号/偏移，观察库函数或应用函数。PIE、ASLR、内联、strip、不同构建 ID和 Go ABI会使定位复杂。按路径挂 probe还要确认实际进程映射的是哪个 inode/version。</p>
+<p>应用已有 OpenTelemetry或语言 profiler时，优先使用语义稳定的 instrumentation；uprobe适合无法修改进程的临时调查。</p>
+<h2 id="95-tracepoint-事件也会淹没消费者">9.5 tracepoint 事件也会淹没消费者</h2>
+<p><code>sched_switch</code>、syscall等每秒可数百万。trace buffer有界，消费者慢会 overwrite/drop。必须按 PID/cgroup/CPU/event过滤、内核侧聚合或采样；“成功 attach”不表示数据完整。</p>
+<hr>
+<h1 id="10-ebpf-到底是什么">10. eBPF 到底是什么</h1>
+<h2 id="101-受限制程序在内核-hook-上运行">10.1 受限制程序在内核 hook 上运行</h2>
+<p>eBPF 是 Linux 内核中的指令集、验证器、运行时与多类 hook机制。用户态 loader 将程序加载，内核 verifier检查，通过后解释执行或 JIT为本机指令，再附加到事件点：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">userspace loader
+</span></span><span class="line"><span class="cl">  -&gt; bpf(BPF_PROG_LOAD)
+</span></span><span class="line"><span class="cl">  -&gt; verifier proves allowed properties
+</span></span><span class="line"><span class="cl">  -&gt; interpreter/JIT
+</span></span><span class="line"><span class="cl">  -&gt; attach to tracepoint/kprobe/fentry/XDP/tc/cgroup/LSM/...
+</span></span><span class="line"><span class="cl">  -&gt; event occurs
+</span></span><span class="line"><span class="cl">  -&gt; BPF program runs in kernel context
+</span></span></code></pre></div><p>它不仅用于观测，也用于网络、security policy、scheduler扩展等。本文聚焦只读/聚合观测路径。</p>
+<h2 id="102-ebpf-与内核模块不同">10.2 eBPF 与内核模块不同</h2>
+<p>内核模块是原生内核代码，错误可任意破坏内核；BPF 程序受 program type、helper白名单、verifier和 attach权限限制，不能随意调用内核函数或访问任意内存。</p>
+<p>这降低风险，不等于无风险：verifier/JIT/helper本身可能有漏洞；合法 BPF也能消耗 CPU/内存、泄露敏感数据或影响网络。许多环境限制 unprivileged BPF，只允许受信任 agent加载。</p>
+<h2 id="103-program-type-决定上下文与能力">10.3 program type 决定上下文与能力</h2>
+<p>示例：</p>
+<table>
+<thead>
+<tr>
+<th>类型/attach</th>
+<th>上下文</th>
+<th>常见用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>tracepoint/raw tracepoint</td>
+<td>内核事件字段</td>
+<td>调度、syscall、block trace</td>
+</tr>
+<tr>
+<td>kprobe/fentry</td>
+<td>内核函数</td>
+<td>深入内部路径</td>
+</tr>
+<tr>
+<td>uprobe</td>
+<td>用户函数</td>
+<td>无侵入应用观察</td>
+</tr>
+<tr>
+<td>perf event</td>
+<td>PMU/软件采样</td>
+<td>stack/profile</td>
+</tr>
+<tr>
+<td>XDP</td>
+<td>驱动早期 RX</td>
+<td>高速过滤/统计</td>
+</tr>
+<tr>
+<td>tc</td>
+<td>qdisc ingress/egress</td>
+<td>网络分类/改写/观测</td>
+</tr>
+<tr>
+<td>cgroup socket hooks</td>
+<td>cgroup网络事件</td>
+<td>容器网络策略/统计</td>
+</tr>
+<tr>
+<td>BPF LSM</td>
+<td>security hooks</td>
+<td>安全审计/策略</td>
+</tr>
+</tbody>
+</table>
+<p>同一 helper并非所有 type可用，因为执行上下文是否可睡眠、是否有 skb、是否允许修改数据不同。</p>
+<h2 id="104-helper-是受控系统调用面">10.4 helper 是受控系统调用面</h2>
+<p>BPF 程序通过 helper/kfunc执行 map lookup、取时间、读取受保护内存、输出事件、获取 PID/cgroup等。verifier根据参数类型追踪指针合法性。</p>
+<p>BPF 程序不能直接使用 libc，也不能任意阻塞。执行事件热路径时必须短小有界。</p>
+<hr>
+<h1 id="11-verifier为什么能进内核也为什么经常拒绝">11. Verifier：为什么能进内核，也为什么经常拒绝</h1>
+<h2 id="111-verifier-做静态状态探索">11.1 verifier 做静态状态探索</h2>
+<p>它分析控制流和每条路径，追踪寄存器/栈类型与范围，证明：</p>
+<ul>
+<li>无不可达或非法指令</li>
+<li>所有路径在允许范围内终止</li>
+<li>内存访问边界安全</li>
+<li>指针来源和偏移合法</li>
+<li>helper参数和 program type匹配</li>
+<li>map value/null检查正确</li>
+<li>栈和复杂度在限制内</li>
+</ul>
+<p>通过后意味着相对于 verifier模型满足这些安全条件，不意味着业务逻辑正确或开销小。</p>
+<h2 id="112-典型-null-check">11.2 典型 null check</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="n">u32</span> <span class="n">key</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="n">u64</span> <span class="o">*</span><span class="n">value</span> <span class="o">=</span> <span class="n">bpf_map_lookup_elem</span><span class="p">(</span><span class="o">&amp;</span><span class="n">counts</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">key</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">value</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="mi">0</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="n">__sync_fetch_and_add</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="mi">1</span><span class="p">);</span>
+</span></span></code></pre></div><p>lookup可返回 null；若未经分支检查就解引用，verifier拒绝。它会沿分支细化 <code>value</code> 类型。</p>
+<h2 id="113-循环必须可证明有界">11.3 循环必须可证明有界</h2>
+<p>早期 BPF几乎禁止循环；现代内核允许 bounded loop、BPF loop helper等，但 verifier必须证明上界或使用受控机制。按用户输入长度无界扫描字符串会被拒绝或造成巨大状态空间。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="cp">#pragma unroll
+</span></span></span><span class="line"><span class="cl"><span class="cp"></span><span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="mi">16</span><span class="p">;</span> <span class="n">i</span><span class="o">++</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// fixed upper bound
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span></code></pre></div><p>即使理论有界，复杂分支也可能触发 verifier complexity limit。应缩小状态、拆 tail call/subprogram、用 helper和固定边界。</p>
+<h2 id="114-verifier-log-是编译错误的一部分">11.4 verifier log 是编译错误的一部分</h2>
+<p>加载失败会返回 <code>EINVAL/EACCES</code> 等，真正原因在 verifier log：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">invalid mem access &#39;scalar&#39;
+</span></span><span class="line"><span class="cl">R1 type=scalar expected=ctx
+</span></span><span class="line"><span class="cl">math between map_value pointer and unbounded register
+</span></span></code></pre></div><p>libbpf/bpftool可输出日志。不要用反复加权限掩盖 verifier错误；权限失败和程序证明失败是不同问题。</p>
+<h2 id="115-verifier-不能证明什么">11.5 verifier 不能证明什么</h2>
+<p>它不保证：</p>
+<ul>
+<li>metric定义正确</li>
+<li>事件不会漏</li>
+<li>map key基数有界</li>
+<li>每事件程序足够快</li>
+<li>用户态 consumer跟得上</li>
+<li>attach点跨内核语义稳定</li>
+<li>没有隐私泄露</li>
+<li>多 CPU 更新符合你想要的一致性</li>
+</ul>
+<p>“verifier通过”是内核安全准入，不是生产质量认证。</p>
+<hr>
+<h1 id="12-mapsbpf-程序的状态与用户态接口">12. Maps：BPF 程序的状态与用户态接口</h1>
+<h2 id="121-为什么程序需要-map">12.1 为什么程序需要 map</h2>
+<p>BPF 程序栈很小、事件执行短暂。map保存跨事件状态并让用户态读写：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">hook event
+</span></span><span class="line"><span class="cl">  -&gt; key = PID/cgroup/stack/device
+</span></span><span class="line"><span class="cl">  -&gt; map lookup/update aggregate
+</span></span><span class="line"><span class="cl">userspace periodically reads map
+</span></span><span class="line"><span class="cl">  -&gt; exports histogram/top stacks
+</span></span></code></pre></div><p>常见类型：hash、array、per-CPU hash/array、LRU hash、stack trace、ring buffer、perf event array、queue/stack、map-in-map。</p>
+<h2 id="122-per-cpu-map-避免热锁">12.2 per-CPU map 避免热锁</h2>
+<p>全局 counter被所有 CPU原子更新会 cache line bouncing。per-CPU map为每 CPU保存 value：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">CPU0 count 100
+</span></span><span class="line"><span class="cl">CPU1 count 120
+</span></span><span class="line"><span class="cl">CPU2 count 80
+</span></span><span class="line"><span class="cl">userspace sum = 300
+</span></span></code></pre></div><p>更新快，但读取要聚合；CPU hotplug、内存占用和瞬时一致性要考虑。适合统计，不适合要求每次更新全局严格顺序的状态机。</p>
+<h2 id="123-hash-map-的-cardinality-仍需限制">12.3 hash map 的 cardinality 仍需限制</h2>
+<p>按 PID、IP、path或完整 stack建 key，条目可快速增长。普通 hash达到 max_entries后更新失败；LRU会淘汰旧项，却让计数变成近似且可能偏向热点。</p>
+<p>程序要统计 update failure/eviction，并设计 key规范化、top-K、sketch或采样。BPF map内存会被锁定/记账并受资源限制，不能当无限内核数据库。</p>
+<h2 id="124-map-pinning-延长生命周期">12.4 map pinning 延长生命周期</h2>
+<p>map/program可 pin 到 bpffs：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">/sys/fs/bpf/...
+</span></span></code></pre></div><p>这样 loader退出后对象仍有引用，多个进程共享状态或平滑升级。代价是 stale pinned对象、schema/version不匹配和权限管理。agent启动时应核对 map type/key/value/BTF schema，不要盲目复用同名路径。</p>
+<h2 id="125-并发与一致性">12.5 并发与一致性</h2>
+<p>BPF map API提供各类型定义的原子性，不代表多个字段复合更新是事务。读者可能看到部分时间点数据；可使用 per-CPU、spin lock（允许的 map value/program type）、sequence/generation或双 buffer设计。</p>
+<p>观测统计通常接受最终一致；不要为“精确”在热路径加全局锁，反而改变系统。</p>
+<hr>
+<h1 id="13-从内核把事件送回用户态">13. 从内核把事件送回用户态</h1>
+<h2 id="131-每事件输出与内核聚合">13.1 每事件输出与内核聚合</h2>
+<p>两个方案：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">A. 每个 syscall 输出一条事件
+</span></span><span class="line"><span class="cl">   信息细，但高频时 CPU/带宽/丢失巨大
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">B. 内核 map 按 key累计 count/sum/histogram
+</span></span><span class="line"><span class="cl">   信息压缩，开销小，但失去单事件细节
+</span></span></code></pre></div><p>默认应聚合。只对错误、慢事件或采样事件输出详情。</p>
+<h2 id="132-perf-buffer">13.2 perf buffer</h2>
+<p>传统 BPF perf event array按 CPU提供 buffer；程序输出 sample，用户态 poll各 CPU ring。它成熟广泛，但事件跨 CPU全局排序需用户态按 timestamp处理，buffer配置和CPU映射较繁琐。</p>
+<h2 id="133-bpf-ring-buffer">13.3 BPF ring buffer</h2>
+<p>BPF ringbuf提供跨 CPU共享 ring，可保留 reservation提交顺序并改善内存利用：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="k">struct</span> <span class="n">event</span> <span class="o">*</span><span class="n">e</span> <span class="o">=</span> <span class="n">bpf_ringbuf_reserve</span><span class="p">(</span><span class="o">&amp;</span><span class="n">events</span><span class="p">,</span> <span class="k">sizeof</span><span class="p">(</span><span class="o">*</span><span class="n">e</span><span class="p">),</span> <span class="mi">0</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">e</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// increment drop counter
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">return</span> <span class="mi">0</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="n">e</span><span class="o">-&gt;</span><span class="n">pid</span> <span class="o">=</span> <span class="p">...;</span>
+</span></span><span class="line"><span class="cl"><span class="n">e</span><span class="o">-&gt;</span><span class="n">ts</span> <span class="o">=</span> <span class="n">bpf_ktime_get_ns</span><span class="p">();</span>
+</span></span><span class="line"><span class="cl"><span class="n">bpf_ringbuf_submit</span><span class="p">(</span><span class="n">e</span><span class="p">,</span> <span class="mi">0</span><span class="p">);</span>
+</span></span></code></pre></div><p>reserve失败必须记 drop；用户态消费慢时不能阻塞内核热路径等待。ring大小吸收短 burst，无法解决持续生产大于消费。</p>
+<h2 id="134-变长事件与隐私">13.4 变长事件与隐私</h2>
+<p>捕获命令行、路径、DNS、payload容易产生变长数据、截断和敏感信息。最好只采固定上限和必要字段，标记 truncated；网络 payload/SQL全文默认不采。内核侧过滤后数据一旦送出，权限和保留同样重要。</p>
+<h2 id="135-丢事件是数据的一部分">13.5 丢事件是数据的一部分</h2>
+<p>每个 pipeline都应暴露：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">reserve/output failures
+</span></span><span class="line"><span class="cl">kernel buffer overruns
+</span></span><span class="line"><span class="cl">userspace decode errors
+</span></span><span class="line"><span class="cl">queue drops
+</span></span><span class="line"><span class="cl">export failures
+</span></span><span class="line"><span class="cl">sampling probability
+</span></span><span class="line"><span class="cl">attach/detach state
+</span></span></code></pre></div><p>报告结果时写“在 drop rate 0.2%、1:100采样下观察到”，而不是假装完整事实。</p>
+<hr>
+<h1 id="14-btf-与-co-re跨内核版本的现实方案">14. BTF 与 CO-RE：跨内核版本的现实方案</h1>
+<h2 id="141-内核内部结构会变">14.1 内核内部结构会变</h2>
+<p>直接假定：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="k">struct</span> <span class="n">task_struct</span> <span class="o">+</span> <span class="n">fixed</span> <span class="n">offset</span> <span class="o">-&gt;</span> <span class="n">field</span>
+</span></span></code></pre></div><p>在另一个内核配置/版本可能读错。发行版 backport还让 release string相同也可能结构不同。过去 BCC常在目标机用 kernel headers即时编译，部署依赖重。</p>
+<h2 id="142-btf-提供类型元数据">14.2 BTF 提供类型元数据</h2>
+<p>BTF（BPF Type Format）描述内核/程序类型、字段和函数信息，常由 <code>/sys/kernel/btf/vmlinux</code> 暴露。loader可据此做重定位、pretty print和typed attach。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">ls -l /sys/kernel/btf/vmlinux
+</span></span><span class="line"><span class="cl">bpftool btf dump file /sys/kernel/btf/vmlinux format c <span class="p">|</span> less
+</span></span></code></pre></div><p>不是所有内核都启用完整 BTF，容器还需能访问宿主对应信息。</p>
+<h2 id="143-co-re-在加载时重定位">14.3 CO-RE 在加载时重定位</h2>
+<p>Compile Once – Run Everywhere：BPF object编译时保留字段访问重定位，libbpf在目标内核加载时用 BTF解析实际字段 offset/存在性：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">compile against vmlinux.h
+</span></span><span class="line"><span class="cl">  -&gt; ELF + BTF + CO-RE relocations
+</span></span><span class="line"><span class="cl">load on target
+</span></span><span class="line"><span class="cl">  -&gt; compare target BTF
+</span></span><span class="line"><span class="cl">  -&gt; relocate field accesses
+</span></span></code></pre></div><p>它解决结构布局差异，不保证 hook语义、字段含义或 helper/program type在所有内核都相同。程序仍需 feature detection与 fallback。</p>
+<h2 id="144-fentryfexit">14.4 fentry/fexit</h2>
+<p>基于 BTF 的 fentry/fexit可直接附加到支持的内核函数入口/退出，参数类型明确，通常比 kprobe开销低、可靠性好。但函数是否存在、允许 tracing、发行版配置仍需探测。</p>
+<h2 id="145-feature-probe-不要只看-uname">14.5 feature probe 不要只看 uname</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">bpftool feature probe
+</span></span><span class="line"><span class="cl">bpftool prog <span class="nb">help</span>
+</span></span><span class="line"><span class="cl">bpftool map <span class="nb">help</span>
+</span></span></code></pre></div><p>权限不足会让 feature probe看似“不支持”。agent应区分：内核未配置、权限策略禁止、BTF缺失、helper/type不支持、attach目标不存在，并选择 tracepoint/kprobe等fallback或明确禁用功能。</p>
+<hr>
+<h1 id="15-一个观测程序的典型设计">15. 一个观测程序的典型设计</h1>
+<p>目标：统计每个 cgroup 中超过 10ms 的 block IO，并按延迟 bucket聚合。</p>
+<h2 id="151-在-issue-时保存开始状态">15.1 在 issue 时保存开始状态</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">key: request identity
+</span></span><span class="line"><span class="cl">value: timestamp, cgroup, device, bytes, op
+</span></span></code></pre></div><p>在 <code>block_rq_issue</code> 写 map；在 <code>block_rq_complete</code> lookup并计算 delta，随后 delete。</p>
+<h2 id="152-在-complete-时聚合">15.2 在 complete 时聚合</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">delta = complete_ts - issue_ts
+</span></span><span class="line"><span class="cl">bucket = log2(delta_us)
+</span></span><span class="line"><span class="cl">key = cgroup_id + device + op + bucket
+</span></span><span class="line"><span class="cl">per-CPU counter++
+</span></span></code></pre></div><p>只对 delta &gt; 10ms 的少量事件可选输出 ring buffer，携带 stack/request metadata。</p>
+<h2 id="153-必须处理生命周期异常">15.3 必须处理生命周期异常</h2>
+<ul>
+<li>issue没看到，complete才 attach：lookup miss</li>
+<li>map满：issue insert失败</li>
+<li>request identity复用/merge/requeue：语义需按 tracepoint定义</li>
+<li>detach时仍有 in-flight entry</li>
+<li>cgroup删除/ID复用或路径解析延迟</li>
+<li>用户态读 map期间数据继续更新</li>
+<li>buffer丢慢事件</li>
+</ul>
+<p>观测工具若不暴露这些 uncertainty，会给出精确数字的错觉。</p>
+<h2 id="154-输出-schema">15.4 输出 schema</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">window_start/end
+</span></span><span class="line"><span class="cl">kernel boot ID
+</span></span><span class="line"><span class="cl">agent version / BPF object build ID
+</span></span><span class="line"><span class="cl">attach points
+</span></span><span class="line"><span class="cl">filter scope (cgroup/PID/device)
+</span></span><span class="line"><span class="cl">sampling config
+</span></span><span class="line"><span class="cl">map insert miss / ring drop
+</span></span><span class="line"><span class="cl">histogram counts
+</span></span><span class="line"><span class="cl">slow-event samples
+</span></span></code></pre></div><p>可复现性与数据本身同样重要。</p>
+<hr>
+<h1 id="16-调度观测慢请求为何没获得-cpu">16. 调度观测：慢请求为何没获得 CPU</h1>
+<h2 id="161-三种不在-cpu-上">16.1 三种“不在 CPU 上”</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">sleeping：等待 IO/futex/timer，当前不可运行
+</span></span><span class="line"><span class="cl">runnable：已经可运行，但在 run queue等 CPU
+</span></span><span class="line"><span class="cl">throttled：cgroup quota耗尽，即使 CPU空闲也受限
+</span></span></code></pre></div><p>只看 wall time或 goroutine blocked不能区分。</p>
+<h2 id="162-run-queue-latency">16.2 run queue latency</h2>
+<p>在 <code>sched_wakeup</code> 记录 task变为 runnable的时间，在 <code>sched_switch</code> 真正切入时计算：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">runqlat = on_cpu_ts - wakeup_ts
+</span></span></code></pre></div><p>按 PID/cgroup/CPU bucket聚合。高 runqlat可能来自 CPU饱和、affinity/cpuset、优先级、softirq或 quota；需结合 <code>cpu.stat</code>/PSI。</p>
+<h2 id="163-off-cpu-stack">16.3 off-CPU stack</h2>
+<p>schedule-out时记录用户/内核栈和 timestamp，schedule-in时累计 duration：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">futex wait stack -&gt; 40% off-CPU
+</span></span><span class="line"><span class="cl">epoll wait stack -&gt; 35% (possibly healthy idle)
+</span></span><span class="line"><span class="cl">disk read stack -&gt; 20%
+</span></span></code></pre></div><p><code>epoll_wait</code>占比高对空闲事件循环是健康，不应“优化掉”。profile必须限定故障请求/繁忙窗口并理解栈语义。</p>
+<h2 id="164-wakerwakee-因果">16.4 waker/wakee 因果</h2>
+<p>仅知道线程等 100ms，还可追谁唤醒它：网络 softirq、锁释放者、timer或另一个 goroutine所在 M。完整因果追踪成本高，可只对长等待采样并关联 task ID、cgroup与 stack。</p>
+<h2 id="165-go-调度与-linux-调度是两层">16.5 Go 调度与 Linux 调度是两层</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Go G runnable -&gt; 等 P/M（runtime run queue）
+</span></span><span class="line"><span class="cl">M runnable    -&gt; 等 Linux CPU（kernel run queue）
+</span></span><span class="line"><span class="cl">cgroup        -&gt; 可能 throttle整个进程
+</span></span></code></pre></div><p>Go trace看到 G调度延迟，不自动知道 M为何没获得 CPU；eBPF/perf看到 OS thread，不自动知道其当前 G。通过 thread ID、runtime labels/uprobes和时间对齐可关联，但版本/开销复杂。通常先分别证明哪一层，再做深度关联。</p>
+<hr>
+<h1 id="17-网络观测包socket-与请求三种层级">17. 网络观测：包、socket 与请求三种层级</h1>
+<h2 id="171-接口-counter">17.1 接口 counter</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">ip -s link
+</span></span><span class="line"><span class="cl">ethtool -S eth0
+</span></span><span class="line"><span class="cl">nstat -az
+</span></span><span class="line"><span class="cl">ss -s
+</span></span></code></pre></div><p>低成本回答包/字节、driver drop、retrans/listen overflow等，适合持续监控。</p>
+<h2 id="172-包级-capture">17.2 包级 capture</h2>
+<p><code>tcpdump</code>/AF_PACKET观察 hook位置的 packet：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">sudo tcpdump -ni eth0 <span class="s1">&#39;host 203.0.113.20 and tcp port 443&#39;</span>
+</span></span></code></pre></div><p>它能看握手、重传、window、RST，但 TLS payload不可见，GRO/TSO/checksum offload会改变主机观察形态。高流量全包 capture开销和隐私风险大。</p>
+<h2 id="173-socket级-ebpf">17.3 socket级 eBPF</h2>
+<p>可在 TCP state、retransmit、accept/connect、send/recv相关 tracepoint/kprobe上按 cgroup/socket cookie聚合：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">connect latency histogram
+</span></span><span class="line"><span class="cl">TCP RTT/retrans by destination prefix
+</span></span><span class="line"><span class="cl">accept queue drops
+</span></span><span class="line"><span class="cl">socket lifetime and bytes
+</span></span><span class="line"><span class="cl">zero-window duration
+</span></span></code></pre></div><p>socket cookie比 fd稳定，因为 fd是进程局部且复用；cookie本身也有生命周期，关联用户 request仍需应用 context。</p>
+<h2 id="174-httpl7-自动观测的边界">17.4 HTTP/L7 自动观测的边界</h2>
+<p>BPF可通过 uprobes、socket buffer或 TLS library hooks尝试重建 HTTP，但面临：</p>
+<ul>
+<li>TLS加密，内核只看密文</li>
+<li>HTTP/2多路复用，一条连接多 stream</li>
+<li>user-space networking/QUIC</li>
+<li>library版本/静态链接/Go ABI变化</li>
+<li>分段与partial IO</li>
+<li>payload隐私和高成本</li>
+</ul>
+<p>因此“零代码自动全链路 tracing”需要明确支持矩阵和fallback，不能承诺所有语言/协议透明准确。</p>
+<h2 id="175-xdp-统计的位置">17.5 XDP 统计的位置</h2>
+<p>XDP在驱动早期、通常 skb构造前运行，适合高 pps drop/redirect和轻量统计。它看到的是非常早期包：后续 firewall、routing、TCP socket和应用结果尚未知。XDP drop计数不能直接等同应用拒绝；不同层 metric需标注 hook位置。</p>
+<hr>
+<h1 id="18-io-与文件系统观测">18. IO 与文件系统观测</h1>
+<h2 id="181-应用延迟与设备延迟不是一回事">18.1 应用延迟与设备延迟不是一回事</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">read syscall
+</span></span><span class="line"><span class="cl">  -&gt; page cache hit：无设备 IO
+</span></span><span class="line"><span class="cl">  -&gt; page fault/readahead
+</span></span><span class="line"><span class="cl">  -&gt; filesystem
+</span></span><span class="line"><span class="cl">  -&gt; block queue
+</span></span><span class="line"><span class="cl">  -&gt; device
+</span></span></code></pre></div><p><code>iostat await</code>只覆盖进入设备的请求；应用可能卡 inode lock、page cache reclaim、journal、cgroup IO throttle。反过来设备忙，应用读若全命中 cache也未受影响。</p>
+<h2 id="182-block-tracepoint">18.2 block tracepoint</h2>
+<p>issue/complete可计算设备服务/队列相关延迟，按 device/op/bytes/cgroup聚合。merge会让应用 IO与block request不是一一对应；NVMe并行下“队列深”未必坏。</p>
+<h2 id="183-vfsfilesystem-probes">18.3 VFS/filesystem probes</h2>
+<p>可观测 open/read/write/fsync、writeback、reclaim、ext4/xfs tracepoint。但 kprobe内部 VFS函数受内核版本影响，先使用稳定 tracepoint和应用 syscall metric。</p>
+<h2 id="184-fsync-延迟要关联业务提交">18.4 fsync 延迟要关联业务提交</h2>
+<p>数据库 commit latency可能包括 group commit等待、WAL lock、write、filesystem journal和device flush。只见 block flush 5ms不能解释事务 100ms；trace需要从应用 span到 syscall/block时间窗逐层对齐。</p>
+<hr>
+<h1 id="19-go-服务的观测基线">19. Go 服务的观测基线</h1>
+<h2 id="191-runtime-metrics">19.1 Runtime metrics</h2>
+<p>Go 应持续导出有限集合：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">goroutines
+</span></span><span class="line"><span class="cl">GOMAXPROCS
+</span></span><span class="line"><span class="cl">heap live / goal / released
+</span></span><span class="line"><span class="cl">allocation bytes/objects rate
+</span></span><span class="line"><span class="cl">GC cycles, pause, assist CPU
+</span></span><span class="line"><span class="cl">mutex/block profile samples（按需）
+</span></span><span class="line"><span class="cl">process CPU/RSS/fd/thread
+</span></span></code></pre></div><p><code>runtime/metrics</code> 的 key和含义随 Go版本演进，collector要标记 runtime version。不要把全部 runtime metric无筛选暴露为长期高成本 dashboard。</p>
+<h2 id="192-pprof-要保护">19.2 pprof 要保护</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">/debug/pprof/profile
+</span></span><span class="line"><span class="cl">/debug/pprof/heap
+</span></span><span class="line"><span class="cl">/debug/pprof/goroutine
+</span></span><span class="line"><span class="cl">/debug/pprof/trace
+</span></span></code></pre></div><p>它们可能暴露函数名、路径、参数/内存线索并消耗 CPU；execution trace尤其可产生较大数据。应绑定管理网络/localhost、认证授权、限时采集，绝不无保护暴露公网。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">curl -o cpu.pprof <span class="s1">&#39;http://127.0.0.1:6060/debug/pprof/profile?seconds=30&#39;</span>
+</span></span><span class="line"><span class="cl">go tool pprof -http<span class="o">=</span>:8081 cpu.pprof
+</span></span></code></pre></div><h2 id="193-mutexblock-profile-有采样率">19.3 Mutex/block profile 有采样率</h2>
+<p>开启：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="nx">runtime</span><span class="p">.</span><span class="nf">SetMutexProfileFraction</span><span class="p">(</span><span class="mi">10</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="nx">runtime</span><span class="p">.</span><span class="nf">SetBlockProfileRate</span><span class="p">(</span><span class="mi">1_000_000</span><span class="p">)</span>
+</span></span></code></pre></div><p>更高采样提高可见性也增加原子/栈采集开销。线上应按事故窗口动态开启、有自动关闭和记录配置。profile显示累计 contention，不同时间窗/采样率不能直接比较原始 count。</p>
+<h2 id="194-execution-trace-分辨-go-调度">19.4 execution trace 分辨 Go 调度</h2>
+<p>Go trace可看 goroutine creation/runnable/running、GC、syscall、network block、processor状态，适合短时间精细分析：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">curl -o trace.out <span class="s1">&#39;http://127.0.0.1:6060/debug/pprof/trace?seconds=5&#39;</span>
+</span></span><span class="line"><span class="cl">go tool trace trace.out
+</span></span></code></pre></div><p>5 秒在高并发程序也可能很大；trace本身有开销。结合 Linux <code>cpu.stat</code>、perf/eBPF调度数据区分 runtime与内核等待。</p>
+<h2 id="195-trace-context-与-log关联">19.5 trace context 与 log关联</h2>
+<p>在请求入口生成/接收 trace context，把 <code>trace_id/span_id</code> 写入结构化 error log，不应放 metric label。profile可用时间、版本、instance、cgroup关联；若使用 runtime labels，要评估 profile cardinality和开销。</p>
+<h2 id="196-版本与部署维度">19.6 版本与部署维度</h2>
+<p>每个信号应至少能按 service、environment、region、version/build、instance/cgroup聚合。部署 marker是最便宜的因果线索之一：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">P99 上升时间 = version rollout 30%
+</span></span><span class="line"><span class="cl">只有新 build 的 alloc profile增长
+</span></span><span class="line"><span class="cl">rollback 后恢复
+</span></span></code></pre></div><p>但相关不等于因果，还要检查流量迁移、节点类型和缓存冷启动。</p>
+<hr>
+<h1 id="20-采样成本与偏差的明确交换">20. 采样：成本与偏差的明确交换</h1>
+<h2 id="201-head-sampling">20.1 Head sampling</h2>
+<p>请求开始时随机决定是否采整条 trace：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">sample probability = 1%
+</span></span></code></pre></div><p>简单、一致、开销可控；但稀有错误如果总体很少可能完全漏掉。可按入口/租户/operation调整，仍须避免用户可操控采样制造成本。</p>
+<h2 id="202-tail-sampling">20.2 Tail sampling</h2>
+<p>先暂存 span，trace结束后依据结果/延迟决定：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">保留所有 error
+</span></span><span class="line"><span class="cl">保留 duration &gt; 1s
+</span></span><span class="line"><span class="cl">正常请求随机 0.1%
+</span></span></code></pre></div><p>更容易保留异常，但 collector需缓存完整 trace、处理迟到/缺失 span，成本和故障面更大。压力时 buffer drop可能恰好丢最慢 trace。</p>
+<h2 id="203-采样后不能直接数事件">20.3 采样后不能直接数事件</h2>
+<p>若每个请求以概率 p独立采样，可用权重 1/p估计总量，但 adaptive/tail sampling让概率依赖结果；查询必须知道策略。错误 trace全部保留、正常只留0.1%，不能拿样本中错误占比当真实错误率。错误率应来自无偏 counter。</p>
+<h2 id="204-coordinated-omission">20.4 Coordinated omission</h2>
+<p>负载生成器若每个响应结束才发下一请求，系统卡住时也停止发压，最差排队延迟不被测到，称 coordinated omission。生产 histogram也可能只记录成功完成请求，超时/丢弃没有 duration。</p>
+<p>应分别统计 timeout/reject、arrival与completion，并让压测按预定到达率发送或使用修正方法。</p>
+<h2 id="205-observer-effect">20.5 Observer effect</h2>
+<p>开启 debug logging、1000Hz profile、全 syscall trace或大 BPF event可能改变锁、缓存、调度和网络。每次采集记录：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">tool/version/config
+</span></span><span class="line"><span class="cl">scope/filter
+</span></span><span class="line"><span class="cl">start/end
+</span></span><span class="line"><span class="cl">CPU/memory/output overhead
+</span></span><span class="line"><span class="cl">dropped/lost
+</span></span></code></pre></div><p>先 staging压测开销，生产逐级升采样，必要时设 kill switch。</p>
+<hr>
+<h1 id="21-时间没有共同时间轴就没有因果">21. 时间：没有共同时间轴就没有因果</h1>
+<h2 id="211-realtime-与-monotonic">21.1 realtime 与 monotonic</h2>
+<ul>
+<li>wall/realtime：用于跨机器日历时间，可被 NTP step/人工调整</li>
+<li>monotonic：从启动起单调递增，适合本机 duration</li>
+<li>boot time：可能包含 suspend语义差异</li>
+<li>TSC/硬件 cycle：高精度但换算/同步依平台</li>
+</ul>
+<p>BPF常用 <code>bpf_ktime_get_ns()</code> 得到单调时间；应用日志使用 wall clock。关联时需要采集两者映射或由 agent统一转换，并记录 boot ID。</p>
+<h2 id="212-ntp-不保证完全相等">21.2 NTP 不保证完全相等</h2>
+<p>机器间几十毫秒偏差就可能让“响应早于请求”。分布式 trace的父子关系提供逻辑因果，duration应由本机 monotonic测量；跨主机 timestamp仍需时间同步监控。</p>
+<h2 id="213-时钟回拨与-histogram">21.3 时钟回拨与 histogram</h2>
+<p>用 wall time计算 duration可能得到负数/巨峰。Go <code>time.Time</code> 在同进程常携带 monotonic component，但序列化后通常只剩 wall time。RPC传递绝对 deadline要考虑时钟语义，常传 timeout budget并在每 hop递减。</p>
+<h2 id="214-boot-id-与-pid复用">21.4 boot ID 与 PID复用</h2>
+<p>内核 monotonic timestamp、PID、socket cookie等只在一定生命周期内唯一。事件 schema加入 machine ID/boot ID、PID namespace/cgroup、process start time，防止重启后误关联同 PID。</p>
+<hr>
+<h1 id="22-ebpf-安全权限与供应链">22. eBPF 安全、权限与供应链</h1>
+<h2 id="221-加载-bpf-是高权限操作">22.1 加载 BPF 是高权限操作</h2>
+<p>现代内核把能力拆为 <code>CAP_BPF</code>、<code>CAP_PERFMON</code> 等，但具体 attach仍可能需要 <code>CAP_NET_ADMIN</code>、<code>CAP_SYS_ADMIN</code>或 LSM许可，取决于内核/程序类型。容器内加载还受 user namespace、seccomp、bpffs/BTF挂载影响。</p>
+<p>不要给每个业务容器 privileged以便观测。常见架构是节点级受信任 agent，用 cgroup/container metadata限定范围，并通过受认证控制面提供结果。</p>
+<h2 id="222-unprivileged-bpf">22.2 unprivileged BPF</h2>
+<p>许多发行版禁用或限制非特权 BPF，因为 verifier/JIT攻击面和侧信道风险。检查：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">sysctl kernel.unprivileged_bpf_disabled
+</span></span></code></pre></div><p>不要为了运行一个工具在生产临时全局放开；使用受审计 agent、最小 capability或离线环境。</p>
+<h2 id="223-bpf-object也是供应链代码">22.3 BPF object也是供应链代码</h2>
+<p>预编译 <code>.o</code>、container image、loader和脚本都能在高权限 agent中运行。需要：</p>
+<ul>
+<li>固定来源、签名/哈希与版本</li>
+<li>review BPF与用户态代码</li>
+<li>最小 map/program权限</li>
+<li>记录 attach目标和变更</li>
+<li>可回滚/自动 detach</li>
+<li>与内核支持矩阵测试</li>
+</ul>
+<p>“eBPF受 verifier保护”不能保证恶意合法程序不采集 secret或丢包。</p>
+<h2 id="224-bpffs-与-map权限">22.4 bpffs 与 map权限</h2>
+<p>pinned map/program是内核对象入口。错误 filesystem permission可能让其他进程读取敏感事件、修改策略 map或替换 link。将 bpffs目录按 agent隔离，避免业务用户可写。</p>
+<h2 id="225-观测与执行分离">22.5 观测与执行分离</h2>
+<p>只读统计程序尽量不使用能 override return、redirect/drop packet或写内核状态的 attach/helper。平台应区分 observability profile与 enforcement profile，审批和 blast radius不同。</p>
+<hr>
+<h1 id="23-常用-ebpf-工具与使用边界">23. 常用 eBPF 工具与使用边界</h1>
+<h2 id="231-bpftrace">23.1 bpftrace</h2>
+<p>一行脚本适合交互调查：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">sudo bpftrace -e <span class="s1">&#39;
+</span></span></span><span class="line"><span class="cl"><span class="s1">tracepoint:syscalls:sys_enter_openat
+</span></span></span><span class="line"><span class="cl"><span class="s1">/comm == &#34;myserver&#34;/
+</span></span></span><span class="line"><span class="cl"><span class="s1">{ @[comm] = count(); }
+</span></span></span><span class="line"><span class="cl"><span class="s1">interval:s:10 { print(@); clear(@); }&#39;</span>
+</span></span></code></pre></div><p>优点是快速；缺点是生产脚本版本、BTF/tracepoint兼容、map基数和开销容易失控。脚本也需要代码 review和 timeout。</p>
+<h2 id="232-bcc-tools">23.2 BCC tools</h2>
+<p>BCC提供 execsnoop、opensnoop、biolatency、runqlat、offcputime、tcpconnect等经典工具，常在目标机编译 BPF C，依赖 headers/LLVM/Python环境。发行版打包能降低门槛；CO-RE工具更适合轻量部署。</p>
+<h2 id="233-libbpfbpftool">23.3 libbpf/bpftool</h2>
+<p>libbpf负责 BPF ELF、CO-RE relocation、map/program/link生命周期；bpftool用于 feature、prog/map/link/net/btf查看：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">sudo bpftool prog list
+</span></span><span class="line"><span class="cl">sudo bpftool map list
+</span></span><span class="line"><span class="cl">sudo bpftool link list
+</span></span><span class="line"><span class="cl">sudo bpftool feature probe
+</span></span></code></pre></div><p>列表可能包含安全/网络策略程序，不要为“清理测试”随意 detach或删除 pinned对象。</p>
+<h2 id="234-先问现成工具能否回答">23.4 先问现成工具能否回答</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">CPU hotspot -&gt; perf/pprof
+</span></span><span class="line"><span class="cl">syscall错误 -&gt; strace过滤
+</span></span><span class="line"><span class="cl">IO latency distribution -&gt; biolatency/tracepoint
+</span></span><span class="line"><span class="cl">run queue latency -&gt; runqlat
+</span></span><span class="line"><span class="cl">TCP connect/retrans -&gt; tcpconnect/tcpretrans
+</span></span><span class="line"><span class="cl">文件打开 -&gt; opensnoop
+</span></span></code></pre></div><p>使用成熟工具比临时写 probe更不易犯语义/丢失错误。只有现成工具无法表达 filter/aggregation时再开发自定义程序。</p>
+<hr>
+<h1 id="24-一次完整调查p99-周期性跳到-100ms">24. 一次完整调查：P99 周期性跳到 100ms</h1>
+<h2 id="241-症状">24.1 症状</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">每 100ms 附近出现延迟台阶
+</span></span><span class="line"><span class="cl">平均 CPU 只有 2 cores
+</span></span><span class="line"><span class="cl">错误率低
+</span></span><span class="line"><span class="cl">数据库 trace正常
+</span></span><span class="line"><span class="cl">Go CPU profile无单一热点
+</span></span></code></pre></div><h2 id="242-从-metrics-建假设">24.2 从 metrics 建假设</h2>
+<ul>
+<li>HTTP histogram在 80–110ms出现峰</li>
+<li>cgroup <code>nr_throttled/throttled_usec</code> 同期增长</li>
+<li>CPU PSI上升</li>
+<li>runnable goroutine增加</li>
+</ul>
+<p>怀疑 CPU quota period throttling，而非数据库。</p>
+<h2 id="243-用-go-trace与调度观测验证">24.3 用 Go trace与调度观测验证</h2>
+<p>Go trace看到大量 G runnable却迟迟未运行；eBPF runqlat按 cgroup聚合显示 wakeup到on-CPU延迟；但普通 runqlat可能把 quota等待混在 run queue。读取 <code>cpu.max/cpu.stat</code>确认 8 个 M并行快速耗尽 quota。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">cpu.max = 200000 100000
+</span></span><span class="line"><span class="cl">GOMAXPROCS = 32
+</span></span><span class="line"><span class="cl">traffic burst -&gt; 8+ threads parallel
+</span></span><span class="line"><span class="cl">25ms左右耗尽200ms CPU budget
+</span></span><span class="line"><span class="cl">等待下个100ms period
+</span></span></code></pre></div><h2 id="244-修复与验证">24.4 修复与验证</h2>
+<p>可能动作：</p>
+<ul>
+<li>按实际 quota调整 GOMAXPROCS/并行 worker</li>
+<li>减少 burst分配/GC CPU</li>
+<li>提高或移除不合理 quota</li>
+<li>用 CPU weight而非硬 quota（若容量模型允许）</li>
+<li>限制入口并发，平滑工作</li>
+</ul>
+<p>对照实验观察 P99、throughput、throttle、runqlat、CPU成本，而不是只看到 throttled次数下降就宣布成功。</p>
+<h2 id="245-证据链的价值">24.5 证据链的价值</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">metric发现周期与范围
+</span></span><span class="line"><span class="cl">trace排除主要下游
+</span></span><span class="line"><span class="cl">Go trace证明 G runnable
+</span></span><span class="line"><span class="cl">cgroup counter证明 throttle
+</span></span><span class="line"><span class="cl">BPF scheduler数据证明 OS执行延迟
+</span></span><span class="line"><span class="cl">配置解释100ms周期
+</span></span><span class="line"><span class="cl">实验验证因果
+</span></span></code></pre></div><p>每个工具回答一个问题，没有一个“万能 eBPF dashboard”直接给根因。</p>
+<hr>
+<h1 id="25-建设可观测平台的原则">25. 建设可观测平台的原则</h1>
+<h2 id="251-默认低成本按需提高分辨率">25.1 默认低成本，按需提高分辨率</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">always on：RED/USE metrics、错误日志、低采样 trace/profile
+</span></span><span class="line"><span class="cl">incident：提高特定 service/route采样
+</span></span><span class="line"><span class="cl">focused：短时 BPF/perf/trace capture
+</span></span><span class="line"><span class="cl">postmortem：保留聚合、关键样本和配置，不保留无界原始流
+</span></span></code></pre></div><p>动态控制必须有权限、审计、自动过期和资源上限。</p>
+<h2 id="252-统一资源身份">25.2 统一资源身份</h2>
+<p>metric、log、trace、profile和BPF事件应共享稳定资源维度：service、namespace、pod/container、host、cgroup ID、version、region。PID和IP会复用/变化，不适合作为唯一长期身份。</p>
+<h2 id="253-schema治理">25.3 Schema治理</h2>
+<ul>
+<li>metric name/unit/type稳定</li>
+<li>label白名单与基数预算</li>
+<li>log字段类型和敏感分类</li>
+<li>trace semantic convention</li>
+<li>profile build ID/symbol保留</li>
+<li>BPF event version和drop字段</li>
+</ul>
+<p>没有 schema治理，团队会出现 <code>latency_ms</code> 实际单位秒、同名 counter语义不同、dashboard悄悄合并错误数据。</p>
+<h2 id="254-保留原始证据的平衡">25.4 保留原始证据的平衡</h2>
+<p>长期保存每个 event昂贵且有隐私风险。可保留：长期聚合趋势、中期错误/慢 trace、短期高分辨率滚动 buffer。事故触发时冻结前后窗口，类似 flight recorder。</p>
+<h2 id="255-观测系统也要降级">25.5 观测系统也要降级</h2>
+<p>collector/storage故障时，业务不能因为同步发 telemetry而阻塞。客户端队列有界，满时 drop低优先级数据并计数；critical audit采用独立可靠通道。日志写磁盘也需容量限制，防止观测填满业务盘。</p>
+<hr>
+<h1 id="26-线上排查命令">26. 线上排查命令</h1>
+<h2 id="261-先建立一分钟系统快照">26.1 先建立一分钟系统快照</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">date -Ins
+</span></span><span class="line"><span class="cl">uptime
+</span></span><span class="line"><span class="cl">vmstat <span class="m">1</span> <span class="m">10</span>
+</span></span><span class="line"><span class="cl">mpstat -P ALL <span class="m">1</span> <span class="m">10</span>
+</span></span><span class="line"><span class="cl">pidstat -u -w -d -p <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span> <span class="m">1</span> <span class="m">10</span>
+</span></span><span class="line"><span class="cl">iostat -xz <span class="m">1</span> <span class="m">10</span>
+</span></span><span class="line"><span class="cl">ss -s
+</span></span><span class="line"><span class="cl">cat /proc/pressure/cpu
+</span></span><span class="line"><span class="cl">cat /proc/pressure/memory
+</span></span><span class="line"><span class="cl">cat /proc/pressure/io
+</span></span></code></pre></div><p>记录命令运行的 namespace、host、PID/cgroup和时间。容器内工具可能看的是 namespace视图或缺少权限；节点视图与容器视图都要标注。</p>
+<h2 id="262-cpu-profile">26.2 CPU profile</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">sudo perf stat -p <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span> -- sleep <span class="m">10</span>
+</span></span><span class="line"><span class="cl">sudo perf record -F <span class="m">99</span> -g -p <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span> -- sleep <span class="m">30</span>
+</span></span><span class="line"><span class="cl">sudo perf report
+</span></span></code></pre></div><p>Go已有 pprof时优先语言 profile，内核/混合栈再用 perf。生产采样先评估 <code>perf_event_paranoid</code>和开销。</p>
+<h2 id="263-syscall调查">26.3 syscall调查</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">sudo timeout 10s strace -ff -c -p <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl">sudo timeout 10s strace -ff -ttT -p <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  -e <span class="nv">trace</span><span class="o">=</span>connect,accept4,read,write,fsync,futex
+</span></span></code></pre></div><p><code>timeout</code> 是安全边界，过滤输出；不要在超高 syscall rate下直接全量附加。</p>
+<h2 id="264-bpf对象状态">26.4 BPF对象状态</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">sudo bpftool feature probe
+</span></span><span class="line"><span class="cl">sudo bpftool prog list
+</span></span><span class="line"><span class="cl">sudo bpftool map list
+</span></span><span class="line"><span class="cl">sudo bpftool link list
+</span></span><span class="line"><span class="cl">mount <span class="p">|</span> grep -E <span class="s1">&#39;tracefs|bpf&#39;</span>
+</span></span></code></pre></div><p>只读列表也可能需要权限。不要删除不认识的程序/map/link，它可能属于 CNI、防火墙或安全 agent。</p>
+<h2 id="265-tracepoint存在性">26.5 Tracepoint存在性</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">sudo perf list <span class="s1">&#39;sched:*&#39;</span>
+</span></span><span class="line"><span class="cl">sudo ls /sys/kernel/tracing/events/sched
+</span></span><span class="line"><span class="cl">sudo cat /sys/kernel/tracing/events/sched/sched_switch/format
+</span></span></code></pre></div><p>字段以本机 format/BTF为准，脚本不要假定所有发行版相同。</p>
+<hr>
+<h1 id="27-常用命令知识点扩展">27. 常用命令知识点扩展</h1>
+<table>
+<thead>
+<tr>
+<th>命令/短参</th>
+<th>英文全称</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>perf stat</code></td>
+<td>statistics</td>
+<td>统计 PMU/软件事件</td>
+</tr>
+<tr>
+<td><code>perf record</code></td>
+<td>record samples</td>
+<td>记录采样数据</td>
+</tr>
+<tr>
+<td><code>perf -F</code></td>
+<td>frequency</td>
+<td>指定采样频率</td>
+</tr>
+<tr>
+<td><code>perf -g</code></td>
+<td>call graph</td>
+<td>采集调用栈</td>
+</tr>
+<tr>
+<td><code>strace -c</code></td>
+<td>summary</td>
+<td>汇总 syscall次数/时间</td>
+</tr>
+<tr>
+<td><code>strace -f</code></td>
+<td>follow forks</td>
+<td>跟踪线程/子进程</td>
+</tr>
+<tr>
+<td><code>strace -T</code></td>
+<td>syscall times</td>
+<td>显示 syscall耗时</td>
+</tr>
+<tr>
+<td><code>tcpdump -n</code></td>
+<td>numeric</td>
+<td>不解析地址/端口名称</td>
+</tr>
+<tr>
+<td><code>tcpdump -i</code></td>
+<td>interface</td>
+<td>选择接口</td>
+</tr>
+<tr>
+<td><code>bpftool prog</code></td>
+<td>BPF programs</td>
+<td>查看/管理 BPF程序</td>
+</tr>
+<tr>
+<td><code>bpftool map</code></td>
+<td>BPF maps</td>
+<td>查看/管理 map</td>
+</tr>
+<tr>
+<td><code>bpftool btf</code></td>
+<td>BPF Type Format</td>
+<td>检查 BTF类型信息</td>
+</tr>
+</tbody>
+</table>
+<p>场景配方：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 哪些进程在频繁 exec（工具存在且授权时）</span>
+</span></span><span class="line"><span class="cl">sudo timeout 30s execsnoop
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 块 IO 延迟分布</span>
+</span></span><span class="line"><span class="cl">sudo timeout 30s biolatency
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># run queue 延迟分布</span>
+</span></span><span class="line"><span class="cl">sudo timeout 30s runqlat
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 查看 Go 进程线程与调度</span>
+</span></span><span class="line"><span class="cl">pidstat -u -w -t -p <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span> <span class="m">1</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 当前机器是否有 vmlinux BTF</span>
+</span></span><span class="line"><span class="cl">stat /sys/kernel/btf/vmlinux
+</span></span></code></pre></div><p>BCC工具参数随版本变化，执行前用 <code>-h</code>；工具名存在不表示当前 kernel hook/headers/BTF兼容。</p>
+<hr>
+<h1 id="28-面试题">28. 面试题</h1>
+<p><strong>Q：Metrics、Logs、Traces、Profiles 分别最适合回答什么？</strong></p>
+<p>Metric用聚合时间序列回答何时、范围、趋势和SLO；log记录离散状态与错误上下文；trace串起一次请求跨组件的因果阶段；profile按调用栈聚合CPU、内存或等待。它们压缩维度不同，应由低成本信号定位范围，再用高分辨率信号验证假设。</p>
+<p><strong>Q：为什么不能对多个实例的 P99 求平均？</strong></p>
+<p>quantile不是可加统计量。每个实例流量和分布不同，平均P99既不等于合并全部请求后的P99，也可能掩盖大实例尾延迟。应合并可聚合histogram bucket后计算，或在支持的原生histogram上查询全局分位数。</p>
+<p><strong>Q：高基数为什么危险？</strong></p>
+<p>每个label组合会创建独立series/index key。把user ID、request ID、原始URL等放label会让内存、WAL、网络、索引和查询成本近乎无界。metric只用有界稳定维度；高基数上下文放受采样的trace/log并建立budget。</p>
+<p><strong>Q：RED 与 USE 方法有什么区别？</strong></p>
+<p>RED从请求服务看Rate、Errors、Duration，反映用户体验；USE对资源看Utilization、Saturation、Errors，定位容量/硬件层。通常先用RED发现哪类请求受影响，再沿依赖和USE检查CPU、内存、IO、网络、连接池等资源。</p>
+<p><strong>Q：strace 显示 read 用了 100ms，是否表示内核执行 read 代码用了 100ms？</strong></p>
+<p>不一定。它显示syscall入口到返回的wall time，线程可能在socket wait queue睡眠、等待IO/信号或调度。要区分on-CPU、sleeping、runnable和throttled，需结合perf/BPF off-CPU、sched trace、cgroup与资源指标。</p>
+<p><strong>Q：perf采样为何不是精确执行计数？</strong></p>
+<p>它按时间或硬件事件抽样instruction pointer，样本占比统计近似CPU时间；短函数/稀有事件可能漏采，stack unwinding、频率、PMU multiplex和符号影响结果。提高频率降低随机误差却增加开销，报告应包含配置和lost samples。</p>
+<p><strong>Q：tracepoint 与 kprobe 如何选择？</strong></p>
+<p>优先使用内核显式维护、语义相对稳定的tracepoint；没有合适事件再考虑BTF fentry/fexit或kprobe。kprobe可覆盖内部函数但函数名、签名、内联和结构随版本变化，需支持矩阵和fallback。</p>
+<p><strong>Q：eBPF verifier 保证什么？</strong></p>
+<p>它静态探索程序路径，验证终止性、内存边界、指针类型、helper参数、栈和复杂度等，阻止不符合执行模型的程序进入内核。它不保证统计语义正确、开销低、map基数有界、事件不丢或没有隐私泄露。</p>
+<p><strong>Q：为什么 eBPF 程序不能简单把每个事件都发到用户态？</strong></p>
+<p>syscall、调度、网络事件可达百万每秒，每事件复制会消耗CPU/内存带宽，ring满后丢失并扰动被测系统。应优先在per-CPU map聚合，只输出错误、慢事件或采样详情，并记录reserve/drop和sampling。</p>
+<p><strong>Q：per-CPU map 的优缺点是什么？</strong></p>
+<p>每CPU独立value避免跨核原子更新和cache line bouncing，适合高频counter/histogram；用户态要汇总所有CPU，内存按CPU倍增，读取不是全局瞬时事务，CPU hotplug也需处理。它优化统计，不适合全局严格顺序状态。</p>
+<p><strong>Q：BTF 与 CO-RE 解决什么？</strong></p>
+<p>BTF提供目标内核类型/字段元数据；CO-RE把BPF object中的字段访问在加载时按目标BTF重定位，使一次编译适配结构布局变化。它不保证函数/hook存在、helper可用或语义不变，仍需feature detection和fallback。</p>
+<p><strong>Q：BPF ring buffer 满了会怎样？</strong></p>
+<p>reserve失败，程序不能在内核热路径阻塞等消费者，只能丢事件或降级。工具必须累计drop并暴露给用户。增大ring只能吸收短burst，持续生产速率大于消费速率仍会满，应过滤、聚合或采样。</p>
+<p><strong>Q：如何用调度事件区分任务睡眠和等CPU？</strong></p>
+<p><code>sched_wakeup</code>标记任务变runnable，<code>sched_switch</code>切入时计算run queue latency；schedule-out/in duration结合阻塞栈得到off-CPU等待。再查cgroup <code>cpu.stat</code>识别quota throttle。sleeping、runnable、throttled都不在CPU，但根因不同。</p>
+<p><strong>Q：为什么 Go trace 与 Linux调度trace都需要？</strong></p>
+<p>Go调度器先在G-P-M层决定goroutine何时绑定OS thread；Linux再决定该thread何时上CPU，cgroup还可能throttle。Go trace能看到G runnable/GC/syscall，内核trace能看到M的run queue/CPU状态。任一层单独都可能把另一层等待当空白。</p>
+<p><strong>Q：Head sampling 与 tail sampling 的取舍？</strong></p>
+<p>head在请求开始决定，简单、低成本、传播一致，但可能漏稀有慢/错；tail先缓存trace，结束后保留error/slow，异常覆盖好但需要大缓存、处理迟到span，过载时可能丢数据。两者都需记录有效采样策略，不能用有偏样本算真实错误率。</p>
+<p><strong>Q：什么是 observer effect？</strong></p>
+<p>观测本身消耗CPU、锁、缓存、IO和网络，从而改变调度、延迟甚至竞态。全量strace/debug log/高频BPF输出尤其明显。应先低频聚合、窄过滤、短时采集，记录开销与drop并设置自动停止。</p>
+<p><strong>Q：为什么时间同步对观测重要？</strong></p>
+<p>跨机日志/span若wall clock偏差，会出现响应早于请求和错误因果；wall time还可回拨。duration应优先用本机monotonic，跨机靠trace逻辑关系和受监控NTP；BPF monotonic事件与应用wall日志关联需转换并带boot ID。</p>
+<p><strong>Q：为什么加载 eBPF 不应给业务容器 privileged？</strong></p>
+<p>加载/attach程序能观察敏感内核事件，某些类型还能改写/丢包；verifier只保证内存执行安全，不保证意图。privileged扩大设备、capability和宿主攻击面。应由受信任节点agent最小授权加载，按cgroup过滤并审计程序、map和输出。</p>
+<p><strong>Q：可观测平台故障时为什么不能阻塞业务？</strong></p>
+<p>若同步日志/trace exporter反压请求，telemetry后端故障会演变成业务故障。客户端应使用有界异步队列，满时按优先级丢弃并计数；审计等必须可靠的数据另走专用通道。观测系统自身要监控drop、lag和成本。</p>
+<hr>
+<h1 id="小结">小结</h1>
+<ul>
+<li>可观测性是从系统输出推断内部状态的能力；telemetry经过采样、聚合、传输和存储，每层都可能丢失，采集系统也必须自监控</li>
+<li>metrics适合趋势/SLO，logs适合事件上下文，traces适合跨组件因果，profiles适合调用栈资源归因；没有单一万能信号</li>
+<li>counter要算rate并处理reset，gauge会漏短峰，histogram bucket决定分位误差；P99不能跨实例求平均</li>
+<li>高基数是平台容量风险，metric label只用有界稳定维度，request/user/raw path放受控trace/log</li>
+<li>RED从请求体验定位症状，USE从资源利用、饱和、错误定位根因；告警应围绕SLO和可执行动作</li>
+<li><code>/proc</code>、sysstat提供低成本基线，strace回答syscall边界但扰动大，perf用采样找on-CPU热点，ftrace/tracepoint提供内核事件</li>
+<li>eBPF程序经verifier后在特定hook执行，通过helper和map保存/输出状态；verifier保证准入安全属性，不保证业务正确、低开销或数据完整</li>
+<li>per-CPU map适合热路径聚合，ring buffer只输出有价值样本；map满、ring drop、decode/export失败都必须成为结果的一部分</li>
+<li>BTF/CO-RE解决内核结构布局适配，fentry提高typed tracing可靠性，但hook语义和feature仍需运行时探测</li>
+<li>调度慢要区分sleeping、runnable和cgroup throttled；Go G调度与Linux M调度是两层，需要分别验证</li>
+<li>eBPF在网络/IO中能填补内核因果盲区，但hook位置决定语义，TLS、多路复用、offload和cache会限制“自动观测”</li>
+<li>采样必须说明概率与偏差，tail sampling不能用于直接计算真实错误率；时钟、boot ID和资源身份决定跨信号关联是否可信</li>
+<li>观测有observer effect与安全风险，应默认低成本、按需升分辨率、窄过滤、自动过期、最小权限并保护敏感数据</li>
+</ul>
+<p>下一篇讲 <strong>线上排查实战案例集</strong> —— 把 CPU quota、内存 OOM、磁盘 fsync、网络重传、DNS、连接池、锁竞争、fd 泄漏等症状放进完整事故时间线，用“现象—假设—证据—反证—修复—验证”的方式演示如何避免凭经验拍脑袋。</p>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2026-08-12</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/linux/">linux</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/linux/linux_39_%E7%BA%BF%E4%B8%8A%E6%8E%92%E6%9F%A5%E5%AE%9E%E6%88%98%E6%A1%88%E4%BE%8B%E9%9B%86/" class="prev" rel="prev" title="Linux-39 线上排查实战案例集：从症状到证据链"><i class="fas fa-angle-left fa-fw"></i>Linux-39 线上排查实战案例集：从症状到证据链</a>
+            <a href="/posts/linux/linux_37_init%E4%B9%8B%E4%BA%89systemd%E4%B8%BA%E4%BB%80%E4%B9%88%E8%B5%A2%E4%B9%9F%E8%A2%AB%E9%AA%82/" class="next" rel="next" title="Linux-37 init 之争：systemd 为什么赢也被骂">Linux-37 init 之争：systemd 为什么赢也被骂<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2026-08-12T05:00:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Linux-38 观测体系的设计与 eBPF：看见系统而不压垮系统"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

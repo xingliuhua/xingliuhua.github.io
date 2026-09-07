@@ -1,0 +1,870 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>Linux-30 文件系统与 inode 抽象的必然性 - xingliuhua博客</title><meta name="Description" content="路径为什么不是文件、dentry/inode/file 各自解决什么问题、页缓存为什么存在、日志文件系统的三种模式、fsync 到底保证什么、ext3 到 ext4 的 delayed allocation 事故，以及 O_DIRECT 为什么经常不是你想要的持久化。"><meta property="og:title" content="Linux-30 文件系统与 inode 抽象的必然性" />
+<meta property="og:description" content="路径为什么不是文件、dentry/inode/file 各自解决什么问题、页缓存为什么存在、日志文件系统的三种模式、fsync 到底保证什么、ext3 到 ext4 的 delayed allocation 事故，以及 O_DIRECT 为什么经常不是你想要的持久化。" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/linux/linux_30_%E6%96%87%E4%BB%B6%E7%B3%BB%E7%BB%9F%E4%B8%8Einode%E6%8A%BD%E8%B1%A1%E7%9A%84%E5%BF%85%E7%84%B6%E6%80%A7/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2026-08-12T09:00:00+08:00" />
+<meta property="article:modified_time" content="2026-08-12T09:00:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="Linux-30 文件系统与 inode 抽象的必然性"/>
+<meta name="twitter:description" content="路径为什么不是文件、dentry/inode/file 各自解决什么问题、页缓存为什么存在、日志文件系统的三种模式、fsync 到底保证什么、ext3 到 ext4 的 delayed allocation 事故，以及 O_DIRECT 为什么经常不是你想要的持久化。"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/linux/linux_30_%E6%96%87%E4%BB%B6%E7%B3%BB%E7%BB%9F%E4%B8%8Einode%E6%8A%BD%E8%B1%A1%E7%9A%84%E5%BF%85%E7%84%B6%E6%80%A7/" /><link rel="prev" href="https://xingliuhua.github.io/posts/linux/linux_31_IO%E6%A8%A1%E5%9E%8B%E6%BC%94%E8%BF%9B%E9%98%BB%E5%A1%9E%E5%88%B0epoll/" /><link rel="next" href="https://xingliuhua.github.io/posts/linux/linux_29_%E4%BF%A1%E5%8F%B7%E8%83%8C%E7%9D%8040%E5%B9%B4%E5%80%BA%E7%9A%84%E6%9C%BA%E5%88%B6/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Linux-30 文件系统与 inode 抽象的必然性",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_30_%E6%96%87%E4%BB%B6%E7%B3%BB%E7%BB%9F%E4%B8%8Einode%E6%8A%BD%E8%B1%A1%E7%9A%84%E5%BF%85%E7%84%B6%E6%80%A7\/"
+        },"genre": "posts","keywords": "linux","wordcount":  9572 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_30_%E6%96%87%E4%BB%B6%E7%B3%BB%E7%BB%9F%E4%B8%8Einode%E6%8A%BD%E8%B1%A1%E7%9A%84%E5%BF%85%E7%84%B6%E6%80%A7\/","datePublished": "2026-08-12T09:00:00+08:00","dateModified": "2026-08-12T09:00:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "路径为什么不是文件、dentry/inode/file 各自解决什么问题、页缓存为什么存在、日志文件系统的三种模式、fsync 到底保证什么、ext3 到 ext4 的 delayed allocation 事故，以及 O_DIRECT 为什么经常不是你想要的持久化。"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">Linux-30 文件系统与 inode 抽象的必然性</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2026-08-12">2026-08-12</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 9572 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 20 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-名字对象与打开实例">1. 名字、对象与打开实例</a>
+      <ol>
+        <li><a href="#11-路径不是文件">1.1 路径不是文件</a></li>
+        <li><a href="#12-一个-fd-指向什么">1.2 一个 fd 指向什么</a></li>
+        <li><a href="#13-vfs-为什么存在">1.3 VFS 为什么存在</a></li>
+        <li><a href="#14-dentry-cache-加速路径解析">1.4 dentry cache 加速路径解析</a></li>
+      </ol>
+    </li>
+    <li><a href="#2-inode-把名字与对象分开">2. inode 把名字与对象分开</a>
+      <ol>
+        <li><a href="#21-inode-保存什么">2.1 inode 保存什么</a></li>
+        <li><a href="#22-硬链接揭示真实对象模型">2.2 硬链接揭示真实对象模型</a></li>
+        <li><a href="#23-为什么不能跨文件系统创建硬链接">2.3 为什么不能跨文件系统创建硬链接</a></li>
+        <li><a href="#24-日志删了空间为什么没回来">2.4 日志删了，空间为什么没回来</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-目录与-rename">3. 目录与 rename</a>
+      <ol>
+        <li><a href="#31-目录是名字映射">3.1 目录是名字映射</a></li>
+        <li><a href="#32-rename-原子不等于持久化">3.2 rename 原子不等于持久化</a></li>
+        <li><a href="#33-不要用-access--rename-实现排他创建">3.3 不要用 access + rename 实现排他创建</a></li>
+      </ol>
+    </li>
+    <li><a href="#4-页缓存write-返回不等于落盘">4. 页缓存：write 返回不等于落盘</a>
+      <ol>
+        <li><a href="#41-普通写入的数据旅程">4.1 普通写入的数据旅程</a></li>
+        <li><a href="#42-脏页何时回写">4.2 脏页何时回写</a></li>
+        <li><a href="#43-fsync-与-fdatasync">4.3 fsync 与 fdatasync</a></li>
+      </ol>
+    </li>
+    <li><a href="#5-日志文件系统为什么必要">5. 日志文件系统为什么必要</a>
+      <ol>
+        <li><a href="#51-一次写会改多个位置">5.1 一次写会改多个位置</a></li>
+        <li><a href="#52-三种-journal-data-mode">5.2 三种 journal data mode</a></li>
+        <li><a href="#53-文件系统-journal-不是数据库-wal">5.3 文件系统 journal 不是数据库 WAL</a></li>
+        <li><a href="#54-fsync-可能触发什么">5.4 fsync 可能触发什么</a></li>
+      </ol>
+    </li>
+    <li><a href="#6-ext3-到-ext4delayed-allocation-的教训">6. ext3 到 ext4：delayed allocation 的教训</a>
+      <ol>
+        <li><a href="#61-延迟分配为什么更快">6.1 延迟分配为什么更快</a></li>
+        <li><a href="#62-历史争议的真正结论">6.2 历史争议的真正结论</a></li>
+        <li><a href="#63-安全更新完整协议">6.3 安全更新完整协议</a></li>
+      </ol>
+    </li>
+    <li><a href="#7-fsync-的边界">7. fsync 的边界</a>
+      <ol>
+        <li><a href="#71-四种成功">7.1 四种成功</a></li>
+        <li><a href="#72-为什么文件与目录都要同步">7.2 为什么文件与目录都要同步</a></li>
+        <li><a href="#73-存储栈越长契约越重要">7.3 存储栈越长，契约越重要</a></li>
+      </ol>
+    </li>
+    <li><a href="#8-o_direct缓存策略不是持久化策略">8. O_DIRECT：缓存策略不是持久化策略</a>
+      <ol>
+        <li><a href="#81-它解决双重缓存">8.1 它解决双重缓存</a></li>
+        <li><a href="#82-复杂性转移给应用">8.2 复杂性转移给应用</a></li>
+        <li><a href="#83-绕页缓存不等于落盘">8.3 绕页缓存不等于落盘</a></li>
+      </ol>
+    </li>
+    <li><a href="#9-线上文件系统排查">9. 线上文件系统排查</a>
+      <ol>
+        <li><a href="#91-文件删除但空间不降">9.1 文件删除但空间不降</a></li>
+        <li><a href="#92-df-有空间却写不进去">9.2 df 有空间却写不进去</a></li>
+        <li><a href="#93-fsync-为什么慢">9.3 fsync 为什么慢</a></li>
+        <li><a href="#94-df-与-du-不一致">9.4 df 与 du 不一致</a></li>
+      </ol>
+    </li>
+    <li><a href="#10-常用命令知识点扩展">10. 常用命令知识点扩展</a></li>
+    <li><a href="#11-面试题">11. 面试题</a></li>
+    <li><a href="#小结">小结</a></li>
+    <li><a href="#12-页缓存与回写的内部节奏">12. 页缓存与回写的内部节奏</a>
+      <ol>
+        <li><a href="#121-page-cache-不是一个简单的-map">12.1 page cache 不是一个简单的 map</a></li>
+        <li><a href="#122-writeback-为什么会反过来阻塞应用">12.2 writeback 为什么会反过来阻塞应用</a></li>
+        <li><a href="#123-顺序写也不一定顺序落盘">12.3 顺序写也不一定顺序落盘</a></li>
+      </ol>
+    </li>
+    <li><a href="#13-崩溃一致性把承诺写成状态矩阵">13. 崩溃一致性：把承诺写成状态矩阵</a>
+      <ol>
+        <li><a href="#131-安全替换的四个断电点">13.1 安全替换的四个断电点</a></li>
+        <li><a href="#132-创建新文件的协议">13.2 创建新文件的协议</a></li>
+        <li><a href="#133-truncate-与-rename-的语义不同">13.3 truncate 与 rename 的语义不同</a></li>
+      </ol>
+    </li>
+    <li><a href="#14-go-视角文件-api-没有自动提供事务">14. Go 视角：文件 API 没有自动提供事务</a>
+      <ol>
+        <li><a href="#141-oswritefile-到底做了什么">14.1 <code>os.WriteFile</code> 到底做了什么</a></li>
+        <li><a href="#142-o_append-保证什么">14.2 <code>O_APPEND</code> 保证什么</a></li>
+        <li><a href="#143-mmap-修改也需要持久化协议">14.3 <code>mmap</code> 修改也需要持久化协议</a></li>
+      </ol>
+    </li>
+    <li><a href="#15-常见错误与修复路径">15. 常见错误与修复路径</a>
+      <ol>
+        <li><a href="#151-用-close-当-commit">15.1 用 close 当 commit</a></li>
+        <li><a href="#152-只-fsync-文件不-fsync-目录">15.2 只 fsync 文件，不 fsync 目录</a></li>
+        <li><a href="#153-用-sleep-等待磁盘已经写完">15.3 用 sleep 等待“磁盘已经写完”</a></li>
+        <li><a href="#154-把-o_direct-当性能开关">15.4 把 O_DIRECT 当性能开关</a></li>
+        <li><a href="#155-只看文件大小不看-inode-与-fd">15.5 只看文件大小，不看 inode 与 fd</a></li>
+      </ol>
+    </li>
+    <li><a href="#16-追加面试题">16. 追加面试题</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><p>上一篇讲信号如何把异步事件插进进程控制流。这一篇把视线移到数据：<strong>文件系统为什么不能只是一张「文件名 → 磁盘位置」的表？</strong></p>
+<p>你每天都在写文件：日志追加一行、数据库提交事务、部署时替换配置。但 <code>write()</code> 返回成功时，数据可能只在页缓存、文件系统日志或磁盘控制器缓存中的某一层。真正困难的不是写入字节，而是定义：<strong>机器突然断电后，哪些字节和目录关系必须仍然成立？</strong></p>
+<p>先看五个问题：</p>
+<ol>
+<li>为什么路径名、dentry、inode、打开文件描述符必须拆成多个对象？</li>
+<li>删除文件后，为什么进程仍能继续读？硬链接为什么说明“文件名”不等于“文件”？</li>
+<li>日志文件系统记录什么？<code>data=journal</code>、<code>ordered</code>、<code>writeback</code> 差在哪里？</li>
+<li><code>write()</code>、<code>fsync(file)</code>、<code>fsync(directory)</code>、<code>rename()</code> 各自承诺什么？</li>
+<li><code>O_DIRECT</code> 真的绕过缓存、保证持久化吗？为什么数据库仍然使用它？</li>
+</ol>
+<hr>
+<h1 id="1-名字对象与打开实例">1. 名字、对象与打开实例</h1>
+<h2 id="11-路径不是文件">1.1 路径不是文件</h2>
+<p>用户看到路径：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">/var/log/app/access.log
+</span></span></code></pre></div><p>内核管理的却是两类关系：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">名字空间                          文件对象
+</span></span><span class="line"><span class="cl">目录层级、文件名、父子关系  -&gt;  inode、权限、所有者、大小、数据块映射
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">/var/log/app/access.log       -&gt;  inode 184729
+</span></span></code></pre></div><p>同一个对象可以有多个名字（硬链接）；名字消失后，已打开它的进程仍可访问对象。如果把名称和对象强行合成一条记录，rename、link、unlink、并发打开和崩溃恢复都会极其复杂。</p>
+<p>Unix 因而把问题拆成：</p>
+<ul>
+<li><strong>dentry / directory entry</strong>：父目录与名字到 inode 的映射</li>
+<li><strong>inode</strong>：文件对象的元数据与数据块映射</li>
+<li><strong>file / open file description</strong>：一次 <code>open()</code> 的状态，包括偏移和 flags</li>
+<li><strong>file descriptor</strong>：进程 fd 表中的整数索引，指向 file</li>
+</ul>
+<h2 id="12-一个-fd-指向什么">1.2 一个 fd 指向什么</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">进程 fd table
+</span></span><span class="line"><span class="cl">fd 3  ----------------------+
+</span></span><span class="line"><span class="cl">                            v
+</span></span><span class="line"><span class="cl">                      open file description
+</span></span><span class="line"><span class="cl">                      f_pos = 4096
+</span></span><span class="line"><span class="cl">                      flags = O_APPEND
+</span></span><span class="line"><span class="cl">                            |
+</span></span><span class="line"><span class="cl">                            v
+</span></span><span class="line"><span class="cl">                      inode 184729
+</span></span><span class="line"><span class="cl">                            |
+</span></span><span class="line"><span class="cl">                            v
+</span></span><span class="line"><span class="cl">                      page cache / data blocks
+</span></span></code></pre></div><p><code>fd</code> 只是表下标。<code>dup(fd)</code> 让两个 fd 指向同一个 open file description，因此共享偏移：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="kt">int</span> <span class="n">b</span> <span class="o">=</span> <span class="n">dup</span><span class="p">(</span><span class="n">a</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="n">read</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">buf1</span><span class="p">,</span> <span class="mi">10</span><span class="p">);</span> <span class="c1">// f_pos 前进 10
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">read</span><span class="p">(</span><span class="n">b</span><span class="p">,</span> <span class="n">buf2</span><span class="p">,</span> <span class="mi">10</span><span class="p">);</span> <span class="c1">// 从新位置继续读
+</span></span></span></code></pre></div><p>两次 <code>open()</code> 则产生两个 file 对象，即使指向同一 inode，偏移也独立。<code>fork()</code> 后父子 fd 仍引用同一个 open file description，所以也共享偏移与 file status flags。</p>
+<h2 id="13-vfs-为什么存在">1.3 VFS 为什么存在</h2>
+<p>Linux 不希望 <code>open/read/write/stat</code> 分别理解 ext4、XFS、Btrfs、tmpfs，于是用 VFS（Virtual File System）提供统一对象和操作：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">用户态系统调用
+</span></span><span class="line"><span class="cl">      |
+</span></span><span class="line"><span class="cl">      v
+</span></span><span class="line"><span class="cl">     VFS
+</span></span><span class="line"><span class="cl">   /  |   \
+</span></span><span class="line"><span class="cl">ext4 XFS tmpfs
+</span></span></code></pre></div><table>
+<thead>
+<tr>
+<th>VFS 对象</th>
+<th>职责</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>super_block</code></td>
+<td>一个已挂载文件系统的整体信息</td>
+</tr>
+<tr>
+<td><code>inode</code></td>
+<td>一个文件对象的统一视图</td>
+</tr>
+<tr>
+<td><code>dentry</code></td>
+<td>路径组件与 inode 关系的缓存</td>
+</tr>
+<tr>
+<td><code>file</code></td>
+<td>一次打开实例</td>
+</tr>
+<tr>
+<td><code>address_space</code></td>
+<td>文件与页缓存/回写的关联</td>
+</tr>
+</tbody>
+</table>
+<p>磁盘上的 ext4 inode 是持久化格式；内存中的 <code>struct inode</code> 是 VFS 统一对象，两者相关但不等同。</p>
+<h2 id="14-dentry-cache-加速路径解析">1.4 dentry cache 加速路径解析</h2>
+<p>每次 <code>open(&quot;/a/b/c&quot;)</code> 都从磁盘扫描目录会慢得不可接受。dcache 缓存每一层路径关系：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">root -&gt; &#34;a&#34; dentry -&gt; &#34;b&#34; dentry -&gt; &#34;c&#34; dentry
+</span></span><span class="line"><span class="cl">          hit             hit             hit
+</span></span></code></pre></div><p>负 dentry 还能缓存“名字不存在”，避免重复查盘。dcache 是内存加速层，掉电后会丢失；重启后依据持久化目录数据重建。</p>
+<hr>
+<h1 id="2-inode-把名字与对象分开">2. inode 把名字与对象分开</h1>
+<h2 id="21-inode-保存什么">2.1 inode 保存什么</h2>
+<p>典型 inode 保存文件类型、权限、uid/gid、大小、链接数、时间戳、extent/块映射、ACL、xattr 和 flags，<strong>通常不保存文件名</strong>。名字保存在父目录的数据中：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">父目录 inode 42：
+</span></span><span class="line"><span class="cl">&#34;report.txt&#34; -&gt; inode 9001
+</span></span><span class="line"><span class="cl">&#34;latest&#34;     -&gt; inode 9001
+</span></span></code></pre></div><p>多个目录项可以指向同一个 inode，rename 也只需改变目录关系，不复制文件内容。</p>
+<h2 id="22-硬链接揭示真实对象模型">2.2 硬链接揭示真实对象模型</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="nb">echo</span> hello &gt; original
+</span></span><span class="line"><span class="cl">ln original <span class="nb">alias</span>
+</span></span><span class="line"><span class="cl">ls -li original <span class="nb">alias</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># inode number 相同，link count 为 2</span>
+</span></span></code></pre></div><p>两个名字背后是一份数据。<code>unlink()</code> 的实际过程是：</p>
+<ol>
+<li>从父目录删除目录项</li>
+<li>inode 的 <code>nlink</code> 减一</li>
+<li><code>nlink==0</code> 且没有打开引用时，才回收 inode 和数据块</li>
+</ol>
+<p>所以：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="kt">int</span> <span class="n">fd</span> <span class="o">=</span> <span class="n">open</span><span class="p">(</span><span class="s">&#34;app.log&#34;</span><span class="p">,</span> <span class="n">O_RDWR</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="n">unlink</span><span class="p">(</span><span class="s">&#34;app.log&#34;</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="n">write</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span> <span class="s">&#34;still alive</span><span class="se">\n</span><span class="s">&#34;</span><span class="p">,</span> <span class="mi">12</span><span class="p">);</span> <span class="c1">// 仍然成功
+</span></span></span></code></pre></div><p>进程持有 file/inode 引用，不是路径字符串。最后一个 fd 关闭后才真正释放空间。</p>
+<h2 id="23-为什么不能跨文件系统创建硬链接">2.3 为什么不能跨文件系统创建硬链接</h2>
+<p>硬链接只是同一文件系统目录项对 inode 的新引用。跨文件系统时 inode 命名空间、分配器和生命周期不同，无法共享对象，只能复制文件或使用符号链接。</p>
+<p>符号链接则拥有自己的 inode，内容是目标路径字符串，因此能跨文件系统，也能暂时指向不存在的路径。</p>
+<p>普通用户不能给目录创建硬链接，否则目录树可能形成循环，<code>..</code>、遍历和回收都失去清晰语义。</p>
+<h2 id="24-日志删了空间为什么没回来">2.4 日志删了，空间为什么没回来</h2>
+<p>日志轮转可能 rename/unlink 旧文件，但服务仍持有旧 fd 并继续写：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">目录项 --X--&gt; inode &lt;---- file &lt;---- fd
+</span></span><span class="line"><span class="cl">              nlink=0       仍有引用
+</span></span></code></pre></div><p>目录中已经看不到文件，数据块却不能回收。定位命令：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">lsof +L1
+</span></span><span class="line"><span class="cl">ls -l /proc/<span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span>/fd <span class="p">|</span> grep deleted
+</span></span></code></pre></div><p>应用必须 reopen 新路径或关闭旧 fd，单纯删除名字不够。</p>
+<hr>
+<h1 id="3-目录与-rename">3. 目录与 rename</h1>
+<h2 id="31-目录是名字映射">3.1 目录是名字映射</h2>
+<p>目录也是 inode 和数据，但其内容由文件系统解释为“名字 → inode”的目录记录，不能让用户随意 <code>write()</code>。</p>
+<p>目录权限控制名字空间：读权限允许列举，写权限允许修改目录项，执行权限允许穿过目录并查找已知名字。因此删除文件通常取决于<strong>父目录</strong>的写+执行权限，而不是文件本身是否可写。</p>
+<h2 id="32-rename-原子不等于持久化">3.2 rename 原子不等于持久化</h2>
+<p>同一文件系统内 <code>rename(old,new)</code> 通常提供原子名字切换：并发观察者看到旧对象或新对象，不会看到一半。但这不保证掉电后新名字和内容一定存在。</p>
+<p>可靠替换的经典协议：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="kt">int</span> <span class="n">fd</span> <span class="o">=</span> <span class="n">open</span><span class="p">(</span><span class="s">&#34;config.tmp&#34;</span><span class="p">,</span> <span class="n">O_WRONLY</span><span class="o">|</span><span class="n">O_CREAT</span><span class="o">|</span><span class="n">O_TRUNC</span><span class="p">,</span> <span class="mo">0644</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="n">write_all</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span> <span class="n">content</span><span class="p">,</span> <span class="n">len</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="n">fsync</span><span class="p">(</span><span class="n">fd</span><span class="p">);</span>                         <span class="c1">// 文件内容先稳定
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">close</span><span class="p">(</span><span class="n">fd</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="n">rename</span><span class="p">(</span><span class="s">&#34;config.tmp&#34;</span><span class="p">,</span> <span class="s">&#34;config&#34;</span><span class="p">);</span>  <span class="c1">// 原子切换名字
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kt">int</span> <span class="n">dfd</span> <span class="o">=</span> <span class="n">open</span><span class="p">(</span><span class="s">&#34;.&#34;</span><span class="p">,</span> <span class="n">O_RDONLY</span><span class="o">|</span><span class="n">O_DIRECTORY</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="n">fsync</span><span class="p">(</span><span class="n">dfd</span><span class="p">);</span>                        <span class="c1">// 目录项再稳定
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">close</span><span class="p">(</span><span class="n">dfd</span><span class="p">);</span>
+</span></span></code></pre></div><p><code>rename</code> 解决并发可见性，<code>fsync</code> 解决崩溃后的持久化顺序。跨挂载点 rename 返回 <code>EXDEV</code>，所以临时文件必须放在目标所在文件系统。</p>
+<h2 id="33-不要用-access--rename-实现排他创建">3.3 不要用 access + rename 实现排他创建</h2>
+<p>“先检查目标不存在，再操作”存在 TOCTOU：另一进程可在两个系统调用间创建目标。需要“不覆盖已有目标”时，应使用 <code>renameat2(..., RENAME_NOREPLACE)</code>、<code>open(..., O_EXCL)</code> 等原子接口，而不是用户态检查后再做。</p>
+<hr>
+<h1 id="4-页缓存write-返回不等于落盘">4. 页缓存：write 返回不等于落盘</h1>
+<h2 id="41-普通写入的数据旅程">4.1 普通写入的数据旅程</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">用户 buffer
+</span></span><span class="line"><span class="cl">   | copy_from_user
+</span></span><span class="line"><span class="cl">   v
+</span></span><span class="line"><span class="cl">page cache（dirty page）
+</span></span><span class="line"><span class="cl">   | writeback
+</span></span><span class="line"><span class="cl">   v
+</span></span><span class="line"><span class="cl">文件系统映射 / journal
+</span></span><span class="line"><span class="cl">   |
+</span></span><span class="line"><span class="cl">   v
+</span></span><span class="line"><span class="cl">block layer / device queue
+</span></span><span class="line"><span class="cl">   |
+</span></span><span class="line"><span class="cl">   v
+</span></span><span class="line"><span class="cl">设备易失写缓存
+</span></span><span class="line"><span class="cl">   | flush / FUA
+</span></span><span class="line"><span class="cl">   v
+</span></span><span class="line"><span class="cl">稳定介质
+</span></span></code></pre></div><p><code>write()</code> 成功通常只表示内核接受数据。页缓存提供读缓存、写合并、预读和异步回写，避免应用等待每一次物理 IO；代价是“已写”与“抗断电”之间存在异步窗口。</p>
+<h2 id="42-脏页何时回写">4.2 脏页何时回写</h2>
+<p>内核会根据脏页比例、存在时间、内存压力和周期回写线程把 dirty pages 写出。<code>sync</code> 请求系统回写大量脏数据，但它不是单个业务事务的精确提交接口。</p>
+<p>设备还可能缓存写入。文件系统必须在正确时机发 flush/FUA，设备也必须诚实兑现。软件无法补救谎报持久化完成的硬件或虚拟存储层。</p>
+<h2 id="43-fsync-与-fdatasync">4.3 fsync 与 fdatasync</h2>
+<ul>
+<li><code>fsync(fd)</code>：请求文件数据及恢复它所需的元数据稳定</li>
+<li><code>fdatasync(fd)</code>：重点保证数据和影响后续正确读取的必要元数据，可能不提交无关时间戳</li>
+</ul>
+<p>数据库把 WAL 的同步作为 commit 边界。选择 <code>fdatasync</code> 还是 <code>fsync</code> 要依据具体文件系统和业务元数据需求，不能只按名字猜性能。</p>
+<hr>
+<h1 id="5-日志文件系统为什么必要">5. 日志文件系统为什么必要</h1>
+<h2 id="51-一次写会改多个位置">5.1 一次写会改多个位置</h2>
+<p>文件增长可能同时修改：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">① 分配数据块
+</span></span><span class="line"><span class="cl">② 更新 inode size / extent
+</span></span><span class="line"><span class="cl">③ 更新空闲块位图
+</span></span><span class="line"><span class="cl">④ 更新目录或校验信息
+</span></span></code></pre></div><p>断电发生在中间可能造成块泄漏、重复分配、inode 指向未初始化块。没有 journal 时，<code>fsck</code> 需要扫描大量结构推断状态。</p>
+<p>日志文件系统先把一组变更写入连续 journal：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">transaction
+</span></span><span class="line"><span class="cl">  -&gt; descriptor + changed blocks
+</span></span><span class="line"><span class="cl">  -&gt; commit record
+</span></span><span class="line"><span class="cl">  -&gt; checkpoint 到正式位置
+</span></span><span class="line"><span class="cl">  -&gt; 回收 journal 空间
+</span></span></code></pre></div><p>恢复时，完整提交的事务重放，未提交事务丢弃。它把全盘猜测变成有限日志重放，首先保证<strong>文件系统结构一致</strong>。</p>
+<h2 id="52-三种-journal-data-mode">5.2 三种 journal data mode</h2>
+<table>
+<thead>
+<tr>
+<th>模式</th>
+<th>journal 内容</th>
+<th>取舍</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>data=journal</code></td>
+<td>数据 + 元数据</td>
+<td>最强，但数据可能写两次</td>
+</tr>
+<tr>
+<td><code>data=ordered</code></td>
+<td>元数据；相关数据先写正式位置</td>
+<td>常见折中，避免指向旧垃圾块</td>
+</tr>
+<tr>
+<td><code>data=writeback</code></td>
+<td>主要是元数据，数据顺序约束弱</td>
+<td>成本低，崩溃后可能见旧内容</td>
+</tr>
+</tbody>
+</table>
+<p><code>data=ordered</code> 不代表每次 <code>write</code> 都持久化；它主要保证已提交的元数据不会指向尚未写入的新块。<code>data=writeback</code> 可以让结构恢复一致，但文件内容不是应用最后写入的版本。</p>
+<h2 id="53-文件系统-journal-不是数据库-wal">5.3 文件系统 journal 不是数据库 WAL</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">文件系统 journal：恢复 inode、目录、extent、位图等结构
+</span></span><span class="line"><span class="cl">数据库 WAL：恢复数据库逻辑事务与提交顺序
+</span></span></code></pre></div><p>ext4 不理解“扣库存与创建订单必须一起提交”。数据库仍需自己的 WAL，并保证 WAL 先稳定后才返回事务提交。两层日志职责不同。</p>
+<h2 id="54-fsync-可能触发什么">5.4 fsync 可能触发什么</h2>
+<p>一次 <code>fsync(file)</code> 可能需要：</p>
+<ol>
+<li>回写 dirty data</li>
+<li>将 inode/extent 变化加入 journal transaction</li>
+<li>写 journal commit record</li>
+<li>对设备发 flush</li>
+</ol>
+<p>路径会随 ext4/XFS/Btrfs、挂载参数、内核和设备变化。不能从“启用了 journal”推导出“write 返回即防断电”。</p>
+<hr>
+<h1 id="6-ext3-到-ext4delayed-allocation-的教训">6. ext3 到 ext4：delayed allocation 的教训</h1>
+<h2 id="61-延迟分配为什么更快">6.1 延迟分配为什么更快</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">write()
+</span></span><span class="line"><span class="cl">  -&gt; 数据进入 page cache
+</span></span><span class="line"><span class="cl">  -&gt; 暂不决定物理块
+</span></span><span class="line"><span class="cl">  -&gt; 回写时看到更大范围 dirty pages
+</span></span><span class="line"><span class="cl">  -&gt; 一次分配连续 extent
+</span></span></code></pre></div><p>延迟到回写时分配物理块，文件系统能做出更好的连续布局，减少碎片。但逻辑文件已更新与物理块稳定之间的窗口也扩大了。</p>
+<h2 id="62-历史争议的真正结论">6.2 历史争议的真正结论</h2>
+<p>ext3/不同 data mode 与应用“写临时文件再 rename”的习惯曾让很多程序偶然获得比标准承诺更强的结果。ext4 delayed allocation 暴露了这些未调用 fsync 的应用假设：崩溃后可能留下零长度文件、旧版本或缺失的新名字。</p>
+<p>教训不是“ext4 不可靠”，而是三层语义必须分开：</p>
+<ul>
+<li><code>write</code> 成功：内核接受了数据</li>
+<li>journal 恢复：文件系统结构一致</li>
+<li>业务 commit：应用要求某个版本在崩溃后存在</li>
+</ul>
+<p>第三层必须由 <code>fsync</code>、目录同步、WAL 或版本化协议明确表达，不能依赖旧文件系统的偶然写入顺序。</p>
+<h2 id="63-安全更新完整协议">6.3 安全更新完整协议</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">write(temp)
+</span></span><span class="line"><span class="cl">  -&gt; fsync(temp)
+</span></span><span class="line"><span class="cl">  -&gt; rename(temp, target)
+</span></span><span class="line"><span class="cl">  -&gt; fsync(parent directory)
+</span></span></code></pre></div><p>若还要保证 mode、owner、xattr，应在 rename 前设置并按文件系统语义同步。跨文件系统不能原子 rename，需要改用同挂载点临时文件或高层事务。</p>
+<hr>
+<h1 id="7-fsync-的边界">7. fsync 的边界</h1>
+<h2 id="71-四种成功">7.1 四种成功</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">write()       内核接受数据，通常进入 page cache
+</span></span><span class="line"><span class="cl">close()       fd 引用释放，不等于持久化
+</span></span><span class="line"><span class="cl">fsync(file)   文件数据及必要 inode 元数据稳定
+</span></span><span class="line"><span class="cl">fsync(dir)    创建、删除、rename 的目录关系稳定
+</span></span></code></pre></div><p><code>close()</code> 可能报告延迟 IO 错误，严肃程序不应忽略返回值；但它仍不能代替明确的提交同步。</p>
+<h2 id="72-为什么文件与目录都要同步">7.2 为什么文件与目录都要同步</h2>
+<p>只 <code>fsync(file)</code>，崩溃后新目录项可能丢失；只 <code>fsync(dir)</code>，名字可能指向内容尚未稳定的新 inode。安全创建和替换需要分别处理文件内容链和名字空间链。</p>
+<h2 id="73-存储栈越长契约越重要">7.3 存储栈越长，契约越重要</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">应用 -&gt; VFS -&gt; 文件系统 -&gt; block layer -&gt; hypervisor -&gt; 云存储 -&gt; SSD
+</span></span></code></pre></div><p><code>fsync</code> 只能要求下层兑现持久化契约。RAID 控制器有无电池、虚拟磁盘是否透传 flush、云盘如何定义完成，都会影响结果。关键系统要通过故障注入与厂商契约验证，而不只靠正常关机测试。</p>
+<hr>
+<h1 id="8-o_direct缓存策略不是持久化策略">8. O_DIRECT：缓存策略不是持久化策略</h1>
+<h2 id="81-它解决双重缓存">8.1 它解决双重缓存</h2>
+<p>数据库已有自己的 buffer pool，再让页缓存保留同一批页面，会造成双份内存和两套预读/淘汰策略冲突。<code>O_DIRECT</code> 尝试让数据在用户 buffer 与存储间传输，绕过普通页缓存，让数据库自行控制缓存和 IO 顺序。</p>
+<h2 id="82-复杂性转移给应用">8.2 复杂性转移给应用</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="kt">int</span> <span class="n">fd</span> <span class="o">=</span> <span class="n">open</span><span class="p">(</span><span class="s">&#34;data.db&#34;</span><span class="p">,</span> <span class="n">O_RDWR</span> <span class="o">|</span> <span class="n">O_DIRECT</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="kt">void</span> <span class="o">*</span><span class="n">buf</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="n">posix_memalign</span><span class="p">(</span><span class="o">&amp;</span><span class="n">buf</span><span class="p">,</span> <span class="mi">4096</span><span class="p">,</span> <span class="mi">4096</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="n">pread</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span> <span class="n">buf</span><span class="p">,</span> <span class="mi">4096</span><span class="p">,</span> <span class="mi">0</span><span class="p">);</span>
+</span></span></code></pre></div><p>buffer 地址、长度和 offset 往往有对齐要求，具体粒度依内核、文件系统和设备。应用还要自己处理预读、缓存淘汰、短 IO、内存管理和并发。</p>
+<p>Linus 对 O_DIRECT 的批评核心是：普通应用不应重复实现内核缓存，并把不可移植复杂性带进程序。数据库仍使用它，是因为数据库掌握页面、WAL、checkpoint、事务和查询模式的全局信息，确实有能力做更合适的策略。</p>
+<h2 id="83-绕页缓存不等于落盘">8.3 绕页缓存不等于落盘</h2>
+<p>数据仍可能停在文件系统、块层或设备缓存。持久化仍需 <code>fsync/fdatasync</code> 与正确 flush 语义：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">O_DIRECT：选择缓存路径
+</span></span><span class="line"><span class="cl">fsync：建立持久化完成点
+</span></span><span class="line"><span class="cl">O_SYNC：给写操作更强同步语义
+</span></span></code></pre></div><p>普通 buffered IO 配合 fsync 一样可以持久化；O_DIRECT 不是 durability 开关，也不保证更快。</p>
+<hr>
+<h1 id="9-线上文件系统排查">9. 线上文件系统排查</h1>
+<h2 id="91-文件删除但空间不降">9.1 文件删除但空间不降</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">lsof +L1
+</span></span><span class="line"><span class="cl">ls -l /proc/<span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span>/fd <span class="p">|</span> grep deleted
+</span></span><span class="line"><span class="cl">df -h /var/log
+</span></span><span class="line"><span class="cl">df -i /var/log
+</span></span></code></pre></div><p>deleted-open 文件仍占空间。让应用 reopen/关闭旧 fd 后才释放。</p>
+<h2 id="92-df-有空间却写不进去">9.2 df 有空间却写不进去</h2>
+<p>可能是 inode 用尽、quota、只读挂载、ACL、ext4 保留块、远程存储故障、文件大小限制或容器层容量：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">df -h /path
+</span></span><span class="line"><span class="cl">df -i /path
+</span></span><span class="line"><span class="cl">findmnt -T /path/to/file
+</span></span><span class="line"><span class="cl">stat -f /path/to/file
+</span></span><span class="line"><span class="cl">getfacl /path/to/file
+</span></span><span class="line"><span class="cl"><span class="nb">ulimit</span> -a
+</span></span></code></pre></div><p>不要只看块容量。</p>
+<h2 id="93-fsync-为什么慢">9.3 fsync 为什么慢</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">pidstat -d -p <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span> <span class="m">1</span>
+</span></span><span class="line"><span class="cl">iostat -xz <span class="m">1</span>
+</span></span><span class="line"><span class="cl">strace -ff -ttT -e <span class="nv">trace</span><span class="o">=</span>write,fsync,fdatasync,openat,rename -p <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span>
+</span></span></code></pre></div><p>可能是脏页积累、journal commit、设备队列、云盘确认或多个线程争同一个 WAL。不要直接删 fsync；先明确 durability，再通过 group commit、批量、合理 WAL 和更合适的存储降成本。</p>
+<h2 id="94-df-与-du-不一致">9.4 df 与 du 不一致</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">du -xsh /var/lib/app
+</span></span><span class="line"><span class="cl">df -h /var/lib/app
+</span></span><span class="line"><span class="cl">lsof +L1
+</span></span></code></pre></div><p><code>df</code> 统计已分配块，<code>du</code> 统计目录中可遍历文件。差额常来自 deleted-open、快照、保留块、隐藏挂载或文件系统元数据。</p>
+<hr>
+<h1 id="10-常用命令知识点扩展">10. 常用命令知识点扩展</h1>
+<table>
+<thead>
+<tr>
+<th>短参</th>
+<th>长参</th>
+<th>英文全称</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ls -i</code></td>
+<td><code>ls --inode</code></td>
+<td>inode</td>
+<td>显示 inode 编号</td>
+</tr>
+<tr>
+<td><code>ls -l</code></td>
+<td><code>ls --format=long</code></td>
+<td>long listing</td>
+<td>显示链接数、权限、大小</td>
+</tr>
+<tr>
+<td><code>find -inum N</code></td>
+<td>无统一长参</td>
+<td>inode number</td>
+<td>按 inode 找硬链接</td>
+</tr>
+<tr>
+<td><code>df -h</code></td>
+<td><code>df --human-readable</code></td>
+<td>disk free</td>
+<td>显示块空间</td>
+</tr>
+<tr>
+<td><code>df -i</code></td>
+<td><code>df --inodes</code></td>
+<td>inode statistics</td>
+<td>显示 inode 使用量</td>
+</tr>
+<tr>
+<td><code>du -x</code></td>
+<td><code>du --one-file-system</code></td>
+<td>disk usage</td>
+<td>只统计一个文件系统</td>
+</tr>
+<tr>
+<td><code>lsof +L1</code></td>
+<td>无统一长参</td>
+<td>list open files</td>
+<td>找 nlink 小于 1 的打开文件</td>
+</tr>
+<tr>
+<td><code>findmnt -T</code></td>
+<td><code>findmnt --target</code></td>
+<td>find mount</td>
+<td>查路径所属挂载点</td>
+</tr>
+</tbody>
+</table>
+<p>场景配方：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 找一个 inode 的所有名字</span>
+</span></span><span class="line"><span class="cl">find /mount -xdev -inum <span class="m">9001</span> -print
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 对比块与 inode 容量</span>
+</span></span><span class="line"><span class="cl">df -h /mount
+</span></span><span class="line"><span class="cl">df -i /mount
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 查路径具体落在哪个文件系统及挂载参数</span>
+</span></span><span class="line"><span class="cl">findmnt -T /mount/path -o TARGET,SOURCE,FSTYPE,OPTIONS
+</span></span></code></pre></div><hr>
+<h1 id="11-面试题">11. 面试题</h1>
+<p><strong>Q：为什么要拆分 dentry、inode、file 和 fd？</strong></p>
+<p>dentry 管名字关系，inode 管无名字的文件对象，file 管一次 open 的偏移与 flags，fd 只是进程表索引。拆开后，同一 inode 可有多个硬链接，unlink 后已打开对象仍存活，dup/fork 可共享 open file description，而两次 open 可有独立偏移。</p>
+<p><strong>Q：inode 为什么通常不保存文件名？</strong></p>
+<p>文件名属于父目录，一个 inode 可被多个目录项引用。这样 rename 修改目录关系即可，硬链接也无需复制数据。<code>unlink</code> 先删除名字，只有链接数和打开引用都归零才回收对象。</p>
+<p><strong>Q：删除文件后为什么还能读？</strong></p>
+<p>fd 经 file 持有 inode 引用；unlink 只删除目录项并减少 nlink。打开引用仍在时数据块不能回收，最后一个 fd close 后才释放。<code>lsof +L1</code> 能找到这类文件。</p>
+<p><strong>Q：rename 是事务吗？</strong></p>
+<p>它通常只提供同文件系统内名字切换的原子可见性，不保证掉电后数据和目录项已持久化。安全替换一般要 <code>write temp → fsync(temp) → rename → fsync(parent)</code>。跨文件系统 rename 不原子并返回 EXDEV。</p>
+<p><strong>Q：write 成功为什么仍可能丢数据？</strong></p>
+<p>buffered write 通常只进入页缓存；后面还有异步回写、journal、块层和设备易失缓存。write 成功表示内核接受，不是稳定存储提交。明确持久化需要 fsync/fdatasync 和可信 flush 链路。</p>
+<p><strong>Q：三种 journal data mode 如何区别？</strong></p>
+<p><code>data=journal</code> 把数据和元数据都写 journal，最强但写放大大；<code>ordered</code> 只 journal 元数据并要求相关数据先写正式位置；<code>writeback</code> 的数据顺序约束较弱，恢复后可能见旧块内容。它们首先保证文件系统恢复，不等于应用事务提交。</p>
+<p><strong>Q：delayed allocation 的教训是什么？</strong></p>
+<p>延迟物理块分配可优化 extent 和碎片，却扩大逻辑写入与物理稳定之间的窗口。ext4 暴露了很多应用依赖旧写入顺序、未调用 fsync 的错误假设。业务必须显式定义 commit，不应把 write 或 journal 一致性当业务 durability。</p>
+<p><strong>Q：为何 fsync(file) 后还要 fsync(directory)？</strong></p>
+<p>文件 fsync 保护内容与 inode 必要元数据；目录 fsync 保护创建、删除和 rename 的名字关系。只同步一边，崩溃后可能内容存在但名字丢失，或名字存在而新内容未稳定。</p>
+<p><strong>Q：O_DIRECT 是否保证落盘？</strong></p>
+<p>不保证。它主要绕过普通页缓存，仍经过文件系统、块层和设备缓存，并有对齐限制。持久化仍需 fsync/fdatasync。数据库因有自己的 buffer pool 和 WAL 才可能受益，普通应用可能反而更慢。</p>
+<p><strong>Q：数据库为何仍要 WAL？</strong></p>
+<p>文件系统 journal 只理解 inode、目录、extent 等结构，不理解数据库事务和提交顺序。数据库 WAL 定义 redo/undo 与 commit durability，职责不同，不能互相替代。</p>
+<p><strong>Q：df 与 du 为什么不同？</strong></p>
+<p>df 统计文件系统分配块，du 只遍历可见目录项。deleted-open 文件、快照、保留块、隐藏挂载和元数据都会形成差额，应联合 <code>lsof +L1</code>、<code>findmnt</code> 和文件系统工具排查。</p>
+<p><strong>Q：fsync 很慢时能直接删除吗？</strong></p>
+<p>不能。先明确哪些数据必须在返回前持久化，再定位是 journal、脏页、设备队列还是云盘确认。可通过 group commit、批量 WAL、减少提交频率或换存储优化；删 fsync 等于改变故障语义，必须由业务接受。</p>
+<hr>
+<h1 id="小结">小结</h1>
+<ul>
+<li>文件名不是文件：dentry 管名字，inode 管对象，file 管一次打开，fd 只是索引</li>
+<li>硬链接、unlink 后继续访问、dup/fork 共享偏移，都是对象拆分的自然结果</li>
+<li>页缓存提升读写性能，但 <code>write</code> 和 <code>close</code> 不等于抗断电持久化</li>
+<li>journal 主要保证文件系统结构可恢复，不理解数据库逻辑事务</li>
+<li><code>data=journal</code>、<code>ordered</code>、<code>writeback</code> 在数据顺序、写放大和性能之间取舍</li>
+<li>delayed allocation 提升布局质量，也揭示应用必须显式表达持久化边界</li>
+<li>安全替换通常是 <code>write temp → fsync(temp) → rename → fsync(parent directory)</code></li>
+<li><code>O_DIRECT</code> 是缓存路径策略，不是持久化保证；数据库能用好它是因为掌握全局事务信息</li>
+<li><code>df</code>、<code>du</code>、inode、deleted-open 文件和挂载边界要联合分析</li>
+</ul>
+<p>下一篇讲 <strong>IO 模型演进：阻塞 → epoll</strong> —— <code>select</code> 的 O(n) 扫描才是关键、epoll 的红黑树与就绪链表如何分工、ET/LT 的真实区别、惊群与 <code>EPOLLEXCLUSIVE</code>，以及 Go netpoller 怎样把这些机制串起来。</p>
+<hr>
+<h1 id="12-页缓存与回写的内部节奏">12. 页缓存与回写的内部节奏</h1>
+<h2 id="121-page-cache-不是一个简单的-map">12.1 page cache 不是一个简单的 map</h2>
+<p>从应用视角看，页缓存像“文件偏移到内存页”的映射；从内核视角，它还要协调：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">文件 inode
+</span></span><span class="line"><span class="cl">   |
+</span></span><span class="line"><span class="cl">address_space / xarray
+</span></span><span class="line"><span class="cl">   |
+</span></span><span class="line"><span class="cl">文件偏移 -&gt; folio/page
+</span></span><span class="line"><span class="cl">   |
+</span></span><span class="line"><span class="cl">clean / dirty / writeback / locked
+</span></span></code></pre></div><p>现代内核逐步用 folio 表示一组连续物理页，减少大页和批量回写的元数据开销。无论底层结构名称如何变化，关键状态仍是：</p>
+<ul>
+<li><strong>clean</strong>：缓存内容与稳定文件数据一致</li>
+<li><strong>dirty</strong>：应用修改过，尚未写回</li>
+<li><strong>writeback</strong>：正在提交到文件系统/块层</li>
+<li><strong>uptodate</strong>：缓存页内容完整可用</li>
+</ul>
+<p>应用的 <code>write()</code> 可能只是在 dirty 状态上完成一次内存复制；真正的 IO 发生在后续 writeback 或显式同步时。</p>
+<h2 id="122-writeback-为什么会反过来阻塞应用">12.2 writeback 为什么会反过来阻塞应用</h2>
+<p>脏页不是无限积累的。达到 dirty limits 后，产生脏页的线程会被迫参与回写（direct reclaim / balance dirty pages）：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">低脏页：
+</span></span><span class="line"><span class="cl">write -&gt; page cache -&gt; 很快返回
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">脏页过多：
+</span></span><span class="line"><span class="cl">write -&gt; 触发 balance_dirty_pages
+</span></span><span class="line"><span class="cl">     -&gt; 等待回写速度追上产生速度
+</span></span><span class="line"><span class="cl">     -&gt; write 延迟突然变高
+</span></span></code></pre></div><p>这解释了一个常见现象：磁盘平均吞吐没有满，但应用 <code>write()</code> 偶尔卡住。瓶颈可能是回写节奏、journal 提交、单设备队列或 dirty limit，而不是单次 IO 的带宽。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 观察系统脏页与回写页</span>
+</span></span><span class="line"><span class="cl">grep -E <span class="s1">&#39;^(Dirty|Writeback|WritebackTmp):&#39;</span> /proc/meminfo
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 观察回写相关内核线程</span>
+</span></span><span class="line"><span class="cl">ps -eo pid,stat,wchan:32,comm <span class="p">|</span> grep -E <span class="s1">&#39;flush-|jbd|kworker&#39;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 每秒看块设备队列和等待</span>
+</span></span><span class="line"><span class="cl">vmstat <span class="m">1</span>
+</span></span><span class="line"><span class="cl">iostat -xz <span class="m">1</span>
+</span></span></code></pre></div><h2 id="123-顺序写也不一定顺序落盘">12.3 顺序写也不一定顺序落盘</h2>
+<p>应用按偏移递增调用 <code>write()</code>，只说明逻辑提交顺序。页缓存可以合并写，文件系统可以延迟分配，块层可以重排请求，SSD 内部还有 FTL 和垃圾回收：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">应用顺序
+</span></span><span class="line"><span class="cl">  -&gt; page cache 合并
+</span></span><span class="line"><span class="cl">  -&gt; 文件系统分配 extent
+</span></span><span class="line"><span class="cl">  -&gt; block layer 调度
+</span></span><span class="line"><span class="cl">  -&gt; SSD FTL 重映射
+</span></span></code></pre></div><p>顺序写通常更容易获得高吞吐，但不能从“应用按顺序写”推导出“断电后按顺序看到所有字节”。需要顺序一致性时，使用明确的日志协议和同步边界。</p>
+<hr>
+<h1 id="13-崩溃一致性把承诺写成状态矩阵">13. 崩溃一致性：把承诺写成状态矩阵</h1>
+<h2 id="131-安全替换的四个断电点">13.1 安全替换的四个断电点</h2>
+<p>假设目标文件是旧版本 <code>A</code>，临时文件写入新版本 <code>B</code>：</p>
+<table>
+<thead>
+<tr>
+<th>断电位置</th>
+<th>未调用 fsync(temp)</th>
+<th>已 fsync(temp)，未 rename</th>
+<th>已 rename，未 fsync(dir)</th>
+<th>已 fsync(dir)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>可能的结果</td>
+<td>temp/内容不完整</td>
+<td>A 通常仍可见，B 可能残留</td>
+<td>可能 A 或 B，依实现与时序</td>
+<td>目标目录关系达到协议要求</td>
+</tr>
+</tbody>
+</table>
+<p>这张表不是对所有文件系统的绝对承诺，而是帮助明确<strong>每一步解决哪个问题</strong>：</p>
+<ul>
+<li><code>fsync(temp)</code>：把 B 的文件内容和必要元数据推到稳定路径</li>
+<li><code>rename</code>：让并发读者看到 A/B 的原子名字切换</li>
+<li><code>fsync(dir)</code>：把这个名字切换纳入目录持久化</li>
+</ul>
+<p>如果临时文件创建在目标目录之外，<code>rename</code> 还可能失败 <code>EXDEV</code>；如果目标路径有多个硬链接，更新其中一个名字不会让所有名字一起变化。</p>
+<h2 id="132-创建新文件的协议">13.2 创建新文件的协议</h2>
+<p>创建新文件比替换已有文件少了旧版本，但目录项仍是独立持久化对象：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">fd = open(temp, O_CREAT|O_EXCL)
+</span></span><span class="line"><span class="cl">write all data
+</span></span><span class="line"><span class="cl">fsync(fd)
+</span></span><span class="line"><span class="cl">close(fd)
+</span></span><span class="line"><span class="cl">rename(temp, final)
+</span></span><span class="line"><span class="cl">fsync(parent directory)
+</span></span></code></pre></div><p>如果使用 <code>O_TMPFILE</code>，Linux 可以先创建一个没有目录名的 inode，再用 <code>linkat</code> 把它发布到目录中：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="kt">int</span> <span class="n">fd</span> <span class="o">=</span> <span class="n">open</span><span class="p">(</span><span class="s">&#34;.&#34;</span><span class="p">,</span> <span class="n">O_TMPFILE</span> <span class="o">|</span> <span class="n">O_WRONLY</span><span class="p">,</span> <span class="mo">0644</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="n">write_all</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span> <span class="n">data</span><span class="p">,</span> <span class="n">len</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="n">fsync</span><span class="p">(</span><span class="n">fd</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="n">linkat</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span> <span class="s">&#34;&#34;</span><span class="p">,</span> <span class="n">AT_FDCWD</span><span class="p">,</span> <span class="s">&#34;config&#34;</span><span class="p">,</span> <span class="n">AT_EMPTY_PATH</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="n">fsync</span><span class="p">(</span><span class="n">dirfd</span><span class="p">);</span>
+</span></span></code></pre></div><p>它减少了临时文件名暴露和清理问题，但依赖 Linux、文件系统支持以及正确处理 link 的错误路径。它同样不跳过最后的目录 fsync。</p>
+<h2 id="133-truncate-与-rename-的语义不同">13.3 truncate 与 rename 的语义不同</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">直接 open(target, O_TRUNC)
+</span></span><span class="line"><span class="cl">  -&gt; 先把旧文件截成空
+</span></span><span class="line"><span class="cl">  -&gt; 写入新内容
+</span></span><span class="line"><span class="cl">  -&gt; 崩溃可能只剩半个文件
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">写 temp + fsync + rename
+</span></span><span class="line"><span class="cl">  -&gt; 旧文件一直完整保留到切换瞬间
+</span></span><span class="line"><span class="cl">  -&gt; 崩溃更容易得到 A 或 B
+</span></span></code></pre></div><p>配置、证书、路由表这类“必须是完整版本”的文件，不应直接 truncate 原文件再写。原子替换不是为了性能，而是把恢复状态压缩到完整旧版本/完整新版本两种可接受状态。</p>
+<hr>
+<h1 id="14-go-视角文件-api-没有自动提供事务">14. Go 视角：文件 API 没有自动提供事务</h1>
+<h2 id="141-oswritefile-到底做了什么">14.1 <code>os.WriteFile</code> 到底做了什么</h2>
+<p>Go 的高层 API 方便，但不会替你定义持久化协议：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="nx">err</span> <span class="o">:=</span> <span class="nx">os</span><span class="p">.</span><span class="nf">WriteFile</span><span class="p">(</span><span class="s">&#34;config&#34;</span><span class="p">,</span> <span class="nx">data</span><span class="p">,</span> <span class="mi">0</span><span class="nx">o644</span><span class="p">)</span>
+</span></span></code></pre></div><p>它解决了打开、写入和关闭的工程细节，返回成功也不等于“断电后一定存在完整 data”。需要 durability 时，要显式控制 fd：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="nx">f</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">os</span><span class="p">.</span><span class="nf">OpenFile</span><span class="p">(</span><span class="s">&#34;config.tmp&#34;</span><span class="p">,</span> <span class="nx">os</span><span class="p">.</span><span class="nx">O_CREATE</span><span class="p">|</span><span class="nx">os</span><span class="p">.</span><span class="nx">O_WRONLY</span><span class="p">|</span><span class="nx">os</span><span class="p">.</span><span class="nx">O_TRUNC</span><span class="p">,</span> <span class="mi">0</span><span class="nx">o644</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="k">if</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span> <span class="nx">log</span><span class="p">.</span><span class="nf">Fatal</span><span class="p">(</span><span class="nx">err</span><span class="p">)</span> <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="k">if</span> <span class="nx">_</span><span class="p">,</span> <span class="nx">err</span> <span class="p">=</span> <span class="nx">f</span><span class="p">.</span><span class="nf">Write</span><span class="p">(</span><span class="nx">data</span><span class="p">);</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span> <span class="nx">log</span><span class="p">.</span><span class="nf">Fatal</span><span class="p">(</span><span class="nx">err</span><span class="p">)</span> <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="k">if</span> <span class="nx">err</span> <span class="p">=</span> <span class="nx">f</span><span class="p">.</span><span class="nf">Sync</span><span class="p">();</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span> <span class="nx">log</span><span class="p">.</span><span class="nf">Fatal</span><span class="p">(</span><span class="nx">err</span><span class="p">)</span> <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="k">if</span> <span class="nx">err</span> <span class="p">=</span> <span class="nx">f</span><span class="p">.</span><span class="nf">Close</span><span class="p">();</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span> <span class="nx">log</span><span class="p">.</span><span class="nf">Fatal</span><span class="p">(</span><span class="nx">err</span><span class="p">)</span> <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="k">if</span> <span class="nx">err</span> <span class="p">=</span> <span class="nx">os</span><span class="p">.</span><span class="nf">Rename</span><span class="p">(</span><span class="s">&#34;config.tmp&#34;</span><span class="p">,</span> <span class="s">&#34;config&#34;</span><span class="p">);</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span> <span class="nx">log</span><span class="p">.</span><span class="nf">Fatal</span><span class="p">(</span><span class="nx">err</span><span class="p">)</span> <span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="nx">dir</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">os</span><span class="p">.</span><span class="nf">Open</span><span class="p">(</span><span class="s">&#34;.&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="k">if</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span> <span class="nx">log</span><span class="p">.</span><span class="nf">Fatal</span><span class="p">(</span><span class="nx">err</span><span class="p">)</span> <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="k">if</span> <span class="nx">err</span> <span class="p">=</span> <span class="nx">dir</span><span class="p">.</span><span class="nf">Sync</span><span class="p">();</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span> <span class="nx">log</span><span class="p">.</span><span class="nf">Fatal</span><span class="p">(</span><span class="nx">err</span><span class="p">)</span> <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="k">if</span> <span class="nx">err</span> <span class="p">=</span> <span class="nx">dir</span><span class="p">.</span><span class="nf">Close</span><span class="p">();</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span> <span class="nx">log</span><span class="p">.</span><span class="nf">Fatal</span><span class="p">(</span><span class="nx">err</span><span class="p">)</span> <span class="p">}</span>
+</span></span></code></pre></div><p>这里的 <code>Sync</code> 是向操作系统请求同步，不应在没有业务需要时对每一行日志都调用；可以用批量提交、WAL group commit 或定期 checkpoint 平衡吞吐与 durability。</p>
+<h2 id="142-o_append-保证什么">14.2 <code>O_APPEND</code> 保证什么</h2>
+<p>多个进程以 <code>O_APPEND</code> 打开同一文件时，内核会把“定位到文件尾并写入”作为一次写操作的原子定位语义，避免两个 writer 都拿到同一个旧 end offset。但它不保证：</p>
+<ul>
+<li>一次很大的 write 不会被拆分观察</li>
+<li>多个 write 调用的日志记录不会交错</li>
+<li>记录已经稳定落盘</li>
+<li>NFS 等远程文件系统提供完全相同的并发语义</li>
+</ul>
+<p>日志记录要避免交错，应让一条记录在一次合适大小的 write 中完成，或由单一 writer/日志代理串行化；要抗断电，还要设计同步策略。</p>
+<h2 id="143-mmap-修改也需要持久化协议">14.3 <code>mmap</code> 修改也需要持久化协议</h2>
+<p>文件映射写入绕过了显式 <code>write()</code>，但仍可能修改页缓存：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="n">p</span> <span class="o">=</span> <span class="n">mmap</span><span class="p">(...,</span> <span class="n">MAP_SHARED</span><span class="p">,</span> <span class="n">fd</span><span class="p">,</span> <span class="mi">0</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="n">p</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="sc">&#39;X&#39;</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="n">msync</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="n">len</span><span class="p">,</span> <span class="n">MS_SYNC</span><span class="p">);</span>
+</span></span></code></pre></div><p><code>msync</code> 请求映射范围的更新同步；若需要文件大小、目录关系或多文件事务，仍要处理 inode/目录/WAL。<code>MAP_PRIVATE</code> 的写入是写时复制，不会把修改写回原文件。</p>
+<p>不要认为 mmap 是“更直接的 fsync 替代品”：它改变的是访问 API，不会自动生成业务事务边界。</p>
+<hr>
+<h1 id="15-常见错误与修复路径">15. 常见错误与修复路径</h1>
+<h2 id="151-用-close-当-commit">15.1 用 close 当 commit</h2>
+<p><strong>错误：</strong> 写完关闭 fd，就认为数据已安全。</p>
+<p><strong>问题：</strong> close 主要释放引用；写回可能尚未完成，目录项更可能未同步。</p>
+<p><strong>修复：</strong> 对需要 durability 的文件先 <code>fsync</code>/<code>fdatasync</code>，替换文件再同步父目录，并检查所有返回值。</p>
+<h2 id="152-只-fsync-文件不-fsync-目录">15.2 只 fsync 文件，不 fsync 目录</h2>
+<p><strong>错误：</strong> 新文件内容已经稳定，所以认为名字也稳定。</p>
+<p><strong>问题：</strong> 文件对象与父目录目录项是两条持久化链。</p>
+<p><strong>修复：</strong> 创建/rename 后打开父目录并 <code>fsync</code>；跨平台时用平台文档确认目录同步能力。</p>
+<h2 id="153-用-sleep-等待磁盘已经写完">15.3 用 sleep 等待“磁盘已经写完”</h2>
+<p><strong>错误：</strong> <code>write(); sleep(1);</code> 代替 fsync。</p>
+<p><strong>问题：</strong> 回写调度和设备队列没有固定时间上界，睡眠不是持久化协议。</p>
+<p><strong>修复：</strong> 使用明确的同步 API，并通过故障注入测试恢复状态。</p>
+<h2 id="154-把-o_direct-当性能开关">15.4 把 O_DIRECT 当性能开关</h2>
+<p><strong>错误：</strong> 发现 page cache 占内存，就全局加 O_DIRECT。</p>
+<p><strong>问题：</strong> 丢掉内核预读/回写优化，却未必拥有应用层缓存和 IO 调度能力。</p>
+<p><strong>修复：</strong> 只有基准证明双重缓存是瓶颈，并且应用能处理对齐、短 IO、预读、持久化和错误恢复时才考虑。</p>
+<h2 id="155-只看文件大小不看-inode-与-fd">15.5 只看文件大小，不看 inode 与 fd</h2>
+<p><strong>错误：</strong> <code>du</code> 看着很小，就认为日志空间没问题。</p>
+<p><strong>问题：</strong> deleted-open 文件、稀疏文件和隐藏挂载会让 <code>df</code> 与 <code>du</code> 差异很大。</p>
+<p><strong>修复：</strong> 联合 <code>df -h</code>、<code>df -i</code>、<code>du -x</code>、<code>lsof +L1</code>、<code>findmnt</code>，再定位具体进程。</p>
+<hr>
+<h1 id="16-追加面试题">16. 追加面试题</h1>
+<p><strong>Q：页缓存为什么会让 write 偶尔突然变慢？</strong></p>
+<p>脏页达到阈值后，产生脏页的线程不能无限继续写，会被迫参与回写或等待 writeback；journal commit、块设备队列和云盘确认也可能把延迟传播到 write。平均磁盘带宽不满不代表回写没有造成阻塞，要结合 <code>/proc/meminfo</code>、vmstat、iostat 和 fsync/write 系统调用时间。</p>
+<p><strong>Q：为什么 write 按顺序调用，断电后不一定按顺序看到？</strong></p>
+<p>页缓存合并、文件系统延迟分配、块层调度和设备 FTL 都可能重排物理写入。逻辑调用顺序不是稳定介质顺序。需要恢复顺序时，用日志记录、commit marker 和 fsync 建立明确 happens-before。</p>
+<p><strong>Q：为什么配置更新不能直接 O_TRUNC 后写？</strong></p>
+<p>truncate 会先破坏旧版本；写入中途崩溃可能留下空文件或半个文件。临时文件写完整并 fsync，再 rename 切换名字，旧版本会一直保留到切换点，崩溃恢复状态更容易保证为旧/新完整版本。</p>
+<p><strong>Q：O_TMPFILE 有什么价值？</strong></p>
+<p>它创建没有目录名的临时 inode，应用可在不可见状态下写完、同步并校验，再通过 <code>linkat</code> 发布名字，减少临时文件暴露和清理问题。它仍需处理文件系统支持、link 错误和父目录 fsync，不能把它当自动事务。</p>
+<p><strong>Q：Go 的 os.WriteFile 是否保证断电后内容完整？</strong></p>
+<p>不保证。它提供方便的打开、写入和关闭，不自动为应用完成 fsync、rename 和目录 fsync。需要 durability 时，应显式使用 File.Sync、临时文件原子替换和父目录同步，或交给实现了 WAL 的数据库/存储库。</p>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2026-08-12</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/linux/">linux</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/linux/linux_31_IO%E6%A8%A1%E5%9E%8B%E6%BC%94%E8%BF%9B%E9%98%BB%E5%A1%9E%E5%88%B0epoll/" class="prev" rel="prev" title="Linux-31 IO 模型演进：阻塞 → epoll"><i class="fas fa-angle-left fa-fw"></i>Linux-31 IO 模型演进：阻塞 → epoll</a>
+            <a href="/posts/linux/linux_29_%E4%BF%A1%E5%8F%B7%E8%83%8C%E7%9D%8040%E5%B9%B4%E5%80%BA%E7%9A%84%E6%9C%BA%E5%88%B6/" class="next" rel="next" title="Linux-29 信号：背着 40 年债的机制">Linux-29 信号：背着 40 年债的机制<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2026-08-12T09:00:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Linux-30 文件系统与 inode 抽象的必然性"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

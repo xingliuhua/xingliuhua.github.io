@@ -1,0 +1,959 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>Linux-36 namespace 与 cgroup：容器到底隔离了什么 - xingliuhua博客</title><meta name="Description" content="namespace 如何改变进程可见的 PID、挂载、网络、主机名、IPC 与用户身份，cgroup v2 如何限制 CPU、内存、IO 和进程数，容器为何共享内核却看起来像独立系统，以及 OOM、CPU throttling、user namespace、rootless 与 Go runtime 的真实边界。"><meta property="og:title" content="Linux-36 namespace 与 cgroup：容器到底隔离了什么" />
+<meta property="og:description" content="namespace 如何改变进程可见的 PID、挂载、网络、主机名、IPC 与用户身份，cgroup v2 如何限制 CPU、内存、IO 和进程数，容器为何共享内核却看起来像独立系统，以及 OOM、CPU throttling、user namespace、rootless 与 Go runtime 的真实边界。" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/linux/linux_36_namespace%E4%B8%8Ecgroup%E5%AE%B9%E5%99%A8%E5%88%B0%E5%BA%95%E9%9A%94%E7%A6%BB%E4%BA%86%E4%BB%80%E4%B9%88/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2026-08-12T06:00:00+08:00" />
+<meta property="article:modified_time" content="2026-08-12T06:00:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="Linux-36 namespace 与 cgroup：容器到底隔离了什么"/>
+<meta name="twitter:description" content="namespace 如何改变进程可见的 PID、挂载、网络、主机名、IPC 与用户身份，cgroup v2 如何限制 CPU、内存、IO 和进程数，容器为何共享内核却看起来像独立系统，以及 OOM、CPU throttling、user namespace、rootless 与 Go runtime 的真实边界。"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/linux/linux_36_namespace%E4%B8%8Ecgroup%E5%AE%B9%E5%99%A8%E5%88%B0%E5%BA%95%E9%9A%94%E7%A6%BB%E4%BA%86%E4%BB%80%E4%B9%88/" /><link rel="prev" href="https://xingliuhua.github.io/posts/linux/linux_37_init%E4%B9%8B%E4%BA%89systemd%E4%B8%BA%E4%BB%80%E4%B9%88%E8%B5%A2%E4%B9%9F%E8%A2%AB%E9%AA%82/" /><link rel="next" href="https://xingliuhua.github.io/posts/linux/linux_35_%E8%99%9A%E6%8B%9F%E7%BD%91%E7%BB%9C%E5%AE%B9%E5%99%A8%E4%B8%BA%E4%BB%80%E4%B9%88%E8%83%BD%E9%80%9A/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Linux-36 namespace 与 cgroup：容器到底隔离了什么",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_36_namespace%E4%B8%8Ecgroup%E5%AE%B9%E5%99%A8%E5%88%B0%E5%BA%95%E9%9A%94%E7%A6%BB%E4%BA%86%E4%BB%80%E4%B9%88\/"
+        },"genre": "posts","keywords": "linux","wordcount":  13648 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_36_namespace%E4%B8%8Ecgroup%E5%AE%B9%E5%99%A8%E5%88%B0%E5%BA%95%E9%9A%94%E7%A6%BB%E4%BA%86%E4%BB%80%E4%B9%88\/","datePublished": "2026-08-12T06:00:00+08:00","dateModified": "2026-08-12T06:00:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "namespace 如何改变进程可见的 PID、挂载、网络、主机名、IPC 与用户身份，cgroup v2 如何限制 CPU、内存、IO 和进程数，容器为何共享内核却看起来像独立系统，以及 OOM、CPU throttling、user namespace、rootless 与 Go runtime 的真实边界。"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">Linux-36 namespace 与 cgroup：容器到底隔离了什么</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2026-08-12">2026-08-12</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 13648 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 28 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-容器的两条轴视图与资源">1. 容器的两条轴：视图与资源</a>
+      <ol>
+        <li><a href="#11-namespace-不是资源配额">1.1 namespace 不是资源配额</a></li>
+        <li><a href="#12-cgroup-不是可见性隔离">1.2 cgroup 不是可见性隔离</a></li>
+        <li><a href="#13-共享内核是效率也是边界">1.3 共享内核是效率也是边界</a></li>
+      </ol>
+    </li>
+    <li><a href="#2-namespace-的共同对象模型">2. namespace 的共同对象模型</a>
+      <ol>
+        <li><a href="#21-进程通过-nsproxy-引用多个-namespace">2.1 进程通过 nsproxy 引用多个 namespace</a></li>
+        <li><a href="#22-cloneunshare-与-setns">2.2 clone、unshare 与 setns</a></li>
+        <li><a href="#23-namespace-生命周期由引用决定">2.3 namespace 生命周期由引用决定</a></li>
+        <li><a href="#24-namespace-可以嵌套但语义不完全相同">2.4 namespace 可以嵌套，但语义不完全相同</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-pid-namespace同一任务有多个-pid">3. PID namespace：同一任务有多个 PID</a>
+      <ol>
+        <li><a href="#31-pid-是相对于观察-namespace-的名字">3.1 PID 是相对于观察 namespace 的名字</a></li>
+        <li><a href="#32-pid-1-有特殊责任">3.2 PID 1 有特殊责任</a></li>
+        <li><a href="#33-proc-视图取决于-mount">3.3 <code>/proc</code> 视图取决于 mount</a></li>
+        <li><a href="#34-隔离-pid-不等于禁止信号">3.4 隔离 PID 不等于禁止信号</a></li>
+      </ol>
+    </li>
+    <li><a href="#4-mount-namespace根目录只是挂载树的起点">4. Mount namespace：根目录只是挂载树的起点</a>
+      <ol>
+        <li><a href="#41-mount-namespace-复制的是挂载关系">4.1 mount namespace 复制的是挂载关系</a></li>
+        <li><a href="#42-bind-mount-改变路径视图">4.2 bind mount 改变路径视图</a></li>
+        <li><a href="#43-pivot_rootchroot-改变查找起点">4.3 pivot_root/chroot 改变查找起点</a></li>
+        <li><a href="#44-overlayfs-如何构造镜像根目录">4.4 overlayfs 如何构造镜像根目录</a></li>
+        <li><a href="#45-mount-propagation-防止意外传播">4.5 mount propagation 防止意外传播</a></li>
+      </ol>
+    </li>
+    <li><a href="#5-utsipcnetworkcgroup-与-time-namespace">5. UTS、IPC、Network、Cgroup 与 Time namespace</a>
+      <ol>
+        <li><a href="#51-uts-namespace主机名不是机器身份">5.1 UTS namespace：主机名不是机器身份</a></li>
+        <li><a href="#52-ipc-namespace隔离-system-vposix-ipc">5.2 IPC namespace：隔离 System V/POSIX IPC</a></li>
+        <li><a href="#53-network-namespace">5.3 Network namespace</a></li>
+        <li><a href="#54-cgroup-namespace隐藏层级路径不创建新额度">5.4 Cgroup namespace：隐藏层级路径，不创建新额度</a></li>
+        <li><a href="#55-time-namespace部分时钟偏移">5.5 Time namespace：部分时钟偏移</a></li>
+      </ol>
+    </li>
+    <li><a href="#6-user-namespace容器-root-不必是宿主-root">6. User namespace：容器 root 不必是宿主 root</a>
+      <ol>
+        <li><a href="#61-uidgid-也可以映射">6.1 UID/GID 也可以映射</a></li>
+        <li><a href="#62-capability-相对于-user-namespace-判断">6.2 capability 相对于 user namespace 判断</a></li>
+        <li><a href="#63-rootless-容器为何更难联网和挂载">6.3 rootless 容器为何更难联网和挂载</a></li>
+        <li><a href="#64-user-namespace-不是漏洞免疫">6.4 user namespace 不是漏洞免疫</a></li>
+      </ol>
+    </li>
+    <li><a href="#7-cgroup-v2一棵资源控制树">7. cgroup v2：一棵资源控制树</a>
+      <ol>
+        <li><a href="#71-统一层级解决-v1-的分裂">7.1 统一层级解决 v1 的分裂</a></li>
+        <li><a href="#72-no-internal-process-规则与-delegation">7.2 no internal process 规则与 delegation</a></li>
+        <li><a href="#73-找到当前进程的-cgroup">7.3 找到当前进程的 cgroup</a></li>
+        <li><a href="#74-线程与进程归属">7.4 线程与进程归属</a></li>
+      </ol>
+    </li>
+    <li><a href="#8-cpu-controller权重硬额度与压力">8. CPU controller：权重、硬额度与压力</a>
+      <ol>
+        <li><a href="#81-cpuweight-只在竞争时分份额">8.1 cpu.weight 只在竞争时分份额</a></li>
+        <li><a href="#82-cpumax-是带-period-的带宽上限">8.2 cpu.max 是带 period 的带宽上限</a></li>
+        <li><a href="#83-cpustat-看节流事实">8.3 cpu.stat 看节流事实</a></li>
+        <li><a href="#84-cpuset-与-numa">8.4 cpuset 与 NUMA</a></li>
+      </ol>
+    </li>
+    <li><a href="#9-memory-controller限制的是内存承诺与回收压力">9. Memory controller：限制的是内存承诺与回收压力</a>
+      <ol>
+        <li><a href="#91-memorycurrent-不只是-go-heap">9.1 memory.current 不只是 Go heap</a></li>
+        <li><a href="#92-四个重要边界">9.2 四个重要边界</a></li>
+        <li><a href="#93-memcg-oom-与全局-oom">9.3 memcg OOM 与全局 OOM</a></li>
+        <li><a href="#94-memoryevents-是关键证据">9.4 memory.events 是关键证据</a></li>
+        <li><a href="#95-swap-与-page-cache">9.5 swap 与 page cache</a></li>
+      </ol>
+    </li>
+    <li><a href="#10-io-controller限制设备时间不等于限制所有文件操作">10. IO controller：限制设备时间，不等于限制所有文件操作</a>
+      <ol>
+        <li><a href="#101-iomax-设置设备级上限">10.1 io.max 设置设备级上限</a></li>
+        <li><a href="#102-ioweight-是竞争时份额">10.2 io.weight 是竞争时份额</a></li>
+        <li><a href="#103-写入会通过回写延迟反馈">10.3 写入会通过回写延迟反馈</a></li>
+        <li><a href="#104-观察-iostat-与-psi">10.4 观察 io.stat 与 PSI</a></li>
+      </ol>
+    </li>
+    <li><a href="#11-pids-controller限制-task-创建而不是-goroutine-数">11. PIDs controller：限制 task 创建而不是 goroutine 数</a>
+      <ol>
+        <li><a href="#111-pidsmax-防-fork-bomb-与线程爆炸">11.1 pids.max 防 fork bomb 与线程爆炸</a></li>
+        <li><a href="#112-限额失败的表现可能离业务很远">11.2 限额失败的表现可能离业务很远</a></li>
+        <li><a href="#113-rlimit_nproc-与-pidsmax-不同">11.3 RLIMIT_NPROC 与 pids.max 不同</a></li>
+      </ol>
+    </li>
+    <li><a href="#12-cgroup-层级与额度去哪了">12. cgroup 层级与“额度去哪了”</a>
+      <ol>
+        <li><a href="#121-父级约束会覆盖子级">12.1 父级约束会覆盖子级</a></li>
+        <li><a href="#122-共享-pod-的资源争用">12.2 共享 Pod 的资源争用</a></li>
+        <li><a href="#123-requestlimit-与-linux-文件不是一一对应">12.3 request、limit 与 Linux 文件不是一一对应</a></li>
+        <li><a href="#124-移动进程不迁移历史内存的直觉陷阱">12.4 移动进程不迁移历史内存的直觉陷阱</a></li>
+      </ol>
+    </li>
+    <li><a href="#13-psi限制未触发服务也可能已经很慢">13. PSI：限制未触发，服务也可能已经很慢</a>
+      <ol>
+        <li><a href="#131-utilization-看工作量pressure-看等待">13.1 utilization 看工作量，pressure 看等待</a></li>
+        <li><a href="#132-some-与-full">13.2 some 与 full</a></li>
+        <li><a href="#133-psi-不是根因标签">13.3 PSI 不是根因标签</a></li>
+      </ol>
+    </li>
+    <li><a href="#14-go-runtime-与容器额度">14. Go runtime 与容器额度</a>
+      <ol>
+        <li><a href="#141-gomaxprocs-必须匹配可用-cpu">14.1 GOMAXPROCS 必须匹配可用 CPU</a></li>
+        <li><a href="#142-gomemlimit-是-runtime-目标不是-cgroup-硬保证">14.2 GOMEMLIMIT 是 runtime 目标，不是 cgroup 硬保证</a></li>
+        <li><a href="#143-rss-不立即下降不一定泄漏">14.3 RSS 不立即下降不一定泄漏</a></li>
+        <li><a href="#144-cgo-和-os-thread-受-pids内存约束">14.4 cgo 和 OS thread 受 PIDs/内存约束</a></li>
+        <li><a href="#145-cpu-限额会放大-gc-与网络尾延迟">14.5 CPU 限额会放大 GC 与网络尾延迟</a></li>
+      </ol>
+    </li>
+    <li><a href="#15-oom-的过程与恢复设计">15. OOM 的过程与恢复设计</a>
+      <ol>
+        <li><a href="#151-分配成功不等于物理页已经保证">15.1 分配成功不等于物理页已经保证</a></li>
+        <li><a href="#152-oom-killer-选择谁">15.2 OOM killer 选择谁</a></li>
+        <li><a href="#153-重启不是恢复全部状态">15.3 重启不是恢复全部状态</a></li>
+      </ol>
+    </li>
+    <li><a href="#16-安全边界隔离限制与授权是三回事">16. 安全边界：隔离、限制与授权是三回事</a>
+      <ol>
+        <li><a href="#161-capability-拆分-root-权限">16.1 capability 拆分 root 权限</a></li>
+        <li><a href="#162-seccomp-限制-syscall-面">16.2 seccomp 限制 syscall 面</a></li>
+        <li><a href="#163-lsm-控制对象访问">16.3 LSM 控制对象访问</a></li>
+        <li><a href="#164-proc设备与宿主-mount-是高风险入口">16.4 <code>/proc</code>、设备与宿主 mount 是高风险入口</a></li>
+      </ol>
+    </li>
+    <li><a href="#17-线上排查先确认自己观察的是哪一层">17. 线上排查：先确认自己观察的是哪一层</a>
+      <ol>
+        <li><a href="#171-namespace-身份">17.1 namespace 身份</a></li>
+        <li><a href="#172-cgroup-路径和控制器">17.2 cgroup 路径和控制器</a></li>
+        <li><a href="#173-cpu-慢的检查顺序">17.3 CPU 慢的检查顺序</a></li>
+        <li><a href="#174-内存问题的检查顺序">17.4 内存问题的检查顺序</a></li>
+        <li><a href="#175-mountoverlay-空间问题">17.5 mount/overlay 空间问题</a></li>
+      </ol>
+    </li>
+    <li><a href="#18-常用命令知识点扩展">18. 常用命令知识点扩展</a></li>
+    <li><a href="#19-面试题">19. 面试题</a></li>
+    <li><a href="#小结">小结</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><p>上一篇用 network namespace、veth、bridge、路由和 NAT 解释了容器为什么能联网。这一篇把视角扩大：<strong>容器看起来有自己的 PID 1、根目录、主机名、网络和资源额度，但它并没有启动另一套内核。这种“像一台机器”的错觉是怎样拼出来的？</strong></p>
+<p>Linux 容器不是一个单独机制，而是两类机制的组合：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">namespace：改变进程能看见哪些内核对象，以及对象在该视图中的名字
+</span></span><span class="line"><span class="cl">cgroup：控制一组进程能消耗多少 CPU、内存、IO、PID 等资源
+</span></span></code></pre></div><p>前者主要回答“你看见什么”，后者回答“你能用多少”。二者都不自动等于安全沙箱；容器还依赖 capability、seccomp、LSM、只读挂载、用户身份与内核修复。把这些边界混在一起，会导致错误的容量规划和危险的权限假设。</p>
+<p>先看五个问题：</p>
+<ol>
+<li>为什么同一个进程可以在宿主机显示 PID 48217，在容器里却是 PID 1？PID namespace 如何嵌套？</li>
+<li>mount namespace 为什么不是复制一份磁盘？<code>pivot_root</code>、bind mount 与 overlayfs 如何拼出容器根目录？</li>
+<li>user namespace 如何让容器里的 root 映射成宿主机普通 UID？它解决了什么，又没有解决什么？</li>
+<li>cgroup v2 的 <code>cpu.max</code>、<code>memory.max</code>、<code>io.max</code>、<code>pids.max</code> 分别在什么位置施加压力？为什么限制不是简单的“超过就报错”？</li>
+<li>Go runtime 看到的 CPU、内存与 PID 是否已经是容器额度？CPU throttling、memcg OOM 与 goroutine 爆炸应如何排查？</li>
+</ol>
+<hr>
+<h1 id="1-容器的两条轴视图与资源">1. 容器的两条轴：视图与资源</h1>
+<h2 id="11-namespace-不是资源配额">1.1 namespace 不是资源配额</h2>
+<p>把进程放进 PID namespace，只让它看到一个不同的进程编号树，不会阻止它吃满全部 CPU。把进程放进 network namespace，会隔离接口、路由和端口空间，却不会限制它制造多少包。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">只有 namespace：
+</span></span><span class="line"><span class="cl">  看起来隔离，但可能耗尽宿主机资源
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">只有 cgroup：
+</span></span><span class="line"><span class="cl">  资源有限，但仍看见宿主机进程、挂载或网络
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">容器：
+</span></span><span class="line"><span class="cl">  namespace + cgroup + filesystem + credentials + security policy
+</span></span></code></pre></div><h2 id="12-cgroup-不是可见性隔离">1.2 cgroup 不是可见性隔离</h2>
+<p>cgroup 将进程组织成层级，并由 controller 记账/控制资源。两个进程即使在同一 PID、mount、network namespace，也可以属于不同 cgroup，拥有不同 CPU weight 和 memory limit。</p>
+<p>同样，一个容器的不同线程通常属于同一 cgroup，但 thread mode、systemd delegation 等能形成更细层级。不要把“一个 cgroup”永久等同“一个容器”。</p>
+<h2 id="13-共享内核是效率也是边界">1.3 共享内核是效率也是边界</h2>
+<p>所有容器 syscall 最终进入宿主机内核：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">container process
+</span></span><span class="line"><span class="cl">  -&gt; syscall
+</span></span><span class="line"><span class="cl">  -&gt; host kernel VFS / scheduler / network / memory manager
+</span></span><span class="line"><span class="cl">  -&gt; namespace 选择对象视图
+</span></span><span class="line"><span class="cl">  -&gt; cgroup controller 记账与限制
+</span></span><span class="line"><span class="cl">  -&gt; capability/seccomp/LSM 检查权限
+</span></span></code></pre></div><p>优点是启动快、内存少、系统调用无需穿过完整 guest；代价是内核漏洞与全局资源仍可能跨容器产生影响。高隔离需求会使用虚拟机、microVM 或 sandboxed runtime增加内核边界。</p>
+<hr>
+<h1 id="2-namespace-的共同对象模型">2. namespace 的共同对象模型</h1>
+<h2 id="21-进程通过-nsproxy-引用多个-namespace">2.1 进程通过 nsproxy 引用多个 namespace</h2>
+<p>进程不是“属于一个统一 namespace”。内核任务凭据和 <code>nsproxy</code> 等结构分别引用多种 namespace：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">task
+</span></span><span class="line"><span class="cl">  -&gt; pid namespace
+</span></span><span class="line"><span class="cl">  -&gt; mount namespace
+</span></span><span class="line"><span class="cl">  -&gt; network namespace
+</span></span><span class="line"><span class="cl">  -&gt; UTS namespace
+</span></span><span class="line"><span class="cl">  -&gt; IPC namespace
+</span></span><span class="line"><span class="cl">  -&gt; cgroup namespace
+</span></span><span class="line"><span class="cl">  -&gt; time namespace
+</span></span><span class="line"><span class="cl">credentials
+</span></span><span class="line"><span class="cl">  -&gt; user namespace
+</span></span></code></pre></div><p>因此可以只共享网络、隔离 mount，或共享 PID、隔离 user。Kubernetes Pod 中多个容器通常共享 network namespace，可选择共享 process namespace，但有独立 mount 视图。</p>
+<h2 id="22-cloneunshare-与-setns">2.2 clone、unshare 与 setns</h2>
+<p>创建/加入 namespace 的核心接口包括：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">clone()/clone3() + CLONE_NEW*：创建子进程时建立新 namespace
+</span></span><span class="line"><span class="cl">unshare(CLONE_NEW*)：当前进程脱离某些共享 namespace
+</span></span><span class="line"><span class="cl">setns(fd, type)：加入一个已有 namespace
+</span></span></code></pre></div><p><code>nsenter</code> 本质上打开 <code>/proc/PID/ns/*</code> 引用，再执行相应 <code>setns</code>，最后运行命令。权限由 user namespace、capability 和目标 namespace 关系决定，不是任何用户都能进入任意容器。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">ls -l /proc/<span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span>/ns/
+</span></span><span class="line"><span class="cl">readlink /proc/<span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span>/ns/pid
+</span></span><span class="line"><span class="cl">readlink /proc/<span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span>/ns/mnt
+</span></span><span class="line"><span class="cl">readlink /proc/<span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span>/ns/net
+</span></span></code></pre></div><p>相同类型 namespace 的符号链接 inode 标识相同，说明进程共享该 namespace。</p>
+<h2 id="23-namespace-生命周期由引用决定">2.3 namespace 生命周期由引用决定</h2>
+<p>只要有进程、打开的 namespace fd 或 bind mount 引用，namespace 就存活。管理员可给它命名：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ip netns 的命名通常通过 /run/netns 下 bind mount 持有引用</span>
+</span></span><span class="line"><span class="cl">ip netns list
+</span></span></code></pre></div><p>进程退出不总会立即删除 namespace；debug 工具或残留 mount 可能持有它。反之，没有任何引用时，相关对象会随 namespace 销毁，network namespace 的设备/socket也会被清理。</p>
+<h2 id="24-namespace-可以嵌套但语义不完全相同">2.4 namespace 可以嵌套，但语义不完全相同</h2>
+<p>PID、user 等支持层级；mount/network 更像独立实例而非“父能自然继承看见子”的相同模型。父 user namespace 中有相应 capability 的主体可以管理子 user namespace；子 PID namespace 看不到祖先和兄弟进程，祖先视图却能看到后代。</p>
+<p>不能用一套“父 namespace/子 namespace”的直觉解释所有类型，具体权限和对象可见性要查对应 <code>namespaces(7)</code> 及类型 man page。</p>
+<hr>
+<h1 id="3-pid-namespace同一任务有多个-pid">3. PID namespace：同一任务有多个 PID</h1>
+<h2 id="31-pid-是相对于观察-namespace-的名字">3.1 PID 是相对于观察 namespace 的名字</h2>
+<p>一个内核 task 可在嵌套 PID namespace 中有多个编号：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">host PID namespace:       PID 48217
+</span></span><span class="line"><span class="cl">container PID namespace:  PID 1
+</span></span></code></pre></div><p>宿主机能用 48217 观察/发送信号；容器内 <code>/proc</code> 若正确挂载，只看到该 PID namespace 的进程，并把同一任务显示为 1。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 宿主机查看 PID 在各层的编号</span>
+</span></span><span class="line"><span class="cl">cat /proc/48217/status <span class="p">|</span> grep <span class="s1">&#39;^NSpid:&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># NSpid: 48217 1</span>
+</span></span></code></pre></div><p>这不是两个进程，也不是 PID 被修改，而是同一对象在不同命名空间有不同名字。</p>
+<h2 id="32-pid-1-有特殊责任">3.2 PID 1 有特殊责任</h2>
+<p>PID namespace 中第一个进程成为该 namespace 的 init：</p>
+<ul>
+<li>收养该 namespace 中的孤儿进程</li>
+<li>应调用 <code>wait</code> 回收 zombie</li>
+<li>对默认 disposition 的某些信号有特殊处理</li>
+<li>它退出时，内核通常终止该 PID namespace 其余进程</li>
+</ul>
+<p>所以把普通应用直接作为容器 PID 1 时，它需要正确处理 SIGTERM 和子进程；或使用轻量 init（如 runtime 的 init 选项）代理信号和 reap。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">bad entrypoint:
+</span></span><span class="line"><span class="cl">PID 1 shell 不 exec 应用
+</span></span><span class="line"><span class="cl">  -&gt; SIGTERM 只到 shell或转发不完整
+</span></span><span class="line"><span class="cl">  -&gt; app 未优雅退出
+</span></span><span class="line"><span class="cl">  -&gt; child zombie 累积
+</span></span></code></pre></div><h2 id="33-proc-视图取决于-mount">3.3 <code>/proc</code> 视图取决于 mount</h2>
+<p>只进入 PID namespace，不重新挂载 procfs，看到的 <code>/proc</code> 可能仍来自旧 PID namespace。容器运行时通常在新 mount namespace 挂载 <code>/proc</code>，使两者一致。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">PID namespace：决定 PID 映射和可见规则
+</span></span><span class="line"><span class="cl">procfs mount：把对应规则呈现为文件
+</span></span></code></pre></div><p>这也是排障时 <code>nsenter -p</code> 后仍看到奇怪进程列表的原因之一：还需要进入 mount namespace 或挂载适配的 procfs。</p>
+<h2 id="34-隔离-pid-不等于禁止信号">3.4 隔离 PID 不等于禁止信号</h2>
+<p>信号权限仍由 credentials、user namespace、UID、capability 和 LSM 决定。看不见某 PID 通常无法按号码操作它，但共享资源、proc mount 暴露或额外权限可能造成其他路径。PID namespace 是对象视图，不应作为唯一访问控制。</p>
+<hr>
+<h1 id="4-mount-namespace根目录只是挂载树的起点">4. Mount namespace：根目录只是挂载树的起点</h1>
+<h2 id="41-mount-namespace-复制的是挂载关系">4.1 mount namespace 复制的是挂载关系</h2>
+<p>创建 mount namespace 时，进程获得一棵挂载树视图。初始内容可从父视图复制，但文件数据仍来自相同底层 filesystem、block device 或内存对象：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">host mount tree:
+</span></span><span class="line"><span class="cl">/ -&gt; host rootfs
+</span></span><span class="line"><span class="cl">/var/lib/data -&gt; disk X
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">container mount tree:
+</span></span><span class="line"><span class="cl">/ -&gt; overlay merged root
+</span></span><span class="line"><span class="cl">/app/config -&gt; bind-mounted host file
+</span></span><span class="line"><span class="cl">/data -&gt; volume filesystem
+</span></span></code></pre></div><p>它不是自动复制整块磁盘。不同 namespace 可把同一目录挂到不同路径，或让某挂载只在一边可见。</p>
+<h2 id="42-bind-mount-改变路径视图">4.2 bind mount 改变路径视图</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">mount --bind /host/data /container-root/data
+</span></span><span class="line"><span class="cl">mount -o remount,bind,ro /container-root/data
+</span></span></code></pre></div><p>bind mount 让同一个 inode 树在另一位置可见。容器 volume 常使用此机制。只读 bind mount能阻止经该挂载写入，但底层对象若还通过其他可写路径暴露，进程仍可能修改；权限设计要检查所有路径和 capability。</p>
+<h2 id="43-pivot_rootchroot-改变查找起点">4.3 pivot_root/chroot 改变查找起点</h2>
+<p><code>chroot</code> 改变进程路径解析的根，但历史上若进程保留外部目录 fd 或特权能力，可逃出单纯 chroot。容器通常组合独立 mount namespace、<code>pivot_root</code>/类似切换、卸载旧根、drop capability 和 LSM。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">准备 new root mount tree
+</span></span><span class="line"><span class="cl">  -&gt; pivot_root(new_root, put_old)
+</span></span><span class="line"><span class="cl">  -&gt; chdir(&#34;/&#34;)
+</span></span><span class="line"><span class="cl">  -&gt; unmount put_old
+</span></span><span class="line"><span class="cl">  -&gt; remove old root path
+</span></span></code></pre></div><p>安全来自组合约束，不来自“路径开头换成 /”这一动作。</p>
+<h2 id="44-overlayfs-如何构造镜像根目录">4.4 overlayfs 如何构造镜像根目录</h2>
+<p>容器镜像的只读层和容器可写层常用 overlayfs 合并：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">lowerdir: image layers (read-only)
+</span></span><span class="line"><span class="cl">upperdir: container writable layer
+</span></span><span class="line"><span class="cl">workdir: overlay internal work
+</span></span><span class="line"><span class="cl">merged:  container sees one filesystem tree
+</span></span></code></pre></div><p>读取先从 upper 查，没有再查 lower；首次修改 lower 文件可能 copy-up 到 upper。删除 lower 文件常用 whiteout 表达“在 merged 中不可见”。</p>
+<p>这会带来：</p>
+<ul>
+<li>首次写大文件的 copy-up 延迟</li>
+<li>可写层随日志/临时文件增长</li>
+<li>inode、rename、hard link 等行为需遵循 overlayfs 语义</li>
+<li>数据库不宜把持久化数据放在临时 writable layer</li>
+</ul>
+<h2 id="45-mount-propagation-防止意外传播">4.5 mount propagation 防止意外传播</h2>
+<p>shared、slave、private 等传播类型决定一个 mount namespace 中的新挂载是否传播到 peer。容器 runtime 通常把边界配置为合适的 private/slave，避免容器 mount 变化污染宿主机；需要把宿主新 mount 传播进容器的插件目录则可能显式使用 shared propagation。</p>
+<p>错误配置可能造成设备/volume 看不见，或反过来扩大权限边界。不要在不理解传播关系时随意执行递归 <code>--make-rshared /</code>。</p>
+<hr>
+<h1 id="5-utsipcnetworkcgroup-与-time-namespace">5. UTS、IPC、Network、Cgroup 与 Time namespace</h1>
+<h2 id="51-uts-namespace主机名不是机器身份">5.1 UTS namespace：主机名不是机器身份</h2>
+<p>UTS namespace 隔离 hostname 和 NIS domain name：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">hostname
+</span></span><span class="line"><span class="cl">uname -n
+</span></span></code></pre></div><p>容器修改 hostname 不会修改宿主机。但 hostname 只是展示/配置数据，不是可信安全身份，也不自动注册 DNS。分布式系统应使用证书、工作负载身份、不可变实例 ID等，而非把 hostname 当认证凭据。</p>
+<h2 id="52-ipc-namespace隔离-system-vposix-ipc">5.2 IPC namespace：隔离 System V/POSIX IPC</h2>
+<p>IPC namespace 隔离 System V message queues、semaphore、shared memory 和 POSIX message queue 等。它避免不同容器使用相同 key/name 时冲突，也限制彼此观察。</p>
+<p>共享内存还与 mount (<code>/dev/shm</code>) 和 cgroup memory 记账有关。容器默认 <code>/dev/shm</code> 较小时，浏览器、数据库或多进程程序可能报空间不足；调大它会增加潜在内存消耗，仍需受 memcg 约束。</p>
+<h2 id="53-network-namespace">5.3 Network namespace</h2>
+<p>上一篇已展开：它隔离接口、地址、路由、neighbor、socket 端口、netfilter 和 loopback。多个容器共享 Pod network namespace 时，共享 <code>localhost</code> 与端口空间，因此 sidecar 可以访问主容器 localhost，也可能发生端口冲突。</p>
+<h2 id="54-cgroup-namespace隐藏层级路径不创建新额度">5.4 Cgroup namespace：隐藏层级路径，不创建新额度</h2>
+<p>cgroup namespace 改变进程看到的 cgroup hierarchy 根，使 <code>/proc/self/cgroup</code> 看起来从容器边界开始。它是视图隔离，不是新建资源 controller 或 limit；真正限制仍来自进程所属 cgroup 的配置。</p>
+<h2 id="55-time-namespace部分时钟偏移">5.5 Time namespace：部分时钟偏移</h2>
+<p>Time namespace 可为某些 monotonic/boottime 时钟提供偏移，帮助容器/检查点恢复等场景；它不等于随意隔离所有 wall clock，也不替代 NTP 与时区配置。修改系统实时时钟仍是高权限操作，容器通常共享宿主机时间基础。</p>
+<p>时区只是用户态文件/环境视图；容器显示 UTC、宿主显示本地时间，并不代表内核时钟不同。</p>
+<hr>
+<h1 id="6-user-namespace容器-root-不必是宿主-root">6. User namespace：容器 root 不必是宿主 root</h1>
+<h2 id="61-uidgid-也可以映射">6.1 UID/GID 也可以映射</h2>
+<p>user namespace 允许内层 ID 映射到外层不同 ID：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">container UID 0      -&gt; host UID 100000
+</span></span><span class="line"><span class="cl">container UID 1..65535 -&gt; host UID 100001..165535
+</span></span></code></pre></div><p>容器进程在内层看到自己是 root，可拥有该 user namespace 内的 capability；在宿主初始 user namespace 看，它只是非特权 UID 100000，不能凭内层 root 修改宿主机任意对象。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">cat /proc/<span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span>/uid_map
+</span></span><span class="line"><span class="cl">cat /proc/<span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span>/gid_map
+</span></span></code></pre></div><h2 id="62-capability-相对于-user-namespace-判断">6.2 capability 相对于 user namespace 判断</h2>
+<p>传统“root/非 root”被拆成 capability；user namespace 又使 capability 有作用范围。容器 root 可能拥有子 user namespace 的 <code>CAP_NET_ADMIN</code>，能管理与该 namespace 所属关系允许的网络对象，却没有宿主初始 user namespace 的同名能力。</p>
+<p>这显著缩小 rootful 容器逃逸后的直接权限，但规则复杂：某些内核对象归属创建它的 user namespace，跨 namespace 操作需在正确层级拥有 capability。</p>
+<h2 id="63-rootless-容器为何更难联网和挂载">6.3 rootless 容器为何更难联网和挂载</h2>
+<p>非特权用户不能随意创建宿主 bridge、配置全局 NAT、挂载任意 filesystem 或创建设备。rootless runtime 常借助：</p>
+<ul>
+<li>user namespace UID/GID mapping</li>
+<li>slirp/pasta 等用户态网络或受控 helper</li>
+<li>fuse-overlayfs 或内核支持的非特权 overlay</li>
+<li>预配置 subordinate UID/GID</li>
+</ul>
+<p>这些方案减少宿主权限，却可能增加网络转发、文件系统兼容性和性能成本。</p>
+<h2 id="64-user-namespace-不是漏洞免疫">6.4 user namespace 不是漏洞免疫</h2>
+<p>容器仍调用同一个内核。user namespace 扩大了非特权用户可触达的内核代码路径，历史上也出现过相关漏洞。安全策略有时禁用非特权 user namespace，有时依赖它实现 rootless 隔离；应依据受支持内核、威胁模型和运行时评估，不是简单“开更安全/关更安全”。</p>
+<hr>
+<h1 id="7-cgroup-v2一棵资源控制树">7. cgroup v2：一棵资源控制树</h1>
+<h2 id="71-统一层级解决-v1-的分裂">7.1 统一层级解决 v1 的分裂</h2>
+<p>cgroup v1 允许不同 controller 挂在不同 hierarchy，一个进程的 CPU、memory、blkio 归属可能不一致，管理与迁移复杂。cgroup v2 使用统一 hierarchy：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">/sys/fs/cgroup
+</span></span><span class="line"><span class="cl">  system.slice/
+</span></span><span class="line"><span class="cl">  user.slice/
+</span></span><span class="line"><span class="cl">  kubepods.slice/
+</span></span><span class="line"><span class="cl">    pod-xxx/
+</span></span><span class="line"><span class="cl">      container-yyy/
+</span></span></code></pre></div><p>进程在树中的一个 cgroup 位置，启用的 controller 沿层级约束资源。父级 limit 是子级总上限；子级不能凭自己配置突破祖先额度。</p>
+<h2 id="72-no-internal-process-规则与-delegation">7.2 no internal process 规则与 delegation</h2>
+<p>v2 的 domain controller 通常要求分发资源的内部节点不同时直接承载普通进程（root 有特殊处理），让资源在子树间清晰分配。父节点通过 <code>cgroup.subtree_control</code> 将 controller 下放给子级。</p>
+<p>systemd 管理 cgroup tree 时，应用不应绕过它任意写目录；delegation 必须明确交给某服务/用户可管理的子树。手工移动 PID 会破坏 systemd/Kubernetes 对生命周期和记账的假设。</p>
+<h2 id="73-找到当前进程的-cgroup">7.3 找到当前进程的 cgroup</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">cat /proc/self/cgroup
+</span></span><span class="line"><span class="cl"><span class="c1"># v2 常见：0::/user.slice/...</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">findmnt -t cgroup2
+</span></span><span class="line"><span class="cl">cat /sys/fs/cgroup/cgroup.controllers
+</span></span><span class="line"><span class="cl">cat /sys/fs/cgroup/cgroup.subtree_control
+</span></span></code></pre></div><p>在 cgroup namespace 内看到的 <code>/</code> 可能是 namespace 重映射的根，而宿主机真实路径更深。排查容器 limit 应同时从容器视图和宿主 runtime/systemd 视图确认。</p>
+<h2 id="74-线程与进程归属">7.4 线程与进程归属</h2>
+<p>默认把进程写入 <code>cgroup.procs</code> 会迁移其线程；v2 也支持 threaded cgroup 处理线程级资源组织，但有 controller 与拓扑限制。Go 程序的多个 M（OS thread）通常应留在同一容器 cgroup，否则 CPU/内存观测会出现难以解释的分裂。</p>
+<hr>
+<h1 id="8-cpu-controller权重硬额度与压力">8. CPU controller：权重、硬额度与压力</h1>
+<h2 id="81-cpuweight-只在竞争时分份额">8.1 cpu.weight 只在竞争时分份额</h2>
+<p><code>cpu.weight</code>（默认 100，范围依接口定义）表达相对权重：当同一父 cgroup 下的 sibling 都想运行且 CPU 不够时，权重高者获得更多 CPU。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">A weight=100
+</span></span><span class="line"><span class="cl">B weight=200
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">两者都持续 runnable 且同层竞争：
+</span></span><span class="line"><span class="cl">B 约获得 A 的两倍 CPU 份额
+</span></span></code></pre></div><p>空闲时 A 可以使用更多 CPU，不会因为 weight=100 被硬限制。权重是 work-conserving 的相对公平，不是“最多 N 核”。</p>
+<h2 id="82-cpumax-是带-period-的带宽上限">8.2 cpu.max 是带 period 的带宽上限</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">cat /sys/fs/cgroup/.../cpu.max
+</span></span><span class="line"><span class="cl"><span class="c1"># quota period，例如：200000 100000</span>
+</span></span></code></pre></div><p>表示每 100ms period 最多消耗 200ms CPU time，相当于平均 2 CPU。多个线程可并行快速耗尽额度：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">8 threads × 25ms wall time = 200ms CPU quota
+</span></span><span class="line"><span class="cl">  -&gt; cgroup 被 throttle
+</span></span><span class="line"><span class="cl">  -&gt; 等下个 period 补充
+</span></span></code></pre></div><p>因此总利用率看似只有 2 核平均值，P99 却会出现接近 period 边界的停顿。<code>cpu.max</code> 是调度带宽机制，不是固定绑定两个 CPU；cpuset 才控制可运行 CPU 集合。</p>
+<h2 id="83-cpustat-看节流事实">8.3 cpu.stat 看节流事实</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">cat /sys/fs/cgroup/.../cpu.stat
+</span></span></code></pre></div><p>常见字段包括：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">usage_usec
+</span></span><span class="line"><span class="cl">user_usec
+</span></span><span class="line"><span class="cl">system_usec
+</span></span><span class="line"><span class="cl">nr_periods
+</span></span><span class="line"><span class="cl">nr_throttled
+</span></span><span class="line"><span class="cl">throttled_usec
+</span></span></code></pre></div><p>应看故障窗口的增量和 throttled ratio，而非进程启动以来累计值。高 <code>nr_throttled</code> 不总等于业务受影响：有些极短并行突发会节流但不在关键路径；需要与 latency、run queue、Go trace 同时对齐。</p>
+<h2 id="84-cpuset-与-numa">8.4 cpuset 与 NUMA</h2>
+<p><code>cpuset.cpus</code> 限定可运行 CPU，<code>cpuset.mems</code> 限定内存节点。它用于隔离、NUMA 局部性与专用核，但设置过窄会造成单核过载；CPU hotplug 和 effective mask 还可能使请求配置与实际集合不同。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">cat cpuset.cpus
+</span></span><span class="line"><span class="cl">cat cpuset.cpus.effective
+</span></span><span class="line"><span class="cl">cat cpuset.mems.effective
+</span></span></code></pre></div><p>CPU quota、weight、cpuset 可以同时生效：最终能力是这些约束的交集。</p>
+<hr>
+<h1 id="9-memory-controller限制的是内存承诺与回收压力">9. Memory controller：限制的是内存承诺与回收压力</h1>
+<h2 id="91-memorycurrent-不只是-go-heap">9.1 memory.current 不只是 Go heap</h2>
+<p>memcg 通常记账匿名页、page cache、部分内核内存、socket buffer 等，精确范围随内核演进。Go <code>HeapAlloc</code> 只是进程运行时堆视图；容器 <code>memory.current</code> 还可能包含：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Go heap in use / idle pages still resident
+</span></span><span class="line"><span class="cl">thread stacks and runtime metadata
+</span></span><span class="line"><span class="cl">mmap regions
+</span></span><span class="line"><span class="cl">file page cache
+</span></span><span class="line"><span class="cl">socket buffers
+</span></span><span class="line"><span class="cl">kernel memory charged to cgroup
+</span></span><span class="line"><span class="cl">other processes in same cgroup
+</span></span></code></pre></div><p>所以 <code>container_memory</code> 高于 pprof heap 是正常起点，不应立刻判定泄漏。</p>
+<h2 id="92-四个重要边界">9.2 四个重要边界</h2>
+<p>cgroup v2 常见接口：</p>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>memory.min</code></td>
+<td>尽力保护的最低内存，过度承诺时并非绝对</td>
+</tr>
+<tr>
+<td><code>memory.low</code></td>
+<td>best-effort 回收保护</td>
+</tr>
+<tr>
+<td><code>memory.high</code></td>
+<td>软节流边界，超过后进程被迫回收/承受延迟</td>
+</tr>
+<tr>
+<td><code>memory.max</code></td>
+<td>硬上限，无法回收时触发 cgroup OOM</td>
+</tr>
+</tbody>
+</table>
+<p><code>memory.high</code> 不是超过就 kill，它通过 direct reclaim/节流施压；这能在到达硬上限前让过度使用者变慢。<code>memory.max</code> 也不是简单每次 malloc 返回错误：Linux 允许按页需求分配、回收与 overcommit，最终可能在 fault/charge 时触发 OOM kill。</p>
+<h2 id="93-memcg-oom-与全局-oom">9.3 memcg OOM 与全局 OOM</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">memcg OOM：某 cgroup 达到 memory.max，宿主机可能仍有空闲内存
+</span></span><span class="line"><span class="cl">system OOM：整个系统无法满足内存，跨 cgroup 选择牺牲者
+</span></span></code></pre></div><p>容器被报 <code>OOMKilled</code> 常是前者。内核在 cgroup 内选择进程，受 <code>oom_score_adj</code>、memory.oom.group 等影响。若一个多进程服务只杀其中一个会留下损坏状态，可配置按组处理，但要理解编排器重启语义。</p>
+<h2 id="94-memoryevents-是关键证据">9.4 memory.events 是关键证据</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">cat /sys/fs/cgroup/.../memory.events
+</span></span><span class="line"><span class="cl">cat /sys/fs/cgroup/.../memory.current
+</span></span><span class="line"><span class="cl">cat /sys/fs/cgroup/.../memory.stat
+</span></span></code></pre></div><p><code>memory.events</code> 常见 <code>low/high/max/oom/oom_kill</code> 累计事件。<code>high</code> 快速增长可解释无 kill 却明显变慢；<code>oom_kill</code> 增长确认 cgroup OOM。再结合内核日志、容器状态和 Go heap，区分内存压力、runtime limit 与业务泄漏。</p>
+<h2 id="95-swap-与-page-cache">9.5 swap 与 page cache</h2>
+<p>v2 用 <code>memory.swap.max/current</code> 单独控制 swap 使用。禁 swap 可避免不可预测的换页尾延迟，却让匿名内存压力更早触发 OOM；允许 swap 增加生存空间，但低延迟服务可能出现抖动。</p>
+<p>page cache 可在压力下回收，所以看到 cache 高不等于浪费；但 dirty/writeback 页、活跃 working set 和 memory.low 保护会影响可回收性。数据库、文件服务和构建任务的最佳策略不同。</p>
+<hr>
+<h1 id="10-io-controller限制设备时间不等于限制所有文件操作">10. IO controller：限制设备时间，不等于限制所有文件操作</h1>
+<h2 id="101-iomax-设置设备级上限">10.1 io.max 设置设备级上限</h2>
+<p>cgroup v2 <code>io.max</code> 可按块设备 major:minor 配置读写带宽或 IOPS：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">8:0 rbps=10485760 wbps=10485760 riops=max wiops=1000
+</span></span></code></pre></div><p>它作用于进入受控块 IO 路径的请求。读命中 page cache 时可能没有设备 IO；tmpfs 是内存；网络文件系统还有远端与客户端语义。因此“文件 read 速度”不总直接等于 io.max。</p>
+<h2 id="102-ioweight-是竞争时份额">10.2 io.weight 是竞争时份额</h2>
+<p>与 CPU weight 类似，IO weight 在支持的调度路径和设备竞争中影响相对份额，不是严格带宽保证。NVMe、多队列、device-mapper、云盘与文件系统会改变实际效果，需要用目标存储栈基准验证。</p>
+<h2 id="103-写入会通过回写延迟反馈">10.3 写入会通过回写延迟反馈</h2>
+<p>应用 buffered write 先产生脏页，实际块 IO 后续发生。memcg/writeback 可把脏页与 cgroup关联，IO 限制导致 writeback 跟不上时，应用最终在 dirty throttling、fsync 或 reclaim 处变慢：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">write() 快速进入 page cache
+</span></span><span class="line"><span class="cl">  -&gt; dirty pages 累积
+</span></span><span class="line"><span class="cl">  -&gt; cgroup IO 限速
+</span></span><span class="line"><span class="cl">  -&gt; writeback 变慢
+</span></span><span class="line"><span class="cl">  -&gt; 后续 write/fsync 延迟突然升高
+</span></span></code></pre></div><p>只看单次 write syscall 的早期延迟可能误判存储没问题。</p>
+<h2 id="104-观察-iostat-与-psi">10.4 观察 io.stat 与 PSI</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">cat /sys/fs/cgroup/.../io.stat
+</span></span><span class="line"><span class="cl">cat /sys/fs/cgroup/.../io.pressure
+</span></span></code></pre></div><p><code>io.stat</code> 按设备显示 rbytes/wbytes/rios/wios 等；PSI 表示任务因 IO 等待而失去推进机会。需要与 <code>iostat -xz</code>、文件系统、云盘指标和应用 fsync latency 一起分析。</p>
+<hr>
+<h1 id="11-pids-controller限制-task-创建而不是-goroutine-数">11. PIDs controller：限制 task 创建而不是 goroutine 数</h1>
+<h2 id="111-pidsmax-防-fork-bomb-与线程爆炸">11.1 pids.max 防 fork bomb 与线程爆炸</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">cat /sys/fs/cgroup/.../pids.current
+</span></span><span class="line"><span class="cl">cat /sys/fs/cgroup/.../pids.max
+</span></span><span class="line"><span class="cl">cat /sys/fs/cgroup/.../pids.events
+</span></span></code></pre></div><p>达到 <code>pids.max</code> 后，新 <code>fork/clone</code> 会失败，常见 <code>EAGAIN</code>。Linux 的 task 包括进程和线程，因此创建 pthread/Go OS thread 也消耗额度。</p>
+<p>Go goroutine 是用户态调度对象，百万 goroutine不会直接等于百万 PID；但阻塞 syscall、cgo、<code>runtime.LockOSThread</code>、高并发和 runtime 调度仍可能增加 M 数。外部命令、插件和 sidecar 也可能共享同一 Pod/父 cgroup 额度。</p>
+<h2 id="112-限额失败的表现可能离业务很远">11.2 限额失败的表现可能离业务很远</h2>
+<p>达到 PIDs limit 时：</p>
+<ul>
+<li>shell 无法 fork 新命令</li>
+<li>Go <code>os/exec</code> 失败</li>
+<li>runtime 创建 OS thread 报错甚至崩溃</li>
+<li>健康检查 helper 无法启动</li>
+<li>debug 工具也无法进入容器执行</li>
+</ul>
+<p>因此要在耗尽前监控 <code>pids.current/max</code>，不能等到 exec 失败才尝试运行排障命令。</p>
+<h2 id="113-rlimit_nproc-与-pidsmax-不同">11.3 RLIMIT_NPROC 与 pids.max 不同</h2>
+<p><code>RLIMIT_NPROC</code> 通常按 real UID 统计可创建进程/线程，语义受 user namespace和特权影响；pids controller 按 cgroup 层级计数。两者都可能限制 clone，最终有效上限取更严格者。系统还有全局 <code>threads-max</code>、PID 空间等边界。</p>
+<hr>
+<h1 id="12-cgroup-层级与额度去哪了">12. cgroup 层级与“额度去哪了”</h1>
+<h2 id="121-父级约束会覆盖子级">12.1 父级约束会覆盖子级</h2>
+<p>假设：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">pod memory.max = 1 GiB
+</span></span><span class="line"><span class="cl">  app container memory.max = 900 MiB
+</span></span><span class="line"><span class="cl">  sidecar container memory.max = 300 MiB
+</span></span></code></pre></div><p>子级声明相加超过父级，不代表可同时用 1.2 GiB；父级 1 GiB 先成为总边界。应用只看自己 cgroup 文件可能还没到 900 MiB，但 pod 父 cgroup 已 OOM/高压。</p>
+<p>CPU、pids、memory protection也有类似层级语义。排查应沿祖先链查看，不只当前目录。</p>
+<h2 id="122-共享-pod-的资源争用">12.2 共享 Pod 的资源争用</h2>
+<p>Kubernetes 等系统可能在 Pod cgroup 下放多个 container cgroup。sidecar 日志代理、service mesh 或 debug 容器会消耗 Pod 总 CPU/内存/IO；主应用 profile 看不见它们的 heap，却感受到 quota 和 OOM 压力。</p>
+<p>容量模型必须把基础设施容器计入，不要把 Pod limit 全当业务可用。</p>
+<h2 id="123-requestlimit-与-linux-文件不是一一对应">12.3 request、limit 与 Linux 文件不是一一对应</h2>
+<p>编排器的 resource request 用于调度和 QoS，可能映射为 CPU weight、memory protection；limit 更常映射 cpu.max、memory.max。精确规则随 Kubernetes 版本、cgroup driver、QoS 和 feature gate 变化。</p>
+<p>不要从 YAML 名称直接猜最终内核值。发生问题时查：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">workload spec
+</span></span><span class="line"><span class="cl">-&gt; runtime/container manager configuration
+</span></span><span class="line"><span class="cl">-&gt; systemd/cgroup hierarchy
+</span></span><span class="line"><span class="cl">-&gt; actual controller files and events
+</span></span></code></pre></div><h2 id="124-移动进程不迁移历史内存的直觉陷阱">12.4 移动进程不迁移历史内存的直觉陷阱</h2>
+<p>cgroup 记账与页面归属有历史和 controller 细节；把进程迁移到另一 cgroup 并不意味着所有已分配页瞬间按直觉迁移。生产中应让 runtime 在进程启动前建立正确层级，而不是靠事故中手工移动 PID 修复资源归属。</p>
+<hr>
+<h1 id="13-psi限制未触发服务也可能已经很慢">13. PSI：限制未触发，服务也可能已经很慢</h1>
+<h2 id="131-utilization-看工作量pressure-看等待">13.1 utilization 看工作量，pressure 看等待</h2>
+<p>CPU 80% 只说明使用量，不直接说明 runnable 任务是否排队；memory.current 未到 max 也不说明没有 direct reclaim；磁盘吞吐不满也可能有 IO latency。</p>
+<p>PSI（Pressure Stall Information）统计任务因资源不足无法推进的时间：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">cpu.pressure：有 runnable 工作等 CPU
+</span></span><span class="line"><span class="cl">memory.pressure：任务因 reclaim/compaction 等停顿
+</span></span><span class="line"><span class="cl">io.pressure：任务等待 IO
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">cat /proc/pressure/cpu
+</span></span><span class="line"><span class="cl">cat /proc/pressure/memory
+</span></span><span class="line"><span class="cl">cat /proc/pressure/io
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">cat /sys/fs/cgroup/.../cpu.pressure
+</span></span><span class="line"><span class="cl">cat /sys/fs/cgroup/.../memory.pressure
+</span></span><span class="line"><span class="cl">cat /sys/fs/cgroup/.../io.pressure
+</span></span></code></pre></div><h2 id="132-some-与-full">13.2 some 与 full</h2>
+<p>概念上：</p>
+<ul>
+<li><code>some</code>：至少一部分任务因该资源停顿</li>
+<li><code>full</code>：所有相关 non-idle 任务同时停顿（CPU PSI 通常只提供 some，接口以本机为准）</li>
+</ul>
+<p><code>avg10/avg60/avg300</code> 是窗口平均，<code>total</code> 是累计微秒。对延迟服务，短时压力尖峰可能比日均资源利用率更能解释 P99。</p>
+<h2 id="133-psi-不是根因标签">13.3 PSI 不是根因标签</h2>
+<p>memory PSI 高说明 reclaim 等内存压力阻碍进展，但根因可能是 limit 太低、匿名堆增长、page cache working set、swap、内核内存或邻居 cgroup竞争。PSI 告诉你“资源等待正在伤害任务”，仍需 controller stats、profile 和设备指标定位为什么。</p>
+<hr>
+<h1 id="14-go-runtime-与容器额度">14. Go runtime 与容器额度</h1>
+<h2 id="141-gomaxprocs-必须匹配可用-cpu">14.1 GOMAXPROCS 必须匹配可用 CPU</h2>
+<p>历史上 Go 默认按机器逻辑 CPU 设置 <code>GOMAXPROCS</code>，容器只分到 2 CPU quota却在 64 核节点创建大量并行工作，会快速耗尽 quota、增加线程与 GC 并行度，造成 period throttling。</p>
+<p>较新的 Go 版本会改进容器感知/默认行为，但精确语义随版本演进，应用应在启动日志记录：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="nx">log</span><span class="p">.</span><span class="nf">Printf</span><span class="p">(</span><span class="s">&#34;GOMAXPROCS=%d NumCPU=%d&#34;</span><span class="p">,</span> <span class="nx">runtime</span><span class="p">.</span><span class="nf">GOMAXPROCS</span><span class="p">(</span><span class="mi">0</span><span class="p">),</span> <span class="nx">runtime</span><span class="p">.</span><span class="nf">NumCPU</span><span class="p">())</span>
+</span></span></code></pre></div><p>并同时读取实际 <code>cpu.max</code>、cpuset 和 <code>cpu.stat</code>。不要仅凭 <code>NumCPU</code> 推断 quota，也不要无证据把 GOMAXPROCS 固定为 1。</p>
+<h2 id="142-gomemlimit-是-runtime-目标不是-cgroup-硬保证">14.2 GOMEMLIMIT 是 runtime 目标，不是 cgroup 硬保证</h2>
+<p>Go 的 soft memory limit（可由 <code>GOMEMLIMIT</code>/runtime API 设置）约束 runtime 管理的内存目标，帮助在容器 <code>memory.max</code> 前更积极 GC/归还。但它不完整覆盖：</p>
+<ul>
+<li>cgo/C malloc</li>
+<li>mmap 与第三方 native library</li>
+<li>kernel/socket memory</li>
+<li>page cache</li>
+<li>同 cgroup 其他进程</li>
+<li>部分 runtime 外部资源</li>
+</ul>
+<p>若 <code>GOMEMLIMIT</code> 等于 memory.max，没有给非 Go heap 和峰值留余量，仍可能 OOM；设得太低会造成持续 GC、CPU 上升和吞吐下降。</p>
+<h2 id="143-rss-不立即下降不一定泄漏">14.3 RSS 不立即下降不一定泄漏</h2>
+<p>Go GC 释放对象后，span 可能变为 idle；scavenger 再把页归还 OS，RSS/memory.current 的下降有节奏。内核也可能保留 page cache。判断泄漏要看：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">live heap after GC 是否持续增长
+</span></span><span class="line"><span class="cl">allocation rate / GC frequency
+</span></span><span class="line"><span class="cl">runtime Sys/HeapReleased/RSS
+</span></span><span class="line"><span class="cl">memory.stat anon/file/kernel 分布
+</span></span><span class="line"><span class="cl">同 cgroup 其他进程
+</span></span></code></pre></div><p>只比较一次 pprof heap 和 <code>docker stats</code> 不足以下结论。</p>
+<h2 id="144-cgo-和-os-thread-受-pids内存约束">14.4 cgo 和 OS thread 受 PIDs/内存约束</h2>
+<p>cgo 调用可能阻塞 OS thread，runtime 创建更多 M 补充可运行 goroutine；每个线程有内核 task 和栈，受 <code>pids.max</code>、memory.max、RLIMIT_STACK 等影响。高 cgo 并发或 thread pinning 可能让看似“只有几百 goroutine”的服务耗尽 PID 额度。</p>
+<h2 id="145-cpu-限额会放大-gc-与网络尾延迟">14.5 CPU 限额会放大 GC 与网络尾延迟</h2>
+<p>Go 服务并行处理、TLS、GC 同时消耗 quota：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">traffic burst
+</span></span><span class="line"><span class="cl">  -&gt; handler + GC workers 并行
+</span></span><span class="line"><span class="cl">  -&gt; cpu quota 提前耗尽
+</span></span><span class="line"><span class="cl">  -&gt; netpoll 唤醒的 goroutine 无法运行
+</span></span><span class="line"><span class="cl">  -&gt; socket/accept queue 积压
+</span></span><span class="line"><span class="cl">  -&gt; P99 增长、客户端重试
+</span></span><span class="line"><span class="cl">  -&gt; 更大流量与分配压力
+</span></span></code></pre></div><p>排查要把 <code>cpu.stat</code> throttling、Go execution trace、GC pause/assist、网络队列和重试率关联，而不是分别优化。</p>
+<hr>
+<h1 id="15-oom-的过程与恢复设计">15. OOM 的过程与恢复设计</h1>
+<h2 id="151-分配成功不等于物理页已经保证">15.1 分配成功不等于物理页已经保证</h2>
+<p>Linux overcommit 和按需 fault 允许 <code>malloc/mmap</code> 先建立虚拟地址，实际访问时才申请/charge 物理页。程序可能在一次看似普通写内存时触发 memcg reclaim/OOM，而不是 malloc 立即返回 nil。</p>
+<p>Go runtime 对无法获得内存通常不能像业务 error 那样优雅恢复；进程可能被 kernel kill 或 runtime fatal。正确方向是限制输入、队列和缓存，给峰值留余量，而不是依赖捕获 OOM。</p>
+<h2 id="152-oom-killer-选择谁">15.2 OOM killer 选择谁</h2>
+<p>内核根据受影响范围、进程内存、<code>oom_score_adj</code> 等选择 victim。cgroup v2 的 <code>memory.oom.group=1</code> 可请求把 cgroup 视为工作负载单元共同杀死，避免多进程服务残缺继续运行；但基础系统进程与编排策略需要谨慎设计。</p>
+<p>应用不应随意把自己设为极低 <code>oom_score_adj</code> 把风险转给节点关键进程。优先通过正确 cgroup hierarchy 和 QoS 表达优先级。</p>
+<h2 id="153-重启不是恢复全部状态">15.3 重启不是恢复全部状态</h2>
+<p>OOM 后编排器重启容器，内存暂时清空，但：</p>
+<ul>
+<li>未落盘数据可能丢失</li>
+<li>客户端可能处于未知结果并重试</li>
+<li>WAL/文件需崩溃恢复</li>
+<li>下游连接和锁需超时</li>
+<li>同一输入若再次加载，仍会 OOM loop</li>
+</ul>
+<p>服务要有幂等、持久化、恢复探针和 backoff，不能把容器重启视为事务回滚。</p>
+<hr>
+<h1 id="16-安全边界隔离限制与授权是三回事">16. 安全边界：隔离、限制与授权是三回事</h1>
+<h2 id="161-capability-拆分-root-权限">16.1 capability 拆分 root 权限</h2>
+<p>容器通常 drop 大量 capability，仅保留业务所需。危险能力示例包括：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">CAP_SYS_ADMIN：覆盖大量系统管理操作，边界非常宽
+</span></span><span class="line"><span class="cl">CAP_NET_ADMIN：配置接口、路由、netfilter 等
+</span></span><span class="line"><span class="cl">CAP_SYS_PTRACE：观察/操作其他满足条件的进程
+</span></span><span class="line"><span class="cl">CAP_DAC_OVERRIDE：绕过部分文件权限检查
+</span></span></code></pre></div><p>capability 的判断还与 user namespace 有关。<code>--privileged</code> 往往同时扩大 capability、设备和安全配置，应只用于明确授权、短时受控场景，不是解决 permission denied 的通用方案。</p>
+<h2 id="162-seccomp-限制-syscall-面">16.2 seccomp 限制 syscall 面</h2>
+<p>seccomp BPF 可按 syscall number/参数实施 allow/deny/notify，减少进程可触达的内核攻击面。它不理解业务文件路径，也不替代 capability/LSM；不同架构 syscall 编号和应用需要不同，策略必须测试。</p>
+<p>Go runtime 会使用 futex、epoll、clone、mmap、signals 等 syscall。过严 profile 可能只在高并发、profile 或升级后触发，部署前要覆盖真实路径。</p>
+<h2 id="163-lsm-控制对象访问">16.3 LSM 控制对象访问</h2>
+<p>SELinux、AppArmor 等 LSM依据 label/profile 控制文件、网络、capability 等对象访问。传统 Unix mode 允许不代表 LSM 允许；容器 volume permission denied 可能是 UID mapping，也可能是 SELinux label。</p>
+<p>排查不能直接关闭 SELinux 或使用 <code>--privileged</code> 验证后长期保留。应查看 audit log、修正 label/profile 和最小授权。</p>
+<h2 id="164-proc设备与宿主-mount-是高风险入口">16.4 <code>/proc</code>、设备与宿主 mount 是高风险入口</h2>
+<p>即便有 namespace，向容器暴露宿主 <code>/proc</code>、Docker socket、设备节点、根目录或高权限 bind mount，可能绕开隔离。Docker socket 本质上常等价于对 daemon 的高权限控制，不应因“只是一个 Unix socket”而低估。</p>
+<hr>
+<h1 id="17-线上排查先确认自己观察的是哪一层">17. 线上排查：先确认自己观察的是哪一层</h1>
+<h2 id="171-namespace-身份">17.1 namespace 身份</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="nv">PID</span><span class="o">=</span><span class="m">12345</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">for</span> ns in pid mnt net uts ipc user cgroup time<span class="p">;</span> <span class="k">do</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">printf</span> <span class="s1">&#39;%-8s &#39;</span> <span class="s2">&#34;</span><span class="nv">$ns</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl">    readlink <span class="s2">&#34;/proc/</span><span class="nv">$PID</span><span class="s2">/ns/</span><span class="nv">$ns</span><span class="s2">&#34;</span> 2&gt;/dev/null <span class="o">||</span> <span class="nb">true</span>
+</span></span><span class="line"><span class="cl"><span class="k">done</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">cat <span class="s2">&#34;/proc/</span><span class="nv">$PID</span><span class="s2">/status&#34;</span> <span class="p">|</span> grep -E <span class="s1">&#39;^(Pid|PPid|NSpid|Uid|Gid):&#39;</span>
+</span></span><span class="line"><span class="cl">cat <span class="s2">&#34;/proc/</span><span class="nv">$PID</span><span class="s2">/uid_map&#34;</span>
+</span></span><span class="line"><span class="cl">cat <span class="s2">&#34;/proc/</span><span class="nv">$PID</span><span class="s2">/gid_map&#34;</span>
+</span></span></code></pre></div><p>将目标 PID 与宿主 PID 1、同 Pod sidecar 对比，可判断哪些 namespace 共享。</p>
+<h2 id="172-cgroup-路径和控制器">17.2 cgroup 路径和控制器</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">cat <span class="s2">&#34;/proc/</span><span class="nv">$PID</span><span class="s2">/cgroup&#34;</span>
+</span></span><span class="line"><span class="cl">findmnt -t cgroup2
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="nv">CG</span><span class="o">=</span>/sys/fs/cgroup/path/to/workload
+</span></span><span class="line"><span class="cl">cat <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/cgroup.controllers&#34;</span>
+</span></span><span class="line"><span class="cl">cat <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/cgroup.events&#34;</span>
+</span></span><span class="line"><span class="cl">cat <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/cpu.max&#34;</span>
+</span></span><span class="line"><span class="cl">cat <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/cpu.stat&#34;</span>
+</span></span><span class="line"><span class="cl">cat <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/memory.current&#34;</span>
+</span></span><span class="line"><span class="cl">cat <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/memory.max&#34;</span>
+</span></span><span class="line"><span class="cl">cat <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/memory.events&#34;</span>
+</span></span><span class="line"><span class="cl">cat <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/pids.current&#34;</span>
+</span></span><span class="line"><span class="cl">cat <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/pids.max&#34;</span>
+</span></span></code></pre></div><p>宿主路径应从 <code>/proc/PID/cgroup</code> 和 mount point安全拼接；容器内 cgroup namespace 可能把路径显示为 <code>/</code>。使用 systemd/Kubernetes 时，优先结合 <code>systemctl status</code>、<code>systemd-cgls</code>、runtime inspect 和监控标签，避免手工猜转义后的 unit 名。</p>
+<h2 id="173-cpu-慢的检查顺序">17.3 CPU 慢的检查顺序</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">1. cpu.max / cpuset 实际值
+</span></span><span class="line"><span class="cl">2. cpu.stat throttled 增量
+</span></span><span class="line"><span class="cl">3. cpu.pressure some
+</span></span><span class="line"><span class="cl">4. 节点 CPU/softirq/steal 与同层 sibling 竞争
+</span></span><span class="line"><span class="cl">5. Go CPU profile / trace / GC
+</span></span><span class="line"><span class="cl">6. 下游等待是否误算为 CPU 慢
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">cat <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/cpu.max&#34;</span> <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/cpuset.cpus.effective&#34;</span> <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/cpu.stat&#34;</span>
+</span></span><span class="line"><span class="cl">cat <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/cpu.pressure&#34;</span>
+</span></span><span class="line"><span class="cl">pidstat -u -w -t -p <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span> <span class="m">1</span>
+</span></span></code></pre></div><h2 id="174-内存问题的检查顺序">17.4 内存问题的检查顺序</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">1. memory.current 与 max/high
+</span></span><span class="line"><span class="cl">2. memory.events 的 high/max/oom/oom_kill 增量
+</span></span><span class="line"><span class="cl">3. memory.stat 区分 anon/file/kernel/sock/slab
+</span></span><span class="line"><span class="cl">4. memory.pressure 与 swap
+</span></span><span class="line"><span class="cl">5. Go heap/profile/runtime metrics
+</span></span><span class="line"><span class="cl">6. 同 cgroup sidecar/child 与父 cgroup 上限
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">cat <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/memory.current&#34;</span> <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/memory.high&#34;</span> <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/memory.max&#34;</span>
+</span></span><span class="line"><span class="cl">cat <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/memory.events&#34;</span> <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/memory.pressure&#34;</span>
+</span></span><span class="line"><span class="cl">cat <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/memory.stat&#34;</span>
+</span></span><span class="line"><span class="cl">cat <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/memory.swap.current&#34;</span> <span class="s2">&#34;</span><span class="nv">$CG</span><span class="s2">/memory.swap.max&#34;</span>
+</span></span></code></pre></div><p>OOM 后文件中的累计事件可能随 cgroup 销毁而消失，监控系统需持续采集；只在新容器启动后进入查看可能已错过证据。</p>
+<h2 id="175-mountoverlay-空间问题">17.5 mount/overlay 空间问题</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">nsenter -t <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span> -m findmnt
+</span></span><span class="line"><span class="cl">nsenter -t <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span> -m df -h
+</span></span><span class="line"><span class="cl">nsenter -t <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span> -m df -i
+</span></span><span class="line"><span class="cl">nsenter -t <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span> -m mount
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># overlay 详细挂载参数可能含很长路径</span>
+</span></span><span class="line"><span class="cl">findmnt -t overlay -o TARGET,FSTYPE,OPTIONS
+</span></span></code></pre></div><p>容器 writable layer、volume、宿主 filesystem 可能在不同配额和 inode 池。<code>df</code>、<code>du</code>、deleted-open 文件与 overlay copy-up 要联合检查。</p>
+<hr>
+<h1 id="18-常用命令知识点扩展">18. 常用命令知识点扩展</h1>
+<table>
+<thead>
+<tr>
+<th>命令/短参</th>
+<th>英文全称</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>nsenter -t PID</code></td>
+<td>target</td>
+<td>选择目标进程</td>
+</tr>
+<tr>
+<td><code>nsenter -p</code></td>
+<td>pid namespace</td>
+<td>进入 PID namespace</td>
+</tr>
+<tr>
+<td><code>nsenter -m</code></td>
+<td>mount namespace</td>
+<td>进入 mount namespace</td>
+</tr>
+<tr>
+<td><code>nsenter -n</code></td>
+<td>network namespace</td>
+<td>进入 network namespace</td>
+</tr>
+<tr>
+<td><code>nsenter -U</code></td>
+<td>user namespace</td>
+<td>进入 user namespace</td>
+</tr>
+<tr>
+<td><code>unshare -p</code></td>
+<td>PID namespace</td>
+<td>创建/进入新的 PID namespace</td>
+</tr>
+<tr>
+<td><code>unshare -m</code></td>
+<td>mount namespace</td>
+<td>创建独立 mount 视图</td>
+</tr>
+<tr>
+<td><code>lsns -t</code></td>
+<td>type</td>
+<td>按类型列出 namespace</td>
+</tr>
+<tr>
+<td><code>systemd-cgls</code></td>
+<td>cgroup list</td>
+<td>以树展示 systemd cgroup</td>
+</tr>
+<tr>
+<td><code>systemd-cgtop</code></td>
+<td>cgroup top</td>
+<td>查看 cgroup 资源使用</td>
+</tr>
+</tbody>
+</table>
+<p>场景配方：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 列出 PID/net/mount namespace 及持有进程</span>
+</span></span><span class="line"><span class="cl">lsns -t pid
+</span></span><span class="line"><span class="cl">lsns -t net
+</span></span><span class="line"><span class="cl">lsns -t mnt
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 在目标完整视图中查看进程（权限允许时）</span>
+</span></span><span class="line"><span class="cl">sudo nsenter -t <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span> -p -m --mount-proc ps -ef
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 查看当前 cgroup v2 压力</span>
+</span></span><span class="line"><span class="cl">cat /sys/fs/cgroup/cpu.pressure
+</span></span><span class="line"><span class="cl">cat /sys/fs/cgroup/memory.pressure
+</span></span><span class="line"><span class="cl">cat /sys/fs/cgroup/io.pressure
+</span></span></code></pre></div><p><code>nsenter --mount-proc</code> 会在临时 mount namespace 场景处理 procfs，具体行为和 util-linux 版本需查本机文档。生产使用前确认不会改变目标 mount 视图。</p>
+<hr>
+<h1 id="19-面试题">19. 面试题</h1>
+<p><strong>Q：namespace 与 cgroup 的核心区别是什么？</strong></p>
+<p>namespace 改变进程可见的对象和名称，例如 PID、mount、network、hostname；cgroup 把进程放进层级并记账/控制 CPU、内存、IO、PID 等资源。前者主要是视图隔离，后者是资源治理。任何一方都不自动构成完整安全沙箱。</p>
+<p><strong>Q：为什么容器 PID 1 在宿主机有另一个 PID？</strong></p>
+<p>PID namespace 支持嵌套，同一个内核 task 在每层有不同 PID 映射。容器内最内层编号为 1，宿主初始 namespace 可见其外层编号。<code>/proc/PID/status</code> 的 <code>NSpid</code> 能显示层级；这不是两个进程。</p>
+<p><strong>Q：容器 PID 1 有什么特殊责任？</strong></p>
+<p>它是该 PID namespace 的 init，需要收养并 wait 回收孤儿/zombie，正确处理停止信号；其退出通常导致 namespace 其余进程被终止。普通应用或 shell 若没做 signal forwarding/reaping，会导致优雅退出失败或 zombie 累积。</p>
+<p><strong>Q：mount namespace 是否复制了一份文件系统？</strong></p>
+<p>不是。它复制/隔离挂载树关系，底层 inode、filesystem、block device 仍可共享。容器根常由 overlay lower/upper 合并，volume 用 bind mount 暴露。隔离的是路径可见与挂载变化，不是自动复制所有文件数据。</p>
+<p><strong>Q：overlayfs 的 copy-up 为什么会导致延迟或空间突增？</strong></p>
+<p>只读 lower 文件首次被修改时，需要复制到 writable upper，再在 upper 修改；大文件第一次写会付出 copy-up IO和空间。删除 lower 对象用 whiteout 表示。数据库/日志应使用专用 volume，并监控 writable layer 与 inode。</p>
+<p><strong>Q：user namespace 如何降低容器 root 风险？</strong></p>
+<p>它把内层 UID 0 映射为宿主非特权 UID，并让 capability 相对于 user namespace生效。容器 root 可管理被授权的内层对象，却不自动拥有宿主初始 user namespace 权限。它缩小后果，但容器仍共享内核，也可能因挂载、设备、漏洞或错误授权突破边界。</p>
+<p><strong>Q：cgroup v2 相比 v1 的关键变化是什么？</strong></p>
+<p>v2 使用统一 hierarchy，使 CPU、memory、IO、pids 等 controller 对同一进程层级保持一致，并定义清晰 delegation、no-internal-process 等规则。父级总约束覆盖子级；controller 通过 <code>cgroup.subtree_control</code> 下放。</p>
+<p><strong>Q：cpu.weight 与 cpu.max 有什么区别？</strong></p>
+<p><code>cpu.weight</code> 是 sibling 在 CPU 竞争时的相对份额，空闲时可借用更多 CPU；<code>cpu.max</code> 是每个 period 可消耗的 CPU time 硬带宽，额度用尽后 throttle 到下一周期。weight 管公平，max 管上限；还可叠加 cpuset。</p>
+<p><strong>Q：容器限制 2 CPU 为什么会出现接近 100ms 的延迟尖峰？</strong></p>
+<p><code>cpu.max</code> 常按 quota/period 实现，例如每 100ms 允许 200ms CPU time。8 个线程并行 25ms 就可提前耗尽 200ms，整个 cgroup 等下一 period。平均像 2 核，突发并行却形成周期性 throttling；应看 <code>cpu.stat</code> 与应用 trace。</p>
+<p><strong>Q：memory.high 与 memory.max 有何不同？</strong></p>
+<p><code>memory.high</code> 是软压力边界，超过后任务承受 direct reclaim/节流，通常不会立即 kill；<code>memory.max</code> 是硬上限，无法回收时触发 memcg OOM。<code>memory.events</code> 的 high/max/oom/oom_kill 可确认发生过什么。</p>
+<p><strong>Q：为什么 Go heap 小于容器 memory.current？</strong></p>
+<p>memcg 还记账线程栈、runtime 元数据、mmap/cgo、page cache、socket和部分 kernel memory，以及同 cgroup 其他进程。GC 后空闲页也未必立即归还。应结合 <code>memory.stat</code>、RSS、Go runtime metrics 和父/兄弟 cgroup 分析。</p>
+<p><strong>Q：GOMEMLIMIT 能否保证容器不 OOM？</strong></p>
+<p>不能。它是 Go runtime 管理内存的软目标，不完整覆盖 cgo、mmap、kernel/socket、page cache和其他进程。需低于 memory.max 留出余量，并限制输入/队列；设太低还会造成 GC thrash 和 CPU throttling。</p>
+<p><strong>Q：pids.max 限制的是 goroutine 数吗？</strong></p>
+<p>不是，它限制 cgroup 中 Linux tasks，即进程和 OS thread。goroutine 是用户态对象，不直接计数；但 cgo、阻塞 syscall、LockOSThread 和 runtime 扩展 M会创建线程并消耗 pids。达到上限后 clone/fork 返回 EAGAIN，甚至无法启动 debug 命令。</p>
+<p><strong>Q：PSI 比 CPU/内存利用率多告诉了什么？</strong></p>
+<p>利用率/用量描述资源被使用多少，PSI 描述任务因 CPU、内存回收或 IO 等待而无法推进的时间。服务可能未到 hard limit，却因 runnable queue、memory.high reclaim或 IO latency 出现高 pressure 和 P99；PSI 是伤害信号，仍需其他指标定位根因。</p>
+<p><strong>Q：为什么容器 OOM 后自动重启不等于恢复成功？</strong></p>
+<p>kill 可能发生在业务操作中间，未落盘状态、未知结果和客户端重试仍需协议处理；相同流量/输入会再次把内存推到上限。需要持久化、幂等、恢复检查、backoff 和容量修复，重启只是重新创建进程。</p>
+<p><strong>Q：namespace 为什么不是完整安全边界？</strong></p>
+<p>它主要改变对象视图，所有容器仍共享内核；capability、syscall、LSM、设备、宿主 mount 和内核漏洞可跨越或绕过单一 namespace。安全容器要组合 user namespace、最小 capability、seccomp、SELinux/AppArmor、只读文件系统、资源 limit 和受支持内核，高隔离还可增加 VM 边界。</p>
+<p><strong>Q：排查容器资源问题为什么要沿父 cgroup 向上看？</strong></p>
+<p>当前 container cgroup 即使未触及自身 limit，也可能被 Pod/服务/节点祖先的 cpu.max、memory.max 或 pids.max 约束；sidecar 和 sibling 共同消耗父额度。层级的有效限制是所有祖先约束的交集。</p>
+<hr>
+<h1 id="小结">小结</h1>
+<ul>
+<li>namespace 负责“看见什么”，cgroup 负责“能用多少”；容器还需 credentials、capability、seccomp、LSM 和 filesystem 共同形成边界</li>
+<li>一个 task 分别引用 PID、mount、network、UTS、IPC、cgroup、time 和 user namespace；它们可独立共享，不能把 namespace 当成一个整体开关</li>
+<li>PID namespace 为同一 task 提供分层 PID；namespace PID 1 负责 signal、reaping 和生命周期，<code>/proc</code> 还必须配合正确 mount 视图</li>
+<li>mount namespace 隔离挂载树而非复制磁盘；bind mount、pivot_root、overlayfs 与 propagation共同构造容器 root 和 volume</li>
+<li>user namespace 把内层 root 映射为外层普通 UID，使 capability 有层级作用域，是 rootless/减权的重要基础，但不消除共享内核风险</li>
+<li>cgroup v2 用统一 hierarchy 管 CPU、memory、IO 和 PIDs；祖先上限覆盖子级，cgroup namespace 只隐藏路径，不创建额度</li>
+<li>cpu.weight 是竞争份额，cpu.max 是周期硬额度，cpuset 是 CPU/NUMA 集合；并行线程可提前耗尽 quota 并制造尾延迟</li>
+<li>memory.high 通过回收/节流施压，memory.max 无法回收时触发 memcg OOM；memory.current 包含的不只是语言堆</li>
+<li>io controller 作用于实际块设备路径，buffered IO 会把限速延迟到 writeback/fsync；pids controller 限制进程与 OS thread，不直接限制 goroutine</li>
+<li>PSI 量化任务因资源不足停顿的时间，可在 hard limit 前解释 P99；它要与 controller events、应用 profile 和设备指标联合使用</li>
+<li>Go 应记录实际 GOMAXPROCS、cpu.max、cpuset、memory events、GOMEMLIMIT 与线程数，避免把宿主机容量误当容器容量</li>
+<li>OOM/restart 不是业务事务回滚；可靠系统还要限制队列、保留余量、实现幂等与恢复协议</li>
+</ul>
+<p>下一篇讲 <strong>init 之争：systemd 为什么赢也被骂</strong> —— SysV init 的串行脚本为何难以表达现代依赖，systemd 如何用 unit、socket activation、cgroup 和 journal 统一管理服务，以及 PID 1、依赖顺序、restart 与 graceful shutdown 为什么常被配置错。</p>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2026-08-12</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/linux/">linux</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/linux/linux_37_init%E4%B9%8B%E4%BA%89systemd%E4%B8%BA%E4%BB%80%E4%B9%88%E8%B5%A2%E4%B9%9F%E8%A2%AB%E9%AA%82/" class="prev" rel="prev" title="Linux-37 init 之争：systemd 为什么赢也被骂"><i class="fas fa-angle-left fa-fw"></i>Linux-37 init 之争：systemd 为什么赢也被骂</a>
+            <a href="/posts/linux/linux_35_%E8%99%9A%E6%8B%9F%E7%BD%91%E7%BB%9C%E5%AE%B9%E5%99%A8%E4%B8%BA%E4%BB%80%E4%B9%88%E8%83%BD%E9%80%9A/" class="next" rel="next" title="Linux-35 虚拟网络：容器为什么能通">Linux-35 虚拟网络：容器为什么能通<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2026-08-12T06:00:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Linux-36 namespace 与 cgroup：容器到底隔离了什么"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

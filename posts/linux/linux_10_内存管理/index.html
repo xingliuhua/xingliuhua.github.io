@@ -1,908 +1,336 @@
-<!DOCTYPE html>
-<html lang="zh-CN">
-    <head>
-        <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <meta name="robots" content="noodp" />
-        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
-        <title>Linux-10 内存管理 - xingliuhua博客</title><meta name="Description" content="虚拟内存与页表、缺页中断的两种类型、free 各列的真实含义、page cache 与脏页回写、swap 与 swappiness、RSS/VSZ/PSS 的区别、OOM Killer 评分机制、内存泄漏与容器 OOM 排查"><meta property="og:title" content="Linux-10 内存管理" />
-<meta property="og:description" content="虚拟内存与页表、缺页中断的两种类型、free 各列的真实含义、page cache 与脏页回写、swap 与 swappiness、RSS/VSZ/PSS 的区别、OOM Killer 评分机制、内存泄漏与容器 OOM 排查" />
-<meta property="og:type" content="article" />
-<meta property="og:url" content="https://xingliuhua.github.io/posts/linux/linux_10_%E5%86%85%E5%AD%98%E7%AE%A1%E7%90%86/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
-<meta property="article:published_time" content="2026-08-06T18:30:00+08:00" />
-<meta property="article:modified_time" content="2026-08-06T18:30:00+08:00" />
-
-<meta name="twitter:card" content="summary_large_image"/>
-<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
-
-<meta name="twitter:title" content="Linux-10 内存管理"/>
-<meta name="twitter:description" content="虚拟内存与页表、缺页中断的两种类型、free 各列的真实含义、page cache 与脏页回写、swap 与 swappiness、RSS/VSZ/PSS 的区别、OOM Killer 评分机制、内存泄漏与容器 OOM 排查"/>
-<meta name="application-name" content="xingliuhua博客">
-<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
-        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
-        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/linux/linux_10_%E5%86%85%E5%AD%98%E7%AE%A1%E7%90%86/" /><link rel="prev" href="https://xingliuhua.github.io/posts/linux/linux_11_%E6%96%87%E4%BB%B6%E7%B3%BB%E7%BB%9F%E4%B8%8E%E7%A3%81%E7%9B%98IO/" /><link rel="next" href="https://xingliuhua.github.io/posts/linux/linux_09_%E7%94%A8%E6%88%B7%E6%80%81%E5%86%85%E6%A0%B8%E6%80%81%E4%B8%8E%E7%B3%BB%E7%BB%9F%E8%B0%83%E7%94%A8/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
-    {
-        "@context": "http://schema.org",
-        "@type": "BlogPosting",
-        "headline": "Linux-10 内存管理",
-        "inLanguage": "zh-CN",
-        "mainEntityOfPage": {
-            "@type": "WebPage",
-            "@id": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_10_%E5%86%85%E5%AD%98%E7%AE%A1%E7%90%86\/"
-        },"genre": "posts","keywords": "linux","wordcount":  9232 ,
-        "url": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_10_%E5%86%85%E5%AD%98%E7%AE%A1%E7%90%86\/","datePublished": "2026-08-06T18:30:00+08:00","dateModified": "2026-08-06T18:30:00+08:00","publisher": {
-            "@type": "Organization",
-            "name": "xingliuhua"},"author": {
-                "@type": "Person",
-                "name": "xingliuhua"
-            },"description": "虚拟内存与页表、缺页中断的两种类型、free 各列的真实含义、page cache 与脏页回写、swap 与 swappiness、RSS/VSZ/PSS 的区别、OOM Killer 评分机制、内存泄漏与容器 OOM 排查"
-    }
-    </script></head>
-    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
-
-        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
-    <div class="header-wrapper">
-        <div class="header-title">
-            <a href="/" title="xingliuhua博客"><img
-        class="lazyload logo"
-        src="/svg/loading.min.svg"
-        data-src="/logo.png"
-        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
-        data-sizes="auto"
-        alt="/logo.png"
-        title="/logo.png" />xingliuhua</a>
-        </div>
-        <div class="menu">
-            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
-                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
-                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
-                            <i class="fas fa-search fa-fw"></i>
-                        </a>
-                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
-                            <i class="fas fa-times-circle fa-fw"></i>
-                        </a>
-                        <span class="search-button search-loading" id="search-loading-desktop">
-                            <i class="fas fa-spinner fa-fw fa-spin"></i>
-                        </span>
-                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
-                    <i class="fas fa-adjust fa-fw"></i>
-                </a>
-            </div>
-        </div>
-    </div>
-</header><header class="mobile" id="header-mobile">
-    <div class="header-container">
-        <div class="header-wrapper">
-            <div class="header-title">
-                <a href="/" title="xingliuhua博客"><img
-        class="lazyload logo"
-        src="/svg/loading.min.svg"
-        data-src="/logo.png"
-        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
-        data-sizes="auto"
-        alt="/logo.png"
-        title="/logo.png" />xingliuhua</a>
-            </div>
-            <div class="menu-toggle" id="menu-toggle-mobile">
-                <span></span><span></span><span></span>
-            </div>
-        </div>
-        <div class="menu" id="menu-mobile"><div class="search-wrapper">
-                    <div class="search mobile" id="search-mobile">
-                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
-                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
-                            <i class="fas fa-search fa-fw"></i>
-                        </a>
-                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
-                            <i class="fas fa-times-circle fa-fw"></i>
-                        </a>
-                        <span class="search-button search-loading" id="search-loading-mobile">
-                            <i class="fas fa-spinner fa-fw fa-spin"></i>
-                        </span>
-                    </div>
-                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
-                        取消
-                    </a>
-                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
-                <i class="fas fa-adjust fa-fw"></i>
-            </a></div>
-    </div>
-</header>
-<div class="search-dropdown desktop">
-    <div id="search-dropdown-desktop"></div>
-</div>
-<div class="search-dropdown mobile">
-    <div id="search-dropdown-mobile"></div>
-</div>
-<main class="main">
-                <div class="container"><div class="toc" id="toc-auto">
-            <h2 class="toc-title">目录</h2>
-            <div class="toc-content" id="toc-content-auto"></div>
-        </div><article class="page single"><h1 class="single-title animated flipInX">Linux-10 内存管理</h1><div class="post-meta">
-            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
-            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2026-08-06">2026-08-06</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 9232 字&nbsp;
-                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 19 分钟&nbsp;</div>
-        </div><div class="details toc" id="toc-static"  kept="">
-                <div class="details-summary toc-title">
-                    <span>目录</span>
-                    <span><i class="details-icon fas fa-angle-right"></i></span>
-                </div>
-                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
-  <ol>
-    <li><a href="#1-虚拟内存每个进程都以为自己独占内存">1. 虚拟内存：每个进程都以为自己独占内存</a>
-      <ol>
-        <li><a href="#11-进程的地址空间布局">1.1 进程的地址空间布局</a></li>
-        <li><a href="#12-页表与-tlb">1.2 页表与 TLB</a></li>
-        <li><a href="#13-大页减少-tlb-压力">1.3 大页：减少 TLB 压力</a></li>
-      </ol>
-    </li>
-    <li><a href="#2-缺页中断内存是用到才给的">2. 缺页中断：内存是「用到才给」的</a>
-      <ol>
-        <li><a href="#21-两种缺页次要和主要">2.1 两种缺页：次要和主要</a></li>
-        <li><a href="#22-overcommit-策略">2.2 overcommit 策略</a></li>
-      </ol>
-    </li>
-    <li><a href="#3-free-命令available-才是关键">3. free 命令：available 才是关键</a>
-      <ol>
-        <li><a href="#31-为什么-free-很少而-available-很多">3.1 为什么 free 很少而 available 很多</a></li>
-        <li><a href="#32-buffcache-能手动清吗">3.2 buff/cache 能手动清吗</a></li>
-      </ol>
-    </li>
-    <li><a href="#4-page-cache-与脏页回写">4. page cache 与脏页回写</a>
-      <ol>
-        <li><a href="#41-读路径">4.1 读路径</a></li>
-        <li><a href="#42-写路径与脏页">4.2 写路径与脏页</a></li>
-        <li><a href="#43-脏页回写的调优参数">4.3 脏页回写的调优参数</a></li>
-      </ol>
-    </li>
-    <li><a href="#5-swap该不该关">5. swap：该不该关</a>
-      <ol>
-        <li><a href="#51-swappiness-的真实含义">5.1 swappiness 的真实含义</a></li>
-        <li><a href="#52-关不关-swap">5.2 关不关 swap</a></li>
-      </ol>
-    </li>
-    <li><a href="#6-rssvszpss进程用了多少内存">6. RSS、VSZ、PSS：进程用了多少内存</a>
-      <ol>
-        <li><a href="#61-为什么-rss-加起来会超过物理内存">6.1 为什么 RSS 加起来会超过物理内存</a></li>
-        <li><a href="#62-用-pss-得到准确数字">6.2 用 PSS 得到准确数字</a></li>
-      </ol>
-    </li>
-    <li><a href="#7-oom-killer">7. OOM Killer</a>
-      <ol>
-        <li><a href="#71-评分机制">7.1 评分机制</a></li>
-        <li><a href="#72-怎么确认发生了-oom">7.2 怎么确认发生了 OOM</a></li>
-        <li><a href="#73-容器里的-oom-不一样">7.3 容器里的 OOM 不一样</a></li>
-        <li><a href="#74-jvm-在容器里被-oom-的经典原因">7.4 JVM 在容器里被 OOM 的经典原因</a></li>
-      </ol>
-    </li>
-    <li><a href="#8-实战定位一个内存持续增长的服务">8. 实战：定位一个内存持续增长的服务</a></li>
-    <li><a href="#9-一些量级感">9. 一些量级感</a></li>
-    <li><a href="#10-面试题">10. 面试题</a></li>
-  </ol>
-</nav></div>
-            </div><div class="content" id="content"><blockquote>
-<p>前置阅读：<a href="../linux_09_%e7%94%a8%e6%88%b7%e6%80%81%e5%86%85%e6%a0%b8%e6%80%81%e4%b8%8e%e7%b3%bb%e7%bb%9f%e8%b0%83%e7%94%a8/" rel="">Linux-09 用户态、内核态与系统调用</a></p>
-</blockquote>
-<p>内存问题是后端最常遇到也最容易误判的一类。典型的困惑：<code>free</code> 显示只剩 200MB 是不是要 OOM 了、进程 RSS 明明只有 2GB 为什么被 OOM Killer 杀了、容器限制 4GB 但 JVM 堆才设了 2GB 为什么还是被杀。</p>
-<p>这一篇把这些问题背后的机制讲清楚。注意本篇讲的是<strong>Linux 内核视角</strong>的内存管理，Go runtime 自己的堆管理和 GC 是另一套东西（在 golang 系列里）。</p>
-<h1 id="1-虚拟内存每个进程都以为自己独占内存">1. 虚拟内存：每个进程都以为自己独占内存</h1>
-<p>一句话：<strong>进程看到的所有地址都是假的，是内核和 MMU 硬件联手编造出来的。</strong></p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">进程 A 的虚拟地址 0x400000 -+
-</span></span><span class="line"><span class="cl">                            +- 页表翻译 -&gt; 完全不同的物理地址
-</span></span><span class="line"><span class="cl">进程 B 的虚拟地址 0x400000 -+
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">两个进程用同一个虚拟地址，指向不同的物理内存，互不干扰
-</span></span></code></pre></div><p>这个抽象带来四个好处，每一个都很关键：</p>
-<table>
-<thead>
-<tr>
-<th>好处</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><strong>隔离</strong></td>
-<td>进程无法访问别人的内存（访问越界 → SIGSEGV）</td>
-</tr>
-<tr>
-<td><strong>超额分配</strong></td>
-<td>可以「分配」比物理内存更多的空间，只在真正使用时才给物理页</td>
-</tr>
-<tr>
-<td><strong>共享</strong></td>
-<td>多个进程映射同一份物理页（共享库、fork 后的 COW）</td>
-</tr>
-<tr>
-<td><strong>连续假象</strong></td>
-<td>虚拟地址连续，物理页可以东一块西一块</td>
-</tr>
-</tbody>
-</table>
-<h2 id="11-进程的地址空间布局">1.1 进程的地址空间布局</h2>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">cat /proc/self/maps
-</span></span><span class="line"><span class="cl"><span class="c1"># 555555554000-555555556000 r-xp ... /usr/bin/cat        代码段（只读可执行）</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># 555555756000-555555757000 rw-p ... /usr/bin/cat        数据段</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># 555555757000-555555778000 rw-p ... [heap]              堆，malloc 从这里拿</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># 7ffff7dc0000-7ffff7de5000 r-xp ... /lib/libc.so.6      共享库</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># 7ffff7ff9000-7ffff7ffd000 rw-p ...                     匿名映射（mmap）</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># 7ffffffde000-7ffffffff000 rw-p ... [stack]             栈，向下增长</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># 7ffff7ffd000-7ffff7ffe000 r-xp ... [vdso]              第 9 篇讲过</span>
-</span></span></code></pre></div><p>权限字段的含义：<code>r</code>读 <code>w</code>写 <code>x</code>执行 <code>p</code>私有 / <code>s</code>共享。</p>
-<p><strong><code>x86_64</code> 的虚拟地址空间是 128TB 用户 + 128TB 内核</strong>（48 位有效地址）。所以进程的虚拟地址空间几乎用不完——这就是 VSZ 可以非常大而完全正常的原因。</p>
-<h2 id="12-页表与-tlb">1.2 页表与 TLB</h2>
-<p>内存以<strong>页</strong>为单位管理，x86_64 的标准页大小是 <strong>4KB</strong>。</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">getconf PAGE_SIZE
-</span></span><span class="line"><span class="cl"><span class="c1"># 4096</span>
-</span></span></code></pre></div><p>虚拟地址到物理地址的翻译靠<strong>多级页表</strong>（x86_64 是 4 级，5.x 内核支持 5 级）：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">虚拟地址 48 位被切成 5 段：
-</span></span><span class="line"><span class="cl">  [47:39] [38:30] [29:21] [20:12] [11:0]
-</span></span><span class="line"><span class="cl">    PGD     PUD     PMD     PTE    页内偏移
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">每级查一次内存 -&gt; 一次翻译最多要访问 4 次内存！
-</span></span></code></pre></div><p><strong>这个开销无法接受</strong>，所以 CPU 有 <strong>TLB（Translation Lookaside Buffer）</strong>——专门缓存「虚拟页 → 物理页」映射的硬件缓存。</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">TLB 命中  -&gt; 约 1 个时钟周期（几乎免费）
-</span></span><span class="line"><span class="cl">TLB 未命中 -&gt; 走页表，100 ~ 300 ns
-</span></span></code></pre></div><p><strong>这就是第 7 篇说「进程上下文切换比线程贵」的根本原因</strong>：切换进程要换页表（写 CR3 寄存器），TLB 大面积失效，之后的每次内存访问都可能要走一遍页表。</p>
-<h2 id="13-大页减少-tlb-压力">1.3 大页：减少 TLB 压力</h2>
-<p>TLB 的条目数是有限的（通常几百到几千条）。用 4KB 页时，1000 个 TLB 条目只能覆盖 4MB 内存——对于占用 32GB 的数据库来说，TLB 命中率极低。</p>
-<p><strong>大页（Huge Page）把页大小提到 2MB 或 1GB</strong>，同样的 TLB 条目数能覆盖 500 倍的内存：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 查看大页配置</span>
-</span></span><span class="line"><span class="cl">cat /proc/meminfo <span class="p">|</span> grep -i huge
-</span></span><span class="line"><span class="cl"><span class="c1"># AnonHugePages:    524288 kB      &lt;- 透明大页实际使用量</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># HugePages_Total:       0         &lt;- 预留的静态大页数</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># Hugepagesize:       2048 kB      &lt;- 大页大小</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># 透明大页（THP）状态</span>
-</span></span><span class="line"><span class="cl">cat /sys/kernel/mm/transparent_hugepage/enabled
-</span></span><span class="line"><span class="cl"><span class="c1"># [always] madvise never</span>
-</span></span></code></pre></div><blockquote>
-<p>坑：**透明大页（THP）对数据库是有害的，几乎所有数据库都建议关闭它。**因为 THP 由内核在后台自动合并页面，会产生不可预测的延迟毛刺（内存规整时可能卡住几百毫秒），而且对于随机访问的工作负载，2MB 的粒度会造成大量内存浪费。MongoDB、Redis、Oracle、PostgreSQL 的官方文档都明确要求关闭：</p>
-</blockquote>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 临时关闭</span>
-</span></span><span class="line"><span class="cl"><span class="nb">echo</span> never &gt; /sys/kernel/mm/transparent_hugepage/enabled
-</span></span><span class="line"><span class="cl"><span class="nb">echo</span> never &gt; /sys/kernel/mm/transparent_hugepage/defrag
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># 永久关闭：加到内核启动参数</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># GRUB_CMDLINE_LINUX=&#34;transparent_hugepage=never&#34;</span>
-</span></span></code></pre></div><p><strong>注意区分</strong>：THP（自动、有害）和静态预留的 HugePages（手动配置、对数据库有益）是两回事。关闭的是 THP。</p>
-<h1 id="2-缺页中断内存是用到才给的">2. 缺页中断：内存是「用到才给」的</h1>
-<p><strong>进程 <code>malloc</code> 一块内存时，内核只是记账，并不真的分配物理页。</strong></p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">malloc(1GB)
-</span></span><span class="line"><span class="cl">    v
-</span></span><span class="line"><span class="cl">内核在 vm_area_struct 里记一笔「这段虚拟地址归你了」
-</span></span><span class="line"><span class="cl">    v
-</span></span><span class="line"><span class="cl">返回指针，VSZ 增加 1GB，RSS 增加 0
-</span></span><span class="line"><span class="cl">    v
-</span></span><span class="line"><span class="cl">进程第一次写入某个地址
-</span></span><span class="line"><span class="cl">    v
-</span></span><span class="line"><span class="cl">MMU 发现页表里没有映射 -&gt; 触发【缺页中断】(Page Fault)
-</span></span><span class="line"><span class="cl">    v
-</span></span><span class="line"><span class="cl">内核分配一个物理页，填进页表，RSS 增加 4KB
-</span></span><span class="line"><span class="cl">    v
-</span></span><span class="line"><span class="cl">恢复执行那条被中断的指令
-</span></span></code></pre></div><p><strong>这就是「超额分配」（overcommit）的基础</strong>——所有进程 <code>malloc</code> 的总量可以远超物理内存，因为大部分从未被真正触碰。</p>
-<h2 id="21-两种缺页次要和主要">2.1 两种缺页：次要和主要</h2>
-<p>这个区分直接决定了性能影响：</p>
-<table>
-<thead>
-<tr>
-<th>类型</th>
-<th>英文</th>
-<th>含义</th>
-<th>开销</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><strong>次要缺页</strong></td>
-<td>minor fault</td>
-<td>物理页已在内存中，只是页表没建立映射</td>
-<td><strong>约 1 μs</strong></td>
-</tr>
-<tr>
-<td><strong>主要缺页</strong></td>
-<td>major fault</td>
-<td>需要从<strong>磁盘</strong>读入（换入 swap、或首次读文件）</td>
-<td><strong>50μs ~ 10ms</strong></td>
-</tr>
-</tbody>
-</table>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 查看进程的缺页统计</span>
-</span></span><span class="line"><span class="cl">ps -eo pid,min_flt,maj_flt,comm <span class="p">|</span> head -5
-</span></span><span class="line"><span class="cl"><span class="c1">#   PID  MINFL  MAJFL COMMAND</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#  1234 892340    123 myapp</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#        ^^^^^^ 次要缺页，正常，数值大也没关系</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#               ^^^ 主要缺页，【这个数持续增长才是问题】</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># 实时观察</span>
-</span></span><span class="line"><span class="cl">pidstat -r <span class="m">1</span> <span class="m">3</span> -p <span class="m">1234</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># 时间     PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># 22:15:01 1234   1234.00     45.00 8234012 4123400  25.1  myapp</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#                             ^^^^^ 每秒 45 次主要缺页 -&gt; 在频繁读磁盘或换页</span>
-</span></span></code></pre></div><p><strong>规律：<code>majflt/s</code> 持续大于 0 是危险信号</strong>——说明进程在从磁盘换入内存，性能会断崖式下降。常见原因是内存不足导致 swap，或者工作集远大于可用内存。</p>
-<h2 id="22-overcommit-策略">2.2 overcommit 策略</h2>
-<p>内核允许「超额分配」到什么程度，由 <code>overcommit_memory</code> 控制：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">cat /proc/sys/vm/overcommit_memory
-</span></span><span class="line"><span class="cl"><span class="c1"># 0</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># 0 = 启发式（默认）：内核估算，明显不合理的大额申请会被拒绝</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># 1 = 总是允许：不做任何检查，来者不拒       &lt;- Redis 要求这个</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># 2 = 严格模式：总分配量不得超过 swap + 物理内存 × overcommit_ratio</span>
-</span></span></code></pre></div><p><strong>Redis 为什么要求 <code>vm.overcommit_memory=1</code></strong>：Redis 做 RDB 持久化时要 <code>fork</code> 子进程（第 6 篇讲过 COW）。在模式 0 下，内核的启发式检查可能认为「这个进程要复制 20GB 地址空间，风险太高」而拒绝 fork，导致持久化失败。设为 1 后 fork 总能成功，而实际上因为 COW，真正消耗的物理内存远小于 20GB。</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># Redis 官方要求</span>
-</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;vm.overcommit_memory = 1&#34;</span> &gt;&gt; /etc/sysctl.d/99-redis.conf
-</span></span><span class="line"><span class="cl">sysctl -p /etc/sysctl.d/99-redis.conf
-</span></span></code></pre></div><h1 id="3-free-命令available-才是关键">3. free 命令：available 才是关键</h1>
-<p>这是最容易误读的一个命令。</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">free -h
-</span></span><span class="line"><span class="cl"><span class="c1">#               total        used        free      shared  buff/cache   available</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># Mem:           15Gi       4.2Gi       231Mi       128Mi        11Gi        10Gi</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#                                       ^^^^^                              ^^^^</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#                                    只剩 231MB？                      其实有 10GB 可用</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># Swap:         2.0Gi          0B       2.0Gi</span>
-</span></span></code></pre></div><p><strong>很多人看到 <code>free</code> 只有 231MB 就以为要 OOM 了，这是完全错误的判断。</strong></p>
-<table>
-<thead>
-<tr>
-<th>列</th>
-<th>含义</th>
-<th>要不要关注</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>total</code></td>
-<td>物理内存总量</td>
-<td>—</td>
-</tr>
-<tr>
-<td><code>used</code></td>
-<td>已被进程使用（不含缓存）</td>
-<td>关注</td>
-</tr>
-<tr>
-<td><code>free</code></td>
-<td><strong>完全空闲、未被任何用途占用</strong></td>
-<td><strong>基本不用看</strong></td>
-</tr>
-<tr>
-<td><code>shared</code></td>
-<td>tmpfs / 共享内存占用</td>
-<td>用共享内存时关注</td>
-</tr>
-<tr>
-<td><code>buff/cache</code></td>
-<td><strong>page cache + buffer</strong>，缓存文件内容</td>
-<td>了解即可</td>
-</tr>
-<tr>
-<td><code>available</code></td>
-<td><strong>估算「新程序可以拿到多少」</strong></td>
-<td><strong>看这一个就够了</strong></td>
-</tr>
-</tbody>
-</table>
-<h2 id="31-为什么-free-很少而-available-很多">3.1 为什么 free 很少而 available 很多</h2>
-<p>**因为 Linux 会主动用掉所有空闲内存来做 page cache。**空闲内存不产生任何价值，拿来缓存磁盘内容能大幅提升 IO 性能。</p>
-<p>**关键在于：page cache 是「可回收」的。**当有进程需要内存时，内核会立刻丢弃干净的 page cache 页（数据在磁盘上有副本，直接丢即可，无成本）来腾出空间。</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">available ≈ free + 可回收的 page cache + 可回收的 slab
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">所以 available 反映的是「真正可用」的量，free 只是「当前完全没被碰的量」
-</span></span></code></pre></div><p><strong>判断内存是否紧张的正确方法</strong>：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ① 看 available 占 total 的比例</span>
-</span></span><span class="line"><span class="cl">free -m <span class="p">|</span> awk <span class="s1">&#39;NR==2 {printf &#34;available: %.1f%%\n&#34;, $7/$2*100}&#39;</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># available: 65.3%        &lt;- 健康</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># ② 看 swap 是否在活动（更灵敏的指标）</span>
-</span></span><span class="line"><span class="cl">vmstat <span class="m">1</span> <span class="m">3</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># ---swap-- </span>
-</span></span><span class="line"><span class="cl"><span class="c1">#  si   so</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#   0    0        &lt;- ✅ 健康，没有换页</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#  45  120        &lt;- ❌ 危险，正在换出内存</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># ③ 看主要缺页</span>
-</span></span><span class="line"><span class="cl">pidstat -r <span class="m">1</span> <span class="m">3</span> <span class="p">|</span> awk <span class="s1">&#39;$5 &gt; 0&#39;</span>
-</span></span></code></pre></div><p><strong>规律：内存是否紧张看 <code>available</code> 和 <code>si</code>/<code>so</code>，不看 <code>free</code>。</strong></p>
-<h2 id="32-buffcache-能手动清吗">3.2 buff/cache 能手动清吗</h2>
-<p>能，但<strong>几乎总是不该做</strong>：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ⚠️ 清 page cache（会导致后续 IO 全部 miss，性能骤降）</span>
-</span></span><span class="line"><span class="cl">sync <span class="o">&amp;&amp;</span> <span class="nb">echo</span> <span class="m">3</span> &gt; /proc/sys/vm/drop_caches
-</span></span><span class="line"><span class="cl"><span class="c1"># 1 = 只清 page cache</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># 2 = 只清 dentry 和 inode 缓存</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># 3 = 全清</span>
-</span></span></code></pre></div><p>内核会在需要时自动回收，手动清除只会让接下来一段时间的所有文件读取都要走磁盘。<strong>唯一合理的场景是做性能基准测试时需要冷启动状态。</strong></p>
-<h1 id="4-page-cache-与脏页回写">4. page cache 与脏页回写</h1>
-<h2 id="41-读路径">4.1 读路径</h2>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">read(fd, buf, 4096)
-</span></span><span class="line"><span class="cl">    v
-</span></span><span class="line"><span class="cl">内核检查 page cache 里有没有这一页
-</span></span><span class="line"><span class="cl">    +- 有（cache hit）  -&gt; 直接 copy_to_user，约 1~3 μs
-</span></span><span class="line"><span class="cl">    +- 无（cache miss） -&gt; 发起磁盘 IO，进程进入 D 状态
-</span></span><span class="line"><span class="cl">                          读上来后放进 page cache，再拷给用户
-</span></span><span class="line"><span class="cl">                          SSD 约 50~150μs，机械盘 5~10ms
-</span></span></code></pre></div><p><strong>page cache 命中率决定了 IO 密集型服务的性能上限</strong>。这也是「数据库内存越大越好」的原因——不是数据库自己要用那么多，是要让 page cache 装下更多数据文件。</p>
-<h2 id="42-写路径与脏页">4.2 写路径与脏页</h2>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">write(fd, buf, 4096)
-</span></span><span class="line"><span class="cl">    v
-</span></span><span class="line"><span class="cl">数据写进 page cache，页被标记为【脏页】(dirty)
-</span></span><span class="line"><span class="cl">    v
-</span></span><span class="line"><span class="cl">write() 立刻返回     &lt;- 注意：此时数据【还在内存里，没落盘】
-</span></span><span class="line"><span class="cl">    v
-</span></span><span class="line"><span class="cl">稍后由内核线程（pdflush/writeback）异步刷到磁盘
-</span></span></code></pre></div><p>**<code>write()</code> 返回成功不等于数据安全。**机器掉电会丢失所有未刷盘的脏页。要保证落盘必须显式调用：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="n">fsync</span><span class="p">(</span><span class="n">fd</span><span class="p">);</span>       <span class="c1">// 刷数据 + 元数据，最可靠
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">fdatasync</span><span class="p">(</span><span class="n">fd</span><span class="p">);</span>   <span class="c1">// 只刷数据，不刷元数据（如 mtime），稍快
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">sync</span><span class="p">();</span>          <span class="c1">// 刷全系统所有脏页（很重）
-</span></span></span></code></pre></div><p><strong>数据库的 WAL 就是靠 <code>fsync</code> 保证持久性的</strong>——MySQL 的 <code>innodb_flush_log_at_trx_commit=1</code> 意味着每次提交都 <code>fsync</code>，这是最安全但最慢的配置。</p>
-<h2 id="43-脏页回写的调优参数">4.3 脏页回写的调优参数</h2>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 脏页占可用内存的比例，超过就【后台】开始回写</span>
-</span></span><span class="line"><span class="cl">cat /proc/sys/vm/dirty_background_ratio       <span class="c1"># 10</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># 超过这个比例，写入进程会被【阻塞】，同步回写</span>
-</span></span><span class="line"><span class="cl">cat /proc/sys/vm/dirty_ratio                  <span class="c1"># 20</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># 脏页最长存活时间（厘秒），超过就回写</span>
-</span></span><span class="line"><span class="cl">cat /proc/sys/vm/dirty_expire_centisecs       <span class="c1"># 3000 = 30 秒</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># 回写线程的唤醒间隔</span>
-</span></span><span class="line"><span class="cl">cat /proc/sys/vm/dirty_writeback_centisecs    <span class="c1"># 500 = 5 秒</span>
-</span></span></code></pre></div><p><strong><code>dirty_ratio</code> 是延迟毛刺的常见来源</strong>：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">脏页比例 &lt; 10%           -&gt; 不回写，write() 都很快
-</span></span><span class="line"><span class="cl">脏页比例 10% ~ 20%       -&gt; 后台异步回写，write() 仍然快
-</span></span><span class="line"><span class="cl">脏页比例 &gt; 20%           -&gt; 写入进程【被阻塞】直到脏页降下来
-</span></span><span class="line"><span class="cl">                            ^ 这里会产生几百毫秒甚至几秒的卡顿
-</span></span></code></pre></div><p><strong>大内存机器上默认值是危险的</strong>：256GB 内存的机器，<code>dirty_ratio=20%</code> 意味着允许积累 <strong>51GB</strong> 脏页。一旦触发同步回写，要把 51GB 刷到磁盘——即使 SSD 有 500MB/s，也要 100 秒，期间所有写操作全部卡死。</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 生产建议：大内存机器改用绝对值而不是比例</span>
-</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;vm.dirty_background_bytes = 268435456&#34;</span> &gt;&gt; /etc/sysctl.d/99-tuning.conf  <span class="c1"># 256MB</span>
-</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;vm.dirty_bytes = 1073741824&#34;</span>           &gt;&gt; /etc/sysctl.d/99-tuning.conf  <span class="c1"># 1GB</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># 设置 _bytes 会让对应的 _ratio 失效</span>
-</span></span><span class="line"><span class="cl">sysctl --system
-</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 观察当前脏页量</span>
-</span></span><span class="line"><span class="cl">grep -E <span class="s2">&#34;Dirty|Writeback&#34;</span> /proc/meminfo
-</span></span><span class="line"><span class="cl"><span class="c1"># Dirty:            234560 kB      &lt;- 待回写的脏页</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># Writeback:          8192 kB      &lt;- 正在回写的</span>
-</span></span></code></pre></div><p><strong>规律：写入延迟出现周期性毛刺，先看 <code>/proc/meminfo</code> 的 <code>Dirty</code> 是否周期性冲高。</strong></p>
-<h1 id="5-swap该不该关">5. swap：该不该关</h1>
-<p><strong>swap 的作用是把不活跃的匿名页（堆、栈）换出到磁盘，腾出物理内存。</strong></p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">free -h <span class="p">|</span> grep Swap
-</span></span><span class="line"><span class="cl"><span class="c1"># Swap:  2.0Gi   512Mi   1.5Gi</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">swapon --show
-</span></span><span class="line"><span class="cl"><span class="c1"># NAME      TYPE      SIZE USED PRIO</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># /dev/vdb2 partition   2G 512M   -2</span>
-</span></span></code></pre></div><h2 id="51-swappiness-的真实含义">5.1 swappiness 的真实含义</h2>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">cat /proc/sys/vm/swappiness
-</span></span><span class="line"><span class="cl"><span class="c1"># 60</span>
-</span></span></code></pre></div><p><strong>常见误解</strong>：swappiness=60 表示「内存用到 60% 就开始 swap」。<strong>这是错的。</strong></p>
-<p>它的真实含义是**「回收内存时，倾向于换出匿名页 vs 丢弃 page cache 的相对权重」**：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">swappiness = 0    尽量不换出匿名页，优先丢 page cache（但内存极度不足时仍会 swap）
-</span></span><span class="line"><span class="cl">swappiness = 60   默认，两者平衡
-</span></span><span class="line"><span class="cl">swappiness = 100  积极换出匿名页
-</span></span></code></pre></div><p>只有在<strong>内存回收被触发时</strong>这个值才起作用，内存充足时它完全不影响任何行为。</p>
-<h2 id="52-关不关-swap">5.2 关不关 swap</h2>
-<p>这是个有争议的话题，分场景看：</p>
-<table>
-<thead>
-<tr>
-<th>场景</th>
-<th>建议</th>
-<th>理由</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><strong>K8s 节点</strong></td>
-<td><strong>必须关</strong>（kubelet 曾强制要求）</td>
-<td>swap 会让 cgroup 内存限制失效，OOM 行为不可预测</td>
-</tr>
-<tr>
-<td>数据库（MySQL/Redis）</td>
-<td>关，或 <code>swappiness=1</code></td>
-<td>换出会造成毫秒级延迟毛刺，比 OOM 更难排查</td>
-</tr>
-<tr>
-<td>延迟敏感的在线服务</td>
-<td>关</td>
-<td>同上</td>
-</tr>
-<tr>
-<td>开发机、内存紧张的小机器</td>
-<td><strong>开</strong></td>
-<td>swap 提供缓冲，避免直接 OOM</td>
-</tr>
-<tr>
-<td>批处理、离线计算</td>
-<td>开</td>
-<td>吞吐优先，延迟不敏感</td>
-</tr>
-</tbody>
-</table>
-<p><strong>核心权衡：swap 用「延迟不可预测」换取「不被 OOM 杀掉」。</strong></p>
-<p>对在线服务来说，一个响应 5 秒的请求和一次进程重启（有健康检查和自动拉起）相比，前者更糟糕——因为它会引发上游超时、重试、雪崩，而且难以定位。</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 关闭 swap</span>
-</span></span><span class="line"><span class="cl">swapoff -a
-</span></span><span class="line"><span class="cl"><span class="c1"># 并注释掉 /etc/fstab 里的 swap 行，否则重启会恢复</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># 或者保留但极不情愿使用</span>
-</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;vm.swappiness = 1&#34;</span> &gt;&gt; /etc/sysctl.d/99-tuning.conf
-</span></span></code></pre></div><blockquote>
-<p>注意：<strong>内核 5.8+ 和 K8s 1.22+ 开始支持有条件地使用 swap</strong>（<code>NodeSwap</code> feature gate），但生产环境目前主流做法仍是关闭。</p>
-</blockquote>
-<h1 id="6-rssvszpss进程用了多少内存">6. RSS、VSZ、PSS：进程用了多少内存</h1>
-<p><strong>这是最容易得出错误结论的地方。</strong></p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">ps -eo pid,vsz,rss,comm <span class="p">|</span> grep myapp
-</span></span><span class="line"><span class="cl"><span class="c1">#   PID     VSZ    RSS COMMAND</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#  1234 8234012 412340 myapp</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#       ^^^^^^^ 8GB 虚拟   ^^^^^^ 412MB 物理</span>
-</span></span></code></pre></div><table>
-<thead>
-<tr>
-<th>指标</th>
-<th>含义</th>
-<th>局限</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>VSZ</code></td>
-<td><strong>虚拟</strong>内存大小，含所有映射（未分配物理页的也算）</td>
-<td>参考价值极低，Go 程序动辄几百 GB</td>
-</tr>
-<tr>
-<td><code>RSS</code></td>
-<td><strong>常驻</strong>物理内存</td>
-<td><strong>共享页会在每个进程里重复计算</strong></td>
-</tr>
-<tr>
-<td><code>PSS</code></td>
-<td>按共享比例分摊后的占用</td>
-<td>最准确，但要读 smaps</td>
-</tr>
-<tr>
-<td><code>USS</code></td>
-<td>进程独占的部分（杀掉它能释放多少）</td>
-<td>判断「杀谁最有效」</td>
-</tr>
-</tbody>
-</table>
-<h2 id="61-为什么-rss-加起来会超过物理内存">6.1 为什么 RSS 加起来会超过物理内存</h2>
-<p>因为<strong>共享页被重复计算</strong>：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">libc.so 占 2MB，被 100 个进程映射
-</span></span><span class="line"><span class="cl">    v
-</span></span><span class="line"><span class="cl">每个进程的 RSS 都 +2MB
-</span></span><span class="line"><span class="cl">    v
-</span></span><span class="line"><span class="cl">100 个进程的 RSS 总和 = 200MB
-</span></span><span class="line"><span class="cl">实际物理内存只用了 2MB
-</span></span></code></pre></div><p>同理 fork 出来的子进程（COW 未触发前）与父进程共享大量页面，两者 RSS 都算了同一份物理内存。</p>
-<p><strong>所以「把所有进程 RSS 加起来看内存够不够」是错误方法。</strong></p>
-<h2 id="62-用-pss-得到准确数字">6.2 用 PSS 得到准确数字</h2>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 单个进程的精确内存构成</span>
-</span></span><span class="line"><span class="cl">cat /proc/1234/smaps_rollup
-</span></span><span class="line"><span class="cl"><span class="c1"># Rss:              412340 kB</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># Pss:              398120 kB      &lt;- 按份额分摊后的真实占用</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># Shared_Clean:      18432 kB      &lt;- 共享的干净页（如共享库代码）</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># Shared_Dirty:          0 kB</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># Private_Clean:      2048 kB</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># Private_Dirty:    391860 kB      &lt;- 【进程独占的脏页】= 杀掉它能释放的</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># Swap:               1024 kB      &lt;- 被换出去的部分</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># 按 PSS 排序找出真正的内存大户</span>
-</span></span><span class="line"><span class="cl"><span class="k">for</span> p in /proc/<span class="o">[</span>0-9<span class="o">]</span>*<span class="p">;</span> <span class="k">do</span>
-</span></span><span class="line"><span class="cl">    <span class="nv">pid</span><span class="o">=</span><span class="si">${</span><span class="nv">p</span><span class="p">#/proc/</span><span class="si">}</span>
-</span></span><span class="line"><span class="cl">    <span class="nv">pss</span><span class="o">=</span><span class="k">$(</span>awk <span class="s1">&#39;/^Pss:/{s+=$2} END{print s+0}&#39;</span> <span class="s2">&#34;</span><span class="nv">$p</span><span class="s2">/smaps_rollup&#34;</span> 2&gt;/dev/null<span class="k">)</span>
-</span></span><span class="line"><span class="cl">    <span class="o">[</span> <span class="s2">&#34;</span><span class="si">${</span><span class="nv">pss</span><span class="k">:-</span><span class="nv">0</span><span class="si">}</span><span class="s2">&#34;</span> -gt <span class="m">0</span> <span class="o">]</span> <span class="o">&amp;&amp;</span> <span class="nb">echo</span> <span class="s2">&#34;</span><span class="nv">$pss</span><span class="s2"> </span><span class="k">$(</span>cat <span class="nv">$p</span>/comm 2&gt;/dev/null<span class="k">)</span><span class="s2">&#34;</span>
-</span></span><span class="line"><span class="cl"><span class="k">done</span> <span class="p">|</span> sort -rn <span class="p">|</span> head -10
-</span></span></code></pre></div><p><strong><code>Private_Dirty</code> 是最有决策价值的数字</strong>——它是这个进程独占且必须保留的内存，杀掉进程能立即释放这么多。</p>
-<h1 id="7-oom-killer">7. OOM Killer</h1>
-<p>当内存真的不够、且无法通过回收缓存或 swap 解决时，内核启动 OOM Killer 杀进程保全系统。</p>
-<h2 id="71-评分机制">7.1 评分机制</h2>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 每个进程的 OOM 分数（0 ~ 1000）</span>
-</span></span><span class="line"><span class="cl">cat /proc/1234/oom_score
-</span></span><span class="line"><span class="cl"><span class="c1"># 823</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># 可调整的偏移量（-1000 ~ 1000）</span>
-</span></span><span class="line"><span class="cl">cat /proc/1234/oom_score_adj
-</span></span><span class="line"><span class="cl"><span class="c1"># 0</span>
-</span></span></code></pre></div><p><strong>基础分数主要由「占用内存的比例」决定</strong>——占内存最多的进程分数最高，最先被杀。所以 OOM Killer 通常会杀掉你最重要的那个服务（因为它就是内存大户）。</p>
-<p><strong>保护关键进程</strong>：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 让某进程几乎不会被 OOM Killer 选中</span>
-</span></span><span class="line"><span class="cl"><span class="nb">echo</span> -1000 &gt; /proc/1234/oom_score_adj      <span class="c1"># -1000 = 完全免疫</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># 让某进程优先被杀（比如非关键的批处理）</span>
-</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="m">1000</span> &gt; /proc/5678/oom_score_adj
-</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="c1"># systemd 里配置</span>
-</span></span><span class="line"><span class="cl"><span class="k">[Service]</span>
-</span></span><span class="line"><span class="cl"><span class="na">OOMScoreAdjust</span><span class="o">=</span><span class="s">-500</span>
-</span></span></code></pre></div><h2 id="72-怎么确认发生了-oom">7.2 怎么确认发生了 OOM</h2>
-<p><strong>这是第 1 篇提过的关键排查点</strong>：进程被 OOM Killer 杀掉时收到的是 <code>SIGKILL</code>，没有任何机会写日志，<strong>应用日志里必然一片空白</strong>。唯一的证据在内核日志：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">dmesg -T <span class="p">|</span> grep -i -A <span class="m">3</span> <span class="s2">&#34;killed process&#34;</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># [Wed Aug  6 03:12:44 2026] Out of memory: Killed process 12345 (java)</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#   total-vm:8388608kB, anon-rss:7340032kB, file-rss:0kB, shmem-rss:0kB,</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#   UID:1000 pgtables:14848kB oom_score_adj:0</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># 或者从 journal 里查</span>
-</span></span><span class="line"><span class="cl">journalctl -k --since <span class="s2">&#34;1 hour ago&#34;</span> <span class="p">|</span> grep -i oom
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># 看完整的 OOM 现场（内核会 dump 当时所有进程的内存占用）</span>
-</span></span><span class="line"><span class="cl">dmesg -T <span class="p">|</span> grep -B <span class="m">30</span> <span class="s2">&#34;Out of memory&#34;</span>
-</span></span></code></pre></div><p><strong><code>anon-rss</code> 是关键数字</strong>——它是被杀进程的匿名页占用（堆、栈），也就是它实际吃掉的内存。</p>
-<h2 id="73-容器里的-oom-不一样">7.3 容器里的 OOM 不一样</h2>
-<p><strong>容器有两层 OOM</strong>，一定要区分清楚：</p>
-<table>
-<thead>
-<tr>
-<th>类型</th>
-<th>触发条件</th>
-<th>现象</th>
-<th>排查</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><strong>cgroup OOM</strong></td>
-<td>容器超过 <code>memory.limit</code></td>
-<td>只杀容器内进程，宿主机正常</td>
-<td><code>kubectl describe pod</code> 里 <code>OOMKilled</code></td>
-</tr>
-<tr>
-<td><strong>宿主机 OOM</strong></td>
-<td>整台机器内存耗尽</td>
-<td>可能杀任何进程</td>
-<td><code>dmesg</code> 里有 <code>Out of memory</code></td>
-</tr>
-</tbody>
-</table>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 容器内查 cgroup 内存状况（cgroup v2）</span>
-</span></span><span class="line"><span class="cl">cat /sys/fs/cgroup/memory.max        <span class="c1"># 4294967296 = 4GB 限制</span>
-</span></span><span class="line"><span class="cl">cat /sys/fs/cgroup/memory.current    <span class="c1"># 4187593728 = 当前用了 3.9GB</span>
-</span></span><span class="line"><span class="cl">cat /sys/fs/cgroup/memory.events
-</span></span><span class="line"><span class="cl"><span class="c1"># low 0</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># high 234</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># max 12</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># oom 3                              &lt;- 发生过 3 次 OOM</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># oom_kill 3                         &lt;- 杀了 3 个进程</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># cgroup v1 的路径</span>
-</span></span><span class="line"><span class="cl">cat /sys/fs/cgroup/memory/memory.limit_in_bytes
-</span></span><span class="line"><span class="cl">cat /sys/fs/cgroup/memory/memory.usage_in_bytes
-</span></span></code></pre></div><p>**关键：<code>memory.current</code> 包含 page cache！**这是容器 OOM 最容易被误判的地方：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">容器限制 4GB
-</span></span><span class="line"><span class="cl">应用堆只用了 2GB
-</span></span><span class="line"><span class="cl">但读写了大量文件 -&gt; page cache 占了 2GB
-</span></span><span class="line"><span class="cl">                    v
-</span></span><span class="line"><span class="cl">memory.current = 4GB -&gt; 触发 cgroup OOM
-</span></span></code></pre></div><p>好消息是内核在触发 OOM 前会先尝试回收容器内的 page cache，所以纯 cache 通常不会直接导致 OOM。<strong>真正的杀手是「匿名页 + 不可回收的内核内存」</strong>：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 看容器内存的构成，判断是谁在占</span>
-</span></span><span class="line"><span class="cl">cat /sys/fs/cgroup/memory.stat <span class="p">|</span> grep -E <span class="s2">&#34;^(anon|file|slab|sock|kernel_stack) &#34;</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># anon 3221225472      &lt;- 匿名页（堆栈），【不可回收】，这是主要嫌疑</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># file 838860800       &lt;- page cache，可回收</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># slab 104857600       &lt;- 内核对象缓存</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># sock 8388608         &lt;- socket 缓冲区</span>
-</span></span></code></pre></div><h2 id="74-jvm-在容器里被-oom-的经典原因">7.4 JVM 在容器里被 OOM 的经典原因</h2>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">容器限制：4GB
-</span></span><span class="line"><span class="cl">JVM 配置：-Xmx2g（堆最大 2GB）
-</span></span><span class="line"><span class="cl">                v
-</span></span><span class="line"><span class="cl">        为什么还是被 OOM 杀了？
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">因为 JVM 的实际内存 = 堆 + 元空间 + 线程栈 + 代码缓存 + 直接内存 + GC 结构
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">  堆（Xmx）          2.0 GB
-</span></span><span class="line"><span class="cl">  Metaspace          0.3 GB
-</span></span><span class="line"><span class="cl">  线程栈 500×1MB     0.5 GB    &lt;- 容易忽略
-</span></span><span class="line"><span class="cl">  CodeCache          0.2 GB
-</span></span><span class="line"><span class="cl">  DirectByteBuffer   0.8 GB    &lt;- Netty/NIO 用的堆外内存，最容易忽略
-</span></span><span class="line"><span class="cl">  GC 元数据          0.3 GB
-</span></span><span class="line"><span class="cl">  -------------------------
-</span></span><span class="line"><span class="cl">  总计               4.1 GB &gt; 4GB -&gt; OOMKilled
-</span></span></code></pre></div><p><strong>修复方式</strong>：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ✅ 用 MaxRAMPercentage 让 JVM 自动按容器限制算堆大小（JDK 10+）</span>
-</span></span><span class="line"><span class="cl">java -XX:MaxRAMPercentage<span class="o">=</span><span class="m">60</span> -jar app.jar
-</span></span><span class="line"><span class="cl"><span class="c1">#                          ^^ 堆只占容器限制的 60%，留 40% 给堆外</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 显式限制堆外内存</span>
-</span></span><span class="line"><span class="cl">java -Xmx2g -XX:MaxDirectMemorySize<span class="o">=</span>512m -XX:MaxMetaspaceSize<span class="o">=</span>256m -jar app.jar
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 开启原生内存追踪，看到底谁在占</span>
-</span></span><span class="line"><span class="cl">java -XX:NativeMemoryTracking<span class="o">=</span>summary -jar app.jar
-</span></span><span class="line"><span class="cl">jcmd &lt;pid&gt; VM.native_memory summary
-</span></span></code></pre></div><p>**规律：容器里的内存限制要留出 30~40% 给运行时的非堆开销。**Go 服务同理——<code>GOGC</code> 和 <code>GOMEMLIMIT</code>（1.19+）要配合容器限制设置：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># Go 1.19+ 的软内存上限，让 GC 感知容器限制</span>
-</span></span><span class="line"><span class="cl"><span class="nv">GOMEMLIMIT</span><span class="o">=</span>3500MiB      <span class="c1"># 容器限制 4GB，留 500MB 余量</span>
-</span></span></code></pre></div><h1 id="8-实战定位一个内存持续增长的服务">8. 实战：定位一个内存持续增长的服务</h1>
-<p><strong>现象</strong>：一个用了 CGO 做图像处理的 Go 服务，上线后内存缓慢增长，2 天从 300MB 涨到 2.1GB，最终被 OOMKilled 重启。</p>
-<p><strong>① 先确认是哪一类内存在涨</strong></p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 连续采样，看 RSS 和各组成部分</span>
-</span></span><span class="line"><span class="cl">watch -n <span class="m">60</span> <span class="s1">&#39;grep -E &#34;^(Rss|Pss|Private_Dirty|Swap):&#34; /proc/$(pgrep myapp)/smaps_rollup&#39;</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># Rss:             2183680 kB</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># Private_Dirty:   2164224 kB      &lt;- 几乎全是独占脏页 -&gt; 是真的在吃内存，不是缓存</span>
-</span></span></code></pre></div><p><code>Private_Dirty</code> 持续增长排除了「page cache 假象」，确认是<strong>真实的内存泄漏</strong>。</p>
-<p><strong>② 区分是 Go 堆内还是堆外</strong></p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># Go 的 runtime 指标</span>
-</span></span><span class="line"><span class="cl">curl -s localhost:6060/debug/pprof/heap?debug<span class="o">=</span><span class="m">1</span> <span class="p">|</span> head -20
-</span></span><span class="line"><span class="cl"><span class="c1"># heap profile: 3120: 188743680 [...]</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># # runtime.MemStats</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># # Sys = 2248146944          &lt;- runtime 向 OS 申请的总量，接近 RSS</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># # HeapAlloc = 188743680     &lt;- 堆上存活对象只有 180MB！</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># # HeapSys = 285212672</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># # HeapReleased = 0</span>
-</span></span></code></pre></div><p>**关键发现：<code>Sys</code> 2.1GB 但 <code>HeapAlloc</code> 只有 180MB。**说明泄漏不在 Go 堆里——如果是堆内泄漏，<code>HeapAlloc</code> 会同步增长。</p>
-<p><strong>③ 查堆外内存</strong></p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 看进程的内存映射，找异常大的匿名区域</span>
-</span></span><span class="line"><span class="cl">awk <span class="s1">&#39;/^[0-9a-f]/ {addr=$1} /^Rss:/ {if ($2 &gt; 100000) print addr, $2&#34; kB&#34;}&#39;</span> <span class="se">\
-</span></span></span><span class="line"><span class="cl"><span class="se"></span>    /proc/<span class="k">$(</span>pgrep myapp<span class="k">)</span>/smaps <span class="p">|</span> head
-</span></span><span class="line"><span class="cl"><span class="c1"># 7f2c00000000-   524288 kB      &lt;- 512MB 的匿名映射</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># 7f2c40000000-   524288 kB      &lt;- 又一个 512MB</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># 7f2c80000000-   524288 kB</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># 数一下 mmap 区域的数量</span>
-</span></span><span class="line"><span class="cl">grep -c <span class="s2">&#34;^[0-9a-f]&#34;</span> /proc/<span class="k">$(</span>pgrep myapp<span class="k">)</span>/maps
-</span></span><span class="line"><span class="cl"><span class="c1"># 8734                           &lt;- 八千多个映射，明显异常（正常几百个）</span>
-</span></span></code></pre></div><p><strong>④ 用 strace 抓是谁在 mmap</strong></p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">timeout <span class="m">30</span> strace -f -e <span class="nv">trace</span><span class="o">=</span>mmap,munmap -p <span class="k">$(</span>pgrep myapp<span class="k">)</span> 2&gt;<span class="p">&amp;</span><span class="m">1</span> <span class="p">|</span> <span class="se">\
-</span></span></span><span class="line"><span class="cl"><span class="se"></span>    grep -c mmap
-</span></span><span class="line"><span class="cl"><span class="c1"># 892                            &lt;- 30 秒 892 次 mmap</span>
-</span></span><span class="line"><span class="cl">timeout <span class="m">30</span> strace -f -e <span class="nv">trace</span><span class="o">=</span>mmap,munmap -p <span class="k">$(</span>pgrep myapp<span class="k">)</span> 2&gt;<span class="p">&amp;</span><span class="m">1</span> <span class="p">|</span> <span class="se">\
-</span></span></span><span class="line"><span class="cl"><span class="se"></span>    grep -c munmap
-</span></span><span class="line"><span class="cl"><span class="c1"># 3                              &lt;- 只 munmap 了 3 次！申请远多于释放</span>
-</span></span></code></pre></div><p><strong>⑤ 定位到代码</strong></p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># Go 的 CGO 或直接系统调用会绕过 Go GC</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># 检查是否用了 cgo</span>
-</span></span><span class="line"><span class="cl">go version -m ./myapp <span class="p">|</span> grep -i cgo
-</span></span><span class="line"><span class="cl"><span class="c1"># 	build	CGO_ENABLED=1        &lt;- 用了 CGO</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># 看 CGO 部分的内存</span>
-</span></span><span class="line"><span class="cl">curl -s localhost:6060/debug/pprof/goroutine?debug<span class="o">=</span><span class="m">2</span> <span class="p">|</span> grep -c <span class="s2">&#34;cgocall&#34;</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># 234                            &lt;- 大量 CGO 调用</span>
-</span></span></code></pre></div><p><strong>原因</strong>：代码里用 CGO 调用了一个图像处理库，每次调用 <code>C.malloc</code> 分配缓冲区，但只在正常路径 <code>C.free</code>，<strong>错误路径直接 return，漏了释放</strong>。因为是 C 侧分配的内存，Go 的 GC 完全管不到，pprof 的 heap profile 也看不见。</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// ❌ 有泄漏的代码
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kd">func</span> <span class="nf">process</span><span class="p">(</span><span class="nx">data</span> <span class="p">[]</span><span class="kt">byte</span><span class="p">)</span> <span class="p">([]</span><span class="kt">byte</span><span class="p">,</span> <span class="kt">error</span><span class="p">)</span> <span class="p">{</span>
-</span></span><span class="line"><span class="cl">    <span class="nx">buf</span> <span class="o">:=</span> <span class="nx">C</span><span class="p">.</span><span class="nf">malloc</span><span class="p">(</span><span class="nx">C</span><span class="p">.</span><span class="nf">size_t</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="nx">data</span><span class="p">)))</span>
-</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">buf</span> <span class="o">==</span> <span class="kc">nil</span> <span class="p">{</span>
-</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="kc">nil</span><span class="p">,</span> <span class="nx">errors</span><span class="p">.</span><span class="nf">New</span><span class="p">(</span><span class="s">&#34;alloc failed&#34;</span><span class="p">)</span>
-</span></span><span class="line"><span class="cl">    <span class="p">}</span>
-</span></span><span class="line"><span class="cl">    <span class="nx">ret</span> <span class="o">:=</span> <span class="nx">C</span><span class="p">.</span><span class="nf">do_process</span><span class="p">(</span><span class="nx">buf</span><span class="p">,</span> <span class="nx">C</span><span class="p">.</span><span class="nb">int</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="nx">data</span><span class="p">)))</span>
-</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">ret</span> <span class="o">!=</span> <span class="mi">0</span> <span class="p">{</span>
-</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="kc">nil</span><span class="p">,</span> <span class="nx">errors</span><span class="p">.</span><span class="nf">New</span><span class="p">(</span><span class="s">&#34;process failed&#34;</span><span class="p">)</span>    <span class="c1">// &lt;- 这里漏了 C.free(buf)
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="p">}</span>
-</span></span><span class="line"><span class="cl">    <span class="nx">out</span> <span class="o">:=</span> <span class="nx">C</span><span class="p">.</span><span class="nf">GoBytes</span><span class="p">(</span><span class="nx">buf</span><span class="p">,</span> <span class="nx">ret</span><span class="p">)</span>
-</span></span><span class="line"><span class="cl">    <span class="nx">C</span><span class="p">.</span><span class="nf">free</span><span class="p">(</span><span class="nx">buf</span><span class="p">)</span>
-</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="nx">out</span><span class="p">,</span> <span class="kc">nil</span>
-</span></span><span class="line"><span class="cl"><span class="p">}</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1">// ✅ 用 defer 保证释放
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kd">func</span> <span class="nf">process</span><span class="p">(</span><span class="nx">data</span> <span class="p">[]</span><span class="kt">byte</span><span class="p">)</span> <span class="p">([]</span><span class="kt">byte</span><span class="p">,</span> <span class="kt">error</span><span class="p">)</span> <span class="p">{</span>
-</span></span><span class="line"><span class="cl">    <span class="nx">buf</span> <span class="o">:=</span> <span class="nx">C</span><span class="p">.</span><span class="nf">malloc</span><span class="p">(</span><span class="nx">C</span><span class="p">.</span><span class="nf">size_t</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="nx">data</span><span class="p">)))</span>
-</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">buf</span> <span class="o">==</span> <span class="kc">nil</span> <span class="p">{</span>
-</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="kc">nil</span><span class="p">,</span> <span class="nx">errors</span><span class="p">.</span><span class="nf">New</span><span class="p">(</span><span class="s">&#34;alloc failed&#34;</span><span class="p">)</span>
-</span></span><span class="line"><span class="cl">    <span class="p">}</span>
-</span></span><span class="line"><span class="cl">    <span class="k">defer</span> <span class="nx">C</span><span class="p">.</span><span class="nf">free</span><span class="p">(</span><span class="nx">buf</span><span class="p">)</span>                               <span class="c1">// &lt;- 所有路径都会释放
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">ret</span> <span class="o">:=</span> <span class="nx">C</span><span class="p">.</span><span class="nf">do_process</span><span class="p">(</span><span class="nx">buf</span><span class="p">,</span> <span class="nx">C</span><span class="p">.</span><span class="nb">int</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="nx">data</span><span class="p">)))</span>
-</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">ret</span> <span class="o">!=</span> <span class="mi">0</span> <span class="p">{</span>
-</span></span><span class="line"><span class="cl">        <span class="k">return</span> <span class="kc">nil</span><span class="p">,</span> <span class="nx">errors</span><span class="p">.</span><span class="nf">New</span><span class="p">(</span><span class="s">&#34;process failed&#34;</span><span class="p">)</span>
-</span></span><span class="line"><span class="cl">    <span class="p">}</span>
-</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="nx">C</span><span class="p">.</span><span class="nf">GoBytes</span><span class="p">(</span><span class="nx">buf</span><span class="p">,</span> <span class="nx">ret</span><span class="p">),</span> <span class="kc">nil</span>
-</span></span><span class="line"><span class="cl"><span class="p">}</span>
-</span></span></code></pre></div><p><strong>结果</strong>：修复后 RSS 稳定在 320MB，<code>mmap</code>/<code>munmap</code> 调用数配平。</p>
-<p><strong>规律：RSS 涨但语言运行时的堆没涨 → 泄漏在堆外（CGO、mmap、内核对象）。这类泄漏用语言自带的 profiler 查不到，要看 <code>/proc/&lt;pid&gt;/smaps</code> 和 <code>strace mmap</code>。</strong></p>
-<blockquote>
-<p>另一种<strong>症状几乎相同但根因完全不同</strong>的情况是 <strong>goroutine 泄漏</strong>——同样是 RSS 涨而 <code>HeapAlloc</code> 不涨，但泄漏在 goroutine 栈（<code>StackSys</code>）而非 CGO。两个案例对照着看能建立完整的判断路径，见 <a href="../linux_20_%e7%ba%bf%e4%b8%8a%e9%97%ae%e9%a2%98%e6%8e%92%e6%9f%a5%e5%ae%9e%e6%88%98/" rel="">Linux-20 §2</a>。</p>
-</blockquote>
-<h1 id="9-一些量级感">9. 一些量级感</h1>
-<table>
-<thead>
-<tr>
-<th>项</th>
-<th>量级</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>标准页大小</td>
-<td>4 KB</td>
-</tr>
-<tr>
-<td>大页大小</td>
-<td>2 MB / 1 GB</td>
-</tr>
-<tr>
-<td>TLB 命中</td>
-<td>~1 个时钟周期</td>
-</tr>
-<tr>
-<td>TLB miss + 页表遍历</td>
-<td>100 ~ 300 ns</td>
-</tr>
-<tr>
-<td>次要缺页（minor fault）</td>
-<td>~1 μs</td>
-</tr>
-<tr>
-<td>主要缺页（major fault，SSD）</td>
-<td>50 ~ 150 μs</td>
-</tr>
-<tr>
-<td>主要缺页（机械盘）</td>
-<td>5 ~ 10 ms</td>
-</tr>
-<tr>
-<td>内存随机访问</td>
-<td>~100 ns</td>
-</tr>
-<tr>
-<td><code>memcpy</code> 吞吐</td>
-<td>5 ~ 20 GB/s</td>
-</tr>
-<tr>
-<td>内核栈大小</td>
-<td>8 ~ 16 KB</td>
-</tr>
-<tr>
-<td>健康的 <code>available</code> 比例</td>
-<td>&gt; 20%</td>
-</tr>
-</tbody>
-</table>
-<h1 id="10-面试题">10. 面试题</h1>
-<p><strong>Q：<code>free -h</code> 显示 free 只剩 200MB，是不是快 OOM 了？</strong></p>
-<p>不是。<strong>要看 <code>available</code> 而不是 <code>free</code></strong>。Linux 会主动用掉几乎所有空闲内存做 page cache——空闲内存不产生价值，拿来缓存磁盘内容能大幅提升 IO 性能。关键在于 page cache 是<strong>可回收</strong>的：干净的缓存页在磁盘上有副本，需要内存时内核直接丢弃即可，零成本。<code>available</code> 就是内核估算的「新程序能拿到多少」，等于 <code>free + 可回收的 cache + 可回收的 slab</code>。判断内存紧张的正确方法是：<code>available</code> 占比是否低于 20%，以及 <code>vmstat</code> 的 <code>si</code>/<code>so</code> 是否非 0（有换页活动）。</p>
-<p><strong>Q：<code>VSZ</code> 和 <code>RSS</code> 有什么区别？为什么所有进程的 RSS 加起来超过物理内存？</strong></p>
-<p><code>VSZ</code> 是虚拟内存大小，包含所有已映射但可能从未分配物理页的区域——Go 程序的 VSZ 动辄几百 GB 完全正常，参考价值极低。<code>RSS</code> 是常驻物理内存，即真正占用的物理页。但 RSS 会<strong>重复计算共享页</strong>：<code>libc.so</code> 占 2MB 被 100 个进程映射，每个进程的 RSS 都算了这 2MB，加起来就是 200MB，实际只用了 2MB。fork 出的子进程在 COW 触发前也与父进程共享大量页面。要精确统计就看 <code>/proc/&lt;pid&gt;/smaps_rollup</code> 的 <strong><code>Pss</code></strong>（按共享份额分摊）和 <strong><code>Private_Dirty</code></strong>（进程独占的脏页，杀掉它能释放的量）。</p>
-<p><strong>Q：<code>swappiness=60</code> 是什么意思？是内存用到 60% 就开始 swap 吗？</strong></p>
-<p>不是，这是常见误解。<code>swappiness</code> 表示的是**「内存回收时，倾向于换出匿名页 vs 丢弃 page cache 的相对权重」<strong>，取值 0~100。它</strong>只在内存回收被触发时才起作用**，内存充足时完全不影响任何行为。设为 0 是「尽量不换出匿名页，优先丢缓存」（但内存极度不足时仍会 swap，不等于关闭 swap），设为 100 是「积极换出匿名页」。生产上数据库和延迟敏感服务建议设 1 或直接关闭 swap。</p>
-<p><strong>Q：K8s 节点为什么要求关闭 swap？</strong></p>
-<p>因为 swap 会让 cgroup 的内存限制<strong>失去意义</strong>，OOM 行为变得不可预测。容器限制 4GB 内存时，如果允许 swap，进程可以超出限制继续运行（只是被换到磁盘），kubelet 无法准确判断 Pod 是否超限，调度决策和 QoS 保证都会失真。更实际的问题是<strong>延迟不可预测</strong>：换入一页要经历主要缺页（磁盘 IO，SSD 也要几十微秒，机械盘几毫秒），一个原本 1ms 的请求可能变成 5 秒。对在线服务来说，「响应 5 秒」比「进程被杀然后自动重启」更糟糕——它会引发上游超时、重试、雪崩，而且极难定位。</p>
-<p><strong>Q：<code>write()</code> 返回成功，数据一定落盘了吗？</strong></p>
-<p><strong>没有</strong>。<code>write()</code> 只是把数据拷进 page cache 并把页标记为脏页，然后立即返回，实际落盘由内核的 writeback 线程异步完成。此时掉电会丢数据。要保证持久化必须显式调用 <code>fsync(fd)</code>（刷数据+元数据）或 <code>fdatasync(fd)</code>（只刷数据，稍快）。数据库的 WAL 就靠这个——MySQL 的 <code>innodb_flush_log_at_trx_commit=1</code> 表示每次事务提交都 <code>fsync</code>，最安全也最慢。<strong>相关的调优点</strong>：脏页超过 <code>vm.dirty_ratio</code>（默认 20%）时，写入进程会被<strong>阻塞</strong>做同步回写；在 256GB 内存的机器上这意味着可能积累 51GB 脏页，一次性刷盘会导致数秒的写卡顿，所以大内存机器应该改用 <code>vm.dirty_bytes</code> 设绝对值。</p>
-<p><strong>Q：怎么确认一个进程是被 OOM Killer 杀掉的？</strong></p>
-<p>看<strong>内核日志</strong>，因为 OOM Killer 发的是 <code>SIGKILL</code>，进程没有任何机会写日志，应用日志里必然一片空白。用 <code>dmesg -T | grep -i &quot;killed process&quot;</code> 或 <code>journalctl -k | grep -i oom</code>，能看到被杀进程的 PID、名字和当时的 <code>anon-rss</code>（实际吃掉的匿名内存）。K8s 里则是 <code>kubectl describe pod</code> 的 <code>Reason: OOMKilled</code>，或者看容器退出码 <strong>137</strong>（128+9）。另外要区分两层 OOM：<strong>cgroup OOM</strong>（容器超限，只杀容器内进程，看 <code>/sys/fs/cgroup/memory.events</code> 的 <code>oom_kill</code> 计数）和<strong>宿主机 OOM</strong>（整机内存耗尽，可能杀任何进程）。</p>
-<p><strong>Q：容器限制 4GB，JVM 堆只设了 2GB，为什么还是被 OOMKilled？</strong></p>
-<p>因为 JVM 的实际内存远不止堆。完整构成是：堆（<code>-Xmx</code>）+ Metaspace + <strong>线程栈</strong>（每个线程约 1MB，500 个线程就是 500MB）+ CodeCache + <strong>DirectByteBuffer 堆外内存</strong>（Netty/NIO 大量使用，最容易忽略）+ GC 自身的元数据。这些加起来很容易突破 4GB。修复方式：用 <code>-XX:MaxRAMPercentage=60</code> 让 JVM 按容器限制自动算堆大小（JDK 10+），显式设置 <code>-XX:MaxDirectMemorySize</code> 和 <code>-XX:MaxMetaspaceSize</code>，用 <code>-XX:NativeMemoryTracking=summary</code> + <code>jcmd VM.native_memory</code> 定位具体占用。<strong>规律：容器内存限制要留 30~40% 给运行时的非堆开销</strong>——Go 服务同理，需要设 <code>GOMEMLIMIT</code>（1.19+）让 GC 感知容器限制。</p>
-<p><strong>Q：透明大页（THP）是什么？为什么数据库都建议关掉？</strong></p>
-<p>大页把内存管理粒度从 4KB 提到 2MB，同样数量的 TLB 条目能覆盖 500 倍内存，大幅降低 TLB miss。THP 是内核<strong>自动</strong>在后台把连续的小页合并成大页的机制。数据库要关掉它的原因是<strong>延迟不可预测</strong>：内核做内存规整（compaction）以凑出连续的 2MB 物理内存时，可能让进程卡住几百毫秒；而且对随机访问的工作负载，2MB 的粒度会造成显著的内存浪费。MongoDB、Redis、Oracle、PostgreSQL 官方文档都明确要求 <code>echo never &gt; /sys/kernel/mm/transparent_hugepage/enabled</code>。<strong>注意区分</strong>：要关的是 THP（自动、有延迟毛刺），而手动预留的静态 HugePages 对数据库是有益的，两者不是一回事。</p>
-<p><strong>Q：一个 Go 服务 RSS 持续增长，但 pprof 的 heap profile 显示堆只有 200MB，怎么查？</strong></p>
-<p>这个特征说明<strong>泄漏在 Go 堆之外</strong>——如果是堆内泄漏，<code>HeapAlloc</code> 会同步增长。先看 <code>runtime.MemStats</code> 的 <code>Sys</code>（runtime 向 OS 申请的总量）是否接近 RSS，如果 <code>Sys</code> 大而 <code>HeapAlloc</code> 小，泄漏就在堆外。常见来源：① <strong>CGO 里 <code>C.malloc</code> 没配对 <code>C.free</code></strong>（Go GC 完全管不到 C 侧内存，pprof 也看不见）；② 直接 <code>mmap</code> 没 <code>munmap</code>；③ goroutine 泄漏导致栈内存累积；④ 内核对象（socket 缓冲、fd）泄漏。排查手段是 <code>/proc/&lt;pid&gt;/smaps</code> 找异常大的匿名映射区域、<code>grep -c &quot;^[0-9a-f]&quot; /proc/&lt;pid&gt;/maps</code> 数映射数量是否异常、<code>strace -e trace=mmap,munmap</code> 看申请和释放是否配平。CGO 场景的修复原则是<strong>用 <code>defer C.free()</code> 保证所有返回路径都释放</strong>。</p>
-<hr>
-<p>上一篇：<a href="../linux_09_%e7%94%a8%e6%88%b7%e6%80%81%e5%86%85%e6%a0%b8%e6%80%81%e4%b8%8e%e7%b3%bb%e7%bb%9f%e8%b0%83%e7%94%a8/" rel="">Linux-09 用户态、内核态与系统调用</a> ｜ 下一篇：<a href="../linux_11_%e6%96%87%e4%bb%b6%e7%b3%bb%e7%bb%9f%e4%b8%8e%e7%a3%81%e7%9b%98IO/" rel="">Linux-11 文件系统与磁盘 IO</a></p>
-</div><div class="post-footer" id="post-footer">
-    <div class="post-info">
-        <div class="post-info-line">
-            <div class="post-info-mod">
-                <span>更新于 2026-08-06</span>
-            </div>
-            <div class="post-info-license"></div>
-        </div>
-        <div class="post-info-line">
-            <div class="post-info-md"></div>
-            <div class="post-info-share">
-                <span></span>
-            </div>
-        </div>
-    </div>
-
-    <div class="post-info-more">
-        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/linux/">linux</a></section>
-        <section>
-            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
-        </section>
-    </div>
-
-    <div class="post-nav"><a href="/posts/linux/linux_11_%E6%96%87%E4%BB%B6%E7%B3%BB%E7%BB%9F%E4%B8%8E%E7%A3%81%E7%9B%98IO/" class="prev" rel="prev" title="Linux-11 文件系统与磁盘 IO"><i class="fas fa-angle-left fa-fw"></i>Linux-11 文件系统与磁盘 IO</a>
-            <a href="/posts/linux/linux_09_%E7%94%A8%E6%88%B7%E6%80%81%E5%86%85%E6%A0%B8%E6%80%81%E4%B8%8E%E7%B3%BB%E7%BB%9F%E8%B0%83%E7%94%A8/" class="next" rel="next" title="Linux-09 用户态、内核态与系统调用">Linux-09 用户态、内核态与系统调用<i class="fas fa-angle-right fa-fw"></i></a></div>
-</div>
-<div id="comments"><div id="gitalk" class="comment"></div><noscript>
-                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
-            </noscript></div></article></div>
-            </main><footer class="footer">
-        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
-                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
-        </div>
-    </footer></div>
-
-        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
-                <i class="fas fa-arrow-up fa-fw"></i>
-            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
-                <i class="fas fa-comment fa-fw"></i>
-            </a>
-        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2026-08-06T18:30:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Linux-10 内存管理"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
-</html>
+<!doctype html><html lang=zh-cn><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><meta name=robots content="noodp"><meta http-equiv=x-ua-compatible content="IE=edge, chrome=1"><title>Linux-10 内存管理 - xingliuhua博客</title><meta name=Description content="虚拟内存与页表、缺页中断的两种类型、free 各列的真实含义、page cache 与脏页回写、swap 与 swappiness、RSS/VSZ/PSS 的区别、OOM Killer 评分机制、内存泄漏与容器 OOM 排查"><meta property="og:title" content="Linux-10 内存管理"><meta property="og:description" content="虚拟内存与页表、缺页中断的两种类型、free 各列的真实含义、page cache 与脏页回写、swap 与 swappiness、RSS/VSZ/PSS 的区别、OOM Killer 评分机制、内存泄漏与容器 OOM 排查"><meta property="og:type" content="article"><meta property="og:url" content="https://xingliuhua.github.io/posts/linux/linux_10_%E5%86%85%E5%AD%98%E7%AE%A1%E7%90%86/"><meta property="og:image" content="https://xingliuhua.github.io/logo.png"><meta property="article:section" content="posts"><meta property="article:published_time" content="2026-08-06T18:30:00+08:00"><meta property="article:modified_time" content="2026-08-11T00:00:00+08:00"><meta name=twitter:card content="summary_large_image"><meta name=twitter:image content="https://xingliuhua.github.io/logo.png"><meta name=twitter:title content="Linux-10 内存管理"><meta name=twitter:description content="虚拟内存与页表、缺页中断的两种类型、free 各列的真实含义、page cache 与脏页回写、swap 与 swappiness、RSS/VSZ/PSS 的区别、OOM Killer 评分机制、内存泄漏与容器 OOM 排查"><meta name=application-name content="xingliuhua博客"><meta name=apple-mobile-web-app-title content="xingliuhua博客"><link rel="shortcut icon" type=image/x-icon href=/favicon.ico><link rel=icon type=image/png sizes=32x32 href=/favicon-32x32.png><link rel=icon type=image/png sizes=16x16 href=/favicon-16x16.png><link rel=apple-touch-icon sizes=180x180 href=/apple-touch-icon.png><link rel=manifest href=/site.webmanifest><link rel=canonical href=https://xingliuhua.github.io/posts/linux/linux_10_%E5%86%85%E5%AD%98%E7%AE%A1%E7%90%86/><link rel=prev href=https://xingliuhua.github.io/posts/linux/linux_11_%E6%96%87%E4%BB%B6%E7%B3%BB%E7%BB%9F%E4%B8%8E%E7%A3%81%E7%9B%98IO/><link rel=next href=https://xingliuhua.github.io/posts/linux/linux_09_%E7%94%A8%E6%88%B7%E6%80%81%E5%86%85%E6%A0%B8%E6%80%81%E4%B8%8E%E7%B3%BB%E7%BB%9F%E8%B0%83%E7%94%A8/><link rel=stylesheet href=/lib/normalize/normalize.min.css><link rel=stylesheet href=/css/style.min.css><link rel=stylesheet href=/lib/fontawesome-free/all.min.css><link rel=stylesheet href=/lib/animate/animate.min.css><script type=application/ld+json>{"@context":"http://schema.org","@type":"BlogPosting","headline":"Linux-10 内存管理","inLanguage":"zh-CN","mainEntityOfPage":{"@type":"WebPage","@id":"https:\/\/xingliuhua.github.io\/posts\/linux\/linux_10_%E5%86%85%E5%AD%98%E7%AE%A1%E7%90%86\/"},"genre":"posts","keywords":"linux","wordcount":9689,"url":"https:\/\/xingliuhua.github.io\/posts\/linux\/linux_10_%E5%86%85%E5%AD%98%E7%AE%A1%E7%90%86\/","datePublished":"2026-08-06T18:30:00+08:00","dateModified":"2026-08-11T00:00:00+08:00","publisher":{"@type":"Organization","name":"xingliuhua"},"author":{"@type":"Person","name":"xingliuhua"},"description":"虚拟内存与页表、缺页中断的两种类型、free 各列的真实含义、page cache 与脏页回写、swap 与 swappiness、RSS/VSZ/PSS 的区别、OOM Killer 评分机制、内存泄漏与容器 OOM 排查"}</script></head><body header-desktop=fixed header-mobile=auto><script type=text/javascript>(window.localStorage&&localStorage.getItem("theme")?localStorage.getItem("theme")==="dark":"auto"==="auto"?window.matchMedia("(prefers-color-scheme: dark)").matches:"auto"==="dark")&&document.body.setAttribute("theme","dark")</script><div id=mask></div><div class=wrapper><header class=desktop id=header-desktop><div class=header-wrapper><div class=header-title><a href=/ title=xingliuhua博客><img class="lazyload logo" src=/svg/loading.min.svg data-src=/logo.png data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x" data-sizes=auto alt=/logo.png title=/logo.png>xingliuhua</a></div><div class=menu><div class=menu-inner><a class=menu-item href=/posts/>文章 </a><a class=menu-item href=/tags/>标签 </a><a class=menu-item href=/categories/>分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id=search-desktop>
+<input type=text placeholder=搜索文章标题或内容... id=search-input-desktop>
+<a href=javascript:void(0); class="search-button search-toggle" id=search-toggle-desktop title=搜索><i class="fas fa-search fa-fw"></i></a>
+<a href=javascript:void(0); class="search-button search-clear" id=search-clear-desktop title=清空><i class="fas fa-times-circle fa-fw"></i></a>
+<span class="search-button search-loading" id=search-loading-desktop><i class="fas fa-spinner fa-fw fa-spin"></i></span>
+</span><a href=javascript:void(0); class="menu-item theme-switch" title=切换主题><i class="fas fa-adjust fa-fw"></i></a></div></div></div></header><header class=mobile id=header-mobile><div class=header-container><div class=header-wrapper><div class=header-title><a href=/ title=xingliuhua博客><img class="lazyload logo" src=/svg/loading.min.svg data-src=/logo.png data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x" data-sizes=auto alt=/logo.png title=/logo.png>xingliuhua</a></div><div class=menu-toggle id=menu-toggle-mobile><span></span><span></span><span></span></div></div><div class=menu id=menu-mobile><div class=search-wrapper><div class="search mobile" id=search-mobile><input type=text placeholder=搜索文章标题或内容... id=search-input-mobile>
+<a href=javascript:void(0); class="search-button search-toggle" id=search-toggle-mobile title=搜索><i class="fas fa-search fa-fw"></i></a>
+<a href=javascript:void(0); class="search-button search-clear" id=search-clear-mobile title=清空><i class="fas fa-times-circle fa-fw"></i></a>
+<span class="search-button search-loading" id=search-loading-mobile><i class="fas fa-spinner fa-fw fa-spin"></i></span></div><a href=javascript:void(0); class=search-cancel id=search-cancel-mobile>取消</a></div><a class=menu-item href=/posts/ title>文章</a><a class=menu-item href=/tags/ title>标签</a><a class=menu-item href=/categories/ title>分类</a><a href=javascript:void(0); class="menu-item theme-switch" title=切换主题>
+<i class="fas fa-adjust fa-fw"></i></a></div></div></header><div class="search-dropdown desktop"><div id=search-dropdown-desktop></div></div><div class="search-dropdown mobile"><div id=search-dropdown-mobile></div></div><main class=main><div class=container><div class=toc id=toc-auto><h2 class=toc-title>目录</h2><div class=toc-content id=toc-content-auto></div></div><article class="page single"><h1 class="single-title animated flipInX">Linux-10 内存管理</h1><div class=post-meta><div class=post-meta-line><span class=post-author><a href=https://xingliuhua/github.com.io title=Author target=_blank rel="noopener noreffer author" class=author><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class=post-category>收录于 <a href=/categories/%E7%AC%94%E8%AE%B0/><i class="far fa-folder fa-fw"></i>笔记</a></span></div><div class=post-meta-line><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime=2026-08-06>2026-08-06</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 9689 字&nbsp;
+<i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 20 分钟&nbsp;</div></div><div class="details toc" id=toc-static kept><div class="details-summary toc-title"><span>目录</span>
+<span><i class="details-icon fas fa-angle-right"></i></span></div><div class="details-content toc-content" id=toc-content-static><nav id=TableOfContents><ol><li><a href=#1-虚拟内存每个进程都以为自己独占内存>1. 虚拟内存：每个进程都以为自己独占内存</a><ol><li><a href=#11-进程的地址空间布局>1.1 进程的地址空间布局</a></li><li><a href=#12-页表与-tlb>1.2 页表与 TLB</a></li><li><a href=#13-大页减少-tlb-压力>1.3 大页：减少 TLB 压力</a></li></ol></li><li><a href=#2-缺页中断内存是用到才给的>2. 缺页中断：内存是「用到才给」的</a><ol><li><a href=#21-两种缺页次要和主要>2.1 两种缺页：次要和主要</a></li><li><a href=#22-overcommit-策略>2.2 overcommit 策略</a></li></ol></li><li><a href=#3-free-命令available-才是关键>3. free 命令：available 才是关键</a><ol><li><a href=#31-为什么-free-很少而-available-很多>3.1 为什么 free 很少而 available 很多</a></li><li><a href=#32-buffcache-能手动清吗>3.2 buff/cache 能手动清吗</a></li></ol></li><li><a href=#4-page-cache-与脏页回写>4. page cache 与脏页回写</a><ol><li><a href=#41-读路径>4.1 读路径</a></li><li><a href=#42-写路径与脏页>4.2 写路径与脏页</a></li><li><a href=#43-脏页回写的调优参数>4.3 脏页回写的调优参数</a></li></ol></li><li><a href=#5-swap该不该关>5. swap：该不该关</a><ol><li><a href=#51-swappiness-的真实含义>5.1 swappiness 的真实含义</a></li><li><a href=#52-关不关-swap>5.2 关不关 swap</a></li></ol></li><li><a href=#6-rssvszpss进程用了多少内存>6. RSS、VSZ、PSS：进程用了多少内存</a><ol><li><a href=#61-为什么-rss-加起来会超过物理内存>6.1 为什么 RSS 加起来会超过物理内存</a></li><li><a href=#62-用-pss-得到准确数字>6.2 用 PSS 得到准确数字</a></li></ol></li><li><a href=#7-oom-killer>7. OOM Killer</a><ol><li><a href=#71-评分机制>7.1 评分机制</a></li><li><a href=#72-怎么确认发生了-oom>7.2 怎么确认发生了 OOM</a></li><li><a href=#73-容器里的-oom-不一样>7.3 容器里的 OOM 不一样</a></li><li><a href=#74-jvm-在容器里被-oom-的经典原因>7.4 JVM 在容器里被 OOM 的经典原因</a></li></ol></li><li><a href=#8-实战定位一个内存持续增长的服务>8. 实战：定位一个内存持续增长的服务</a></li><li><a href=#9-一些量级感>9. 一些量级感</a></li><li><a href=#命令附录内存观测命令>命令附录：内存观测命令</a><ol><li><a href=#名称与参数速查>名称与参数速查</a></li><li><a href=#单位与脚本输出>单位与脚本输出</a></li></ol></li><li><a href=#10-面试题>10. 面试题</a></li></ol></nav></div></div><div class=content id=content><blockquote><p>前置阅读：<a href=../linux_09_%e7%94%a8%e6%88%b7%e6%80%81%e5%86%85%e6%a0%b8%e6%80%81%e4%b8%8e%e7%b3%bb%e7%bb%9f%e8%b0%83%e7%94%a8/ rel>Linux-09 用户态、内核态与系统调用</a></p></blockquote><p>内存问题是后端最常遇到也最容易误判的一类。典型的困惑：<code>free</code> 显示只剩 200MB 是不是要 OOM 了、进程 RSS 明明只有 2GB 为什么被 OOM Killer 杀了、容器限制 4GB 但 JVM 堆才设了 2GB 为什么还是被杀。</p><p>这一篇把这些问题背后的机制讲清楚。注意本篇讲的是<strong>Linux 内核视角</strong>的内存管理，Go runtime 自己的堆管理和 GC 是另一套东西（在 golang 系列里）。</p><h1 id=1-虚拟内存每个进程都以为自己独占内存>1. 虚拟内存：每个进程都以为自己独占内存</h1><p>一句话：<strong>进程看到的所有地址都是假的，是内核和 MMU 硬件联手编造出来的。</strong></p><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>进程 A 的虚拟地址 0x400000 -+
+</span></span><span class=line><span class=cl>                            +- 页表翻译 -&gt; 完全不同的物理地址
+</span></span><span class=line><span class=cl>进程 B 的虚拟地址 0x400000 -+
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>两个进程用同一个虚拟地址，指向不同的物理内存，互不干扰
+</span></span></code></pre></div><p>这个抽象带来四个好处，每一个都很关键：</p><table><thead><tr><th>好处</th><th>说明</th></tr></thead><tbody><tr><td><strong>隔离</strong></td><td>进程无法访问别人的内存（访问越界 → SIGSEGV）</td></tr><tr><td><strong>超额分配</strong></td><td>可以「分配」比物理内存更多的空间，只在真正使用时才给物理页</td></tr><tr><td><strong>共享</strong></td><td>多个进程映射同一份物理页（共享库、fork 后的 COW）</td></tr><tr><td><strong>连续假象</strong></td><td>虚拟地址连续，物理页可以东一块西一块</td></tr></tbody></table><h2 id=11-进程的地址空间布局>1.1 进程的地址空间布局</h2><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>cat /proc/self/maps
+</span></span><span class=line><span class=cl><span class=c1># 555555554000-555555556000 r-xp ... /usr/bin/cat        代码段（只读可执行）</span>
+</span></span><span class=line><span class=cl><span class=c1># 555555756000-555555757000 rw-p ... /usr/bin/cat        数据段</span>
+</span></span><span class=line><span class=cl><span class=c1># 555555757000-555555778000 rw-p ... [heap]              堆，malloc 从这里拿</span>
+</span></span><span class=line><span class=cl><span class=c1># 7ffff7dc0000-7ffff7de5000 r-xp ... /lib/libc.so.6      共享库</span>
+</span></span><span class=line><span class=cl><span class=c1># 7ffff7ff9000-7ffff7ffd000 rw-p ...                     匿名映射（mmap）</span>
+</span></span><span class=line><span class=cl><span class=c1># 7ffffffde000-7ffffffff000 rw-p ... [stack]             栈，向下增长</span>
+</span></span><span class=line><span class=cl><span class=c1># 7ffff7ffd000-7ffff7ffe000 r-xp ... [vdso]              第 9 篇讲过</span>
+</span></span></code></pre></div><p>权限字段的含义：<code>r</code>读 <code>w</code>写 <code>x</code>执行 <code>p</code>私有 / <code>s</code>共享。</p><p><strong><code>x86_64</code> 的虚拟地址空间是 128TB 用户 + 128TB 内核</strong>（48 位有效地址）。所以进程的虚拟地址空间几乎用不完——这就是 VSZ 可以非常大而完全正常的原因。</p><h2 id=12-页表与-tlb>1.2 页表与 TLB</h2><p>内存以<strong>页</strong>为单位管理，x86_64 的标准页大小是 <strong>4KB</strong>。</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>getconf PAGE_SIZE
+</span></span><span class=line><span class=cl><span class=c1># 4096</span>
+</span></span></code></pre></div><p>虚拟地址到物理地址的翻译靠<strong>多级页表</strong>（x86_64 是 4 级，5.x 内核支持 5 级）：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>虚拟地址 48 位被切成 5 段：
+</span></span><span class=line><span class=cl>  [47:39] [38:30] [29:21] [20:12] [11:0]
+</span></span><span class=line><span class=cl>    PGD     PUD     PMD     PTE    页内偏移
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>每级查一次内存 -&gt; 一次翻译最多要访问 4 次内存！
+</span></span></code></pre></div><p><strong>这个开销无法接受</strong>，所以 CPU 有 <strong>TLB（Translation Lookaside Buffer）</strong>——专门缓存「虚拟页 → 物理页」映射的硬件缓存。</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>TLB 命中  -&gt; 约 1 个时钟周期（几乎免费）
+</span></span><span class=line><span class=cl>TLB 未命中 -&gt; 走页表，100 ~ 300 ns
+</span></span></code></pre></div><p><strong>这就是第 7 篇说「进程上下文切换比线程贵」的根本原因</strong>：切换进程要换页表（写 CR3 寄存器），TLB 大面积失效，之后的每次内存访问都可能要走一遍页表。</p><h2 id=13-大页减少-tlb-压力>1.3 大页：减少 TLB 压力</h2><p>TLB 的条目数是有限的（通常几百到几千条）。用 4KB 页时，1000 个 TLB 条目只能覆盖 4MB 内存——对于占用 32GB 的数据库来说，TLB 命中率极低。</p><p><strong>大页（Huge Page）把页大小提到 2MB 或 1GB</strong>，同样的 TLB 条目数能覆盖 500 倍的内存：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># 查看大页配置</span>
+</span></span><span class=line><span class=cl>cat /proc/meminfo <span class=p>|</span> grep -i huge
+</span></span><span class=line><span class=cl><span class=c1># AnonHugePages:    524288 kB      &lt;- 透明大页实际使用量</span>
+</span></span><span class=line><span class=cl><span class=c1># HugePages_Total:       0         &lt;- 预留的静态大页数</span>
+</span></span><span class=line><span class=cl><span class=c1># Hugepagesize:       2048 kB      &lt;- 大页大小</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 透明大页（THP）状态</span>
+</span></span><span class=line><span class=cl>cat /sys/kernel/mm/transparent_hugepage/enabled
+</span></span><span class=line><span class=cl><span class=c1># [always] madvise never</span>
+</span></span></code></pre></div><blockquote><p>坑：**透明大页（THP）对数据库是有害的，几乎所有数据库都建议关闭它。**因为 THP 由内核在后台自动合并页面，会产生不可预测的延迟毛刺（内存规整时可能卡住几百毫秒），而且对于随机访问的工作负载，2MB 的粒度会造成大量内存浪费。MongoDB、Redis、Oracle、PostgreSQL 的官方文档都明确要求关闭：</p></blockquote><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># 临时关闭</span>
+</span></span><span class=line><span class=cl><span class=nb>echo</span> never &gt; /sys/kernel/mm/transparent_hugepage/enabled
+</span></span><span class=line><span class=cl><span class=nb>echo</span> never &gt; /sys/kernel/mm/transparent_hugepage/defrag
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 永久关闭：加到内核启动参数</span>
+</span></span><span class=line><span class=cl><span class=c1># GRUB_CMDLINE_LINUX=&#34;transparent_hugepage=never&#34;</span>
+</span></span></code></pre></div><p><strong>注意区分</strong>：THP（自动、有害）和静态预留的 HugePages（手动配置、对数据库有益）是两回事。关闭的是 THP。</p><h1 id=2-缺页中断内存是用到才给的>2. 缺页中断：内存是「用到才给」的</h1><p><strong>进程 <code>malloc</code> 一块内存时，内核只是记账，并不真的分配物理页。</strong></p><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>malloc(1GB)
+</span></span><span class=line><span class=cl>    v
+</span></span><span class=line><span class=cl>内核在 vm_area_struct 里记一笔「这段虚拟地址归你了」
+</span></span><span class=line><span class=cl>    v
+</span></span><span class=line><span class=cl>返回指针，VSZ 增加 1GB，RSS 增加 0
+</span></span><span class=line><span class=cl>    v
+</span></span><span class=line><span class=cl>进程第一次写入某个地址
+</span></span><span class=line><span class=cl>    v
+</span></span><span class=line><span class=cl>MMU 发现页表里没有映射 -&gt; 触发【缺页中断】(Page Fault)
+</span></span><span class=line><span class=cl>    v
+</span></span><span class=line><span class=cl>内核分配一个物理页，填进页表，RSS 增加 4KB
+</span></span><span class=line><span class=cl>    v
+</span></span><span class=line><span class=cl>恢复执行那条被中断的指令
+</span></span></code></pre></div><p><strong>这就是「超额分配」（overcommit）的基础</strong>——所有进程 <code>malloc</code> 的总量可以远超物理内存，因为大部分从未被真正触碰。</p><h2 id=21-两种缺页次要和主要>2.1 两种缺页：次要和主要</h2><p>这个区分直接决定了性能影响：</p><table><thead><tr><th>类型</th><th>英文</th><th>含义</th><th>开销</th></tr></thead><tbody><tr><td><strong>次要缺页</strong></td><td>minor fault</td><td>物理页已在内存中，只是页表没建立映射</td><td><strong>约 1 μs</strong></td></tr><tr><td><strong>主要缺页</strong></td><td>major fault</td><td>需要从<strong>磁盘</strong>读入（换入 swap、或首次读文件）</td><td><strong>50μs ~ 10ms</strong></td></tr></tbody></table><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># 查看进程的缺页统计</span>
+</span></span><span class=line><span class=cl>ps -eo pid,min_flt,maj_flt,comm <span class=p>|</span> head -5
+</span></span><span class=line><span class=cl><span class=c1>#   PID  MINFL  MAJFL COMMAND</span>
+</span></span><span class=line><span class=cl><span class=c1>#  1234 892340    123 myapp</span>
+</span></span><span class=line><span class=cl><span class=c1>#        ^^^^^^ 次要缺页，正常，数值大也没关系</span>
+</span></span><span class=line><span class=cl><span class=c1>#               ^^^ 主要缺页，【这个数持续增长才是问题】</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 实时观察</span>
+</span></span><span class=line><span class=cl>pidstat -r <span class=m>1</span> <span class=m>3</span> -p <span class=m>1234</span>
+</span></span><span class=line><span class=cl><span class=c1># 时间     PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command</span>
+</span></span><span class=line><span class=cl><span class=c1># 22:15:01 1234   1234.00     45.00 8234012 4123400  25.1  myapp</span>
+</span></span><span class=line><span class=cl><span class=c1>#                             ^^^^^ 每秒 45 次主要缺页 -&gt; 在频繁读磁盘或换页</span>
+</span></span></code></pre></div><p><strong>规律：<code>majflt/s</code> 持续大于 0 是危险信号</strong>——说明进程在从磁盘换入内存，性能会断崖式下降。常见原因是内存不足导致 swap，或者工作集远大于可用内存。</p><h2 id=22-overcommit-策略>2.2 overcommit 策略</h2><p>内核允许「超额分配」到什么程度，由 <code>overcommit_memory</code> 控制：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>cat /proc/sys/vm/overcommit_memory
+</span></span><span class=line><span class=cl><span class=c1># 0</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 0 = 启发式（默认）：内核估算，明显不合理的大额申请会被拒绝</span>
+</span></span><span class=line><span class=cl><span class=c1># 1 = 总是允许：不做任何检查，来者不拒       &lt;- Redis 要求这个</span>
+</span></span><span class=line><span class=cl><span class=c1># 2 = 严格模式：总分配量不得超过 swap + 物理内存 × overcommit_ratio</span>
+</span></span></code></pre></div><p><strong>Redis 为什么要求 <code>vm.overcommit_memory=1</code></strong>：Redis 做 RDB 持久化时要 <code>fork</code> 子进程（第 6 篇讲过 COW）。在模式 0 下，内核的启发式检查可能认为「这个进程要复制 20GB 地址空间，风险太高」而拒绝 fork，导致持久化失败。设为 1 后 fork 总能成功，而实际上因为 COW，真正消耗的物理内存远小于 20GB。</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># Redis 官方要求</span>
+</span></span><span class=line><span class=cl><span class=nb>echo</span> <span class=s2>&#34;vm.overcommit_memory = 1&#34;</span> &gt;&gt; /etc/sysctl.d/99-redis.conf
+</span></span><span class=line><span class=cl>sysctl -p /etc/sysctl.d/99-redis.conf
+</span></span></code></pre></div><h1 id=3-free-命令available-才是关键>3. free 命令：available 才是关键</h1><p>这是最容易误读的一个命令。</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>free -h
+</span></span><span class=line><span class=cl><span class=c1>#               total        used        free      shared  buff/cache   available</span>
+</span></span><span class=line><span class=cl><span class=c1># Mem:           15Gi       4.2Gi       231Mi       128Mi        11Gi        10Gi</span>
+</span></span><span class=line><span class=cl><span class=c1>#                                       ^^^^^                              ^^^^</span>
+</span></span><span class=line><span class=cl><span class=c1>#                                    只剩 231MB？                      其实有 10GB 可用</span>
+</span></span><span class=line><span class=cl><span class=c1># Swap:         2.0Gi          0B       2.0Gi</span>
+</span></span></code></pre></div><p><strong>很多人看到 <code>free</code> 只有 231MB 就以为要 OOM 了，这是完全错误的判断。</strong></p><table><thead><tr><th>列</th><th>含义</th><th>要不要关注</th></tr></thead><tbody><tr><td><code>total</code></td><td>物理内存总量</td><td>—</td></tr><tr><td><code>used</code></td><td>已被进程使用（不含缓存）</td><td>关注</td></tr><tr><td><code>free</code></td><td><strong>完全空闲、未被任何用途占用</strong></td><td><strong>基本不用看</strong></td></tr><tr><td><code>shared</code></td><td>tmpfs / 共享内存占用</td><td>用共享内存时关注</td></tr><tr><td><code>buff/cache</code></td><td><strong>page cache + buffer</strong>，缓存文件内容</td><td>了解即可</td></tr><tr><td><code>available</code></td><td><strong>估算「新程序可以拿到多少」</strong></td><td><strong>看这一个就够了</strong></td></tr></tbody></table><h2 id=31-为什么-free-很少而-available-很多>3.1 为什么 free 很少而 available 很多</h2><p>**因为 Linux 会主动用掉所有空闲内存来做 page cache。**空闲内存不产生任何价值，拿来缓存磁盘内容能大幅提升 IO 性能。</p><p>**关键在于：page cache 是「可回收」的。**当有进程需要内存时，内核会立刻丢弃干净的 page cache 页（数据在磁盘上有副本，直接丢即可，无成本）来腾出空间。</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>available ≈ free + 可回收的 page cache + 可回收的 slab
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>所以 available 反映的是「真正可用」的量，free 只是「当前完全没被碰的量」
+</span></span></code></pre></div><p><strong>判断内存是否紧张的正确方法</strong>：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># ① 看 available 占 total 的比例</span>
+</span></span><span class=line><span class=cl>free -m <span class=p>|</span> awk <span class=s1>&#39;NR==2 {printf &#34;available: %.1f%%\n&#34;, $7/$2*100}&#39;</span>
+</span></span><span class=line><span class=cl><span class=c1># available: 65.3%        &lt;- 健康</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># ② 看 swap 是否在活动（更灵敏的指标）</span>
+</span></span><span class=line><span class=cl>vmstat <span class=m>1</span> <span class=m>3</span>
+</span></span><span class=line><span class=cl><span class=c1># ---swap-- </span>
+</span></span><span class=line><span class=cl><span class=c1>#  si   so</span>
+</span></span><span class=line><span class=cl><span class=c1>#   0    0        &lt;- ✅ 健康，没有换页</span>
+</span></span><span class=line><span class=cl><span class=c1>#  45  120        &lt;- ❌ 危险，正在换出内存</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># ③ 看主要缺页</span>
+</span></span><span class=line><span class=cl>pidstat -r <span class=m>1</span> <span class=m>3</span> <span class=p>|</span> awk <span class=s1>&#39;$5 &gt; 0&#39;</span>
+</span></span></code></pre></div><p><strong>规律：内存是否紧张看 <code>available</code> 和 <code>si</code>/<code>so</code>，不看 <code>free</code>。</strong></p><h2 id=32-buffcache-能手动清吗>3.2 buff/cache 能手动清吗</h2><p>能，但<strong>几乎总是不该做</strong>：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># ⚠️ 清 page cache（会导致后续 IO 全部 miss，性能骤降）</span>
+</span></span><span class=line><span class=cl>sync <span class=o>&amp;&amp;</span> <span class=nb>echo</span> <span class=m>3</span> &gt; /proc/sys/vm/drop_caches
+</span></span><span class=line><span class=cl><span class=c1># 1 = 只清 page cache</span>
+</span></span><span class=line><span class=cl><span class=c1># 2 = 只清 dentry 和 inode 缓存</span>
+</span></span><span class=line><span class=cl><span class=c1># 3 = 全清</span>
+</span></span></code></pre></div><p>内核会在需要时自动回收，手动清除只会让接下来一段时间的所有文件读取都要走磁盘。<strong>唯一合理的场景是做性能基准测试时需要冷启动状态。</strong></p><h1 id=4-page-cache-与脏页回写>4. page cache 与脏页回写</h1><h2 id=41-读路径>4.1 读路径</h2><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>read(fd, buf, 4096)
+</span></span><span class=line><span class=cl>    v
+</span></span><span class=line><span class=cl>内核检查 page cache 里有没有这一页
+</span></span><span class=line><span class=cl>    +- 有（cache hit）  -&gt; 直接 copy_to_user，约 1~3 μs
+</span></span><span class=line><span class=cl>    +- 无（cache miss） -&gt; 发起磁盘 IO，进程进入 D 状态
+</span></span><span class=line><span class=cl>                          读上来后放进 page cache，再拷给用户
+</span></span><span class=line><span class=cl>                          SSD 约 50~150μs，机械盘 5~10ms
+</span></span></code></pre></div><p><strong>page cache 命中率决定了 IO 密集型服务的性能上限</strong>。这也是「数据库内存越大越好」的原因——不是数据库自己要用那么多，是要让 page cache 装下更多数据文件。</p><h2 id=42-写路径与脏页>4.2 写路径与脏页</h2><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>write(fd, buf, 4096)
+</span></span><span class=line><span class=cl>    v
+</span></span><span class=line><span class=cl>数据写进 page cache，页被标记为【脏页】(dirty)
+</span></span><span class=line><span class=cl>    v
+</span></span><span class=line><span class=cl>write() 立刻返回     &lt;- 注意：此时数据【还在内存里，没落盘】
+</span></span><span class=line><span class=cl>    v
+</span></span><span class=line><span class=cl>稍后由内核线程（pdflush/writeback）异步刷到磁盘
+</span></span></code></pre></div><p>**<code>write()</code> 返回成功不等于数据安全。**机器掉电会丢失所有未刷盘的脏页。要保证落盘必须显式调用：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=n>fsync</span><span class=p>(</span><span class=n>fd</span><span class=p>);</span>       <span class=c1>// 刷数据 + 元数据，最可靠
+</span></span></span><span class=line><span class=cl><span class=c1></span><span class=n>fdatasync</span><span class=p>(</span><span class=n>fd</span><span class=p>);</span>   <span class=c1>// 只刷数据，不刷元数据（如 mtime），稍快
+</span></span></span><span class=line><span class=cl><span class=c1></span><span class=n>sync</span><span class=p>();</span>          <span class=c1>// 刷全系统所有脏页（很重）
+</span></span></span></code></pre></div><p><strong>数据库的 WAL 就是靠 <code>fsync</code> 保证持久性的</strong>——MySQL 的 <code>innodb_flush_log_at_trx_commit=1</code> 意味着每次提交都 <code>fsync</code>，这是最安全但最慢的配置。</p><h2 id=43-脏页回写的调优参数>4.3 脏页回写的调优参数</h2><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># 脏页占可用内存的比例，超过就【后台】开始回写</span>
+</span></span><span class=line><span class=cl>cat /proc/sys/vm/dirty_background_ratio       <span class=c1># 10</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 超过这个比例，写入进程会被【阻塞】，同步回写</span>
+</span></span><span class=line><span class=cl>cat /proc/sys/vm/dirty_ratio                  <span class=c1># 20</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 脏页最长存活时间（厘秒），超过就回写</span>
+</span></span><span class=line><span class=cl>cat /proc/sys/vm/dirty_expire_centisecs       <span class=c1># 3000 = 30 秒</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 回写线程的唤醒间隔</span>
+</span></span><span class=line><span class=cl>cat /proc/sys/vm/dirty_writeback_centisecs    <span class=c1># 500 = 5 秒</span>
+</span></span></code></pre></div><p><strong><code>dirty_ratio</code> 是延迟毛刺的常见来源</strong>：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>脏页比例 &lt; 10%           -&gt; 不回写，write() 都很快
+</span></span><span class=line><span class=cl>脏页比例 10% ~ 20%       -&gt; 后台异步回写，write() 仍然快
+</span></span><span class=line><span class=cl>脏页比例 &gt; 20%           -&gt; 写入进程【被阻塞】直到脏页降下来
+</span></span><span class=line><span class=cl>                            ^ 这里会产生几百毫秒甚至几秒的卡顿
+</span></span></code></pre></div><p><strong>大内存机器上默认值是危险的</strong>：256GB 内存的机器，<code>dirty_ratio=20%</code> 意味着允许积累 <strong>51GB</strong> 脏页。一旦触发同步回写，要把 51GB 刷到磁盘——即使 SSD 有 500MB/s，也要 100 秒，期间所有写操作全部卡死。</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># 生产建议：大内存机器改用绝对值而不是比例</span>
+</span></span><span class=line><span class=cl><span class=nb>echo</span> <span class=s2>&#34;vm.dirty_background_bytes = 268435456&#34;</span> &gt;&gt; /etc/sysctl.d/99-tuning.conf  <span class=c1># 256MB</span>
+</span></span><span class=line><span class=cl><span class=nb>echo</span> <span class=s2>&#34;vm.dirty_bytes = 1073741824&#34;</span>           &gt;&gt; /etc/sysctl.d/99-tuning.conf  <span class=c1># 1GB</span>
+</span></span><span class=line><span class=cl><span class=c1># 设置 _bytes 会让对应的 _ratio 失效</span>
+</span></span><span class=line><span class=cl>sysctl --system
+</span></span></code></pre></div><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># 观察当前脏页量</span>
+</span></span><span class=line><span class=cl>grep -E <span class=s2>&#34;Dirty|Writeback&#34;</span> /proc/meminfo
+</span></span><span class=line><span class=cl><span class=c1># Dirty:            234560 kB      &lt;- 待回写的脏页</span>
+</span></span><span class=line><span class=cl><span class=c1># Writeback:          8192 kB      &lt;- 正在回写的</span>
+</span></span></code></pre></div><p><strong>规律：写入延迟出现周期性毛刺，先看 <code>/proc/meminfo</code> 的 <code>Dirty</code> 是否周期性冲高。</strong></p><h1 id=5-swap该不该关>5. swap：该不该关</h1><p><strong>swap 的作用是把不活跃的匿名页（堆、栈）换出到磁盘，腾出物理内存。</strong></p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>free -h <span class=p>|</span> grep Swap
+</span></span><span class=line><span class=cl><span class=c1># Swap:  2.0Gi   512Mi   1.5Gi</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>swapon --show
+</span></span><span class=line><span class=cl><span class=c1># NAME      TYPE      SIZE USED PRIO</span>
+</span></span><span class=line><span class=cl><span class=c1># /dev/vdb2 partition   2G 512M   -2</span>
+</span></span></code></pre></div><h2 id=51-swappiness-的真实含义>5.1 swappiness 的真实含义</h2><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>cat /proc/sys/vm/swappiness
+</span></span><span class=line><span class=cl><span class=c1># 60</span>
+</span></span></code></pre></div><p><strong>常见误解</strong>：swappiness=60 表示「内存用到 60% 就开始 swap」。<strong>这是错的。</strong></p><p>它的真实含义是**「回收内存时，倾向于换出匿名页 vs 丢弃 page cache 的相对权重」**：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>swappiness = 0    尽量不换出匿名页，优先丢 page cache（但内存极度不足时仍会 swap）
+</span></span><span class=line><span class=cl>swappiness = 60   默认，两者平衡
+</span></span><span class=line><span class=cl>swappiness = 100  积极换出匿名页
+</span></span></code></pre></div><p>只有在<strong>内存回收被触发时</strong>这个值才起作用，内存充足时它完全不影响任何行为。</p><h2 id=52-关不关-swap>5.2 关不关 swap</h2><p>这是个有争议的话题，分场景看：</p><table><thead><tr><th>场景</th><th>建议</th><th>理由</th></tr></thead><tbody><tr><td><strong>K8s 节点</strong></td><td><strong>必须关</strong>（kubelet 曾强制要求）</td><td>swap 会让 cgroup 内存限制失效，OOM 行为不可预测</td></tr><tr><td>数据库（MySQL/Redis）</td><td>关，或 <code>swappiness=1</code></td><td>换出会造成毫秒级延迟毛刺，比 OOM 更难排查</td></tr><tr><td>延迟敏感的在线服务</td><td>关</td><td>同上</td></tr><tr><td>开发机、内存紧张的小机器</td><td><strong>开</strong></td><td>swap 提供缓冲，避免直接 OOM</td></tr><tr><td>批处理、离线计算</td><td>开</td><td>吞吐优先，延迟不敏感</td></tr></tbody></table><p><strong>核心权衡：swap 用「延迟不可预测」换取「不被 OOM 杀掉」。</strong></p><p>对在线服务来说，一个响应 5 秒的请求和一次进程重启（有健康检查和自动拉起）相比，前者更糟糕——因为它会引发上游超时、重试、雪崩，而且难以定位。</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># 关闭 swap</span>
+</span></span><span class=line><span class=cl>swapoff -a
+</span></span><span class=line><span class=cl><span class=c1># 并注释掉 /etc/fstab 里的 swap 行，否则重启会恢复</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 或者保留但极不情愿使用</span>
+</span></span><span class=line><span class=cl><span class=nb>echo</span> <span class=s2>&#34;vm.swappiness = 1&#34;</span> &gt;&gt; /etc/sysctl.d/99-tuning.conf
+</span></span></code></pre></div><blockquote><p>注意：<strong>内核 5.8+ 和 K8s 1.22+ 开始支持有条件地使用 swap</strong>（<code>NodeSwap</code> feature gate），但生产环境目前主流做法仍是关闭。</p></blockquote><h1 id=6-rssvszpss进程用了多少内存>6. RSS、VSZ、PSS：进程用了多少内存</h1><p><strong>这是最容易得出错误结论的地方。</strong></p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>ps -eo pid,vsz,rss,comm <span class=p>|</span> grep myapp
+</span></span><span class=line><span class=cl><span class=c1>#   PID     VSZ    RSS COMMAND</span>
+</span></span><span class=line><span class=cl><span class=c1>#  1234 8234012 412340 myapp</span>
+</span></span><span class=line><span class=cl><span class=c1>#       ^^^^^^^ 8GB 虚拟   ^^^^^^ 412MB 物理</span>
+</span></span></code></pre></div><table><thead><tr><th>指标</th><th>含义</th><th>局限</th></tr></thead><tbody><tr><td><code>VSZ</code></td><td><strong>虚拟</strong>内存大小，含所有映射（未分配物理页的也算）</td><td>参考价值极低，Go 程序动辄几百 GB</td></tr><tr><td><code>RSS</code></td><td><strong>常驻</strong>物理内存</td><td><strong>共享页会在每个进程里重复计算</strong></td></tr><tr><td><code>PSS</code></td><td>按共享比例分摊后的占用</td><td>最准确，但要读 smaps</td></tr><tr><td><code>USS</code></td><td>进程独占的部分（杀掉它能释放多少）</td><td>判断「杀谁最有效」</td></tr></tbody></table><h2 id=61-为什么-rss-加起来会超过物理内存>6.1 为什么 RSS 加起来会超过物理内存</h2><p>因为<strong>共享页被重复计算</strong>：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>libc.so 占 2MB，被 100 个进程映射
+</span></span><span class=line><span class=cl>    v
+</span></span><span class=line><span class=cl>每个进程的 RSS 都 +2MB
+</span></span><span class=line><span class=cl>    v
+</span></span><span class=line><span class=cl>100 个进程的 RSS 总和 = 200MB
+</span></span><span class=line><span class=cl>实际物理内存只用了 2MB
+</span></span></code></pre></div><p>同理 fork 出来的子进程（COW 未触发前）与父进程共享大量页面，两者 RSS 都算了同一份物理内存。</p><p><strong>所以「把所有进程 RSS 加起来看内存够不够」是错误方法。</strong></p><h2 id=62-用-pss-得到准确数字>6.2 用 PSS 得到准确数字</h2><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># 单个进程的精确内存构成</span>
+</span></span><span class=line><span class=cl>cat /proc/1234/smaps_rollup
+</span></span><span class=line><span class=cl><span class=c1># Rss:              412340 kB</span>
+</span></span><span class=line><span class=cl><span class=c1># Pss:              398120 kB      &lt;- 按份额分摊后的真实占用</span>
+</span></span><span class=line><span class=cl><span class=c1># Shared_Clean:      18432 kB      &lt;- 共享的干净页（如共享库代码）</span>
+</span></span><span class=line><span class=cl><span class=c1># Shared_Dirty:          0 kB</span>
+</span></span><span class=line><span class=cl><span class=c1># Private_Clean:      2048 kB</span>
+</span></span><span class=line><span class=cl><span class=c1># Private_Dirty:    391860 kB      &lt;- 【进程独占的脏页】= 杀掉它能释放的</span>
+</span></span><span class=line><span class=cl><span class=c1># Swap:               1024 kB      &lt;- 被换出去的部分</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 按 PSS 排序找出真正的内存大户</span>
+</span></span><span class=line><span class=cl><span class=k>for</span> p in /proc/<span class=o>[</span>0-9<span class=o>]</span>*<span class=p>;</span> <span class=k>do</span>
+</span></span><span class=line><span class=cl>    <span class=nv>pid</span><span class=o>=</span><span class=si>${</span><span class=nv>p</span><span class=p>#/proc/</span><span class=si>}</span>
+</span></span><span class=line><span class=cl>    <span class=nv>pss</span><span class=o>=</span><span class=k>$(</span>awk <span class=s1>&#39;/^Pss:/{s+=$2} END{print s+0}&#39;</span> <span class=s2>&#34;</span><span class=nv>$p</span><span class=s2>/smaps_rollup&#34;</span> 2&gt;/dev/null<span class=k>)</span>
+</span></span><span class=line><span class=cl>    <span class=o>[</span> <span class=s2>&#34;</span><span class=si>${</span><span class=nv>pss</span><span class=k>:-</span><span class=nv>0</span><span class=si>}</span><span class=s2>&#34;</span> -gt <span class=m>0</span> <span class=o>]</span> <span class=o>&amp;&amp;</span> <span class=nb>echo</span> <span class=s2>&#34;</span><span class=nv>$pss</span><span class=s2> </span><span class=k>$(</span>cat <span class=nv>$p</span>/comm 2&gt;/dev/null<span class=k>)</span><span class=s2>&#34;</span>
+</span></span><span class=line><span class=cl><span class=k>done</span> <span class=p>|</span> sort -rn <span class=p>|</span> head -10
+</span></span></code></pre></div><p><strong><code>Private_Dirty</code> 是最有决策价值的数字</strong>——它是这个进程独占且必须保留的内存，杀掉进程能立即释放这么多。</p><h1 id=7-oom-killer>7. OOM Killer</h1><p>当内存真的不够、且无法通过回收缓存或 swap 解决时，内核启动 OOM Killer 杀进程保全系统。</p><h2 id=71-评分机制>7.1 评分机制</h2><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># 每个进程的 OOM 分数（0 ~ 1000）</span>
+</span></span><span class=line><span class=cl>cat /proc/1234/oom_score
+</span></span><span class=line><span class=cl><span class=c1># 823</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 可调整的偏移量（-1000 ~ 1000）</span>
+</span></span><span class=line><span class=cl>cat /proc/1234/oom_score_adj
+</span></span><span class=line><span class=cl><span class=c1># 0</span>
+</span></span></code></pre></div><p><strong>基础分数主要由「占用内存的比例」决定</strong>——占内存最多的进程分数最高，最先被杀。所以 OOM Killer 通常会杀掉你最重要的那个服务（因为它就是内存大户）。</p><p><strong>保护关键进程</strong>：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># 让某进程几乎不会被 OOM Killer 选中</span>
+</span></span><span class=line><span class=cl><span class=nb>echo</span> -1000 &gt; /proc/1234/oom_score_adj      <span class=c1># -1000 = 完全免疫</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 让某进程优先被杀（比如非关键的批处理）</span>
+</span></span><span class=line><span class=cl><span class=nb>echo</span> <span class=m>1000</span> &gt; /proc/5678/oom_score_adj
+</span></span></code></pre></div><div class=highlight><pre tabindex=0 class=chroma><code class=language-ini data-lang=ini><span class=line><span class=cl><span class=c1># systemd 里配置</span>
+</span></span><span class=line><span class=cl><span class=k>[Service]</span>
+</span></span><span class=line><span class=cl><span class=na>OOMScoreAdjust</span><span class=o>=</span><span class=s>-500</span>
+</span></span></code></pre></div><h2 id=72-怎么确认发生了-oom>7.2 怎么确认发生了 OOM</h2><p><strong>这是第 1 篇提过的关键排查点</strong>：进程被 OOM Killer 杀掉时收到的是 <code>SIGKILL</code>，没有任何机会写日志，<strong>应用日志里必然一片空白</strong>。唯一的证据在内核日志：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>dmesg -T <span class=p>|</span> grep -i -A <span class=m>3</span> <span class=s2>&#34;killed process&#34;</span>
+</span></span><span class=line><span class=cl><span class=c1># [Wed Aug  6 03:12:44 2026] Out of memory: Killed process 12345 (java)</span>
+</span></span><span class=line><span class=cl><span class=c1>#   total-vm:8388608kB, anon-rss:7340032kB, file-rss:0kB, shmem-rss:0kB,</span>
+</span></span><span class=line><span class=cl><span class=c1>#   UID:1000 pgtables:14848kB oom_score_adj:0</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 或者从 journal 里查</span>
+</span></span><span class=line><span class=cl>journalctl -k --since <span class=s2>&#34;1 hour ago&#34;</span> <span class=p>|</span> grep -i oom
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 看完整的 OOM 现场（内核会 dump 当时所有进程的内存占用）</span>
+</span></span><span class=line><span class=cl>dmesg -T <span class=p>|</span> grep -B <span class=m>30</span> <span class=s2>&#34;Out of memory&#34;</span>
+</span></span></code></pre></div><p><strong><code>anon-rss</code> 是关键数字</strong>——它是被杀进程的匿名页占用（堆、栈），也就是它实际吃掉的内存。</p><h2 id=73-容器里的-oom-不一样>7.3 容器里的 OOM 不一样</h2><p><strong>容器有两层 OOM</strong>，一定要区分清楚：</p><table><thead><tr><th>类型</th><th>触发条件</th><th>现象</th><th>排查</th></tr></thead><tbody><tr><td><strong>cgroup OOM</strong></td><td>容器超过 <code>memory.limit</code></td><td>只杀容器内进程，宿主机正常</td><td><code>kubectl describe pod</code> 里 <code>OOMKilled</code></td></tr><tr><td><strong>宿主机 OOM</strong></td><td>整台机器内存耗尽</td><td>可能杀任何进程</td><td><code>dmesg</code> 里有 <code>Out of memory</code></td></tr></tbody></table><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># 容器内查 cgroup 内存状况（cgroup v2）</span>
+</span></span><span class=line><span class=cl>cat /sys/fs/cgroup/memory.max        <span class=c1># 4294967296 = 4GB 限制</span>
+</span></span><span class=line><span class=cl>cat /sys/fs/cgroup/memory.current    <span class=c1># 4187593728 = 当前用了 3.9GB</span>
+</span></span><span class=line><span class=cl>cat /sys/fs/cgroup/memory.events
+</span></span><span class=line><span class=cl><span class=c1># low 0</span>
+</span></span><span class=line><span class=cl><span class=c1># high 234</span>
+</span></span><span class=line><span class=cl><span class=c1># max 12</span>
+</span></span><span class=line><span class=cl><span class=c1># oom 3                              &lt;- 发生过 3 次 OOM</span>
+</span></span><span class=line><span class=cl><span class=c1># oom_kill 3                         &lt;- 杀了 3 个进程</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># cgroup v1 的路径</span>
+</span></span><span class=line><span class=cl>cat /sys/fs/cgroup/memory/memory.limit_in_bytes
+</span></span><span class=line><span class=cl>cat /sys/fs/cgroup/memory/memory.usage_in_bytes
+</span></span></code></pre></div><p>**关键：<code>memory.current</code> 包含 page cache！**这是容器 OOM 最容易被误判的地方：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>容器限制 4GB
+</span></span><span class=line><span class=cl>应用堆只用了 2GB
+</span></span><span class=line><span class=cl>但读写了大量文件 -&gt; page cache 占了 2GB
+</span></span><span class=line><span class=cl>                    v
+</span></span><span class=line><span class=cl>memory.current = 4GB -&gt; 触发 cgroup OOM
+</span></span></code></pre></div><p>好消息是内核在触发 OOM 前会先尝试回收容器内的 page cache，所以纯 cache 通常不会直接导致 OOM。<strong>真正的杀手是「匿名页 + 不可回收的内核内存」</strong>：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># 看容器内存的构成，判断是谁在占</span>
+</span></span><span class=line><span class=cl>cat /sys/fs/cgroup/memory.stat <span class=p>|</span> grep -E <span class=s2>&#34;^(anon|file|slab|sock|kernel_stack) &#34;</span>
+</span></span><span class=line><span class=cl><span class=c1># anon 3221225472      &lt;- 匿名页（堆栈），【不可回收】，这是主要嫌疑</span>
+</span></span><span class=line><span class=cl><span class=c1># file 838860800       &lt;- page cache，可回收</span>
+</span></span><span class=line><span class=cl><span class=c1># slab 104857600       &lt;- 内核对象缓存</span>
+</span></span><span class=line><span class=cl><span class=c1># sock 8388608         &lt;- socket 缓冲区</span>
+</span></span></code></pre></div><h2 id=74-jvm-在容器里被-oom-的经典原因>7.4 JVM 在容器里被 OOM 的经典原因</h2><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>容器限制：4GB
+</span></span><span class=line><span class=cl>JVM 配置：-Xmx2g（堆最大 2GB）
+</span></span><span class=line><span class=cl>                v
+</span></span><span class=line><span class=cl>        为什么还是被 OOM 杀了？
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>因为 JVM 的实际内存 = 堆 + 元空间 + 线程栈 + 代码缓存 + 直接内存 + GC 结构
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>  堆（Xmx）          2.0 GB
+</span></span><span class=line><span class=cl>  Metaspace          0.3 GB
+</span></span><span class=line><span class=cl>  线程栈 500×1MB     0.5 GB    &lt;- 容易忽略
+</span></span><span class=line><span class=cl>  CodeCache          0.2 GB
+</span></span><span class=line><span class=cl>  DirectByteBuffer   0.8 GB    &lt;- Netty/NIO 用的堆外内存，最容易忽略
+</span></span><span class=line><span class=cl>  GC 元数据          0.3 GB
+</span></span><span class=line><span class=cl>  -------------------------
+</span></span><span class=line><span class=cl>  总计               4.1 GB &gt; 4GB -&gt; OOMKilled
+</span></span></code></pre></div><p><strong>修复方式</strong>：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># ✅ 用 MaxRAMPercentage 让 JVM 自动按容器限制算堆大小（JDK 10+）</span>
+</span></span><span class=line><span class=cl>java -XX:MaxRAMPercentage<span class=o>=</span><span class=m>60</span> -jar app.jar
+</span></span><span class=line><span class=cl><span class=c1>#                          ^^ 堆只占容器限制的 60%，留 40% 给堆外</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># ✅ 显式限制堆外内存</span>
+</span></span><span class=line><span class=cl>java -Xmx2g -XX:MaxDirectMemorySize<span class=o>=</span>512m -XX:MaxMetaspaceSize<span class=o>=</span>256m -jar app.jar
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># ✅ 开启原生内存追踪，看到底谁在占</span>
+</span></span><span class=line><span class=cl>java -XX:NativeMemoryTracking<span class=o>=</span>summary -jar app.jar
+</span></span><span class=line><span class=cl>jcmd &lt;pid&gt; VM.native_memory summary
+</span></span></code></pre></div><p>**规律：容器里的内存限制要留出 30~40% 给运行时的非堆开销。**Go 服务同理——<code>GOGC</code> 和 <code>GOMEMLIMIT</code>（1.19+）要配合容器限制设置：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># Go 1.19+ 的软内存上限，让 GC 感知容器限制</span>
+</span></span><span class=line><span class=cl><span class=nv>GOMEMLIMIT</span><span class=o>=</span>3500MiB      <span class=c1># 容器限制 4GB，留 500MB 余量</span>
+</span></span></code></pre></div><h1 id=8-实战定位一个内存持续增长的服务>8. 实战：定位一个内存持续增长的服务</h1><p><strong>现象</strong>：一个用了 CGO 做图像处理的 Go 服务，上线后内存缓慢增长，2 天从 300MB 涨到 2.1GB，最终被 OOMKilled 重启。</p><p><strong>① 先确认是哪一类内存在涨</strong></p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># 连续采样，看 RSS 和各组成部分</span>
+</span></span><span class=line><span class=cl>watch -n <span class=m>60</span> <span class=s1>&#39;grep -E &#34;^(Rss|Pss|Private_Dirty|Swap):&#34; /proc/$(pgrep myapp)/smaps_rollup&#39;</span>
+</span></span><span class=line><span class=cl><span class=c1># Rss:             2183680 kB</span>
+</span></span><span class=line><span class=cl><span class=c1># Private_Dirty:   2164224 kB      &lt;- 几乎全是独占脏页 -&gt; 是真的在吃内存，不是缓存</span>
+</span></span></code></pre></div><p><code>Private_Dirty</code> 持续增长排除了「page cache 假象」，确认是<strong>真实的内存泄漏</strong>。</p><p><strong>② 区分是 Go 堆内还是堆外</strong></p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># Go 的 runtime 指标</span>
+</span></span><span class=line><span class=cl>curl -s localhost:6060/debug/pprof/heap?debug<span class=o>=</span><span class=m>1</span> <span class=p>|</span> head -20
+</span></span><span class=line><span class=cl><span class=c1># heap profile: 3120: 188743680 [...]</span>
+</span></span><span class=line><span class=cl><span class=c1># # runtime.MemStats</span>
+</span></span><span class=line><span class=cl><span class=c1># # Sys = 2248146944          &lt;- runtime 向 OS 申请的总量，接近 RSS</span>
+</span></span><span class=line><span class=cl><span class=c1># # HeapAlloc = 188743680     &lt;- 堆上存活对象只有 180MB！</span>
+</span></span><span class=line><span class=cl><span class=c1># # HeapSys = 285212672</span>
+</span></span><span class=line><span class=cl><span class=c1># # HeapReleased = 0</span>
+</span></span></code></pre></div><p>**关键发现：<code>Sys</code> 2.1GB 但 <code>HeapAlloc</code> 只有 180MB。**说明泄漏不在 Go 堆里——如果是堆内泄漏，<code>HeapAlloc</code> 会同步增长。</p><p><strong>③ 查堆外内存</strong></p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># 看进程的内存映射，找异常大的匿名区域</span>
+</span></span><span class=line><span class=cl>awk <span class=s1>&#39;/^[0-9a-f]/ {addr=$1} /^Rss:/ {if ($2 &gt; 100000) print addr, $2&#34; kB&#34;}&#39;</span> <span class=se>\
+</span></span></span><span class=line><span class=cl><span class=se></span>    /proc/<span class=k>$(</span>pgrep myapp<span class=k>)</span>/smaps <span class=p>|</span> head
+</span></span><span class=line><span class=cl><span class=c1># 7f2c00000000-   524288 kB      &lt;- 512MB 的匿名映射</span>
+</span></span><span class=line><span class=cl><span class=c1># 7f2c40000000-   524288 kB      &lt;- 又一个 512MB</span>
+</span></span><span class=line><span class=cl><span class=c1># 7f2c80000000-   524288 kB</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 数一下 mmap 区域的数量</span>
+</span></span><span class=line><span class=cl>grep -c <span class=s2>&#34;^[0-9a-f]&#34;</span> /proc/<span class=k>$(</span>pgrep myapp<span class=k>)</span>/maps
+</span></span><span class=line><span class=cl><span class=c1># 8734                           &lt;- 八千多个映射，明显异常（正常几百个）</span>
+</span></span></code></pre></div><p><strong>④ 用 strace 抓是谁在 mmap</strong></p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>timeout <span class=m>30</span> strace -f -e <span class=nv>trace</span><span class=o>=</span>mmap,munmap -p <span class=k>$(</span>pgrep myapp<span class=k>)</span> 2&gt;<span class=p>&amp;</span><span class=m>1</span> <span class=p>|</span> <span class=se>\
+</span></span></span><span class=line><span class=cl><span class=se></span>    grep -c mmap
+</span></span><span class=line><span class=cl><span class=c1># 892                            &lt;- 30 秒 892 次 mmap</span>
+</span></span><span class=line><span class=cl>timeout <span class=m>30</span> strace -f -e <span class=nv>trace</span><span class=o>=</span>mmap,munmap -p <span class=k>$(</span>pgrep myapp<span class=k>)</span> 2&gt;<span class=p>&amp;</span><span class=m>1</span> <span class=p>|</span> <span class=se>\
+</span></span></span><span class=line><span class=cl><span class=se></span>    grep -c munmap
+</span></span><span class=line><span class=cl><span class=c1># 3                              &lt;- 只 munmap 了 3 次！申请远多于释放</span>
+</span></span></code></pre></div><p><strong>⑤ 定位到代码</strong></p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># Go 的 CGO 或直接系统调用会绕过 Go GC</span>
+</span></span><span class=line><span class=cl><span class=c1># 检查是否用了 cgo</span>
+</span></span><span class=line><span class=cl>go version -m ./myapp <span class=p>|</span> grep -i cgo
+</span></span><span class=line><span class=cl><span class=c1># 	build	CGO_ENABLED=1        &lt;- 用了 CGO</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 看 CGO 部分的内存</span>
+</span></span><span class=line><span class=cl>curl -s localhost:6060/debug/pprof/goroutine?debug<span class=o>=</span><span class=m>2</span> <span class=p>|</span> grep -c <span class=s2>&#34;cgocall&#34;</span>
+</span></span><span class=line><span class=cl><span class=c1># 234                            &lt;- 大量 CGO 调用</span>
+</span></span></code></pre></div><p><strong>原因</strong>：代码里用 CGO 调用了一个图像处理库，每次调用 <code>C.malloc</code> 分配缓冲区，但只在正常路径 <code>C.free</code>，<strong>错误路径直接 return，漏了释放</strong>。因为是 C 侧分配的内存，Go 的 GC 完全管不到，pprof 的 heap profile 也看不见。</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-go data-lang=go><span class=line><span class=cl><span class=c1>// ❌ 有泄漏的代码
+</span></span></span><span class=line><span class=cl><span class=c1></span><span class=kd>func</span> <span class=nf>process</span><span class=p>(</span><span class=nx>data</span> <span class=p>[]</span><span class=kt>byte</span><span class=p>)</span> <span class=p>([]</span><span class=kt>byte</span><span class=p>,</span> <span class=kt>error</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=nx>buf</span> <span class=o>:=</span> <span class=nx>C</span><span class=p>.</span><span class=nf>malloc</span><span class=p>(</span><span class=nx>C</span><span class=p>.</span><span class=nf>size_t</span><span class=p>(</span><span class=nb>len</span><span class=p>(</span><span class=nx>data</span><span class=p>)))</span>
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=nx>buf</span> <span class=o>==</span> <span class=kc>nil</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=k>return</span> <span class=kc>nil</span><span class=p>,</span> <span class=nx>errors</span><span class=p>.</span><span class=nf>New</span><span class=p>(</span><span class=s>&#34;alloc failed&#34;</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=nx>ret</span> <span class=o>:=</span> <span class=nx>C</span><span class=p>.</span><span class=nf>do_process</span><span class=p>(</span><span class=nx>buf</span><span class=p>,</span> <span class=nx>C</span><span class=p>.</span><span class=nb>int</span><span class=p>(</span><span class=nb>len</span><span class=p>(</span><span class=nx>data</span><span class=p>)))</span>
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=nx>ret</span> <span class=o>!=</span> <span class=mi>0</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=k>return</span> <span class=kc>nil</span><span class=p>,</span> <span class=nx>errors</span><span class=p>.</span><span class=nf>New</span><span class=p>(</span><span class=s>&#34;process failed&#34;</span><span class=p>)</span>    <span class=c1>// &lt;- 这里漏了 C.free(buf)
+</span></span></span><span class=line><span class=cl><span class=c1></span>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=nx>out</span> <span class=o>:=</span> <span class=nx>C</span><span class=p>.</span><span class=nf>GoBytes</span><span class=p>(</span><span class=nx>buf</span><span class=p>,</span> <span class=nx>ret</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=nx>C</span><span class=p>.</span><span class=nf>free</span><span class=p>(</span><span class=nx>buf</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=nx>out</span><span class=p>,</span> <span class=kc>nil</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1>// ✅ 用 defer 保证释放
+</span></span></span><span class=line><span class=cl><span class=c1></span><span class=kd>func</span> <span class=nf>process</span><span class=p>(</span><span class=nx>data</span> <span class=p>[]</span><span class=kt>byte</span><span class=p>)</span> <span class=p>([]</span><span class=kt>byte</span><span class=p>,</span> <span class=kt>error</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=nx>buf</span> <span class=o>:=</span> <span class=nx>C</span><span class=p>.</span><span class=nf>malloc</span><span class=p>(</span><span class=nx>C</span><span class=p>.</span><span class=nf>size_t</span><span class=p>(</span><span class=nb>len</span><span class=p>(</span><span class=nx>data</span><span class=p>)))</span>
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=nx>buf</span> <span class=o>==</span> <span class=kc>nil</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=k>return</span> <span class=kc>nil</span><span class=p>,</span> <span class=nx>errors</span><span class=p>.</span><span class=nf>New</span><span class=p>(</span><span class=s>&#34;alloc failed&#34;</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=k>defer</span> <span class=nx>C</span><span class=p>.</span><span class=nf>free</span><span class=p>(</span><span class=nx>buf</span><span class=p>)</span>                               <span class=c1>// &lt;- 所有路径都会释放
+</span></span></span><span class=line><span class=cl><span class=c1></span>    <span class=nx>ret</span> <span class=o>:=</span> <span class=nx>C</span><span class=p>.</span><span class=nf>do_process</span><span class=p>(</span><span class=nx>buf</span><span class=p>,</span> <span class=nx>C</span><span class=p>.</span><span class=nb>int</span><span class=p>(</span><span class=nb>len</span><span class=p>(</span><span class=nx>data</span><span class=p>)))</span>
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=nx>ret</span> <span class=o>!=</span> <span class=mi>0</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=k>return</span> <span class=kc>nil</span><span class=p>,</span> <span class=nx>errors</span><span class=p>.</span><span class=nf>New</span><span class=p>(</span><span class=s>&#34;process failed&#34;</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=nx>C</span><span class=p>.</span><span class=nf>GoBytes</span><span class=p>(</span><span class=nx>buf</span><span class=p>,</span> <span class=nx>ret</span><span class=p>),</span> <span class=kc>nil</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></div><p><strong>结果</strong>：修复后 RSS 稳定在 320MB，<code>mmap</code>/<code>munmap</code> 调用数配平。</p><p><strong>规律：RSS 涨但语言运行时的堆没涨 → 泄漏在堆外（CGO、mmap、内核对象）。这类泄漏用语言自带的 profiler 查不到，要看 <code>/proc/&lt;pid>/smaps</code> 和 <code>strace mmap</code>。</strong></p><blockquote><p>另一种<strong>症状几乎相同但根因完全不同</strong>的情况是 <strong>goroutine 泄漏</strong>——同样是 RSS 涨而 <code>HeapAlloc</code> 不涨，但泄漏在 goroutine 栈（<code>StackSys</code>）而非 CGO。两个案例对照着看能建立完整的判断路径，见 <a href=../linux_20_%e7%ba%bf%e4%b8%8a%e9%97%ae%e9%a2%98%e6%8e%92%e6%9f%a5%e5%ae%9e%e6%88%98/ rel>Linux-20 §2</a>。</p></blockquote><h1 id=9-一些量级感>9. 一些量级感</h1><table><thead><tr><th>项</th><th>量级</th></tr></thead><tbody><tr><td>标准页大小</td><td>4 KB</td></tr><tr><td>大页大小</td><td>2 MB / 1 GB</td></tr><tr><td>TLB 命中</td><td>~1 个时钟周期</td></tr><tr><td>TLB miss + 页表遍历</td><td>100 ~ 300 ns</td></tr><tr><td>次要缺页（minor fault）</td><td>~1 μs</td></tr><tr><td>主要缺页（major fault，SSD）</td><td>50 ~ 150 μs</td></tr><tr><td>主要缺页（机械盘）</td><td>5 ~ 10 ms</td></tr><tr><td>内存随机访问</td><td>~100 ns</td></tr><tr><td><code>memcpy</code> 吞吐</td><td>5 ~ 20 GB/s</td></tr><tr><td>内核栈大小</td><td>8 ~ 16 KB</td></tr><tr><td>健康的 <code>available</code> 比例</td><td>> 20%</td></tr></tbody></table><h1 id=命令附录内存观测命令>命令附录：内存观测命令</h1><h2 id=名称与参数速查>名称与参数速查</h2><table><thead><tr><th>命令</th><th>名字怎么记</th><th>主要用途</th><th>高频选项 / 参数</th></tr></thead><tbody><tr><td><code>free</code></td><td>free memory</td><td>汇总物理内存和 swap</td><td><code>-h/--human</code>、<code>-b/--bytes</code>、<code>-s/--seconds</code>、<code>-w/--wide</code>；重点看 <code>available</code></td></tr><tr><td><code>vmstat</code></td><td><strong>virtual memory statistics</strong></td><td>连续观察内存、换页、CPU 和运行队列</td><td><code>-s/--stats</code>、<code>-S/--unit</code>；<code>vmstat 1</code> 每秒采样</td></tr><tr><td><code>pmap</code></td><td><strong>process memory map</strong></td><td>查看进程虚拟内存映射</td><td><code>-x/--extended</code>、<code>-X</code> 更详细、<code>-p/--show-path</code></td></tr><tr><td><code>smem</code></td><td><strong>shared memory reporting</strong></td><td>按 USS/PSS/RSS 更准确地统计进程内存</td><td><code>-p/--processfilter</code>、<code>-r/--reverse</code>、<code>-k/--abbreviate</code>；通常需额外安装</td></tr><tr><td><code>swapon</code> / <code>swapoff</code></td><td><strong>swap on / off</strong></td><td>查看、启用或停用 swap</td><td><code>swapon --show</code>、<code>-a/--all</code>；<code>swapoff</code> 需要足够内存接回换出的页</td></tr><tr><td><code>dmesg</code></td><td><strong>diagnostic messages</strong></td><td>读取内核环形缓冲区，确认 OOM 等事件</td><td><code>-T/--ctime</code>、<code>-w/--follow</code>、<code>-l/--level</code></td></tr></tbody></table><h2 id=单位与脚本输出>单位与脚本输出</h2><p><code>free -h</code> 的 <code>h</code> 是 human-readable，会自动显示 KiB/MiB/GiB；脚本若需要稳定数值则用 <code>-b/--bytes</code>，不要解析带单位且可能变化的展示文本。</p><h1 id=10-面试题>10. 面试题</h1><p><strong>Q：<code>free -h</code> 显示 free 只剩 200MB，是不是快 OOM 了？</strong></p><p>不是。<strong>要看 <code>available</code> 而不是 <code>free</code></strong>。Linux 会主动用掉几乎所有空闲内存做 page cache——空闲内存不产生价值，拿来缓存磁盘内容能大幅提升 IO 性能。关键在于 page cache 是<strong>可回收</strong>的：干净的缓存页在磁盘上有副本，需要内存时内核直接丢弃即可，零成本。<code>available</code> 就是内核估算的「新程序能拿到多少」，等于 <code>free + 可回收的 cache + 可回收的 slab</code>。判断内存紧张的正确方法是：<code>available</code> 占比是否低于 20%，以及 <code>vmstat</code> 的 <code>si</code>/<code>so</code> 是否非 0（有换页活动）。</p><p><strong>Q：<code>VSZ</code> 和 <code>RSS</code> 有什么区别？为什么所有进程的 RSS 加起来超过物理内存？</strong></p><p><code>VSZ</code> 是虚拟内存大小，包含所有已映射但可能从未分配物理页的区域——Go 程序的 VSZ 动辄几百 GB 完全正常，参考价值极低。<code>RSS</code> 是常驻物理内存，即真正占用的物理页。但 RSS 会<strong>重复计算共享页</strong>：<code>libc.so</code> 占 2MB 被 100 个进程映射，每个进程的 RSS 都算了这 2MB，加起来就是 200MB，实际只用了 2MB。fork 出的子进程在 COW 触发前也与父进程共享大量页面。要精确统计就看 <code>/proc/&lt;pid>/smaps_rollup</code> 的 <strong><code>Pss</code></strong>（按共享份额分摊）和 <strong><code>Private_Dirty</code></strong>（进程独占的脏页，杀掉它能释放的量）。</p><p><strong>Q：<code>swappiness=60</code> 是什么意思？是内存用到 60% 就开始 swap 吗？</strong></p><p>不是，这是常见误解。<code>swappiness</code> 表示的是**「内存回收时，倾向于换出匿名页 vs 丢弃 page cache 的相对权重」<strong>，取值 0~100。它</strong>只在内存回收被触发时才起作用**，内存充足时完全不影响任何行为。设为 0 是「尽量不换出匿名页，优先丢缓存」（但内存极度不足时仍会 swap，不等于关闭 swap），设为 100 是「积极换出匿名页」。生产上数据库和延迟敏感服务建议设 1 或直接关闭 swap。</p><p><strong>Q：K8s 节点为什么要求关闭 swap？</strong></p><p>因为 swap 会让 cgroup 的内存限制<strong>失去意义</strong>，OOM 行为变得不可预测。容器限制 4GB 内存时，如果允许 swap，进程可以超出限制继续运行（只是被换到磁盘），kubelet 无法准确判断 Pod 是否超限，调度决策和 QoS 保证都会失真。更实际的问题是<strong>延迟不可预测</strong>：换入一页要经历主要缺页（磁盘 IO，SSD 也要几十微秒，机械盘几毫秒），一个原本 1ms 的请求可能变成 5 秒。对在线服务来说，「响应 5 秒」比「进程被杀然后自动重启」更糟糕——它会引发上游超时、重试、雪崩，而且极难定位。</p><p><strong>Q：<code>write()</code> 返回成功，数据一定落盘了吗？</strong></p><p><strong>没有</strong>。<code>write()</code> 只是把数据拷进 page cache 并把页标记为脏页，然后立即返回，实际落盘由内核的 writeback 线程异步完成。此时掉电会丢数据。要保证持久化必须显式调用 <code>fsync(fd)</code>（刷数据+元数据）或 <code>fdatasync(fd)</code>（只刷数据，稍快）。数据库的 WAL 就靠这个——MySQL 的 <code>innodb_flush_log_at_trx_commit=1</code> 表示每次事务提交都 <code>fsync</code>，最安全也最慢。<strong>相关的调优点</strong>：脏页超过 <code>vm.dirty_ratio</code>（默认 20%）时，写入进程会被<strong>阻塞</strong>做同步回写；在 256GB 内存的机器上这意味着可能积累 51GB 脏页，一次性刷盘会导致数秒的写卡顿，所以大内存机器应该改用 <code>vm.dirty_bytes</code> 设绝对值。</p><p><strong>Q：怎么确认一个进程是被 OOM Killer 杀掉的？</strong></p><p>看<strong>内核日志</strong>，因为 OOM Killer 发的是 <code>SIGKILL</code>，进程没有任何机会写日志，应用日志里必然一片空白。用 <code>dmesg -T | grep -i "killed process"</code> 或 <code>journalctl -k | grep -i oom</code>，能看到被杀进程的 PID、名字和当时的 <code>anon-rss</code>（实际吃掉的匿名内存）。K8s 里则是 <code>kubectl describe pod</code> 的 <code>Reason: OOMKilled</code>，或者看容器退出码 <strong>137</strong>（128+9）。另外要区分两层 OOM：<strong>cgroup OOM</strong>（容器超限，只杀容器内进程，看 <code>/sys/fs/cgroup/memory.events</code> 的 <code>oom_kill</code> 计数）和<strong>宿主机 OOM</strong>（整机内存耗尽，可能杀任何进程）。</p><p><strong>Q：容器限制 4GB，JVM 堆只设了 2GB，为什么还是被 OOMKilled？</strong></p><p>因为 JVM 的实际内存远不止堆。完整构成是：堆（<code>-Xmx</code>）+ Metaspace + <strong>线程栈</strong>（每个线程约 1MB，500 个线程就是 500MB）+ CodeCache + <strong>DirectByteBuffer 堆外内存</strong>（Netty/NIO 大量使用，最容易忽略）+ GC 自身的元数据。这些加起来很容易突破 4GB。修复方式：用 <code>-XX:MaxRAMPercentage=60</code> 让 JVM 按容器限制自动算堆大小（JDK 10+），显式设置 <code>-XX:MaxDirectMemorySize</code> 和 <code>-XX:MaxMetaspaceSize</code>，用 <code>-XX:NativeMemoryTracking=summary</code> + <code>jcmd VM.native_memory</code> 定位具体占用。<strong>规律：容器内存限制要留 30~40% 给运行时的非堆开销</strong>——Go 服务同理，需要设 <code>GOMEMLIMIT</code>（1.19+）让 GC 感知容器限制。</p><p><strong>Q：透明大页（THP）是什么？为什么数据库都建议关掉？</strong></p><p>大页把内存管理粒度从 4KB 提到 2MB，同样数量的 TLB 条目能覆盖 500 倍内存，大幅降低 TLB miss。THP 是内核<strong>自动</strong>在后台把连续的小页合并成大页的机制。数据库要关掉它的原因是<strong>延迟不可预测</strong>：内核做内存规整（compaction）以凑出连续的 2MB 物理内存时，可能让进程卡住几百毫秒；而且对随机访问的工作负载，2MB 的粒度会造成显著的内存浪费。MongoDB、Redis、Oracle、PostgreSQL 官方文档都明确要求 <code>echo never > /sys/kernel/mm/transparent_hugepage/enabled</code>。<strong>注意区分</strong>：要关的是 THP（自动、有延迟毛刺），而手动预留的静态 HugePages 对数据库是有益的，两者不是一回事。</p><p><strong>Q：一个 Go 服务 RSS 持续增长，但 pprof 的 heap profile 显示堆只有 200MB，怎么查？</strong></p><p>这个特征说明<strong>泄漏在 Go 堆之外</strong>——如果是堆内泄漏，<code>HeapAlloc</code> 会同步增长。先看 <code>runtime.MemStats</code> 的 <code>Sys</code>（runtime 向 OS 申请的总量）是否接近 RSS，如果 <code>Sys</code> 大而 <code>HeapAlloc</code> 小，泄漏就在堆外。常见来源：① <strong>CGO 里 <code>C.malloc</code> 没配对 <code>C.free</code></strong>（Go GC 完全管不到 C 侧内存，pprof 也看不见）；② 直接 <code>mmap</code> 没 <code>munmap</code>；③ goroutine 泄漏导致栈内存累积；④ 内核对象（socket 缓冲、fd）泄漏。排查手段是 <code>/proc/&lt;pid>/smaps</code> 找异常大的匿名映射区域、<code>grep -c "^[0-9a-f]" /proc/&lt;pid>/maps</code> 数映射数量是否异常、<code>strace -e trace=mmap,munmap</code> 看申请和释放是否配平。CGO 场景的修复原则是<strong>用 <code>defer C.free()</code> 保证所有返回路径都释放</strong>。</p><hr><p>上一篇：<a href=../linux_09_%e7%94%a8%e6%88%b7%e6%80%81%e5%86%85%e6%a0%b8%e6%80%81%e4%b8%8e%e7%b3%bb%e7%bb%9f%e8%b0%83%e7%94%a8/ rel>Linux-09 用户态、内核态与系统调用</a> ｜ 下一篇：<a href=../linux_11_%e6%96%87%e4%bb%b6%e7%b3%bb%e7%bb%9f%e4%b8%8e%e7%a3%81%e7%9b%98IO/ rel>Linux-11 文件系统与磁盘 IO</a></p></div><div class=post-footer id=post-footer><div class=post-info><div class=post-info-line><div class=post-info-mod><span>更新于 2026-08-11</span></div><div class=post-info-license></div></div><div class=post-info-line><div class=post-info-md></div><div class=post-info-share><span></span></div></div></div><div class=post-info-more><section class=post-tags><i class="fas fa-tags fa-fw"></i>&nbsp;<a href=/tags/linux/>linux</a></section><section><span><a href=javascript:void(0); onclick=window.history.back()>返回</a></span>&nbsp;|&nbsp;<span><a href=/>主页</a></span></section></div><div class=post-nav><a href=/posts/linux/linux_11_%E6%96%87%E4%BB%B6%E7%B3%BB%E7%BB%9F%E4%B8%8E%E7%A3%81%E7%9B%98IO/ class=prev rel=prev title="Linux-11 文件系统与磁盘 IO"><i class="fas fa-angle-left fa-fw"></i>Linux-11 文件系统与磁盘 IO</a>
+<a href=/posts/linux/linux_09_%E7%94%A8%E6%88%B7%E6%80%81%E5%86%85%E6%A0%B8%E6%80%81%E4%B8%8E%E7%B3%BB%E7%BB%9F%E8%B0%83%E7%94%A8/ class=next rel=next title="Linux-09 用户态、内核态与系统调用">Linux-09 用户态、内核态与系统调用<i class="fas fa-angle-right fa-fw"></i></a></div></div><div id=comments><div id=gitalk class=comment></div><noscript>Please enable JavaScript to view the comments powered by <a href=https://github.com/gitalk/gitalk></a>Gitalk</a>.</noscript></div></article></div></main><footer class=footer><div class=footer-container><div class=footer-line>由 <a href=https://gohugo.io/ target=_blank rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href=https://github.com/dillonzq/LoveIt target=_blank rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a></div><div class=footer-line><i class="far fa-copyright fa-fw"></i><span itemprop=copyrightYear>2026</span><span class=author itemprop=copyrightHolder>&nbsp;<a href=https://xingliuhua/github.com.io target=_blank>xingliuhua</a></span></div></div></footer></div><div id=fixed-buttons><a href=# id=back-to-top class=fixed-button title=回到顶部><i class="fas fa-arrow-up fa-fw"></i>
+</a><a href=# id=view-comments class=fixed-button title=查看评论><i class="fas fa-comment fa-fw"></i></a></div><link rel=stylesheet href=/lib/gitalk/gitalk.min.css><link rel=stylesheet href=/lib/lightgallery/lightgallery.min.css><script type=text/javascript src=/lib/gitalk/gitalk.min.js></script><script type=text/javascript src=/lib/smooth-scroll/smooth-scroll.min.js></script><script type=text/javascript src=/lib/autocomplete/autocomplete.min.js></script><script type=text/javascript src=/lib/lunr/lunr.min.js></script><script type=text/javascript src=/lib/lunr/lunr.stemmer.support.min.js></script><script type=text/javascript src=/lib/lunr/lunr.zh.min.js></script><script type=text/javascript src=/lib/lazysizes/lazysizes.min.js></script><script type=text/javascript src=/lib/lightgallery/lightgallery.min.js></script><script type=text/javascript src=/lib/lightgallery/lg-thumbnail.min.js></script><script type=text/javascript src=/lib/lightgallery/lg-zoom.min.js></script><script type=text/javascript src=/lib/clipboard/clipboard.min.js></script><script type=text/javascript>window.config={code:{copyTitle:"复制到剪贴板",maxShownLines:15},comment:{gitalk:{admin:["xingliuhua"],clientID:"c0161bf1d93ccdd5f765",clientSecret:"3782f9a39ee0849148faa2ec75bb19d9964dda16",id:"2026-08-06T18:30:00+08:00",owner:"xingliuhua",repo:"xingliuhua.github.io",title:"Linux-10 内存管理"}},lightGallery:{actualSize:!1,exThumbImage:"data-thumbnail",hideBarsDelay:2e3,selector:".lightgallery",speed:400,thumbContHeight:80,thumbWidth:80,thumbnail:!0},search:{highlightTag:"em",lunrIndexURL:"/index.json",lunrLanguageCode:"zh",lunrSegmentitURL:"/lib/lunr/lunr.segmentit.js",maxResultLength:10,noResultsFound:"没有找到结果",snippetLength:50,type:"lunr"}}</script><script type=text/javascript src=/js/theme.min.js></script><script type=text/javascript src=/js/toc-collapse.min.js></script></body></html>

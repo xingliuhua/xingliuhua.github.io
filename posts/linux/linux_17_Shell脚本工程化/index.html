@@ -1,0 +1,1172 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>Linux-17 Shell 脚本工程化：set -euo pipefail 的陷阱、引号规则与 trap 清理 - xingliuhua博客</title><meta name="Description" content="set -e 在哪些情况下不生效、[[ ]] 与 [ ] 的本质区别、引号的完整决策树、数组为什么必须用 ${arr[@]} 加引号、trap 如何保证清理、getopts 解析参数、ShellCheck 能查出的隐患、以及什么时候该换 Python/Go。附生产脚本模板与检查清单。"><meta property="og:title" content="Linux-17 Shell 脚本工程化：set -euo pipefail 的陷阱、引号规则与 trap 清理" />
+<meta property="og:description" content="set -e 在哪些情况下不生效、[[ ]] 与 [ ] 的本质区别、引号的完整决策树、数组为什么必须用 ${arr[@]} 加引号、trap 如何保证清理、getopts 解析参数、ShellCheck 能查出的隐患、以及什么时候该换 Python/Go。附生产脚本模板与检查清单。" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/linux/linux_17_Shell%E8%84%9A%E6%9C%AC%E5%B7%A5%E7%A8%8B%E5%8C%96/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2026-08-12T15:30:00+08:00" />
+<meta property="article:modified_time" content="2026-08-12T15:30:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="Linux-17 Shell 脚本工程化：set -euo pipefail 的陷阱、引号规则与 trap 清理"/>
+<meta name="twitter:description" content="set -e 在哪些情况下不生效、[[ ]] 与 [ ] 的本质区别、引号的完整决策树、数组为什么必须用 ${arr[@]} 加引号、trap 如何保证清理、getopts 解析参数、ShellCheck 能查出的隐患、以及什么时候该换 Python/Go。附生产脚本模板与检查清单。"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/linux/linux_17_Shell%E8%84%9A%E6%9C%AC%E5%B7%A5%E7%A8%8B%E5%8C%96/" /><link rel="prev" href="https://xingliuhua.github.io/posts/linux/linux_18_Unix%E8%AE%BE%E8%AE%A1%E5%93%B2%E5%AD%A6%E4%B8%8ELinux%E7%9A%84%E5%BD%A2%E6%80%81/" /><link rel="next" href="https://xingliuhua.github.io/posts/linux/linux_16_SSH%E4%B8%8E%E8%BF%9C%E7%A8%8B%E5%B7%A5%E4%BD%9C%E6%B5%81/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Linux-17 Shell 脚本工程化：set -euo pipefail 的陷阱、引号规则与 trap 清理",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_17_Shell%E8%84%9A%E6%9C%AC%E5%B7%A5%E7%A8%8B%E5%8C%96\/"
+        },"genre": "posts","keywords": "linux","wordcount":  11436 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_17_Shell%E8%84%9A%E6%9C%AC%E5%B7%A5%E7%A8%8B%E5%8C%96\/","datePublished": "2026-08-12T15:30:00+08:00","dateModified": "2026-08-12T15:30:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "set -e 在哪些情况下不生效、[[ ]] 与 [ ] 的本质区别、引号的完整决策树、数组为什么必须用 ${arr[@]} 加引号、trap 如何保证清理、getopts 解析参数、ShellCheck 能查出的隐患、以及什么时候该换 Python/Go。附生产脚本模板与检查清单。"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">Linux-17 Shell 脚本工程化：set -euo pipefail 的陷阱、引号规则与 trap 清理</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2026-08-12">2026-08-12</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 11436 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 23 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-脚本的骨架">1. 脚本的骨架</a>
+      <ol>
+        <li><a href="#11-shebang">1.1 shebang</a></li>
+        <li><a href="#12-开篇第一问set--euo-pipefail">1.2 开篇第一问：<code>set -euo pipefail</code></a></li>
+        <li><a href="#13-set--e-的七个陷阱重点">1.3 <code>set -e</code> 的七个陷阱（重点）</a></li>
+        <li><a href="#14-完整模板">1.4 完整模板</a></li>
+      </ol>
+    </li>
+    <li><a href="#2-变量与引号">2. 变量与引号</a>
+      <ol>
+        <li><a href="#21-开篇第三问引号决策树">2.1 开篇第三问：引号决策树</a></li>
+        <li><a href="#22-参数展开默认值与校验">2.2 参数展开：默认值与校验</a></li>
+        <li><a href="#23-数组必须掌握">2.3 数组：必须掌握</a></li>
+        <li><a href="#24-声明与作用域">2.4 声明与作用域</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-条件测试">3. 条件测试</a>
+      <ol>
+        <li><a href="#31-开篇第二问--vs---vs--">3.1 开篇第二问：<code>[[ ]]</code> vs <code>[ ]</code> vs <code>(( ))</code></a></li>
+        <li><a href="#32-测试表达式速查">3.2 测试表达式速查</a></li>
+      </ol>
+    </li>
+    <li><a href="#4-流程控制">4. 流程控制</a></li>
+    <li><a href="#5-函数">5. 函数</a></li>
+    <li><a href="#6-trap-与清理">6. trap 与清理</a>
+      <ol>
+        <li><a href="#61-开篇第四问保证清理一定执行">6.1 开篇第四问：保证清理一定执行</a></li>
+        <li><a href="#62-临时文件与原子写">6.2 临时文件与原子写</a></li>
+        <li><a href="#63-防止并发执行">6.3 防止并发执行</a></li>
+      </ol>
+    </li>
+    <li><a href="#7-参数解析">7. 参数解析</a></li>
+    <li><a href="#8-日志与输出">8. 日志与输出</a></li>
+    <li><a href="#9-调试与检查">9. 调试与检查</a>
+      <ol>
+        <li><a href="#91-shellcheck必须用">9.1 ShellCheck：必须用</a></li>
+        <li><a href="#92-测试">9.2 测试</a></li>
+      </ol>
+    </li>
+    <li><a href="#10-性能开篇第五问">10. 性能：开篇第五问</a>
+      <ol>
+        <li><a href="#101-为什么慢">10.1 为什么慢</a></li>
+        <li><a href="#102-优化手段">10.2 优化手段</a></li>
+        <li><a href="#103-什么时候该换语言">10.3 什么时候该换语言</a></li>
+      </ol>
+    </li>
+    <li><a href="#11-生产脚本检查清单">11. 生产脚本检查清单</a></li>
+    <li><a href="#12-面试题">12. 面试题</a></li>
+    <li><a href="#小结">小结</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><p>这是上手部分的最后一篇。前面 16 篇讲的命令，最终都会被写进脚本 —— 而<strong>脚本的可靠性取决于你是否知道 shell 的那些坑</strong>。</p>
+<p>先看五个问题：</p>
+<ol>
+<li><code>set -euo pipefail</code> 每一项在防什么？它在哪些情况下<strong>完全不生效</strong>？</li>
+<li><code>[[ ]]</code> 和 <code>[ ]</code> 有什么本质区别？</li>
+<li>什么时候必须加引号？有没有一条能记住的规则？</li>
+<li>怎么保证脚本无论怎么退出（正常、报错、被 Ctrl-C、被 kill）都能清理临时文件？</li>
+<li>为什么 shell 脚本慢？什么时候该换 Python/Go？</li>
+</ol>
+<h1 id="1-脚本的骨架">1. 脚本的骨架</h1>
+<h2 id="11-shebang">1.1 shebang</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="cp">#!/bin/bash                # 大多数 Linux 可用
+</span></span></span><span class="line"><span class="cl"><span class="cp"></span><span class="c1">#!/usr/bin/env bash        # ✅ 最可移植：去 PATH 里找 bash</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#!/bin/sh                  # ⚠️ POSIX shell，【不能用 bash 特性】</span>
+</span></span></code></pre></div><p><strong>为什么推荐 <code>#!/usr/bin/env bash</code></strong>：macOS 的新版 bash 装在 <code>/opt/homebrew/bin/bash</code>（系统自带的 <code>/bin/bash</code> 是 2007 年的 3.2 版），FreeBSD 在 <code>/usr/local/bin/bash</code>。写死 <code>/bin/bash</code> 在这些系统上会用到老版本或根本找不到。</p>
+<p><strong><code>#!/bin/sh</code> 的坑</strong>：Debian/Ubuntu 上 <code>/bin/sh</code> 是 <strong>dash</strong>（不是 bash），以下全部不可用：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="o">[[</span> <span class="o">]]</span>                      <span class="c1"># 双方括号</span>
+</span></span><span class="line"><span class="cl"><span class="nv">arr</span><span class="o">=(</span>a b c<span class="o">)</span>                <span class="c1"># 数组</span>
+</span></span><span class="line"><span class="cl"><span class="si">${</span><span class="nv">var</span><span class="p">,,</span><span class="si">}</span>  <span class="si">${</span><span class="nv">var</span><span class="p">^^</span><span class="si">}</span>         <span class="c1"># 大小写转换</span>
+</span></span><span class="line"><span class="cl">&lt;<span class="o">(</span>cmd<span class="o">)</span>                     <span class="c1"># 进程替换</span>
+</span></span><span class="line"><span class="cl"><span class="s1">$&#39;\t&#39;</span>                      <span class="c1"># C 风格转义</span>
+</span></span><span class="line"><span class="cl"><span class="o">{</span>1..10<span class="o">}</span>                    <span class="c1"># 花括号序列展开</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> -e                    <span class="c1"># dash 的 echo 不支持 -e</span>
+</span></span><span class="line"><span class="cl"><span class="nb">source</span>                     <span class="c1"># 只能用 .</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 检查是否真的兼容 POSIX</span>
+</span></span><span class="line"><span class="cl">checkbashisms script.sh              <span class="c1"># Debian 的 devscripts 包</span>
+</span></span><span class="line"><span class="cl">shellcheck -s sh script.sh           <span class="c1"># 用 sh 方言检查</span>
+</span></span><span class="line"><span class="cl">dash -n script.sh                    <span class="c1"># 用 dash 做语法检查</span>
+</span></span></code></pre></div><h2 id="12-开篇第一问set--euo-pipefail">1.2 开篇第一问：<code>set -euo pipefail</code></h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="nb">set</span> -euo pipefail
+</span></span><span class="line"><span class="cl"><span class="c1">#    ││││</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    │││└─ o pipefail : 管道中任意一段失败，整个管道就算失败</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    ││└── u          : 使用未定义变量时报错退出</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    │└─── e          : 任何命令返回非 0 就立即退出</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    └──── set        : shell 选项</span>
+</span></span></code></pre></div><p><strong>逐项说明它在防什么</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ── -e (errexit)：防止「错误被忽略后继续执行造成更大破坏」──</span>
+</span></span><span class="line"><span class="cl"><span class="nb">cd</span> /nonexistent          <span class="c1"># 失败了，但脚本继续跑！</span>
+</span></span><span class="line"><span class="cl">rm -rf ./*               <span class="c1"># 💀 在【当前目录】执行了删除</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 加了 set -e：cd 失败就退出，不会执行到 rm</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── -u (nounset)：防止变量名拼错导致的灾难 ──</span>
+</span></span><span class="line"><span class="cl">rm -rf <span class="s2">&#34;</span><span class="nv">$TAGET_DIR</span><span class="s2">/&#34;</span>     <span class="c1"># 变量名拼错了（TARGET -&gt; TAGET）</span>
+</span></span><span class="line"><span class="cl">                         <span class="c1"># 没有 -u 时展开成 rm -rf /  💀</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 加了 -u：报 &#34;TAGET_DIR: unbound variable&#34; 并退出</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── -o pipefail：防止管道中间的失败被最后一个命令的成功掩盖 ──</span>
+</span></span><span class="line"><span class="cl">curl -s https://api/data <span class="p">|</span> jq <span class="s1">&#39;.items&#39;</span>      <span class="c1"># curl 失败了，但 jq 处理空输入成功</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="nv">$?</span>                  <span class="c1"># 0  &lt;- 看起来成功了！</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 加了 pipefail：$? 是 curl 的非 0 退出码</span>
+</span></span></code></pre></div><h2 id="13-set--e-的七个陷阱重点">1.3 <code>set -e</code> 的七个陷阱（重点）</h2>
+<p><strong><code>set -e</code> 有一长串不生效的情况</strong>，这是很多人以为「加了就安全」却仍然踩坑的原因：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="nb">set</span> -e
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ❌ 陷阱 1：条件判断的上下文里【完全不生效】（这是设计意图）</span>
+</span></span><span class="line"><span class="cl"><span class="k">if</span> failing_cmd<span class="p">;</span> <span class="k">then</span> ...<span class="p">;</span> <span class="k">fi</span>           <span class="c1"># 不退出</span>
+</span></span><span class="line"><span class="cl"><span class="k">while</span> failing_cmd<span class="p">;</span> <span class="k">do</span> ...<span class="p">;</span> <span class="k">done</span>        <span class="c1"># 不退出</span>
+</span></span><span class="line"><span class="cl">failing_cmd <span class="o">&amp;&amp;</span> <span class="nb">echo</span> ok                 <span class="c1"># 不退出</span>
+</span></span><span class="line"><span class="cl">failing_cmd <span class="o">||</span> <span class="nb">echo</span> failed             <span class="c1"># 不退出</span>
+</span></span><span class="line"><span class="cl">! failing_cmd                          <span class="c1"># 不退出</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ❌ 陷阱 2：函数被用在条件里时，函数【内部】的 -e 也失效</span>
+</span></span><span class="line"><span class="cl">check<span class="o">()</span> <span class="o">{</span>
+</span></span><span class="line"><span class="cl">    failing_cmd          <span class="c1"># 这里失败了</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">echo</span> <span class="s2">&#34;还是执行到了这里&#34;</span>     <span class="c1"># 竟然会执行！</span>
+</span></span><span class="line"><span class="cl"><span class="o">}</span>
+</span></span><span class="line"><span class="cl"><span class="k">if</span> check<span class="p">;</span> <span class="k">then</span> ...<span class="p">;</span> <span class="k">fi</span>   <span class="c1"># 因为 check 处于条件上下文，它内部的 -e 被禁用</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ❌ 陷阱 3：local / export / declare 会掩盖退出码</span>
+</span></span><span class="line"><span class="cl"><span class="nv">result</span><span class="o">=</span><span class="k">$(</span>failing_cmd<span class="k">)</span>    <span class="c1"># ✅ 这个会退出（赋值语句传递退出码）</span>
+</span></span><span class="line"><span class="cl"><span class="nb">local</span> <span class="nv">r</span><span class="o">=</span><span class="k">$(</span>failing_cmd<span class="k">)</span>   <span class="c1"># ❌ 【不会】退出！local 的退出码是它自己的</span>
+</span></span><span class="line"><span class="cl"><span class="nb">export</span> <span class="nv">r</span><span class="o">=</span><span class="k">$(</span>failing_cmd<span class="k">)</span>  <span class="c1"># ❌ 同上（这个坑非常隐蔽）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 修法：分两行</span>
+</span></span><span class="line"><span class="cl"><span class="nb">local</span> r
+</span></span><span class="line"><span class="cl"><span class="nv">r</span><span class="o">=</span><span class="k">$(</span>failing_cmd<span class="k">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ❌ 陷阱 4：管道中非最后一个命令（没开 pipefail 时）</span>
+</span></span><span class="line"><span class="cl">failing_cmd <span class="p">|</span> cat        <span class="c1"># 不退出（$? 是 cat 的）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ❌ 陷阱 5：算术运算结果为 0</span>
+</span></span><span class="line"><span class="cl"><span class="nv">count</span><span class="o">=</span><span class="m">0</span>
+</span></span><span class="line"><span class="cl"><span class="o">((</span>count++<span class="o">))</span>              <span class="c1"># 返回 0（因为 count++ 的【值】是 0）-&gt; 脚本退出！</span>
+</span></span><span class="line"><span class="cl"><span class="o">((</span>count++<span class="o">))</span> <span class="o">||</span> <span class="nb">true</span>      <span class="c1"># ✅</span>
+</span></span><span class="line"><span class="cl"><span class="nv">count</span><span class="o">=</span><span class="k">$((</span>count+1<span class="k">))</span>       <span class="c1"># ✅ 这个不会</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ❌ 陷阱 6：grep 没匹配到返回 1（08 篇讲过）</span>
+</span></span><span class="line"><span class="cl">grep pattern file        <span class="c1"># 没匹配 -&gt; 退出码 1 -&gt; 脚本退出</span>
+</span></span><span class="line"><span class="cl">grep pattern file <span class="o">||</span> <span class="nb">true</span>          <span class="c1"># ✅</span>
+</span></span><span class="line"><span class="cl"><span class="k">if</span> grep -q pattern file<span class="p">;</span> <span class="k">then</span> ...  <span class="c1"># ✅</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ❌ 陷阱 7：子 shell 与 trap 的交互在不同 bash 版本行为不完全一致</span>
+</span></span></code></pre></div><p><strong><code>-u</code> 的陷阱</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="nb">set</span> -u
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;</span><span class="nv">$1</span><span class="s2">&#34;</span>                          <span class="c1"># 没传参数时报错退出</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;</span><span class="si">${</span><span class="nv">1</span><span class="k">:-</span><span class="nv">默认值</span><span class="si">}</span><span class="s2">&#34;</span>                 <span class="c1"># ✅ 用默认值</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;</span><span class="si">${</span><span class="nv">1</span><span class="p">-</span><span class="si">}</span><span class="s2">&#34;</span>                       <span class="c1"># ✅ 允许为空</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="nv">arr</span><span class="o">=()</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;</span><span class="si">${</span><span class="nv">arr</span><span class="p">[@]</span><span class="si">}</span><span class="s2">&#34;</span>                   <span class="c1"># bash ≤4.3 上空数组会触发 unbound variable</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;</span><span class="si">${</span><span class="nv">arr</span><span class="p">[@]</span><span class="k">:-</span><span class="si">}</span><span class="s2">&#34;</span>                 <span class="c1"># ✅ 兼容写法</span>
+</span></span></code></pre></div><p><strong>结论：<code>set -euo pipefail</code> 是有用的基线，但不能替代显式的错误处理。</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ✅ 关键路径显式检查</span>
+</span></span><span class="line"><span class="cl"><span class="k">if</span> ! <span class="nb">cd</span> <span class="s2">&#34;</span><span class="nv">$WORKDIR</span><span class="s2">&#34;</span><span class="p">;</span> <span class="k">then</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">echo</span> <span class="s2">&#34;无法进入目录 </span><span class="nv">$WORKDIR</span><span class="s2">&#34;</span> &gt;<span class="p">&amp;</span><span class="m">2</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">exit</span> <span class="m">1</span>
+</span></span><span class="line"><span class="cl"><span class="k">fi</span>
+</span></span><span class="line"><span class="cl"><span class="nb">cd</span> <span class="s2">&#34;</span><span class="nv">$WORKDIR</span><span class="s2">&#34;</span> <span class="o">||</span> <span class="o">{</span> <span class="nb">echo</span> <span class="s2">&#34;无法进入 </span><span class="nv">$WORKDIR</span><span class="s2">&#34;</span> &gt;<span class="p">&amp;</span>2<span class="p">;</span> <span class="nb">exit</span> 1<span class="p">;</span> <span class="o">}</span>
+</span></span><span class="line"><span class="cl">mkdir -p <span class="s2">&#34;</span><span class="nv">$OUT</span><span class="s2">&#34;</span> <span class="o">||</span> die <span class="s2">&#34;创建目录失败: </span><span class="nv">$OUT</span><span class="s2">&#34;</span>
+</span></span></code></pre></div><h2 id="14-完整模板">1.4 完整模板</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="cp">#!/usr/bin/env bash
+</span></span></span><span class="line"><span class="cl"><span class="cp"></span><span class="c1">#</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 用途：部署 myapp 到指定环境</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 用法：./deploy.sh -e prod -v 1.2.3 [-d]</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="nb">set</span> -euo pipefail
+</span></span><span class="line"><span class="cl"><span class="nv">IFS</span><span class="o">=</span><span class="s1">$&#39;\n\t&#39;</span>              <span class="c1"># ✅ 去掉空格作为分隔符，减少「未加引号变量」的伤害</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 脚本自身的位置（不受调用方 cwd 影响）──</span>
+</span></span><span class="line"><span class="cl"><span class="nv">SCRIPT_DIR</span><span class="o">=</span><span class="s2">&#34;</span><span class="k">$(</span><span class="nb">cd</span> -P -- <span class="s2">&#34;</span><span class="k">$(</span>dirname -- <span class="s2">&#34;</span><span class="k">$(</span>readlink -f <span class="s2">&#34;</span><span class="si">${</span><span class="nv">BASH_SOURCE</span><span class="p">[0]</span><span class="si">}</span><span class="s2">&#34;</span><span class="k">)</span><span class="s2">&#34;</span><span class="k">)</span><span class="s2">&#34;</span> <span class="o">&amp;&amp;</span> <span class="nb">pwd</span><span class="k">)</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                 ^^ 物理路径（03 篇 6.1）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                              ^^^^^^^^^^^^^^ 解析软链接（脚本被软链接调用时）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                                              ^^^^^^^^^^^^^^^^^ 比 $0 可靠（source 时也对）</span>
+</span></span><span class="line"><span class="cl"><span class="nv">SCRIPT_NAME</span><span class="o">=</span><span class="s2">&#34;</span><span class="k">$(</span>basename -- <span class="s2">&#34;</span><span class="si">${</span><span class="nv">BASH_SOURCE</span><span class="p">[0]</span><span class="si">}</span><span class="s2">&#34;</span><span class="k">)</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="nb">readonly</span> SCRIPT_DIR SCRIPT_NAME
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="nv">ENVIRONMENT</span><span class="o">=</span><span class="s2">&#34;&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="nv">VERSION</span><span class="o">=</span><span class="s2">&#34;&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="nv">DRY_RUN</span><span class="o">=</span><span class="nb">false</span>
+</span></span><span class="line"><span class="cl"><span class="nv">LOG_LEVEL</span><span class="o">=</span><span class="s2">&#34;</span><span class="si">${</span><span class="nv">LOG_LEVEL</span><span class="k">:-</span><span class="nv">info</span><span class="si">}</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 日志（一律输出到 stderr，不污染 stdout）──</span>
+</span></span><span class="line"><span class="cl">_log<span class="o">()</span>  <span class="o">{</span> <span class="nb">printf</span> <span class="s1">&#39;%s [%-5s] %s\n&#39;</span> <span class="s2">&#34;</span><span class="k">$(</span>date +<span class="s1">&#39;%F %T&#39;</span><span class="k">)</span><span class="s2">&#34;</span> <span class="s2">&#34;</span><span class="nv">$1</span><span class="s2">&#34;</span> <span class="s2">&#34;</span><span class="si">${</span><span class="p">*:</span><span class="nv">2</span><span class="si">}</span><span class="s2">&#34;</span> &gt;<span class="p">&amp;</span>2<span class="p">;</span> <span class="o">}</span>
+</span></span><span class="line"><span class="cl">debug<span class="o">()</span> <span class="o">{</span> <span class="o">[[</span> <span class="s2">&#34;</span><span class="nv">$LOG_LEVEL</span><span class="s2">&#34;</span> <span class="o">==</span> debug <span class="o">]]</span> <span class="o">&amp;&amp;</span> _log DEBUG <span class="s2">&#34;</span><span class="nv">$@</span><span class="s2">&#34;</span> <span class="o">||</span> true<span class="p">;</span> <span class="o">}</span>
+</span></span><span class="line"><span class="cl">info<span class="o">()</span>  <span class="o">{</span> _log INFO  <span class="s2">&#34;</span><span class="nv">$@</span><span class="s2">&#34;</span><span class="p">;</span> <span class="o">}</span>
+</span></span><span class="line"><span class="cl">warn<span class="o">()</span>  <span class="o">{</span> _log WARN  <span class="s2">&#34;</span><span class="nv">$@</span><span class="s2">&#34;</span><span class="p">;</span> <span class="o">}</span>
+</span></span><span class="line"><span class="cl">error<span class="o">()</span> <span class="o">{</span> _log ERROR <span class="s2">&#34;</span><span class="nv">$@</span><span class="s2">&#34;</span><span class="p">;</span> <span class="o">}</span>
+</span></span><span class="line"><span class="cl">die<span class="o">()</span>   <span class="o">{</span> error <span class="s2">&#34;</span><span class="nv">$@</span><span class="s2">&#34;</span><span class="p">;</span> <span class="nb">exit</span> 1<span class="p">;</span> <span class="o">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 清理（无论怎么退出都执行，见第 6 章）──</span>
+</span></span><span class="line"><span class="cl"><span class="nv">TMPDIR_SELF</span><span class="o">=</span><span class="s2">&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">cleanup<span class="o">()</span> <span class="o">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">local</span> <span class="nv">code</span><span class="o">=</span><span class="nv">$?</span>
+</span></span><span class="line"><span class="cl">    <span class="o">[[</span> -n <span class="s2">&#34;</span><span class="nv">$TMPDIR_SELF</span><span class="s2">&#34;</span> <span class="o">&amp;&amp;</span> -d <span class="s2">&#34;</span><span class="nv">$TMPDIR_SELF</span><span class="s2">&#34;</span> <span class="o">]]</span> <span class="o">&amp;&amp;</span> rm -rf -- <span class="s2">&#34;</span><span class="nv">$TMPDIR_SELF</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="o">((</span> code !<span class="o">=</span> <span class="m">0</span> <span class="o">))</span> <span class="o">&amp;&amp;</span> error <span class="s2">&#34;脚本以退出码 </span><span class="nv">$code</span><span class="s2"> 结束&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="nv">$code</span>
+</span></span><span class="line"><span class="cl"><span class="o">}</span>
+</span></span><span class="line"><span class="cl"><span class="nb">trap</span> cleanup EXIT
+</span></span><span class="line"><span class="cl"><span class="nb">trap</span> <span class="s1">&#39;die &#34;被信号中断&#34;&#39;</span> INT TERM
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">usage<span class="o">()</span> <span class="o">{</span>
+</span></span><span class="line"><span class="cl">    cat <span class="s">&lt;&lt;EOF
+</span></span></span><span class="line"><span class="cl"><span class="s">用法: $SCRIPT_NAME -e &lt;env&gt; -v &lt;version&gt; [选项]
+</span></span></span><span class="line"><span class="cl"><span class="s">
+</span></span></span><span class="line"><span class="cl"><span class="s">必需:
+</span></span></span><span class="line"><span class="cl"><span class="s">  -e ENV        环境（prod|staging|dev）
+</span></span></span><span class="line"><span class="cl"><span class="s">  -v VERSION    版本号
+</span></span></span><span class="line"><span class="cl"><span class="s">可选:
+</span></span></span><span class="line"><span class="cl"><span class="s">  -d            演练模式
+</span></span></span><span class="line"><span class="cl"><span class="s">  -h            帮助
+</span></span></span><span class="line"><span class="cl"><span class="s">
+</span></span></span><span class="line"><span class="cl"><span class="s">示例:
+</span></span></span><span class="line"><span class="cl"><span class="s">  $SCRIPT_NAME -e staging -v 1.2.3
+</span></span></span><span class="line"><span class="cl"><span class="s">EOF</span>
+</span></span><span class="line"><span class="cl"><span class="o">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">parse_args<span class="o">()</span> <span class="o">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">while</span> <span class="nb">getopts</span> <span class="s1">&#39;:e:v:dh&#39;</span> opt<span class="p">;</span> <span class="k">do</span>
+</span></span><span class="line"><span class="cl">        <span class="k">case</span> <span class="s2">&#34;</span><span class="nv">$opt</span><span class="s2">&#34;</span> in
+</span></span><span class="line"><span class="cl">            e<span class="o">)</span> <span class="nv">ENVIRONMENT</span><span class="o">=</span><span class="s2">&#34;</span><span class="nv">$OPTARG</span><span class="s2">&#34;</span> <span class="p">;;</span>
+</span></span><span class="line"><span class="cl">            v<span class="o">)</span> <span class="nv">VERSION</span><span class="o">=</span><span class="s2">&#34;</span><span class="nv">$OPTARG</span><span class="s2">&#34;</span> <span class="p">;;</span>
+</span></span><span class="line"><span class="cl">            d<span class="o">)</span> <span class="nv">DRY_RUN</span><span class="o">=</span><span class="nb">true</span> <span class="p">;;</span>
+</span></span><span class="line"><span class="cl">            h<span class="o">)</span> usage<span class="p">;</span> <span class="nb">exit</span> <span class="m">0</span> <span class="p">;;</span>
+</span></span><span class="line"><span class="cl">            :<span class="o">)</span> die <span class="s2">&#34;选项 -</span><span class="nv">$OPTARG</span><span class="s2"> 缺少参数&#34;</span> <span class="p">;;</span>
+</span></span><span class="line"><span class="cl">            <span class="se">\?</span><span class="o">)</span> usage &gt;<span class="p">&amp;</span>2<span class="p">;</span> die <span class="s2">&#34;未知选项 -</span><span class="nv">$OPTARG</span><span class="s2">&#34;</span> <span class="p">;;</span>
+</span></span><span class="line"><span class="cl">        <span class="k">esac</span>
+</span></span><span class="line"><span class="cl">    <span class="k">done</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">shift</span> <span class="k">$((</span>OPTIND <span class="o">-</span> <span class="m">1</span><span class="k">))</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="o">[[</span> -n <span class="s2">&#34;</span><span class="nv">$ENVIRONMENT</span><span class="s2">&#34;</span> <span class="o">]]</span> <span class="o">||</span> <span class="o">{</span> usage &gt;<span class="p">&amp;</span>2<span class="p">;</span> die <span class="s2">&#34;必须指定 -e&#34;</span><span class="p">;</span> <span class="o">}</span>
+</span></span><span class="line"><span class="cl">    <span class="o">[[</span> -n <span class="s2">&#34;</span><span class="nv">$VERSION</span><span class="s2">&#34;</span> <span class="o">]]</span> <span class="o">||</span> <span class="o">{</span> usage &gt;<span class="p">&amp;</span>2<span class="p">;</span> die <span class="s2">&#34;必须指定 -v&#34;</span><span class="p">;</span> <span class="o">}</span>
+</span></span><span class="line"><span class="cl">    <span class="o">[[</span> <span class="s2">&#34;</span><span class="nv">$ENVIRONMENT</span><span class="s2">&#34;</span> <span class="o">=</span>~ ^<span class="o">(</span>prod<span class="p">|</span>staging<span class="p">|</span>dev<span class="o">)</span>$ <span class="o">]]</span> <span class="o">||</span> die <span class="s2">&#34;无效环境: </span><span class="nv">$ENVIRONMENT</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="o">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">check_deps<span class="o">()</span> <span class="o">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">local</span> <span class="nv">missing</span><span class="o">=()</span> cmd
+</span></span><span class="line"><span class="cl">    <span class="k">for</span> cmd in curl jq rsync<span class="p">;</span> <span class="k">do</span>
+</span></span><span class="line"><span class="cl">        <span class="nb">command</span> -v <span class="s2">&#34;</span><span class="nv">$cmd</span><span class="s2">&#34;</span> &gt;/dev/null 2&gt;<span class="p">&amp;</span><span class="m">1</span> <span class="o">||</span> <span class="nv">missing</span><span class="o">+=(</span><span class="s2">&#34;</span><span class="nv">$cmd</span><span class="s2">&#34;</span><span class="o">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">done</span>
+</span></span><span class="line"><span class="cl">    <span class="o">((</span> <span class="si">${#</span><span class="nv">missing</span><span class="p">[@]</span><span class="si">}</span> <span class="o">==</span> <span class="m">0</span> <span class="o">))</span> <span class="o">||</span> die <span class="s2">&#34;缺少依赖: </span><span class="si">${</span><span class="nv">missing</span><span class="p">[*]</span><span class="si">}</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="o">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">main<span class="o">()</span> <span class="o">{</span>
+</span></span><span class="line"><span class="cl">    parse_args <span class="s2">&#34;</span><span class="nv">$@</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl">    check_deps
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="nv">TMPDIR_SELF</span><span class="o">=</span><span class="s2">&#34;</span><span class="k">$(</span>mktemp -d<span class="k">)</span><span class="s2">&#34;</span> <span class="o">||</span> die <span class="s2">&#34;无法创建临时目录&#34;</span>
+</span></span><span class="line"><span class="cl">    info <span class="s2">&#34;开始部署 </span><span class="nv">$VERSION</span><span class="s2"> 到 </span><span class="nv">$ENVIRONMENT</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="o">[[</span> <span class="s2">&#34;</span><span class="nv">$DRY_RUN</span><span class="s2">&#34;</span> <span class="o">==</span> <span class="nb">true</span> <span class="o">]]</span> <span class="o">&amp;&amp;</span> warn <span class="s2">&#34;演练模式，不会实际执行&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1"># ... 实际逻辑 ...</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    info <span class="s2">&#34;部署完成&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="o">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">main <span class="s2">&#34;</span><span class="nv">$@</span><span class="s2">&#34;</span>
+</span></span></code></pre></div><h1 id="2-变量与引号">2. 变量与引号</h1>
+<h2 id="21-开篇第三问引号决策树">2.1 开篇第三问：引号决策树</h2>
+<pre tabindex="0"><code>要引用一个变量？
+├─ 是 -&gt; 【永远加双引号】&#34;$var&#34;
+│        唯一例外：确实需要分词或 glob（这时应该改用数组）
+└─ 是字面字符串？
+   ├─ 需要展开变量/命令替换 -&gt; 双引号 &#34;text $var&#34;
+   └─ 完全字面 -&gt; 单引号 &#39;text $literal&#39;
+</code></pre><p><strong>一条铁律：<code>&quot;$var&quot;</code>、<code>&quot;$@&quot;</code>、<code>&quot;${arr[@]}&quot;</code>、<code>&quot;$(cmd)&quot;</code> 这四个形式永远加引号。</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="nv">f</span><span class="o">=</span><span class="s2">&#34;my file.txt&#34;</span>
+</span></span><span class="line"><span class="cl">rm <span class="nv">$f</span>                    <span class="c1"># ❌ 变成 rm my file.txt（两个参数）</span>
+</span></span><span class="line"><span class="cl">rm <span class="s2">&#34;</span><span class="nv">$f</span><span class="s2">&#34;</span>                  <span class="c1"># ✅</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="nv">p</span><span class="o">=</span><span class="s2">&#34;*.txt&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="nv">$p</span>                  <span class="c1"># ❌ 被 glob 展开成实际文件名</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;</span><span class="nv">$p</span><span class="s2">&#34;</span>                <span class="c1"># ✅ 输出字面的 *.txt</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="nv">v</span><span class="o">=</span><span class="s2">&#34;&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="o">[</span> <span class="nv">$v</span> <span class="o">=</span> <span class="s2">&#34;x&#34;</span> <span class="o">]</span>             <span class="c1"># ❌ 变成 [ = &#34;x&#34; ]，语法错误</span>
+</span></span><span class="line"><span class="cl"><span class="o">[</span> <span class="s2">&#34;</span><span class="nv">$v</span><span class="s2">&#34;</span> <span class="o">=</span> <span class="s2">&#34;x&#34;</span> <span class="o">]</span>           <span class="c1"># ✅</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="nv">files</span><span class="o">=</span><span class="k">$(</span>ls<span class="k">)</span>              <span class="c1"># ❌ 文件名带空格就散了</span>
+</span></span><span class="line"><span class="cl">mapfile -t files &lt; &lt;<span class="o">(</span>ls<span class="o">)</span> <span class="c1"># ✅ 读进数组</span>
+</span></span></code></pre></div><h2 id="22-参数展开默认值与校验">2.2 参数展开：默认值与校验</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="si">${</span><span class="nv">var</span><span class="k">:-</span><span class="nv">default</span><span class="si">}</span>          <span class="c1"># 为空或未设 -&gt; 用 default（不改变 var）</span>
+</span></span><span class="line"><span class="cl"><span class="si">${</span><span class="nv">var</span><span class="p">-default</span><span class="si">}</span>           <span class="c1"># 未设 -&gt; 用 default（空字符串算已设置）</span>
+</span></span><span class="line"><span class="cl"><span class="si">${</span><span class="nv">var</span><span class="p">:=default</span><span class="si">}</span>          <span class="c1"># 为空 -&gt; 用 default 并【赋值】</span>
+</span></span><span class="line"><span class="cl"><span class="si">${</span><span class="nv">var</span><span class="p">:?错误信息</span><span class="si">}</span>          <span class="c1"># ✅ 为空 -&gt; 打印错误并退出（参数校验神器）</span>
+</span></span><span class="line"><span class="cl"><span class="si">${</span><span class="nv">var</span><span class="p">:+替代值</span><span class="si">}</span>            <span class="c1"># 【非空】时才用替代值</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="nv">PORT</span><span class="o">=</span><span class="s2">&#34;</span><span class="si">${</span><span class="nv">PORT</span><span class="k">:-</span><span class="nv">8080</span><span class="si">}</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl">: <span class="s2">&#34;</span><span class="si">${</span><span class="nv">DEPLOY_DIR</span><span class="p">:?必须设置 DEPLOY_DIR</span><span class="si">}</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl">rm -rf <span class="s2">&#34;</span><span class="si">${</span><span class="nv">TARGET</span><span class="p">:?TARGET 未设置</span><span class="si">}</span><span class="s2">&#34;</span>/*            <span class="c1"># ✅ 变量为空时直接报错，不会变成 rm -rf /*</span>
+</span></span><span class="line"><span class="cl"><span class="nv">OPTS</span><span class="o">=</span><span class="s2">&#34;</span><span class="si">${</span><span class="nv">DEBUG</span><span class="p">:+--verbose --log-level=debug</span><span class="si">}</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 字符串操作（不起进程，比 sed/cut 快得多）</span>
+</span></span><span class="line"><span class="cl"><span class="nv">p</span><span class="o">=</span>/var/log/app.log
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;</span><span class="si">${#</span><span class="nv">p</span><span class="si">}</span><span class="s2">&#34;</span>             <span class="c1"># 16          长度</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;</span><span class="si">${</span><span class="nv">p</span><span class="p">##*/</span><span class="si">}</span><span class="s2">&#34;</span>          <span class="c1"># app.log     = basename</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;</span><span class="si">${</span><span class="nv">p</span><span class="p">%/*</span><span class="si">}</span><span class="s2">&#34;</span>           <span class="c1"># /var/log    = dirname</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;</span><span class="si">${</span><span class="nv">p</span><span class="p">%.log</span><span class="si">}</span><span class="s2">.txt&#34;</span>     <span class="c1"># /var/log/app.txt</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;</span><span class="si">${</span><span class="nv">p</span><span class="p">##*.</span><span class="si">}</span><span class="s2">&#34;</span>          <span class="c1"># log         扩展名</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;</span><span class="si">${</span><span class="nv">p</span><span class="p">//log/LOG</span><span class="si">}</span><span class="s2">&#34;</span>     <span class="c1"># 全部替换（单个 / 是替换第一个）</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;</span><span class="si">${</span><span class="nv">p</span><span class="p">:</span><span class="nv">5</span><span class="p">:</span><span class="nv">3</span><span class="si">}</span><span class="s2">&#34;</span>          <span class="c1"># 子串</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;</span><span class="si">${</span><span class="nv">p</span><span class="p">^^</span><span class="si">}</span><span class="s2">&#34;</span> <span class="s2">&#34;</span><span class="si">${</span><span class="nv">p</span><span class="p">,,</span><span class="si">}</span><span class="s2">&#34;</span>   <span class="c1"># 转大写 / 小写（bash 4+）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 记忆：# 在键盘上 $ 左边 -&gt; 删前缀；% 在右边 -&gt; 删后缀</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#      单个 = 最短匹配，双个 = 最长匹配</span>
+</span></span></code></pre></div><h2 id="23-数组必须掌握">2.3 数组：必须掌握</h2>
+<p><strong>数组是「安全地处理多个值」的唯一正确方式。</strong> 很多人用字符串拼接代替，然后被空格坑到。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="nv">arr</span><span class="o">=(</span>a b <span class="s2">&#34;c d&#34;</span> e<span class="o">)</span>                    <span class="c1"># 定义</span>
+</span></span><span class="line"><span class="cl"><span class="nv">arr</span><span class="o">+=(</span>f g<span class="o">)</span>                           <span class="c1"># 追加</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;</span><span class="si">${</span><span class="nv">arr</span><span class="p">[0]</span><span class="si">}</span><span class="s2">&#34;</span>                     <span class="c1"># 第一个</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;</span><span class="si">${</span><span class="nv">arr</span><span class="p">[-1]</span><span class="si">}</span><span class="s2">&#34;</span>                    <span class="c1"># 最后一个（bash 4.3+）</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;</span><span class="si">${#</span><span class="nv">arr</span><span class="p">[@]</span><span class="si">}</span><span class="s2">&#34;</span>                    <span class="c1"># ✅ 元素个数</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;</span><span class="si">${</span><span class="p">!arr[@]</span><span class="si">}</span><span class="s2">&#34;</span>                    <span class="c1"># 所有索引</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;</span><span class="si">${</span><span class="nv">arr</span><span class="p">[@]:</span><span class="nv">1</span><span class="p">:</span><span class="nv">2</span><span class="si">}</span><span class="s2">&#34;</span>                 <span class="c1"># 切片</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 遍历（唯一正确的写法）──</span>
+</span></span><span class="line"><span class="cl"><span class="k">for</span> x in <span class="s2">&#34;</span><span class="si">${</span><span class="nv">arr</span><span class="p">[@]</span><span class="si">}</span><span class="s2">&#34;</span><span class="p">;</span> <span class="k">do</span> <span class="nb">echo</span> <span class="s2">&#34;[</span><span class="nv">$x</span><span class="s2">]&#34;</span><span class="p">;</span> <span class="k">done</span>    <span class="c1"># ✅ 双引号 + [@]</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># [a] [b] [c d] [e] [f] [g]                   &lt;- &#34;c d&#34; 保持完整</span>
+</span></span><span class="line"><span class="cl"><span class="k">for</span> x in <span class="si">${</span><span class="nv">arr</span><span class="p">[@]</span><span class="si">}</span><span class="p">;</span> <span class="k">do</span> ...<span class="p">;</span> <span class="k">done</span>              <span class="c1"># ❌ &#34;c d&#34; 被拆成两个</span>
+</span></span><span class="line"><span class="cl"><span class="k">for</span> x in <span class="s2">&#34;</span><span class="si">${</span><span class="nv">arr</span><span class="p">[*]</span><span class="si">}</span><span class="s2">&#34;</span><span class="p">;</span> <span class="k">do</span> ...<span class="p">;</span> <span class="k">done</span>            <span class="c1"># ❌ 拼成一个字符串，只循环一次</span>
+</span></span></code></pre></div><p><strong><code>[@]</code> 与 <code>[*]</code> 的区别</strong>（与 <code>$@</code>/<code>$*</code> 完全一样，09 篇 4.4）：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="nv">arr</span><span class="o">=(</span>a <span class="s2">&#34;b c&#34;</span> d<span class="o">)</span>
+</span></span><span class="line"><span class="cl"><span class="nb">printf</span> <span class="s1">&#39;%s\n&#39;</span> <span class="s2">&#34;</span><span class="si">${</span><span class="nv">arr</span><span class="p">[@]</span><span class="si">}</span><span class="s2">&#34;</span>       <span class="c1"># 3 行：a / b c / d       ✅ 每个元素独立</span>
+</span></span><span class="line"><span class="cl"><span class="nb">printf</span> <span class="s1">&#39;%s\n&#39;</span> <span class="s2">&#34;</span><span class="si">${</span><span class="nv">arr</span><span class="p">[*]</span><span class="si">}</span><span class="s2">&#34;</span>       <span class="c1"># 1 行：a b c d           拼成一个字符串</span>
+</span></span><span class="line"><span class="cl"><span class="nv">IFS</span><span class="o">=</span>,<span class="p">;</span> <span class="nb">echo</span> <span class="s2">&#34;</span><span class="si">${</span><span class="nv">arr</span><span class="p">[*]</span><span class="si">}</span><span class="s2">&#34;</span>         <span class="c1"># a,b c,d                 用 IFS 首字符连接</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ── 实战 ──</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ① 构建命令参数（避免字符串拼接的空格问题）</span>
+</span></span><span class="line"><span class="cl"><span class="nv">args</span><span class="o">=(</span>--verbose --output <span class="s2">&#34;/path with space/out.txt&#34;</span><span class="o">)</span>
+</span></span><span class="line"><span class="cl"><span class="o">[[</span> <span class="s2">&#34;</span><span class="nv">$DEBUG</span><span class="s2">&#34;</span> <span class="o">==</span> <span class="nb">true</span> <span class="o">]]</span> <span class="o">&amp;&amp;</span> <span class="nv">args</span><span class="o">+=(</span>--debug<span class="o">)</span>
+</span></span><span class="line"><span class="cl"><span class="o">[[</span> -n <span class="s2">&#34;</span><span class="si">${</span><span class="nv">CONFIG</span><span class="k">:-</span><span class="si">}</span><span class="s2">&#34;</span> <span class="o">]]</span> <span class="o">&amp;&amp;</span> <span class="nv">args</span><span class="o">+=(</span>--config <span class="s2">&#34;</span><span class="nv">$CONFIG</span><span class="s2">&#34;</span><span class="o">)</span>
+</span></span><span class="line"><span class="cl">mycommand <span class="s2">&#34;</span><span class="si">${</span><span class="nv">args</span><span class="p">[@]</span><span class="si">}</span><span class="s2">&#34;</span>           <span class="c1"># ✅ 每个元素作为一个独立参数</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="nv">opts</span><span class="o">=</span><span class="s2">&#34;--output &#39;/path with space/out.txt&#39;&#34;</span>
+</span></span><span class="line"><span class="cl">mycommand <span class="nv">$opts</span>                  <span class="c1"># ❌ 引号不会被再次解析，路径被拆开</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ② 读命令输出到数组</span>
+</span></span><span class="line"><span class="cl">mapfile -t lines &lt; &lt;<span class="o">(</span>grep ERROR app.log<span class="o">)</span>      <span class="c1"># ✅ bash 4+</span>
+</span></span><span class="line"><span class="cl">readarray -t lines &lt; file                      <span class="c1"># 同 mapfile</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;共 </span><span class="si">${#</span><span class="nv">lines</span><span class="p">[@]</span><span class="si">}</span><span class="s2"> 行&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ③ 处理任意文件名（07 篇）</span>
+</span></span><span class="line"><span class="cl"><span class="nv">files</span><span class="o">=()</span>
+</span></span><span class="line"><span class="cl"><span class="k">while</span> <span class="nv">IFS</span><span class="o">=</span> <span class="nb">read</span> -r -d <span class="s1">&#39;&#39;</span> f<span class="p">;</span> <span class="k">do</span> <span class="nv">files</span><span class="o">+=(</span><span class="s2">&#34;</span><span class="nv">$f</span><span class="s2">&#34;</span><span class="o">)</span><span class="p">;</span> <span class="k">done</span> &lt; &lt;<span class="o">(</span>find . -name <span class="s1">&#39;*.log&#39;</span> -print0<span class="o">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ④ 切分字符串</span>
+</span></span><span class="line"><span class="cl"><span class="nv">IFS</span><span class="o">=</span><span class="s1">&#39;,&#39;</span> <span class="nb">read</span> -ra parts <span class="o">&lt;&lt;&lt;</span> <span class="s2">&#34;a,b,c&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;</span><span class="si">${</span><span class="nv">parts</span><span class="p">[1]</span><span class="si">}</span><span class="s2">&#34;</span>               <span class="c1"># b</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ⑤ 传给函数（要展开）</span>
+</span></span><span class="line"><span class="cl">process<span class="o">()</span> <span class="o">{</span> <span class="nb">local</span> -a <span class="nv">items</span><span class="o">=(</span><span class="s2">&#34;</span><span class="nv">$@</span><span class="s2">&#34;</span><span class="o">)</span><span class="p">;</span> <span class="k">for</span> i in <span class="s2">&#34;</span><span class="si">${</span><span class="nv">items</span><span class="p">[@]</span><span class="si">}</span><span class="s2">&#34;</span><span class="p">;</span> <span class="k">do</span> <span class="nb">echo</span> <span class="s2">&#34;</span><span class="nv">$i</span><span class="s2">&#34;</span><span class="p">;</span> <span class="k">done</span><span class="p">;</span> <span class="o">}</span>
+</span></span><span class="line"><span class="cl">process <span class="s2">&#34;</span><span class="si">${</span><span class="nv">arr</span><span class="p">[@]</span><span class="si">}</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 或者用 nameref 传引用（bash 4.3+，避免拷贝）</span>
+</span></span><span class="line"><span class="cl">process_ref<span class="o">()</span> <span class="o">{</span> <span class="nb">local</span> -n <span class="nv">ref</span><span class="o">=</span><span class="nv">$1</span><span class="p">;</span> <span class="nv">ref</span><span class="o">+=(</span><span class="s2">&#34;new&#34;</span><span class="o">)</span><span class="p">;</span> <span class="nb">echo</span> <span class="s2">&#34;</span><span class="si">${#</span><span class="nv">ref</span><span class="p">[@]</span><span class="si">}</span><span class="s2">&#34;</span><span class="p">;</span> <span class="o">}</span>
+</span></span><span class="line"><span class="cl">process_ref arr
+</span></span></code></pre></div><p><strong>关联数组（哈希表）</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="nb">declare</span> -A config                     <span class="c1"># ✅ 必须先声明</span>
+</span></span><span class="line"><span class="cl">config<span class="o">[</span>host<span class="o">]=</span><span class="s2">&#34;10.0.0.5&#34;</span>
+</span></span><span class="line"><span class="cl">config<span class="o">[</span><span class="s2">&#34;db name&#34;</span><span class="o">]=</span><span class="s2">&#34;mydb&#34;</span>              <span class="c1"># key 可以有空格</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;</span><span class="si">${</span><span class="nv">config</span><span class="p">[host]</span><span class="si">}</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;</span><span class="si">${</span><span class="p">!config[@]</span><span class="si">}</span><span class="s2">&#34;</span>                  <span class="c1"># 所有 key</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;</span><span class="si">${#</span><span class="nv">config</span><span class="p">[@]</span><span class="si">}</span><span class="s2">&#34;</span>                  <span class="c1"># 元素个数</span>
+</span></span><span class="line"><span class="cl"><span class="k">for</span> k in <span class="s2">&#34;</span><span class="si">${</span><span class="p">!config[@]</span><span class="si">}</span><span class="s2">&#34;</span><span class="p">;</span> <span class="k">do</span> <span class="nb">echo</span> <span class="s2">&#34;</span><span class="nv">$k</span><span class="s2"> = </span><span class="si">${</span><span class="nv">config</span><span class="p">[</span><span class="nv">$k</span><span class="p">]</span><span class="si">}</span><span class="s2">&#34;</span><span class="p">;</span> <span class="k">done</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="o">[[</span> -v config<span class="o">[</span>host<span class="o">]</span> <span class="o">]]</span> <span class="o">&amp;&amp;</span> <span class="nb">echo</span> <span class="s2">&#34;存在&#34;</span>   <span class="c1"># ✅ 判断 key 存在（bash 4.3+）</span>
+</span></span><span class="line"><span class="cl"><span class="nb">unset</span> <span class="s1">&#39;config[host]&#39;</span>                  <span class="c1"># 删除（注意引号）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 实战：计数</span>
+</span></span><span class="line"><span class="cl"><span class="nb">declare</span> -A count
+</span></span><span class="line"><span class="cl"><span class="k">while</span> <span class="nb">read</span> -r ip<span class="p">;</span> <span class="k">do</span> <span class="o">((</span>count<span class="o">[</span><span class="nv">$ip</span><span class="o">]</span>++<span class="o">))</span> <span class="o">||</span> true<span class="p">;</span> <span class="k">done</span> &lt; ips.txt
+</span></span><span class="line"><span class="cl"><span class="k">for</span> ip in <span class="s2">&#34;</span><span class="si">${</span><span class="p">!count[@]</span><span class="si">}</span><span class="s2">&#34;</span><span class="p">;</span> <span class="k">do</span> <span class="nb">echo</span> <span class="s2">&#34;</span><span class="si">${</span><span class="nv">count</span><span class="p">[</span><span class="nv">$ip</span><span class="p">]</span><span class="si">}</span><span class="s2"> </span><span class="nv">$ip</span><span class="s2">&#34;</span><span class="p">;</span> <span class="k">done</span> <span class="p">|</span> sort -rn
+</span></span></code></pre></div><h2 id="24-声明与作用域">2.4 声明与作用域</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="nb">readonly</span> <span class="nv">VERSION</span><span class="o">=</span><span class="s2">&#34;1.2.3&#34;</span>              <span class="c1"># 常量</span>
+</span></span><span class="line"><span class="cl"><span class="nb">declare</span> -i <span class="nv">count</span><span class="o">=</span><span class="m">0</span>                    <span class="c1"># 整型</span>
+</span></span><span class="line"><span class="cl"><span class="nb">declare</span> -a arr                         <span class="c1"># 数组</span>
+</span></span><span class="line"><span class="cl"><span class="nb">declare</span> -A map                         <span class="c1"># 关联数组</span>
+</span></span><span class="line"><span class="cl"><span class="nb">declare</span> -n <span class="nv">ref</span><span class="o">=</span>target                 <span class="c1"># 引用（nameref）</span>
+</span></span><span class="line"><span class="cl"><span class="nb">declare</span> -p VAR                         <span class="c1"># ✅ 打印变量的类型与值（调试用）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 函数里必须用 local ──</span>
+</span></span><span class="line"><span class="cl">process<span class="o">()</span> <span class="o">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">local</span> <span class="nv">file</span><span class="o">=</span><span class="s2">&#34;</span><span class="nv">$1</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">local</span> -a <span class="nv">items</span><span class="o">=()</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">local</span> -i <span class="nv">n</span><span class="o">=</span><span class="m">0</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">local</span> <span class="nv">IFS</span><span class="o">=</span><span class="s1">$&#39;\n&#39;</span>                   <span class="c1"># ✅ 局部修改 IFS（返回后自动恢复）</span>
+</span></span><span class="line"><span class="cl">    <span class="c1"># 不加 local 就是全局变量，会污染调用者 —— shell 脚本 bug 的常见来源</span>
+</span></span><span class="line"><span class="cl"><span class="o">}</span>
+</span></span></code></pre></div><h1 id="3-条件测试">3. 条件测试</h1>
+<h2 id="31-开篇第二问--vs---vs--">3.1 开篇第二问：<code>[[ ]]</code> vs <code>[ ]</code> vs <code>(( ))</code></h2>
+<table>
+<thead>
+<tr>
+<th></th>
+<th><code>[ ]</code> / <code>test</code></th>
+<th><code>[[ ]]</code></th>
+<th><code>(( ))</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>本质</td>
+<td><strong>命令</strong>（语义上是外部命令）</td>
+<td><strong>bash 关键字</strong>（语法层面）</td>
+<td>算术求值</td>
+</tr>
+<tr>
+<td>POSIX</td>
+<td>✅</td>
+<td>❌ bash/zsh/ksh 专有</td>
+<td>❌</td>
+</tr>
+<tr>
+<td>变量未加引号</td>
+<td>❌ <strong>会出错</strong>（分词 + glob）</td>
+<td>✅ <strong>安全</strong></td>
+<td>✅</td>
+</tr>
+<tr>
+<td>逻辑运算</td>
+<td><code>-a</code> / <code>-o</code>（已废弃）</td>
+<td><strong><code>&amp;&amp;</code> / <code>||</code></strong></td>
+<td><code>&amp;&amp;</code> / <code>||</code></td>
+</tr>
+<tr>
+<td>正则匹配</td>
+<td>❌</td>
+<td>✅ <strong><code>=~</code></strong></td>
+<td>❌</td>
+</tr>
+<tr>
+<td>通配匹配</td>
+<td>❌</td>
+<td>✅ <code>==</code> 右侧支持 glob</td>
+<td>❌</td>
+</tr>
+<tr>
+<td>数值比较</td>
+<td><code>-eq -lt -gt</code></td>
+<td>同</td>
+<td><strong><code>==</code> <code>&lt;</code> <code>&gt;</code></strong> 直接用</td>
+</tr>
+<tr>
+<td>空变量</td>
+<td>❌ 语法错误</td>
+<td>✅ 安全</td>
+<td>✅</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="nv">v</span><span class="o">=</span><span class="s2">&#34;&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="o">[</span> <span class="nv">$v</span> <span class="o">=</span> <span class="s2">&#34;x&#34;</span> <span class="o">]</span>             <span class="c1"># ❌ bash: [: =: unary operator expected</span>
+</span></span><span class="line"><span class="cl"><span class="o">[[</span> <span class="nv">$v</span> <span class="o">==</span> <span class="s2">&#34;x&#34;</span> <span class="o">]]</span>          <span class="c1"># ✅ 正常返回 false（甚至不需要引号）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="nv">f</span><span class="o">=</span><span class="s2">&#34;a b.txt&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="o">[</span> -f <span class="nv">$f</span> <span class="o">]</span>                <span class="c1"># ❌ 参数太多</span>
+</span></span><span class="line"><span class="cl"><span class="o">[[</span> -f <span class="nv">$f</span> <span class="o">]]</span>              <span class="c1"># ✅ 安全</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># [[ ]] 独有的能力</span>
+</span></span><span class="line"><span class="cl"><span class="o">[[</span> <span class="s2">&#34;</span><span class="nv">$name</span><span class="s2">&#34;</span> <span class="o">==</span> a* <span class="o">]]</span>                       <span class="c1"># glob 匹配</span>
+</span></span><span class="line"><span class="cl"><span class="o">[[</span> <span class="s2">&#34;</span><span class="nv">$name</span><span class="s2">&#34;</span> <span class="o">=</span>~ ^<span class="o">[</span>a-z<span class="o">]</span>+<span class="o">[</span>0-9<span class="o">]{</span>2<span class="o">}</span>$ <span class="o">]]</span>         <span class="c1"># 正则匹配</span>
+</span></span><span class="line"><span class="cl"><span class="o">[[</span> <span class="s2">&#34;</span><span class="nv">$a</span><span class="s2">&#34;</span> <span class="o">==</span> <span class="s2">&#34;</span><span class="nv">$b</span><span class="s2">&#34;</span> <span class="o">&amp;&amp;</span> <span class="s2">&#34;</span><span class="nv">$c</span><span class="s2">&#34;</span> !<span class="o">=</span> <span class="s2">&#34;</span><span class="nv">$d</span><span class="s2">&#34;</span> <span class="o">]]</span>        <span class="c1"># &amp;&amp; 直接用</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 正则的捕获组</span>
+</span></span><span class="line"><span class="cl"><span class="k">if</span> <span class="o">[[</span> <span class="s2">&#34;v1.2.3&#34;</span> <span class="o">=</span>~ ^v<span class="o">([</span>0-9<span class="o">]</span>+<span class="o">)</span><span class="se">\.</span><span class="o">([</span>0-9<span class="o">]</span>+<span class="o">)</span><span class="se">\.</span><span class="o">([</span>0-9<span class="o">]</span>+<span class="o">)</span>$ <span class="o">]]</span><span class="p">;</span> <span class="k">then</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">echo</span> <span class="s2">&#34;主版本 </span><span class="si">${</span><span class="nv">BASH_REMATCH</span><span class="p">[1]</span><span class="si">}</span><span class="s2">, 次版本 </span><span class="si">${</span><span class="nv">BASH_REMATCH</span><span class="p">[2]</span><span class="si">}</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">#             ^^^^^^^^^^^^^^ [0] 是整个匹配</span>
+</span></span><span class="line"><span class="cl"><span class="k">fi</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ⚠️ 正则不要加引号（加了就变成字面字符串匹配）</span>
+</span></span><span class="line"><span class="cl"><span class="o">[[</span> <span class="s2">&#34;</span><span class="nv">$x</span><span class="s2">&#34;</span> <span class="o">=</span>~ ^<span class="o">[</span>0-9<span class="o">]</span>+$ <span class="o">]]</span>        <span class="c1"># ✅</span>
+</span></span><span class="line"><span class="cl"><span class="o">[[</span> <span class="s2">&#34;</span><span class="nv">$x</span><span class="s2">&#34;</span> <span class="o">=</span>~ <span class="s2">&#34;^[0-9]+</span>$<span class="s2">&#34;</span> <span class="o">]]</span>      <span class="c1"># ❌</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># (( )) 做数值最自然</span>
+</span></span><span class="line"><span class="cl"><span class="o">((</span> i &gt; <span class="m">3</span> <span class="o">))</span> <span class="o">&amp;&amp;</span> <span class="nb">echo</span> <span class="s2">&#34;大于 3&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="o">((</span> <span class="nv">sum</span> <span class="o">=</span> a + b <span class="o">))</span>
+</span></span><span class="line"><span class="cl"><span class="k">if</span> <span class="o">((</span> count &gt; <span class="m">100</span> <span class="o">))</span><span class="p">;</span> <span class="k">then</span> ...<span class="p">;</span> <span class="k">fi</span>        <span class="c1"># ✅ 比 [ &#34;$count&#34; -gt 100 ] 清晰</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="k">$((</span> <span class="m">2</span> <span class="o">**</span> <span class="m">10</span> <span class="k">))</span>          <span class="c1"># 1024</span>
+</span></span></code></pre></div><p><strong>结论：bash 脚本一律用 <code>[[ ]]</code>（字符串/文件）和 <code>(( ))</code>（数值）；只有写 <code>#!/bin/sh</code> 时才用 <code>[ ]</code>。</strong></p>
+<h2 id="32-测试表达式速查">3.2 测试表达式速查</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ── 文件 ──</span>
+</span></span><span class="line"><span class="cl"><span class="o">[[</span> -e p <span class="o">]]</span>  存在      <span class="o">[[</span> -f p <span class="o">]]</span>  普通文件    <span class="o">[[</span> -d p <span class="o">]]</span>  目录
+</span></span><span class="line"><span class="cl"><span class="o">[[</span> -L p <span class="o">]]</span>  软链接    <span class="o">[[</span> -s p <span class="o">]]</span>  非空        <span class="o">[[</span> -r/-w/-x p <span class="o">]]</span> 可读/写/执行
+</span></span><span class="line"><span class="cl"><span class="o">[[</span> -O p <span class="o">]]</span>  属主是我  <span class="o">[[</span> -u/-g/-k p <span class="o">]]</span> SUID/SGID/Sticky
+</span></span><span class="line"><span class="cl"><span class="o">[[</span> -p p <span class="o">]]</span>  管道      <span class="o">[[</span> -S p <span class="o">]]</span>  socket      <span class="o">[[</span> -b/-c p <span class="o">]]</span> 块/字符设备
+</span></span><span class="line"><span class="cl"><span class="o">[[</span> -t <span class="m">1</span> <span class="o">]]</span>  ✅ fd <span class="m">1</span> 是终端（判断是否输出颜色）
+</span></span><span class="line"><span class="cl"><span class="o">[[</span> a -nt b <span class="o">]]</span> a 比 b 新   <span class="o">[[</span> a -ot b <span class="o">]]</span> 更旧   <span class="o">[[</span> a -ef b <span class="o">]]</span> ✅ 同一个 inode
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 字符串 ──</span>
+</span></span><span class="line"><span class="cl"><span class="o">[[</span> -z <span class="s2">&#34;</span><span class="nv">$s</span><span class="s2">&#34;</span> <span class="o">]]</span> 为空    <span class="o">[[</span> -n <span class="s2">&#34;</span><span class="nv">$s</span><span class="s2">&#34;</span> <span class="o">]]</span> 非空
+</span></span><span class="line"><span class="cl"><span class="o">[[</span> <span class="s2">&#34;</span><span class="nv">$a</span><span class="s2">&#34;</span> <span class="o">==</span> <span class="s2">&#34;</span><span class="nv">$b</span><span class="s2">&#34;</span> <span class="o">]]</span>    <span class="o">[[</span> <span class="s2">&#34;</span><span class="nv">$a</span><span class="s2">&#34;</span> !<span class="o">=</span> <span class="s2">&#34;</span><span class="nv">$b</span><span class="s2">&#34;</span> <span class="o">]]</span>    <span class="o">[[</span> <span class="s2">&#34;</span><span class="nv">$a</span><span class="s2">&#34;</span> &lt; <span class="s2">&#34;</span><span class="nv">$b</span><span class="s2">&#34;</span> <span class="o">]]</span> 字典序
+</span></span><span class="line"><span class="cl"><span class="o">[[</span> <span class="s2">&#34;</span><span class="nv">$s</span><span class="s2">&#34;</span> <span class="o">==</span> pre* <span class="o">]]</span> glob    <span class="o">[[</span> <span class="s2">&#34;</span><span class="nv">$s</span><span class="s2">&#34;</span> <span class="o">=</span>~ re <span class="o">]]</span> 正则
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 数值（[[ ]] 里用这些，(( )) 里用 &gt; &lt; ==）──</span>
+</span></span><span class="line"><span class="cl">-eq -ne -lt -le -gt -ge
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 变量 ──</span>
+</span></span><span class="line"><span class="cl"><span class="o">[[</span> -v name <span class="o">]]</span>  ✅ 变量已定义（bash 4.2+）
+</span></span><span class="line"><span class="cl"><span class="o">[[</span> -o errexit <span class="o">]]</span> shell 选项已开启
+</span></span></code></pre></div><h1 id="4-流程控制">4. 流程控制</h1>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ── case（比一串 elif 清晰）──</span>
+</span></span><span class="line"><span class="cl"><span class="k">case</span> <span class="s2">&#34;</span><span class="nv">$ENVIRONMENT</span><span class="s2">&#34;</span> in
+</span></span><span class="line"><span class="cl">    prod<span class="p">|</span>production<span class="o">)</span>  deploy_prod <span class="p">;;</span>
+</span></span><span class="line"><span class="cl">    staging<span class="p">|</span>stg<span class="o">)</span>      deploy_staging <span class="p">;;</span>
+</span></span><span class="line"><span class="cl">    test-*<span class="o">)</span>           deploy_test <span class="s2">&#34;</span><span class="si">${</span><span class="nv">ENVIRONMENT</span><span class="p">#test-</span><span class="si">}</span><span class="s2">&#34;</span> <span class="p">;;</span>     <span class="c1"># glob 匹配</span>
+</span></span><span class="line"><span class="cl">    *<span class="o">)</span>                die <span class="s2">&#34;未知环境: </span><span class="nv">$ENVIRONMENT</span><span class="s2">&#34;</span> <span class="p">;;</span>
+</span></span><span class="line"><span class="cl"><span class="k">esac</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── for 的四种形式 ──</span>
+</span></span><span class="line"><span class="cl"><span class="k">for</span> f in *.log<span class="p">;</span> <span class="k">do</span> ... <span class="k">done</span>                       <span class="c1"># glob</span>
+</span></span><span class="line"><span class="cl"><span class="k">for</span> f in <span class="s2">&#34;</span><span class="si">${</span><span class="nv">arr</span><span class="p">[@]</span><span class="si">}</span><span class="s2">&#34;</span><span class="p">;</span> <span class="k">do</span> ... <span class="k">done</span>                 <span class="c1"># ✅ 数组</span>
+</span></span><span class="line"><span class="cl"><span class="k">for</span> i in <span class="o">{</span>1..10<span class="o">}</span><span class="p">;</span> <span class="k">do</span> ... <span class="k">done</span>                     <span class="c1"># 序列（不起进程，优于 seq）</span>
+</span></span><span class="line"><span class="cl"><span class="k">for</span> <span class="o">((</span><span class="nv">i</span><span class="o">=</span>0<span class="p">;</span> i&lt;10<span class="p">;</span> i++<span class="o">))</span><span class="p">;</span> <span class="k">do</span> ... <span class="k">done</span>               <span class="c1"># ✅ C 风格</span>
+</span></span><span class="line"><span class="cl"><span class="k">for</span> arg in <span class="s2">&#34;</span><span class="nv">$@</span><span class="s2">&#34;</span><span class="p">;</span> <span class="k">do</span> ... <span class="k">done</span>                      <span class="c1"># ✅ 参数</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ⚠️ glob 无匹配的坑</span>
+</span></span><span class="line"><span class="cl"><span class="k">for</span> f in *.log<span class="p">;</span> <span class="k">do</span> <span class="nb">echo</span> <span class="s2">&#34;</span><span class="nv">$f</span><span class="s2">&#34;</span><span class="p">;</span> <span class="k">done</span>                <span class="c1"># 没有 .log 时输出字面的 &#34;*.log&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="nb">shopt</span> -s nullglob                                  <span class="c1"># ✅ 无匹配时展开成空</span>
+</span></span><span class="line"><span class="cl"><span class="k">for</span> f in *.log<span class="p">;</span> <span class="k">do</span> <span class="o">[[</span> -e <span class="s2">&#34;</span><span class="nv">$f</span><span class="s2">&#34;</span> <span class="o">]]</span> <span class="o">||</span> <span class="k">continue</span><span class="p">;</span> ... <span class="k">done</span>   <span class="c1"># 或显式检查</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── while read 的正确写法（04/06/09 篇讲过）──</span>
+</span></span><span class="line"><span class="cl"><span class="k">while</span> <span class="nv">IFS</span><span class="o">=</span> <span class="nb">read</span> -r line<span class="p">;</span> <span class="k">do</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">echo</span> <span class="s2">&#34;[</span><span class="nv">$line</span><span class="s2">]&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="k">done</span> &lt; input.txt
+</span></span><span class="line"><span class="cl"><span class="c1">#     ^^^^^^^^^^^^^^ 用重定向而不是管道（否则变量修改会丢，09 篇 3.2）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">while</span> <span class="nv">IFS</span><span class="o">=</span> <span class="nb">read</span> -r -d <span class="s1">&#39;&#39;</span> f<span class="p">;</span> <span class="k">do</span> ...<span class="p">;</span> <span class="k">done</span> &lt; &lt;<span class="o">(</span>find . -print0<span class="o">)</span>     <span class="c1"># \0 分隔</span>
+</span></span><span class="line"><span class="cl"><span class="k">while</span> <span class="nv">IFS</span><span class="o">=</span>: <span class="nb">read</span> -r user _ uid _ _ home shell<span class="p">;</span> <span class="k">do</span> ...<span class="p">;</span> <span class="k">done</span> &lt; /etc/passwd
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ⚠️ 循环里的 ssh/mysql 会吃掉 stdin</span>
+</span></span><span class="line"><span class="cl"><span class="k">while</span> <span class="nb">read</span> -r host<span class="p">;</span> <span class="k">do</span> ssh <span class="s2">&#34;</span><span class="nv">$host</span><span class="s2">&#34;</span> uptime<span class="p">;</span> <span class="k">done</span> &lt; hosts.txt      <span class="c1"># ❌ ssh 读走剩余输入</span>
+</span></span><span class="line"><span class="cl"><span class="k">while</span> <span class="nb">read</span> -r host<span class="p">;</span> <span class="k">do</span> ssh -n <span class="s2">&#34;</span><span class="nv">$host</span><span class="s2">&#34;</span> uptime<span class="p">;</span> <span class="k">done</span> &lt; hosts.txt    <span class="c1"># ✅ -n</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 带超时的等待（生产脚本常用）──</span>
+</span></span><span class="line"><span class="cl">wait_for<span class="o">()</span> <span class="o">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">local</span> <span class="nv">url</span><span class="o">=</span><span class="nv">$1</span> <span class="nv">timeout</span><span class="o">=</span><span class="si">${</span><span class="nv">2</span><span class="k">:-</span><span class="nv">60</span><span class="si">}</span> <span class="nv">elapsed</span><span class="o">=</span><span class="m">0</span>
+</span></span><span class="line"><span class="cl">    <span class="k">until</span> curl -sf --max-time <span class="m">2</span> <span class="s2">&#34;</span><span class="nv">$url</span><span class="s2">&#34;</span> &gt;/dev/null 2&gt;<span class="p">&amp;</span>1<span class="p">;</span> <span class="k">do</span>
+</span></span><span class="line"><span class="cl">        <span class="o">((</span> <span class="nv">elapsed</span> <span class="o">+=</span> <span class="m">2</span> <span class="o">))</span>
+</span></span><span class="line"><span class="cl">        <span class="o">((</span> elapsed &gt;<span class="o">=</span> timeout <span class="o">))</span> <span class="o">&amp;&amp;</span> <span class="o">{</span> error <span class="s2">&#34;等待 </span><span class="nv">$url</span><span class="s2"> 超时&#34;</span><span class="p">;</span> <span class="k">return</span> 1<span class="p">;</span> <span class="o">}</span>
+</span></span><span class="line"><span class="cl">        sleep <span class="m">2</span>
+</span></span><span class="line"><span class="cl">    <span class="k">done</span>
+</span></span><span class="line"><span class="cl">    info <span class="s2">&#34;</span><span class="nv">$url</span><span class="s2"> 已就绪（</span><span class="si">${</span><span class="nv">elapsed</span><span class="si">}</span><span class="s2">s）&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="o">}</span>
+</span></span></code></pre></div><h1 id="5-函数">5. 函数</h1>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ── 参数 ──</span>
+</span></span><span class="line"><span class="cl">greet<span class="o">()</span> <span class="o">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">local</span> <span class="nv">name</span><span class="o">=</span><span class="s2">&#34;</span><span class="si">${</span><span class="nv">1</span><span class="p">:?需要名字</span><span class="si">}</span><span class="s2">&#34;</span>      <span class="c1"># ✅ 必需参数校验</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">local</span> <span class="nv">greeting</span><span class="o">=</span><span class="s2">&#34;</span><span class="si">${</span><span class="nv">2</span><span class="k">:-</span><span class="nv">你好</span><span class="si">}</span><span class="s2">&#34;</span>       <span class="c1"># 可选参数带默认值</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">echo</span> <span class="s2">&#34;</span><span class="nv">$greeting</span><span class="s2">, </span><span class="nv">$name</span><span class="s2">!&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="o">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 返回值：return 只能是 0-255 的退出码，不能返回数据 ──</span>
+</span></span><span class="line"><span class="cl">get_count<span class="o">()</span> <span class="o">{</span> <span class="k">return</span> 42<span class="p">;</span> <span class="o">}</span>           <span class="c1"># ❌ 只表达&#34;退出码 42&#34;，语义是失败</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 用 stdout 返回数据，用 return 表达成败</span>
+</span></span><span class="line"><span class="cl">get_count<span class="o">()</span> <span class="o">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">local</span> n
+</span></span><span class="line"><span class="cl">    <span class="nv">n</span><span class="o">=</span><span class="k">$(</span>wc -l &lt; <span class="s2">&#34;</span><span class="nv">$1</span><span class="s2">&#34;</span><span class="k">)</span> <span class="o">||</span> <span class="k">return</span> <span class="m">1</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">echo</span> <span class="s2">&#34;</span><span class="nv">$n</span><span class="s2">&#34;</span>                        <span class="c1"># 数据写 stdout</span>
+</span></span><span class="line"><span class="cl"><span class="o">}</span>
+</span></span><span class="line"><span class="cl"><span class="nv">count</span><span class="o">=</span><span class="k">$(</span>get_count file.txt<span class="k">)</span> <span class="o">||</span> die <span class="s2">&#34;统计失败&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 或用 nameref 输出（避免起子 shell）</span>
+</span></span><span class="line"><span class="cl">get_count_ref<span class="o">()</span> <span class="o">{</span> <span class="nb">local</span> -n <span class="nv">out</span><span class="o">=</span><span class="nv">$2</span><span class="p">;</span> <span class="nv">out</span><span class="o">=</span><span class="k">$(</span>wc -l &lt; <span class="s2">&#34;</span><span class="nv">$1</span><span class="s2">&#34;</span><span class="k">)</span><span class="p">;</span> <span class="o">}</span>
+</span></span><span class="line"><span class="cl">get_count_ref file.txt result<span class="p">;</span> <span class="nb">echo</span> <span class="s2">&#34;</span><span class="nv">$result</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ⚠️ 因为 stdout 用来返回数据，所有日志必须走 stderr（否则混进返回值）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 错误处理模式 ──</span>
+</span></span><span class="line"><span class="cl">process_file<span class="o">()</span> <span class="o">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">local</span> <span class="nv">f</span><span class="o">=</span><span class="nv">$1</span>
+</span></span><span class="line"><span class="cl">    <span class="o">[[</span> -f <span class="s2">&#34;</span><span class="nv">$f</span><span class="s2">&#34;</span> <span class="o">]]</span> <span class="o">||</span> <span class="o">{</span> error <span class="s2">&#34;文件不存在: </span><span class="nv">$f</span><span class="s2">&#34;</span><span class="p">;</span> <span class="k">return</span> 1<span class="p">;</span> <span class="o">}</span>
+</span></span><span class="line"><span class="cl">    <span class="o">[[</span> -r <span class="s2">&#34;</span><span class="nv">$f</span><span class="s2">&#34;</span> <span class="o">]]</span> <span class="o">||</span> <span class="o">{</span> error <span class="s2">&#34;文件不可读: </span><span class="nv">$f</span><span class="s2">&#34;</span><span class="p">;</span> <span class="k">return</span> 2<span class="p">;</span> <span class="o">}</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="m">0</span>
+</span></span><span class="line"><span class="cl"><span class="o">}</span>
+</span></span><span class="line"><span class="cl">process_file <span class="s2">&#34;</span><span class="nv">$input</span><span class="s2">&#34;</span> <span class="o">||</span> <span class="k">case</span> <span class="nv">$?</span> in
+</span></span><span class="line"><span class="cl">    1<span class="o">)</span> die <span class="s2">&#34;输入文件缺失&#34;</span> <span class="p">;;</span>
+</span></span><span class="line"><span class="cl">    2<span class="o">)</span> die <span class="s2">&#34;权限不足&#34;</span> <span class="p">;;</span>
+</span></span><span class="line"><span class="cl"><span class="k">esac</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="nb">declare</span> -F                           <span class="c1"># 列出所有函数名</span>
+</span></span><span class="line"><span class="cl"><span class="nb">declare</span> -f myfunc                    <span class="c1"># 打印函数定义</span>
+</span></span></code></pre></div><h1 id="6-trap-与清理">6. trap 与清理</h1>
+<h2 id="61-开篇第四问保证清理一定执行">6.1 开篇第四问：保证清理一定执行</h2>
+<p><strong><code>trap ... EXIT</code> 是唯一可靠的清理方式</strong> —— 它在任何退出路径上都会执行：正常结束、<code>exit</code>、<code>set -e</code> 触发、被信号杀死（除 <code>SIGKILL</code>）。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="nv">TMPDIR_SELF</span><span class="o">=</span><span class="s2">&#34;&#34;</span>
+</span></span><span class="line"><span class="cl">cleanup<span class="o">()</span> <span class="o">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">local</span> <span class="nv">exit_code</span><span class="o">=</span><span class="nv">$?</span>               <span class="c1"># ✅ 第一行就保存退出码（后面的命令会覆盖 $?）</span>
+</span></span><span class="line"><span class="cl">    <span class="o">[[</span> -n <span class="s2">&#34;</span><span class="nv">$TMPDIR_SELF</span><span class="s2">&#34;</span> <span class="o">&amp;&amp;</span> -d <span class="s2">&#34;</span><span class="nv">$TMPDIR_SELF</span><span class="s2">&#34;</span> <span class="o">]]</span> <span class="o">&amp;&amp;</span> rm -rf -- <span class="s2">&#34;</span><span class="nv">$TMPDIR_SELF</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="o">[[</span> -n <span class="s2">&#34;</span><span class="si">${</span><span class="nv">LOCKFILE</span><span class="k">:-</span><span class="si">}</span><span class="s2">&#34;</span> <span class="o">]]</span> <span class="o">&amp;&amp;</span> rm -f -- <span class="s2">&#34;</span><span class="nv">$LOCKFILE</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">kill</span> <span class="s2">&#34;</span><span class="si">${</span><span class="nv">BG_PID</span><span class="k">:-</span><span class="si">}</span><span class="s2">&#34;</span> 2&gt;/dev/null <span class="o">||</span> <span class="nb">true</span>       <span class="c1"># 清理后台进程</span>
+</span></span><span class="line"><span class="cl">    <span class="o">((</span> exit_code !<span class="o">=</span> <span class="m">0</span> <span class="o">))</span> <span class="o">&amp;&amp;</span> error <span class="s2">&#34;脚本失败（退出码 </span><span class="nv">$exit_code</span><span class="s2">）&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="nv">$exit_code</span>                <span class="c1"># ✅ 保持原退出码</span>
+</span></span><span class="line"><span class="cl"><span class="o">}</span>
+</span></span><span class="line"><span class="cl"><span class="nb">trap</span> cleanup EXIT
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="nv">TMPDIR_SELF</span><span class="o">=</span><span class="k">$(</span>mktemp -d<span class="k">)</span>             <span class="c1"># 之后才创建资源</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="nb">trap</span> cleanup EXIT                    <span class="c1"># ✅ 任何退出（最重要）</span>
+</span></span><span class="line"><span class="cl"><span class="nb">trap</span> <span class="s1">&#39;echo 被中断; exit 130&#39;</span> INT     <span class="c1"># Ctrl-C（130 = 128+2）</span>
+</span></span><span class="line"><span class="cl"><span class="nb">trap</span> <span class="s1">&#39;echo 被终止; exit 143&#39;</span> TERM    <span class="c1"># kill（143 = 128+15）</span>
+</span></span><span class="line"><span class="cl"><span class="nb">trap</span> <span class="s1">&#39;&#39;</span> INT                          <span class="c1"># 忽略 Ctrl-C（关键区段保护）</span>
+</span></span><span class="line"><span class="cl"><span class="nb">trap</span> - INT                           <span class="c1"># 恢复默认</span>
+</span></span><span class="line"><span class="cl"><span class="nb">trap</span> -p                              <span class="c1"># ✅ 列出当前所有 trap</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ⚠️ SIGKILL（9）无法捕获 —— 清理逻辑不能只依赖 trap，</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    临时文件应放在 /tmp（重启清空）或用可预测路径便于后续清理</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── ERR trap：出错时打印上下文（比单纯 set -e 有用得多）──</span>
+</span></span><span class="line"><span class="cl">on_error<span class="o">()</span> <span class="o">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">local</span> <span class="nv">exit_code</span><span class="o">=</span><span class="nv">$?</span> <span class="nv">line</span><span class="o">=</span><span class="nv">$1</span> <span class="nv">cmd</span><span class="o">=</span><span class="nv">$2</span>
+</span></span><span class="line"><span class="cl">    error <span class="s2">&#34;第 </span><span class="nv">$line</span><span class="s2"> 行失败（退出码 </span><span class="nv">$exit_code</span><span class="s2">）: </span><span class="nv">$cmd</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl">    error <span class="s2">&#34;调用栈: </span><span class="si">${</span><span class="nv">FUNCNAME</span><span class="p">[*]:</span><span class="nv">1</span><span class="si">}</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="o">}</span>
+</span></span><span class="line"><span class="cl"><span class="nb">trap</span> <span class="s1">&#39;on_error $LINENO &#34;$BASH_COMMAND&#34;&#39;</span> ERR
+</span></span><span class="line"><span class="cl"><span class="nb">set</span> -E                               <span class="c1"># ✅ 让 ERR trap 在函数里也生效（errtrace）</span>
+</span></span></code></pre></div><h2 id="62-临时文件与原子写">6.2 临时文件与原子写</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="nv">tmpfile</span><span class="o">=</span><span class="k">$(</span>mktemp<span class="k">)</span> <span class="o">||</span> die <span class="s2">&#34;无法创建临时文件&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="nv">tmpdir</span><span class="o">=</span><span class="k">$(</span>mktemp -d<span class="k">)</span> <span class="o">||</span> die
+</span></span><span class="line"><span class="cl"><span class="nb">trap</span> <span class="s1">&#39;rm -rf -- &#34;$tmpdir&#34;&#39;</span> EXIT
+</span></span><span class="line"><span class="cl"><span class="c1"># 为什么不用 $$ 拼名字：可预测 -&gt; 符号链接攻击（14 篇 10.13）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 原子写文件（04 篇 5.1）</span>
+</span></span><span class="line"><span class="cl">write_config<span class="o">()</span> <span class="o">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">local</span> <span class="nv">target</span><span class="o">=</span><span class="nv">$1</span> <span class="nv">content</span><span class="o">=</span><span class="nv">$2</span> tmp
+</span></span><span class="line"><span class="cl">    <span class="nv">tmp</span><span class="o">=</span><span class="k">$(</span>mktemp <span class="s2">&#34;</span><span class="k">$(</span>dirname <span class="s2">&#34;</span><span class="nv">$target</span><span class="s2">&#34;</span><span class="k">)</span><span class="s2">/.</span><span class="k">$(</span>basename <span class="s2">&#34;</span><span class="nv">$target</span><span class="s2">&#34;</span><span class="k">)</span><span class="s2">.XXXXXX&#34;</span><span class="k">)</span> <span class="o">||</span> <span class="k">return</span> <span class="m">1</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">#             ^^^^^^^^^^^^^^^^^^^^^ 必须与目标同目录（同一文件系统才能 rename）</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">printf</span> <span class="s1">&#39;%s&#39;</span> <span class="s2">&#34;</span><span class="nv">$content</span><span class="s2">&#34;</span> &gt; <span class="s2">&#34;</span><span class="nv">$tmp</span><span class="s2">&#34;</span> <span class="o">||</span> <span class="o">{</span> rm -f <span class="s2">&#34;</span><span class="nv">$tmp</span><span class="s2">&#34;</span><span class="p">;</span> <span class="k">return</span> 1<span class="p">;</span> <span class="o">}</span>
+</span></span><span class="line"><span class="cl">    chmod <span class="m">644</span> <span class="s2">&#34;</span><span class="nv">$tmp</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl">    sync -f <span class="s2">&#34;</span><span class="nv">$tmp</span><span class="s2">&#34;</span> 2&gt;/dev/null <span class="o">||</span> <span class="nb">true</span>
+</span></span><span class="line"><span class="cl">    mv -f -- <span class="s2">&#34;</span><span class="nv">$tmp</span><span class="s2">&#34;</span> <span class="s2">&#34;</span><span class="nv">$target</span><span class="s2">&#34;</span>               <span class="c1"># ✅ 原子替换</span>
+</span></span><span class="line"><span class="cl"><span class="o">}</span>
+</span></span></code></pre></div><h2 id="63-防止并发执行">6.3 防止并发执行</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ✅ flock：最可靠（14 篇 8.4 提过）</span>
+</span></span><span class="line"><span class="cl"><span class="nv">LOCKFILE</span><span class="o">=</span>/var/lock/myjob.lock
+</span></span><span class="line"><span class="cl"><span class="nb">exec</span> 9&gt;<span class="s2">&#34;</span><span class="nv">$LOCKFILE</span><span class="s2">&#34;</span> <span class="o">||</span> die <span class="s2">&#34;无法打开锁文件&#34;</span>
+</span></span><span class="line"><span class="cl">flock -n <span class="m">9</span> <span class="o">||</span> die <span class="s2">&#34;另一个实例正在运行&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#     ^^ -n 拿不到锁立即失败（-w 10 表示等 10 秒）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 锁随 fd 9 关闭自动释放（进程退出即释放，不留陈旧锁）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># crontab 里的一行版</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># */5 * * * * flock -n /var/lock/myjob.lock /path/script.sh</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ❌ 不要自己用 pid 文件实现锁 —— 有 TOCTOU 竞态且会留下陈旧锁</span>
+</span></span></code></pre></div><h1 id="7-参数解析">7. 参数解析</h1>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="s2">&#34;</span><span class="nv">$0</span><span class="s2">&#34;</span>        <span class="c1"># 脚本名（${BASH_SOURCE[0]} 更可靠）</span>
+</span></span><span class="line"><span class="cl"><span class="s2">&#34;</span><span class="si">${</span><span class="nv">10</span><span class="si">}</span><span class="s2">&#34;</span>     <span class="c1"># 第 10 个参数（超过 9 必须加花括号！）</span>
+</span></span><span class="line"><span class="cl"><span class="s2">&#34;</span><span class="nv">$#</span><span class="s2">&#34;</span>        <span class="c1"># 参数个数</span>
+</span></span><span class="line"><span class="cl"><span class="s2">&#34;</span><span class="nv">$@</span><span class="s2">&#34;</span>        <span class="c1"># ✅ 所有参数（每个独立成词）</span>
+</span></span><span class="line"><span class="cl"><span class="s2">&#34;</span><span class="nv">$?</span><span class="s2">&#34;</span> <span class="s2">&#34;</span><span class="nv">$$</span><span class="s2">&#34;</span> <span class="s2">&#34;</span><span class="nv">$!</span><span class="s2">&#34;</span>   <span class="c1"># 上条退出码 / 当前 PID / 最后一个后台 PID</span>
+</span></span><span class="line"><span class="cl"><span class="nb">shift</span> <span class="o">[</span>n<span class="o">]</span>   <span class="c1"># 丢掉前 n 个参数</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ── getopts：短选项 ──</span>
+</span></span><span class="line"><span class="cl"><span class="k">while</span> <span class="nb">getopts</span> <span class="s1">&#39;:e:v:dh&#39;</span> opt<span class="p">;</span> <span class="k">do</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#              ^ 开头冒号 = 静默模式（自己处理错误，推荐）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#               ^^ e 后的冒号 = 该选项需要参数</span>
+</span></span><span class="line"><span class="cl">    <span class="k">case</span> <span class="s2">&#34;</span><span class="nv">$opt</span><span class="s2">&#34;</span> in
+</span></span><span class="line"><span class="cl">        e<span class="o">)</span> <span class="nv">ENVIRONMENT</span><span class="o">=</span><span class="s2">&#34;</span><span class="nv">$OPTARG</span><span class="s2">&#34;</span> <span class="p">;;</span>
+</span></span><span class="line"><span class="cl">        d<span class="o">)</span> <span class="nv">DRY_RUN</span><span class="o">=</span><span class="nb">true</span> <span class="p">;;</span>
+</span></span><span class="line"><span class="cl">        h<span class="o">)</span> usage<span class="p">;</span> <span class="nb">exit</span> <span class="m">0</span> <span class="p">;;</span>
+</span></span><span class="line"><span class="cl">        :<span class="o">)</span> die <span class="s2">&#34;选项 -</span><span class="nv">$OPTARG</span><span class="s2"> 需要参数&#34;</span> <span class="p">;;</span>
+</span></span><span class="line"><span class="cl">        <span class="se">\?</span><span class="o">)</span> die <span class="s2">&#34;未知选项 -</span><span class="nv">$OPTARG</span><span class="s2">&#34;</span> <span class="p">;;</span>
+</span></span><span class="line"><span class="cl">    <span class="k">esac</span>
+</span></span><span class="line"><span class="cl"><span class="k">done</span>
+</span></span><span class="line"><span class="cl"><span class="nb">shift</span> <span class="k">$((</span>OPTIND <span class="o">-</span> <span class="m">1</span><span class="k">))</span>                    <span class="c1"># ✅ 移除已解析的选项</span>
+</span></span></code></pre></div><p><strong><code>getopts</code> 只支持单字符短选项</strong>，需要 <code>--long-option</code> 有三个方案：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 方案一：手写循环（最常用，无依赖）</span>
+</span></span><span class="line"><span class="cl"><span class="k">while</span> <span class="o">[[</span> <span class="nv">$#</span> -gt <span class="m">0</span> <span class="o">]]</span><span class="p">;</span> <span class="k">do</span>
+</span></span><span class="line"><span class="cl">    <span class="k">case</span> <span class="s2">&#34;</span><span class="nv">$1</span><span class="s2">&#34;</span> in
+</span></span><span class="line"><span class="cl">        -e<span class="p">|</span>--env<span class="o">)</span>      <span class="nv">ENVIRONMENT</span><span class="o">=</span><span class="s2">&#34;</span><span class="nv">$2</span><span class="s2">&#34;</span><span class="p">;</span> <span class="nb">shift</span> <span class="m">2</span> <span class="p">;;</span>
+</span></span><span class="line"><span class="cl">        --env<span class="o">=</span>*<span class="o">)</span>       <span class="nv">ENVIRONMENT</span><span class="o">=</span><span class="s2">&#34;</span><span class="si">${</span><span class="nv">1</span><span class="p">#*=</span><span class="si">}</span><span class="s2">&#34;</span><span class="p">;</span> <span class="nb">shift</span> <span class="p">;;</span>      <span class="c1"># 支持 --env=prod</span>
+</span></span><span class="line"><span class="cl">        -d<span class="p">|</span>--dry-run<span class="o">)</span>  <span class="nv">DRY_RUN</span><span class="o">=</span>true<span class="p">;</span> <span class="nb">shift</span> <span class="p">;;</span>
+</span></span><span class="line"><span class="cl">        -h<span class="p">|</span>--help<span class="o">)</span>     usage<span class="p">;</span> <span class="nb">exit</span> <span class="m">0</span> <span class="p">;;</span>
+</span></span><span class="line"><span class="cl">        --<span class="o">)</span>            shift<span class="p">;</span> <span class="nb">break</span> <span class="p">;;</span>                       <span class="c1"># -- 之后都是位置参数</span>
+</span></span><span class="line"><span class="cl">        -*<span class="o">)</span>            die <span class="s2">&#34;未知选项: </span><span class="nv">$1</span><span class="s2">&#34;</span> <span class="p">;;</span>
+</span></span><span class="line"><span class="cl">        *<span class="o">)</span>             <span class="nv">POSITIONAL</span><span class="o">+=(</span><span class="s2">&#34;</span><span class="nv">$1</span><span class="s2">&#34;</span><span class="o">)</span><span class="p">;</span> <span class="nb">shift</span> <span class="p">;;</span>
+</span></span><span class="line"><span class="cl">    <span class="k">esac</span>
+</span></span><span class="line"><span class="cl"><span class="k">done</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 方案二：getopt(1)（GNU 版支持长选项，macOS 自带的不支持）</span>
+</span></span><span class="line"><span class="cl"><span class="nv">parsed</span><span class="o">=</span><span class="k">$(</span>getopt -o e:v:dh -l env:,version:,dry-run,help -n <span class="s2">&#34;</span><span class="nv">$0</span><span class="s2">&#34;</span> -- <span class="s2">&#34;</span><span class="nv">$@</span><span class="s2">&#34;</span><span class="k">)</span> <span class="o">||</span> <span class="o">{</span> usage<span class="p">;</span> <span class="nb">exit</span> 1<span class="p">;</span> <span class="o">}</span>
+</span></span><span class="line"><span class="cl"><span class="nb">eval</span> <span class="nb">set</span> -- <span class="s2">&#34;</span><span class="nv">$parsed</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 方案三：参数复杂了就该换语言（Python argparse / Go flag、cobra）</span>
+</span></span></code></pre></div><h1 id="8-日志与输出">8. 日志与输出</h1>
+<p><strong>核心原则：stdout 只放「数据」，所有日志/提示/错误一律走 stderr。</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 理由：这样脚本才能被安全地放进管道</span>
+</span></span><span class="line"><span class="cl">get_ips<span class="o">()</span> <span class="o">{</span>
+</span></span><span class="line"><span class="cl">    info <span class="s2">&#34;正在查询…&#34;</span>          <span class="c1"># 走 stderr，不污染</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">echo</span> <span class="s2">&#34;10.0.0.1&#34;</span>           <span class="c1"># 数据走 stdout</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">echo</span> <span class="s2">&#34;10.0.0.2&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="o">}</span>
+</span></span><span class="line"><span class="cl">get_ips <span class="p">|</span> wc -l               <span class="c1"># 2   ✅ 如果 info 走 stdout，这里就是 3</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">_log<span class="o">()</span> <span class="o">{</span> <span class="nb">printf</span> <span class="s1">&#39;%s [%-5s] %s\n&#39;</span> <span class="s2">&#34;</span><span class="k">$(</span>date +<span class="s1">&#39;%F %T&#39;</span><span class="k">)</span><span class="s2">&#34;</span> <span class="s2">&#34;</span><span class="nv">$1</span><span class="s2">&#34;</span> <span class="s2">&#34;</span><span class="si">${</span><span class="p">*:</span><span class="nv">2</span><span class="si">}</span><span class="s2">&#34;</span> &gt;<span class="p">&amp;</span>2<span class="p">;</span> <span class="o">}</span>
+</span></span><span class="line"><span class="cl">info<span class="o">()</span> <span class="o">{</span> _log INFO <span class="s2">&#34;</span><span class="nv">$@</span><span class="s2">&#34;</span><span class="p">;</span> <span class="o">}</span>
+</span></span><span class="line"><span class="cl">die<span class="o">()</span>  <span class="o">{</span> _log ERROR <span class="s2">&#34;</span><span class="nv">$@</span><span class="s2">&#34;</span><span class="p">;</span> <span class="nb">exit</span> 1<span class="p">;</span> <span class="o">}</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ── 颜色：只在终端时输出 ──</span>
+</span></span><span class="line"><span class="cl"><span class="k">if</span> <span class="o">[[</span> -t <span class="m">2</span> <span class="o">]]</span><span class="p">;</span> <span class="k">then</span>          <span class="c1"># ✅ 判断 stderr 是否连着终端（重定向到文件时不加颜色）</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">readonly</span> <span class="nv">C_RED</span><span class="o">=</span><span class="s1">$&#39;\033[0;31m&#39;</span> <span class="nv">C_RESET</span><span class="o">=</span><span class="s1">$&#39;\033[0m&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="k">else</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">readonly</span> <span class="nv">C_RED</span><span class="o">=</span><span class="s1">&#39;&#39;</span> <span class="nv">C_RESET</span><span class="o">=</span><span class="s1">&#39;&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="k">fi</span>
+</span></span><span class="line"><span class="cl">error<span class="o">()</span> <span class="o">{</span> <span class="nb">printf</span> <span class="s1">&#39;%s[ERROR]%s %s\n&#39;</span> <span class="s2">&#34;</span><span class="nv">$C_RED</span><span class="s2">&#34;</span> <span class="s2">&#34;</span><span class="nv">$C_RESET</span><span class="s2">&#34;</span> <span class="s2">&#34;</span><span class="nv">$*</span><span class="s2">&#34;</span> &gt;<span class="p">&amp;</span>2<span class="p">;</span> <span class="o">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 让整个脚本的输出落盘 ──</span>
+</span></span><span class="line"><span class="cl"><span class="nb">exec</span> &gt; &gt;<span class="o">(</span>tee -a <span class="s2">&#34;</span><span class="nv">$LOGFILE</span><span class="s2">&#34;</span><span class="o">)</span> 2&gt;<span class="p">&amp;</span><span class="m">1</span>              <span class="c1"># 同时输出到终端和文件</span>
+</span></span><span class="line"><span class="cl"><span class="nb">exec</span> &gt;&gt; <span class="s2">&#34;</span><span class="nv">$LOGFILE</span><span class="s2">&#34;</span> 2&gt;<span class="p">&amp;</span><span class="m">1</span>                        <span class="c1"># 只写文件</span>
+</span></span><span class="line"><span class="cl"><span class="nb">exec</span> &gt; &gt;<span class="o">(</span>logger -t myjob -p user.info<span class="o">)</span> 2&gt; &gt;<span class="o">(</span>logger -t myjob -p user.err<span class="o">)</span>   <span class="c1"># 进 journal</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 或者交给 systemd（14 篇的 StandardOutput=journal）</span>
+</span></span></code></pre></div><h1 id="9-调试与检查">9. 调试与检查</h1>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">bash -n script.sh                    <span class="c1"># ✅ 只检查语法，不执行</span>
+</span></span><span class="line"><span class="cl">bash -x script.sh                    <span class="c1"># ✅ 追踪每条命令（展开后的样子）</span>
+</span></span><span class="line"><span class="cl"><span class="nb">set</span> -x<span class="p">;</span> ...<span class="p">;</span> <span class="nb">set</span> +x                  <span class="c1"># 只追踪一段</span>
+</span></span><span class="line"><span class="cl"><span class="nb">export</span> <span class="nv">PS4</span><span class="o">=</span><span class="s1">&#39;+ ${BASH_SOURCE##*/}:${LINENO}:${FUNCNAME[0]:-main}(): &#39;</span>   <span class="c1"># ✅ 带位置的追踪</span>
+</span></span><span class="line"><span class="cl"><span class="nb">exec</span> 5&gt; /tmp/trace.log<span class="p">;</span> <span class="nv">BASH_XTRACEFD</span><span class="o">=</span>5<span class="p">;</span> <span class="nb">set</span> -x    <span class="c1"># 追踪输出单独存文件</span>
+</span></span><span class="line"><span class="cl"><span class="nb">declare</span> -p myvar myarr               <span class="c1"># 打印变量的完整状态</span>
+</span></span></code></pre></div><h2 id="91-shellcheck必须用">9.1 ShellCheck：必须用</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">shellcheck script.sh
+</span></span><span class="line"><span class="cl">shellcheck -s bash -S warning script.sh
+</span></span><span class="line"><span class="cl">shellcheck -x script.sh              <span class="c1"># 跟进 source 的文件</span>
+</span></span><span class="line"><span class="cl">find . -name <span class="s1">&#39;*.sh&#39;</span> -print0 <span class="p">|</span> xargs -0 shellcheck -S warning     <span class="c1"># CI 里跑</span>
+</span></span></code></pre></div><p><strong>它能查出的典型问题</strong>（每条都对应真实的 bug）：</p>
+<table>
+<thead>
+<tr>
+<th>编号</th>
+<th>问题</th>
+<th>后果</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>SC2086</strong></td>
+<td>变量未加引号</td>
+<td>空格/glob 导致参数错乱</td>
+</tr>
+<tr>
+<td><strong>SC2046</strong></td>
+<td><code>$(cmd)</code> 未加引号</td>
+<td>同上</td>
+</tr>
+<tr>
+<td>SC2068</td>
+<td><code>$@</code> 未加引号</td>
+<td>参数边界丢失</td>
+</tr>
+<tr>
+<td><strong>SC2164</strong></td>
+<td><code>cd</code> 没检查返回值</td>
+<td>目录不存在仍执行后续危险操作</td>
+</tr>
+<tr>
+<td>SC2155</td>
+<td><code>local x=$(cmd)</code> 掩盖退出码</td>
+<td><code>set -e</code> 不生效（1.3 陷阱 3）</td>
+</tr>
+<tr>
+<td>SC2015</td>
+<td><code>A &amp;&amp; B || C</code> 的逻辑陷阱</td>
+<td>B 失败也会执行 C</td>
+</tr>
+<tr>
+<td>SC2094</td>
+<td>同一文件同时读写</td>
+<td>文件被清空（<code>sort f &gt; f</code>）</td>
+</tr>
+<tr>
+<td><strong>SC2115</strong></td>
+<td><code>rm -rf &quot;$VAR/&quot;</code> 未校验</td>
+<td>变量为空时删根目录</td>
+</tr>
+<tr>
+<td>SC2181</td>
+<td>用 <code>$?</code> 而不是直接判断命令</td>
+<td>易错</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 需要忽略某条时，写明理由</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># shellcheck disable=SC2086  # 这里确实需要分词展开 opts</span>
+</span></span><span class="line"><span class="cl">mycommand <span class="nv">$opts</span>
+</span></span></code></pre></div><h2 id="92-测试">9.2 测试</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># bats：shell 的单元测试框架</span>
+</span></span><span class="line"><span class="cl">cat &gt; test/utils.bats <span class="s">&lt;&lt;&#39;EOF&#39;
+</span></span></span><span class="line"><span class="cl"><span class="s">setup() { source &#34;${BATS_TEST_DIRNAME}/../lib/utils.sh&#34;; }
+</span></span></span><span class="line"><span class="cl"><span class="s">
+</span></span></span><span class="line"><span class="cl"><span class="s">@test &#34;version_gt 能正确比较版本&#34; {
+</span></span></span><span class="line"><span class="cl"><span class="s">    run version_gt &#34;1.2.3&#34; &#34;1.2.2&#34;
+</span></span></span><span class="line"><span class="cl"><span class="s">    [ &#34;$status&#34; -eq 0 ]
+</span></span></span><span class="line"><span class="cl"><span class="s">}
+</span></span></span><span class="line"><span class="cl"><span class="s">@test &#34;缺少参数时应该报错&#34; {
+</span></span></span><span class="line"><span class="cl"><span class="s">    run ./deploy.sh
+</span></span></span><span class="line"><span class="cl"><span class="s">    [ &#34;$status&#34; -ne 0 ]
+</span></span></span><span class="line"><span class="cl"><span class="s">    [[ &#34;$output&#34; == *&#34;必须指定&#34;* ]]
+</span></span></span><span class="line"><span class="cl"><span class="s">}
+</span></span></span><span class="line"><span class="cl"><span class="s">EOF</span>
+</span></span><span class="line"><span class="cl">bats test/
+</span></span></code></pre></div><h1 id="10-性能开篇第五问">10. 性能：开篇第五问</h1>
+<h2 id="101-为什么慢">10.1 为什么慢</h2>
+<p><strong>shell 慢的唯一原因是「进程创建」</strong>（<code>fork</code> + <code>exec</code> 的开销），不是「解释执行」。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="nb">time</span> <span class="k">for</span> i in <span class="o">{</span>1..10000<span class="o">}</span><span class="p">;</span> <span class="k">do</span> <span class="nb">echo</span> x &gt;/dev/null<span class="p">;</span> <span class="k">done</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># real 0m0.09s        &lt;- echo 是 builtin，不起进程</span>
+</span></span><span class="line"><span class="cl"><span class="nb">time</span> <span class="k">for</span> i in <span class="o">{</span>1..10000<span class="o">}</span><span class="p">;</span> <span class="k">do</span> /bin/echo x &gt;/dev/null<span class="p">;</span> <span class="k">done</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># real 0m5.20s        &lt;- 每次 fork+exec，慢 50 倍</span>
+</span></span></code></pre></div><h2 id="102-优化手段">10.2 优化手段</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ── ① 用 builtin 和参数展开替代外部命令 ──</span>
+</span></span><span class="line"><span class="cl">basename <span class="s2">&#34;</span><span class="nv">$p</span><span class="s2">&#34;</span>           -&gt;  <span class="s2">&#34;</span><span class="si">${</span><span class="nv">p</span><span class="p">##*/</span><span class="si">}</span><span class="s2">&#34;</span>           <span class="c1"># 快 100 倍</span>
+</span></span><span class="line"><span class="cl">dirname <span class="s2">&#34;</span><span class="nv">$p</span><span class="s2">&#34;</span>            -&gt;  <span class="s2">&#34;</span><span class="si">${</span><span class="nv">p</span><span class="p">%/*</span><span class="si">}</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;</span><span class="nv">$s</span><span class="s2">&#34;</span> <span class="p">|</span> tr a-z A-Z  -&gt;  <span class="s2">&#34;</span><span class="si">${</span><span class="nv">s</span><span class="p">^^</span><span class="si">}</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl">expr <span class="nv">$a</span> + <span class="nv">$b</span>            -&gt;  <span class="k">$((</span>a <span class="o">+</span> b<span class="k">))</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;</span><span class="nv">$s</span><span class="s2">&#34;</span> <span class="p">|</span> wc -c       -&gt;  <span class="si">${#</span><span class="nv">s</span><span class="si">}</span>
+</span></span><span class="line"><span class="cl"><span class="k">$(</span>cat file<span class="k">)</span>             -&gt;  <span class="k">$(</span>&lt;file<span class="k">)</span>             <span class="c1"># ✅ bash 内建读文件，不起 cat</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── ② 不要在循环里起进程 ──</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ❌ 10000 行 = 20000 个进程</span>
+</span></span><span class="line"><span class="cl"><span class="k">while</span> <span class="nb">read</span> -r line<span class="p">;</span> <span class="k">do</span>
+</span></span><span class="line"><span class="cl">    <span class="nv">field</span><span class="o">=</span><span class="k">$(</span><span class="nb">echo</span> <span class="s2">&#34;</span><span class="nv">$line</span><span class="s2">&#34;</span> <span class="p">|</span> cut -d, -f2<span class="k">)</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">echo</span> <span class="s2">&#34;</span><span class="nv">$field</span><span class="s2">&#34;</span> &gt;&gt; out.txt
+</span></span><span class="line"><span class="cl"><span class="k">done</span> &lt; input.csv
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 一个进程搞定</span>
+</span></span><span class="line"><span class="cl">awk -F, <span class="s1">&#39;{print $2}&#39;</span> input.csv &gt; out.txt
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 或纯 shell（不起进程）</span>
+</span></span><span class="line"><span class="cl"><span class="k">while</span> <span class="nv">IFS</span><span class="o">=</span>, <span class="nb">read</span> -r _ field _<span class="p">;</span> <span class="k">do</span> <span class="nb">printf</span> <span class="s1">&#39;%s\n&#39;</span> <span class="s2">&#34;</span><span class="nv">$field</span><span class="s2">&#34;</span><span class="p">;</span> <span class="k">done</span> &lt; input.csv &gt; out.txt
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── ③ 批量而不是逐个 ──</span>
+</span></span><span class="line"><span class="cl"><span class="k">for</span> f in *.log<span class="p">;</span> <span class="k">do</span> gzip <span class="s2">&#34;</span><span class="nv">$f</span><span class="s2">&#34;</span><span class="p">;</span> <span class="k">done</span>                          <span class="c1"># ❌</span>
+</span></span><span class="line"><span class="cl"><span class="nb">printf</span> <span class="s1">&#39;%s\0&#39;</span> *.log <span class="p">|</span> xargs -0 -P <span class="s2">&#34;</span><span class="k">$(</span>nproc<span class="k">)</span><span class="s2">&#34;</span> gzip           <span class="c1"># ✅</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── ④ 减少重复调用 ──</span>
+</span></span><span class="line"><span class="cl"><span class="k">for</span> i in <span class="o">{</span>1..1000<span class="o">}</span><span class="p">;</span> <span class="k">do</span> <span class="nb">echo</span> <span class="s2">&#34;</span><span class="k">$(</span>date<span class="k">)</span><span class="s2"> </span><span class="nv">$i</span><span class="s2">&#34;</span><span class="p">;</span> <span class="k">done</span>              <span class="c1"># ❌ 调 1000 次 date</span>
+</span></span><span class="line"><span class="cl"><span class="nv">now</span><span class="o">=</span><span class="k">$(</span>date<span class="k">)</span><span class="p">;</span> <span class="k">for</span> i in <span class="o">{</span>1..1000<span class="o">}</span><span class="p">;</span> <span class="k">do</span> <span class="nb">echo</span> <span class="s2">&#34;</span><span class="nv">$now</span><span class="s2"> </span><span class="nv">$i</span><span class="s2">&#34;</span><span class="p">;</span> <span class="k">done</span>    <span class="c1"># ✅</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── ⑤ 并行 ──</span>
+</span></span><span class="line"><span class="cl"><span class="nb">printf</span> <span class="s1">&#39;%s\n&#39;</span> <span class="s2">&#34;</span><span class="si">${</span><span class="nv">hosts</span><span class="p">[@]</span><span class="si">}</span><span class="s2">&#34;</span> <span class="p">|</span> xargs -P <span class="m">10</span> -I<span class="o">{}</span> ssh -n <span class="o">{}</span> uptime     <span class="c1"># xargs -P</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">for</span> h in <span class="s2">&#34;</span><span class="si">${</span><span class="nv">hosts</span><span class="p">[@]</span><span class="si">}</span><span class="s2">&#34;</span><span class="p">;</span> <span class="k">do</span> ssh -n <span class="s2">&#34;</span><span class="nv">$h</span><span class="s2">&#34;</span> uptime &gt; <span class="s2">&#34;/tmp/out.</span><span class="nv">$h</span><span class="s2">&#34;</span> <span class="p">&amp;</span> <span class="k">done</span>
+</span></span><span class="line"><span class="cl"><span class="nb">wait</span>                                 <span class="c1"># 后台任务 + wait</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="nv">max_jobs</span><span class="o">=</span><span class="m">10</span>                          <span class="c1"># 带并发上限</span>
+</span></span><span class="line"><span class="cl"><span class="k">for</span> h in <span class="s2">&#34;</span><span class="si">${</span><span class="nv">hosts</span><span class="p">[@]</span><span class="si">}</span><span class="s2">&#34;</span><span class="p">;</span> <span class="k">do</span>
+</span></span><span class="line"><span class="cl">    <span class="k">while</span> <span class="o">((</span> <span class="k">$(</span><span class="nb">jobs</span> -rp <span class="p">|</span> wc -l<span class="k">)</span> &gt;<span class="o">=</span> max_jobs <span class="o">))</span><span class="p">;</span> <span class="k">do</span> sleep 0.1<span class="p">;</span> <span class="k">done</span>
+</span></span><span class="line"><span class="cl">    ssh -n <span class="s2">&#34;</span><span class="nv">$h</span><span class="s2">&#34;</span> uptime &gt; <span class="s2">&#34;/tmp/out.</span><span class="nv">$h</span><span class="s2">&#34;</span> <span class="p">&amp;</span>
+</span></span><span class="line"><span class="cl"><span class="k">done</span>
+</span></span><span class="line"><span class="cl"><span class="nb">wait</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">parallel -j <span class="m">10</span> ssh <span class="o">{}</span> uptime ::: <span class="s2">&#34;</span><span class="si">${</span><span class="nv">hosts</span><span class="p">[@]</span><span class="si">}</span><span class="s2">&#34;</span>    <span class="c1"># GNU parallel（输出不交错）</span>
+</span></span></code></pre></div><h2 id="103-什么时候该换语言">10.3 什么时候该换语言</h2>
+<pre tabindex="0"><code>继续用 shell：
+  ✓ 主要在【调用其他命令】、串联管道
+  ✓ 逻辑简单（顺序执行 + 少量条件）
+  ✓ 200 行以内
+  ✓ 系统管理、部署、CI 胶水脚本
+
+换 Python / Go：
+  ✗ 需要【数据结构】（嵌套字典、JSON、结构体）
+  ✗ 需要【复杂错误处理】（重试、回滚、事务）
+  ✗ 需要【并发控制】（超过「起几个后台任务」的程度）
+  ✗ 需要【单元测试】（bats 能用但很受限）
+  ✗ 大量字符串/数值计算（shell 没有浮点，要靠 bc/awk）
+  ✗ 超过 300~500 行，或要被多人长期维护
+
+判断标准：「如果你在 shell 里实现数据结构、或在 grep/sed/awk 里嵌套三层以上，
+           就该换语言了。」
+</code></pre><h1 id="11-生产脚本检查清单">11. 生产脚本检查清单</h1>
+<pre tabindex="0"><code>── 骨架 ──
+[ ] #!/usr/bin/env bash
+[ ] set -euo pipefail
+[ ] 关键路径显式检查错误（不只依赖 -e）
+[ ] trap cleanup EXIT 清理临时资源
+[ ] 开头有用途、用法、示例注释
+
+── 安全 ──
+[ ] 所有变量引用加双引号 &#34;$var&#34;
+[ ] 数组用 &#34;${arr[@]}&#34;，参数用 &#34;$@&#34;
+[ ] rm -rf 前校验变量非空：${VAR:?} 或显式 if
+[ ] 临时文件用 mktemp（不用 $$ 拼名字）
+[ ] 密码不写在命令行（会进 ps 和 history）
+[ ] 用 find -print0 | xargs -0 处理文件名
+[ ] 幂等（重复执行结果一致）
+[ ] 破坏性操作有 --dry-run
+
+── 可靠性 ──
+[ ] 外部命令依赖检查（command -v）
+[ ] 网络/远程操作有超时（curl -m、timeout、ssh -o ConnectTimeout）
+[ ] 长任务防并发（flock）
+[ ] 关键操作前备份
+[ ] 有失败通知（邮件/webhook/healthchecks）
+
+── 可观测 ──
+[ ] 日志走 stderr，数据走 stdout
+[ ] 日志带时间戳与级别
+[ ] 有 DEBUG 开关
+[ ] 退出码有意义
+
+── 质量 ──
+[ ] shellcheck 无 warning
+[ ] bash -n 通过
+[ ] 在目标环境实际跑过
+[ ] cron 里跑的用 env -i 模拟过最小环境（14 篇 8.3）
+</code></pre><h1 id="12-面试题">12. 面试题</h1>
+<p><strong>Q：<code>set -euo pipefail</code> 每一项在防什么？<code>set -e</code> 有哪些不生效的情况？</strong></p>
+<ul>
+<li><strong><code>-e</code></strong>：命令失败立即退出，防止「错误被忽略后继续造成更大破坏」（<code>cd /nonexistent</code> 失败后继续 <code>rm -rf ./*</code>）</li>
+<li><strong><code>-u</code></strong>：用未定义变量报错，防止变量名拼错导致 <code>rm -rf &quot;$TAGET/&quot;</code> 变成 <code>rm -rf /</code></li>
+<li><strong><code>-o pipefail</code></strong>：管道任意段失败即算失败，防止 <code>curl ... | jq</code> 里 curl 的失败被 jq 的成功掩盖</li>
+</ul>
+<p><strong><code>set -e</code> 至少有六种不生效的情况</strong>，这是关键：</p>
+<ol>
+<li><strong>条件上下文里完全失效</strong>：<code>if cmd</code>、<code>while cmd</code>、<code>cmd &amp;&amp; ...</code>、<code>cmd || ...</code>、<code>! cmd</code></li>
+<li><strong>函数被用在条件里时，函数内部的 <code>-e</code> 也失效</strong>（很隐蔽）</li>
+<li><strong><code>local x=$(cmd)</code> / <code>export x=$(cmd)</code> 掩盖退出码</strong>（<code>local</code> 自身的退出码覆盖了命令的）—— 必须分两行写</li>
+<li><strong>管道中非最后一个命令</strong>（未开 pipefail 时）</li>
+<li><strong><code>((count++))</code> 结果为 0 时返回非零</strong>，会导致脚本退出</li>
+<li><strong><code>grep</code> 没匹配返回 1</strong></li>
+</ol>
+<p><strong>结论：<code>set -euo pipefail</code> 是基线而非保障，关键路径必须显式检查</strong> —— <code>cmd || die &quot;...&quot;</code> 或 <code>if ! cmd; then ...</code>。</p>
+<p><strong>Q：<code>[[ ]]</code> 和 <code>[ ]</code> 有什么本质区别？</strong></p>
+<p><strong><code>[ ]</code> 是命令，<code>[[ ]]</code> 是 bash 关键字</strong> —— 这一条差异决定了其余所有区别。</p>
+<p>因为 <code>[ ]</code> 是命令，它的参数要经过<strong>正常的分词和 glob 展开</strong>：<code>v=&quot;&quot;; [ $v = &quot;x&quot; ]</code> 会展开成 <code>[ = &quot;x&quot; ]</code>（参数缺失，语法错误），<code>f=&quot;a b&quot;; [ -f $f ]</code> 会变成三个参数。</p>
+<p>而 <code>[[ ]]</code> 在<strong>语法层面</strong>被解析，内部<strong>不做分词也不做 glob</strong>，所以变量不加引号也安全。它还独有三个能力：<strong><code>=~</code> 正则匹配</strong>（捕获组存在 <code>BASH_REMATCH</code> 数组里）、<code>==</code> 右侧的 <strong>glob 匹配</strong>、以及直接用 <strong><code>&amp;&amp;</code>/<code>||</code></strong>（<code>[ ]</code> 只能用已废弃的 <code>-a</code>/<code>-o</code>）。</p>
+<p>代价是 <code>[[ ]]</code> <strong>不是 POSIX</strong>（bash/zsh/ksh 专有）。所以规则是：<strong>bash 脚本一律用 <code>[[ ]]</code>（字符串/文件）和 <code>(( ))</code>（数值），只有写 <code>#!/bin/sh</code> 时才用 <code>[ ]</code></strong>。</p>
+<p><strong>Q：为什么数组必须写 <code>&quot;${arr[@]}&quot;</code>？<code>[@]</code> 和 <code>[*]</code> 有什么区别？</strong></p>
+<p><code>[@]</code> 让<strong>每个元素独立成词</strong>，<code>[*]</code> 把所有元素<strong>拼成一个字符串</strong>（用 <code>IFS</code> 首字符连接）。加引号才能保住这个区别：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="nv">arr</span><span class="o">=(</span>a <span class="s2">&#34;b c&#34;</span> d<span class="o">)</span>
+</span></span><span class="line"><span class="cl"><span class="nb">printf</span> <span class="s1">&#39;%s\n&#39;</span> <span class="s2">&#34;</span><span class="si">${</span><span class="nv">arr</span><span class="p">[@]</span><span class="si">}</span><span class="s2">&#34;</span>   <span class="c1"># 3 行：a / b c / d    ✅ &#34;b c&#34; 完整</span>
+</span></span><span class="line"><span class="cl"><span class="nb">printf</span> <span class="s1">&#39;%s\n&#39;</span> <span class="s2">&#34;</span><span class="si">${</span><span class="nv">arr</span><span class="p">[*]</span><span class="si">}</span><span class="s2">&#34;</span>   <span class="c1"># 1 行：a b c d</span>
+</span></span><span class="line"><span class="cl"><span class="k">for</span> x in <span class="si">${</span><span class="nv">arr</span><span class="p">[@]</span><span class="si">}</span>          <span class="c1"># ❌ 不加引号，&#34;b c&#34; 被拆成两个</span>
+</span></span></code></pre></div><p>这与 <code>&quot;$@&quot;</code> / <code>&quot;$*&quot;</code> 的区别完全一致。<strong>实际价值最大的场景是构建命令参数</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="nv">args</span><span class="o">=(</span>--output <span class="s2">&#34;/path with space/x.txt&#34;</span><span class="o">)</span>
+</span></span><span class="line"><span class="cl"><span class="o">[[</span> <span class="s2">&#34;</span><span class="nv">$DEBUG</span><span class="s2">&#34;</span> <span class="o">==</span> <span class="nb">true</span> <span class="o">]]</span> <span class="o">&amp;&amp;</span> <span class="nv">args</span><span class="o">+=(</span>--debug<span class="o">)</span>
+</span></span><span class="line"><span class="cl">mycommand <span class="s2">&#34;</span><span class="si">${</span><span class="nv">args</span><span class="p">[@]</span><span class="si">}</span><span class="s2">&#34;</span>      <span class="c1"># ✅ 每个元素一个独立参数</span>
+</span></span></code></pre></div><p>如果用字符串拼接 <code>opts=&quot;--output '/path with space/x.txt'&quot;</code>，那些引号<strong>不会被再次解析</strong>，路径仍然会被空格拆开 —— 这是「用字符串代替数组」的经典 bug。</p>
+<p><strong>Q：怎么保证脚本无论怎么退出都能清理临时文件？</strong></p>
+<p>用 <strong><code>trap cleanup EXIT</code></strong> —— 它在<strong>任何退出路径</strong>上都会执行：正常结束、<code>exit</code>、<code>set -e</code> 触发、被 <code>SIGINT</code>/<code>SIGTERM</code> 杀死。</p>
+<p>两个实现细节很关键：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">cleanup<span class="o">()</span> <span class="o">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">local</span> <span class="nv">exit_code</span><span class="o">=</span><span class="nv">$?</span>      <span class="c1"># ✅ 第一行就保存（后面的命令会覆盖 $?）</span>
+</span></span><span class="line"><span class="cl">    <span class="o">[[</span> -n <span class="s2">&#34;</span><span class="nv">$TMPDIR_SELF</span><span class="s2">&#34;</span> <span class="o">&amp;&amp;</span> -d <span class="s2">&#34;</span><span class="nv">$TMPDIR_SELF</span><span class="s2">&#34;</span> <span class="o">]]</span> <span class="o">&amp;&amp;</span> rm -rf -- <span class="s2">&#34;</span><span class="nv">$TMPDIR_SELF</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="nv">$exit_code</span>       <span class="c1"># ✅ 保持原退出码</span>
+</span></span><span class="line"><span class="cl"><span class="o">}</span>
+</span></span><span class="line"><span class="cl"><span class="nb">trap</span> cleanup EXIT
+</span></span><span class="line"><span class="cl"><span class="nv">TMPDIR_SELF</span><span class="o">=</span><span class="k">$(</span>mktemp -d<span class="k">)</span>    <span class="c1"># trap 设好【之后】才创建资源</span>
+</span></span></code></pre></div><p><strong>唯一无法捕获的是 <code>SIGKILL</code>（9）</strong>，所以清理不能只依赖 trap —— 临时文件应放在 <code>/tmp</code>（重启清空）或用可预测路径便于后续清理。</p>
+<p>另外推荐配 <strong><code>trap 'on_error $LINENO &quot;$BASH_COMMAND&quot;' ERR</code> + <code>set -E</code></strong>，出错时打印行号、失败的命令和调用栈（<code>FUNCNAME</code>），比单纯的 <code>set -e</code> 有用得多。</p>
+<p><strong>Q：shell 脚本为什么慢？什么时候该换语言？</strong></p>
+<p><strong>慢的唯一原因是进程创建</strong>（<code>fork</code> + <code>exec</code>），不是「解释执行」。实测循环一万次：用 builtin 的 <code>echo</code> 是 0.09 秒，用 <code>/bin/echo</code> 是 5.2 秒 —— <strong>差 50 倍</strong>。</p>
+<p>四条优化：① <strong>用参数展开替代外部命令</strong>（<code>${p##*/}</code> 替 <code>basename</code> 快百倍，<code>$(&lt;file)</code> 替 <code>$(cat file)</code>）；② <strong>绝不在循环里起进程</strong>（把 <code>while read + cut</code> 换成一次 <code>awk</code>）；③ <strong>批量而非逐个</strong>（<code>xargs -P</code> 替 <code>for</code> 循环）；④ 循环外提取不变的调用（<code>date</code> 只调一次）。</p>
+<p>该换语言的信号：需要<strong>数据结构</strong>（嵌套 JSON、结构体）、需要<strong>复杂错误处理</strong>（重试/回滚/事务）、需要<strong>真正的并发控制</strong>、需要<strong>单元测试</strong>、有大量<strong>数值计算</strong>（shell 没有浮点）、或者超过 <strong>300~500 行</strong>。</p>
+<p>一个很实用的判断标准：<strong>如果你在 shell 里实现数据结构，或者在 <code>grep</code>/<code>sed</code>/<code>awk</code> 里嵌套三层以上，就该换语言了。</strong></p>
+<p><strong>Q：为什么脚本的日志必须输出到 stderr？</strong></p>
+<p>因为<strong>stdout 是「数据通道」，要留给函数返回值和管道下游</strong>。</p>
+<p>shell 函数无法用 <code>return</code> 返回数据（只能返回 0-255 的退出码），所以约定是<strong>用 stdout 返回数据</strong>。如果日志也走 stdout，就会混进返回值：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">get_ips<span class="o">()</span> <span class="o">{</span>
+</span></span><span class="line"><span class="cl">    info <span class="s2">&#34;正在查询…&#34;</span>      <span class="c1"># 走 stderr，不污染</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">echo</span> <span class="s2">&#34;10.0.0.1&#34;</span><span class="p">;</span> <span class="nb">echo</span> <span class="s2">&#34;10.0.0.2&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="o">}</span>
+</span></span><span class="line"><span class="cl">get_ips <span class="p">|</span> wc -l           <span class="c1"># 2  ✅ 如果 info 走 stdout，这里会是 3</span>
+</span></span><span class="line"><span class="cl"><span class="nv">count</span><span class="o">=</span><span class="k">$(</span>get_ips<span class="k">)</span>          <span class="c1"># 也会被污染</span>
+</span></span></code></pre></div><p>配套的两个实践：颜色输出要用 <strong><code>[[ -t 2 ]]</code></strong> 判断 stderr 是否连着终端（重定向到文件时不输出 ANSI 转义码，否则日志文件里全是乱码）；整个脚本的输出落盘用 <strong><code>exec &gt; &gt;(tee -a &quot;$LOG&quot;) 2&gt;&amp;1</code></strong>，或者干脆交给 systemd 的 <code>StandardOutput=journal</code>。</p>
+<p><strong>Q：<code>getopts</code> 和手写参数解析各有什么适用场景？</strong></p>
+<p><strong><code>getopts</code> 是 shell 内建</strong>，处理短选项（<code>-e prod -d</code>）很干净，自动处理选项聚合（<code>-abc</code>）、<code>OPTARG</code>、<code>OPTIND</code>，用 <code>while getopts ':e:v:dh' opt</code> + <code>shift $((OPTIND-1))</code> 就够了。开头那个冒号表示静默模式（自己处理错误提示）。</p>
+<p><strong>它的硬限制是只支持单字符选项</strong>，不认 <code>--long-option</code>。三个方案：</p>
+<ol>
+<li><strong>手写 <code>while [[ $# -gt 0 ]]</code> + <code>case</code></strong>（最常用，无依赖，还能支持 <code>--env=prod</code> 这种等号形式，用 <code>${1#*=}</code> 提取）</li>
+<li><strong><code>getopt(1)</code></strong> 外部命令（GNU 版支持长选项，但 <strong>macOS 自带的 BSD 版不支持</strong>，可移植性差）</li>
+<li><strong>参数复杂了就换语言</strong>（Python 的 <code>argparse</code>、Go 的 <code>flag</code>/<code>cobra</code> 能自动生成帮助、做类型校验）</li>
+</ol>
+<p>顺带两个易错点：<code>&quot;${10}&quot;</code> 超过 9 的位置参数<strong>必须加花括号</strong>；<code>--</code> 之后的参数应该一律当位置参数处理。</p>
+<p><strong>Q：写完脚本上生产前该做哪些检查？</strong></p>
+<p>四类：</p>
+<p><strong>安全</strong>：所有变量加双引号、数组用 <code>&quot;${arr[@]}&quot;</code>、<code>rm -rf</code> 前用 <code>${VAR:?}</code> 校验非空、临时文件用 <code>mktemp</code>、密码不放命令行（会进 <code>ps</code> 和 history）、文件名用 <code>find -print0 | xargs -0</code>。</p>
+<p><strong>可靠</strong>：外部依赖用 <code>command -v</code> 检查、网络操作有超时（<code>curl -m</code>、<code>timeout</code>、<code>ssh -o ConnectTimeout</code>）、长任务用 <code>flock</code> 防并发、破坏性操作提供 <code>--dry-run</code>、脚本<strong>幂等</strong>（重复执行结果一致）。</p>
+<p><strong>可观测</strong>：日志走 stderr 带时间戳和级别、有 DEBUG 开关、退出码有意义、<strong>失败要有通知</strong>（否则「静默失败三个月」是最常见的事故，12 篇 6.4 提过）。</p>
+<p><strong>质量</strong>：<strong><code>shellcheck</code> 无 warning</strong>（它能查出 SC2086 未加引号、SC2155 <code>local x=$(cmd)</code> 掩盖退出码、SC2115 <code>rm -rf &quot;$VAR/&quot;</code> 未校验这些真实 bug）、<code>bash -n</code> 语法检查、<strong>在目标环境实际跑过</strong>、cron 里的脚本用 <code>env -i</code> 模拟过最小环境。</p>
+<hr>
+<h1 id="小结">小结</h1>
+<ul>
+<li><strong><code>#!/usr/bin/env bash</code></strong> 最可移植；<code>#!/bin/sh</code> 在 Debian 上是 dash，<code>[[ ]]</code>、数组、<code>&lt;()</code> 全部不可用</li>
+<li><strong><code>set -euo pipefail</code> 是基线不是保障</strong> —— 它在条件上下文、函数被当条件用、<code>local x=$(cmd)</code>、<code>((i++))</code> 等场景下不生效，关键路径要显式检查</li>
+<li><strong>引号铁律</strong>：<code>&quot;$var&quot;</code>、<code>&quot;$@&quot;</code>、<code>&quot;${arr[@]}&quot;</code>、<code>&quot;$(cmd)&quot;</code> 永远加引号</li>
+<li><strong><code>[[ ]]</code> 是关键字所以不分词不 glob</strong>，还独有 <code>=~</code> 正则和 glob 匹配；数值用 <code>(( ))</code></li>
+<li><strong>数组是安全处理多值的唯一方式</strong>，<code>[@]</code> 每个元素独立、<code>[*]</code> 拼成一个字符串</li>
+<li><strong><code>trap cleanup EXIT</code></strong> 是唯一可靠的清理方式（第一行存 <code>$?</code>，<code>SIGKILL</code> 无法捕获）</li>
+<li><strong><code>flock</code></strong> 防并发，不要自己用 pid 文件（有竞态）</li>
+<li><strong>stdout 是数据通道，日志一律走 stderr</strong>；颜色用 <code>[[ -t 2 ]]</code> 判断</li>
+<li><strong>shell 慢在进程创建</strong>：用参数展开替代 <code>basename</code>/<code>cut</code>，别在循环里起进程，用 <code>xargs -P</code> 并行</li>
+<li><strong>超过 300 行 / 需要数据结构 / 需要测试，就该换 Python 或 Go</strong></li>
+<li><strong><code>shellcheck</code> 是必须的</strong>，它查出的每条警告都对应真实 bug</li>
+</ul>
+<hr>
+<p><strong>上手部分（01~17）到这里结束。</strong> 从下一篇开始进入<strong>第二部分：深入层（18~40 篇）</strong>，主线从「怎么用」转向「<strong>为什么被设计成这样</strong>」：</p>
+<ul>
+<li><strong>17 Unix 设计哲学与 Linux 的形态</strong> —— 一切皆文件的代价、宏内核之争、POSIX 是谁的妥协</li>
+<li><strong>18 从按下电源到 shell 提示符</strong> —— 每一环为什么必须存在、initramfs 为什么被发明</li>
+<li><strong>19 VFS：一切皆文件的实现代价</strong> —— <code>file_operations</code> 如何统一磁盘/管道/socket</li>
+<li><strong>20 进程的诞生：fork 为什么是 fork</strong> —— 对比 <code>CreateProcess</code>/<code>posix_spawn</code>，COW 是设计还是补丁</li>
+<li><strong>21~22 凭证模型与权限演进史</strong> —— 你在 10 篇学的操作，在这里能看到它们为什么长成这样</li>
+</ul>
+<p>下一篇讲 <strong>Unix 设计哲学与 Linux 的形态</strong>。</p>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2026-08-12</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/linux/">linux</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/linux/linux_18_Unix%E8%AE%BE%E8%AE%A1%E5%93%B2%E5%AD%A6%E4%B8%8ELinux%E7%9A%84%E5%BD%A2%E6%80%81/" class="prev" rel="prev" title="Linux-18 Unix 设计哲学与 Linux 的形态：一切皆文件的代价、宏内核之争、ABI 承诺"><i class="fas fa-angle-left fa-fw"></i>Linux-18 Unix 设计哲学与 Linux 的形态：一切皆文件的代价、宏内核之争、ABI 承诺</a>
+            <a href="/posts/linux/linux_16_SSH%E4%B8%8E%E8%BF%9C%E7%A8%8B%E5%B7%A5%E4%BD%9C%E6%B5%81/" class="next" rel="next" title="Linux-16 SSH 与远程工作流：密钥认证原理、config 的威力、三种端口转发">Linux-16 SSH 与远程工作流：密钥认证原理、config 的威力、三种端口转发<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2026-08-12T15:30:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Linux-17 Shell 脚本工程化：set -euo pipefail 的陷阱、引号规则与 trap 清理"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

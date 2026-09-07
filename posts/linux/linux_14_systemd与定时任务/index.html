@@ -1,0 +1,1711 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>Linux-14 systemd 与定时任务：写一个生产级 unit、Type 怎么选、cron 的经典坑 - xingliuhua博客</title><meta name="Description" content="Type=simple/forking/notify 选错会怎样、enable 与 start 的区别、为什么改 unit 要 daemon-reload、drop-in 覆盖机制、journalctl 的完整查询、systemd timer 相比 cron 的优势、以及「脚本手动跑正常放进 cron 就失败」的根因。附生产级 Go 服务 unit 模板。"><meta property="og:title" content="Linux-14 systemd 与定时任务：写一个生产级 unit、Type 怎么选、cron 的经典坑" />
+<meta property="og:description" content="Type=simple/forking/notify 选错会怎样、enable 与 start 的区别、为什么改 unit 要 daemon-reload、drop-in 覆盖机制、journalctl 的完整查询、systemd timer 相比 cron 的优势、以及「脚本手动跑正常放进 cron 就失败」的根因。附生产级 Go 服务 unit 模板。" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/linux/linux_14_systemd%E4%B8%8E%E5%AE%9A%E6%97%B6%E4%BB%BB%E5%8A%A1/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2026-08-12T17:00:00+08:00" />
+<meta property="article:modified_time" content="2026-08-12T17:00:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="Linux-14 systemd 与定时任务：写一个生产级 unit、Type 怎么选、cron 的经典坑"/>
+<meta name="twitter:description" content="Type=simple/forking/notify 选错会怎样、enable 与 start 的区别、为什么改 unit 要 daemon-reload、drop-in 覆盖机制、journalctl 的完整查询、systemd timer 相比 cron 的优势、以及「脚本手动跑正常放进 cron 就失败」的根因。附生产级 Go 服务 unit 模板。"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/linux/linux_14_systemd%E4%B8%8E%E5%AE%9A%E6%97%B6%E4%BB%BB%E5%8A%A1/" /><link rel="prev" href="https://xingliuhua.github.io/posts/linux/linux_15_%E7%BD%91%E7%BB%9C%E6%93%8D%E4%BD%9C%E4%B8%8E%E6%8E%92%E6%9F%A5/" /><link rel="next" href="https://xingliuhua.github.io/posts/linux/linux_13_%E8%BF%9B%E7%A8%8B%E4%B8%8E%E4%BD%9C%E4%B8%9A%E6%8E%A7%E5%88%B6/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Linux-14 systemd 与定时任务：写一个生产级 unit、Type 怎么选、cron 的经典坑",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_14_systemd%E4%B8%8E%E5%AE%9A%E6%97%B6%E4%BB%BB%E5%8A%A1\/"
+        },"genre": "posts","keywords": "linux","wordcount":  13483 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_14_systemd%E4%B8%8E%E5%AE%9A%E6%97%B6%E4%BB%BB%E5%8A%A1\/","datePublished": "2026-08-12T17:00:00+08:00","dateModified": "2026-08-12T17:00:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "Type=simple/forking/notify 选错会怎样、enable 与 start 的区别、为什么改 unit 要 daemon-reload、drop-in 覆盖机制、journalctl 的完整查询、systemd timer 相比 cron 的优势、以及「脚本手动跑正常放进 cron 就失败」的根因。附生产级 Go 服务 unit 模板。"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">Linux-14 systemd 与定时任务：写一个生产级 unit、Type 怎么选、cron 的经典坑</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2026-08-12">2026-08-12</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 13483 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 27 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-基本概念">1. 基本概念</a>
+      <ol>
+        <li><a href="#11-unitsystemd-管理的一切">1.1 unit：systemd 管理的一切</a></li>
+        <li><a href="#12-unit-文件的位置与优先级">1.2 unit 文件的位置与优先级</a></li>
+        <li><a href="#13-两组状态">1.3 两组状态</a></li>
+        <li><a href="#14-依赖关系">1.4 依赖关系</a></li>
+        <li><a href="#15-target替代-runlevel">1.5 target：替代 runlevel</a></li>
+      </ol>
+    </li>
+    <li><a href="#2-systemctl-完整用法">2. systemctl 完整用法</a>
+      <ol>
+        <li><a href="#21-开篇第二问start-与-enable">2.1 开篇第二问：start 与 enable</a></li>
+        <li><a href="#22-生命周期操作">2.2 生命周期操作</a></li>
+        <li><a href="#23-开机自启与屏蔽">2.3 开机自启与屏蔽</a></li>
+        <li><a href="#24-查询与诊断">2.4 查询与诊断</a></li>
+        <li><a href="#25-启动性能分析">2.5 启动性能分析</a></li>
+        <li><a href="#26-开篇第三问为什么要-daemon-reload">2.6 开篇第三问：为什么要 daemon-reload</a></li>
+        <li><a href="#27-系统控制">2.7 系统控制</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-写一个生产级-unit">3. 写一个生产级 unit</a>
+      <ol>
+        <li><a href="#31-unit-段">3.1 <code>[Unit]</code> 段</a></li>
+        <li><a href="#32-service-段核心字段">3.2 <code>[Service]</code> 段核心字段</a></li>
+        <li><a href="#33-重启策略">3.3 重启策略</a></li>
+        <li><a href="#34-完整的-go-服务模板">3.4 完整的 Go 服务模板</a></li>
+      </ol>
+    </li>
+    <li><a href="#4-开篇第一问type-怎么选">4. 开篇第一问：Type 怎么选</a>
+      <ol>
+        <li><a href="#41-选错的后果">4.1 选错的后果</a></li>
+        <li><a href="#42-go-服务实现-sd_notify">4.2 Go 服务实现 sd_notify</a></li>
+      </ol>
+    </li>
+    <li><a href="#5-drop-in正确的覆盖方式">5. drop-in：正确的覆盖方式</a></li>
+    <li><a href="#6-journalctl">6. journalctl</a>
+      <ol>
+        <li><a href="#61-基本查询">6.1 基本查询</a></li>
+        <li><a href="#62-磁盘占用与持久化">6.2 磁盘占用与持久化</a></li>
+      </ol>
+    </li>
+    <li><a href="#7-systemd-timer">7. systemd timer</a>
+      <ol>
+        <li><a href="#71-timer--service-配对">7.1 timer + service 配对</a></li>
+        <li><a href="#72-oncalendar-语法">7.2 OnCalendar 语法</a></li>
+        <li><a href="#73-开篇第五问timer-相比-cron-的优势">7.3 开篇第五问：timer 相比 cron 的优势</a></li>
+      </ol>
+    </li>
+    <li><a href="#8-cron">8. cron</a>
+      <ol>
+        <li><a href="#81-语法">8.1 语法</a></li>
+        <li><a href="#82-配置文件的层次">8.2 配置文件的层次</a></li>
+        <li><a href="#83-开篇第四问为什么-cron-里就失败">8.3 开篇第四问：为什么 cron 里就失败</a></li>
+        <li><a href="#84-cron-的其他坑">8.4 cron 的其他坑</a></li>
+        <li><a href="#85-anacron-与-at">8.5 anacron 与 at</a></li>
+      </ol>
+    </li>
+    <li><a href="#9-socket-激活简介">9. socket 激活（简介）</a></li>
+    <li><a href="#10-知识点扩展">10. 知识点扩展</a>
+      <ol>
+        <li><a href="#101-systemctl-速查">10.1 systemctl 速查</a></li>
+        <li><a href="#102-journalctl-速查">10.2 journalctl 速查</a></li>
+        <li><a href="#103-unit-字段速查按用途">10.3 unit 字段速查（按用途）</a></li>
+        <li><a href="#104-常用占位符">10.4 常用占位符</a></li>
+      </ol>
+    </li>
+    <li><a href="#11-面试题">11. 面试题</a></li>
+    <li><a href="#小结">小结</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><p>上一篇讲了进程，这一篇讲<strong>怎么把进程变成服务</strong>。systemd 的设计之争（为什么它赢了、为什么它被骂）留给<strong>第 37 篇</strong>，这里只讲实操。</p>
+<p>先看五个问题：</p>
+<ol>
+<li><code>Type=simple</code>、<code>forking</code>、<code>notify</code> 该选哪个？选错会发生什么？</li>
+<li><code>systemctl enable</code> 和 <code>systemctl start</code> 有什么区别？</li>
+<li>为什么改了 unit 文件必须 <code>daemon-reload</code>？</li>
+<li>脚本手动跑正常，放进 cron 就失败，为什么？</li>
+<li>systemd timer 相比 cron 有什么优势？</li>
+</ol>
+<h1 id="1-基本概念">1. 基本概念</h1>
+<h2 id="11-unitsystemd-管理的一切">1.1 unit：systemd 管理的一切</h2>
+<p>systemd 把所有被管理的东西统一抽象成 <strong>unit</strong>，用后缀区分类型：</p>
+<table>
+<thead>
+<tr>
+<th>后缀</th>
+<th>类型</th>
+<th>管什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong><code>.service</code></strong></td>
+<td>服务</td>
+<td><strong>进程</strong>（最常用）</td>
+</tr>
+<tr>
+<td><strong><code>.timer</code></strong></td>
+<td>定时器</td>
+<td>定时触发另一个 unit（<strong>cron 的替代</strong>）</td>
+</tr>
+<tr>
+<td><code>.socket</code></td>
+<td>套接字</td>
+<td>监听端口/socket，有连接时才启动服务（socket 激活）</td>
+</tr>
+<tr>
+<td><strong><code>.mount</code></strong></td>
+<td>挂载点</td>
+<td>文件系统挂载（<strong>由 <code>/etc/fstab</code> 自动生成</strong>）</td>
+</tr>
+<tr>
+<td><code>.automount</code></td>
+<td>自动挂载</td>
+<td>首次访问时才挂载</td>
+</tr>
+<tr>
+<td><code>.swap</code></td>
+<td>交换区</td>
+<td>swap 设备/文件</td>
+</tr>
+<tr>
+<td><strong><code>.target</code></strong></td>
+<td>目标</td>
+<td><strong>一组 unit 的集合</strong>（替代传统的 runlevel）</td>
+</tr>
+<tr>
+<td><code>.path</code></td>
+<td>路径监视</td>
+<td>文件/目录变化时触发</td>
+</tr>
+<tr>
+<td><code>.device</code></td>
+<td>设备</td>
+<td>udev 识别的设备</td>
+</tr>
+<tr>
+<td><code>.slice</code></td>
+<td>切片</td>
+<td><strong>cgroup 层级</strong>，用于资源分配</td>
+</tr>
+<tr>
+<td><code>.scope</code></td>
+<td>作用域</td>
+<td>外部创建的进程组（如用户会话、容器）</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">systemctl list-units                        <span class="c1"># 当前【已加载】的 unit</span>
+</span></span><span class="line"><span class="cl">systemctl list-units --type<span class="o">=</span>service         <span class="c1"># 只看服务</span>
+</span></span><span class="line"><span class="cl">systemctl list-units --state<span class="o">=</span>failed         <span class="c1"># ✅ 失败的（排查第一步）</span>
+</span></span><span class="line"><span class="cl">systemctl list-unit-files                   <span class="c1"># 所有【已安装】的 unit 文件及其启用状态</span>
+</span></span><span class="line"><span class="cl">systemctl list-unit-files --type<span class="o">=</span>timer      <span class="c1"># 所有定时器</span>
+</span></span><span class="line"><span class="cl">systemctl --failed                          <span class="c1"># 等价 --state=failed</span>
+</span></span></code></pre></div><h2 id="12-unit-文件的位置与优先级">1.2 unit 文件的位置与优先级</h2>
+<pre tabindex="0"><code>优先级从高到低（同名文件，高优先级的完全覆盖低优先级的）：
+
+  /etc/systemd/system/          ← 【管理员写的】，你应该放在这里
+  /run/systemd/system/          ← 运行时动态生成的（重启消失）
+  /usr/lib/systemd/system/      ← 【软件包安装的】，不要手改！
+  /lib/systemd/system/          ← 同上（多数发行版是软链接到 /usr/lib）
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">systemctl cat nginx                         <span class="c1"># ✅ 看实际生效的完整配置（含所有 drop-in）</span>
+</span></span><span class="line"><span class="cl">systemctl show nginx                        <span class="c1"># 看所有属性的最终值（很长）</span>
+</span></span><span class="line"><span class="cl">systemctl show nginx -p ExecStart -p Type -p Restart   <span class="c1"># 只看关心的</span>
+</span></span><span class="line"><span class="cl">systemctl status nginx                      <span class="c1"># 运行状态 + 最近日志</span>
+</span></span></code></pre></div><p><strong>关键规则：不要直接编辑 <code>/usr/lib/systemd/system/</code> 下的文件</strong> —— 软件包升级会覆盖你的修改。正确做法是 drop-in（见第 5 章）。</p>
+<h2 id="13-两组状态">1.3 两组状态</h2>
+<p><strong>「是否开机自启」</strong>（<code>list-unit-files</code> 的 STATE 列）：</p>
+<table>
+<thead>
+<tr>
+<th>状态</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>enabled</code></td>
+<td>已启用开机自启（在某个 target 的 <code>.wants/</code> 目录里有软链接）</td>
+</tr>
+<tr>
+<td><code>disabled</code></td>
+<td>未启用</td>
+</tr>
+<tr>
+<td><strong><code>static</code></strong></td>
+<td><strong>没有 <code>[Install]</code> 段</strong>，无法 enable（通常是被别的 unit 依赖才启动）</td>
+</tr>
+<tr>
+<td><strong><code>masked</code></strong></td>
+<td><strong>被彻底屏蔽</strong>（软链接到 <code>/dev/null</code>），任何方式都无法启动</td>
+</tr>
+<tr>
+<td><code>indirect</code></td>
+<td>通过别名间接启用</td>
+</tr>
+<tr>
+<td><code>generated</code></td>
+<td>由 generator 自动生成（如 fstab 转换来的 <code>.mount</code>）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>「当前是否在运行」</strong>（<code>status</code> 的 Active 行）：</p>
+<table>
+<thead>
+<tr>
+<th>状态</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>active (running)</code></td>
+<td>正在运行（有常驻进程）</td>
+</tr>
+<tr>
+<td><code>active (exited)</code></td>
+<td>执行完退出了但被视为成功（<code>Type=oneshot</code> + <code>RemainAfterExit=yes</code>）</td>
+</tr>
+<tr>
+<td><code>active (waiting)</code></td>
+<td>在等触发（timer、socket）</td>
+</tr>
+<tr>
+<td><code>inactive (dead)</code></td>
+<td>未运行</td>
+</tr>
+<tr>
+<td><strong><code>failed</code></strong></td>
+<td><strong>启动失败或异常退出</strong></td>
+</tr>
+<tr>
+<td><code>activating</code> / <code>deactivating</code></td>
+<td>正在启动/停止中</td>
+</tr>
+</tbody>
+</table>
+<h2 id="14-依赖关系">1.4 依赖关系</h2>
+<p>这是 systemd 相对 SysV 脚本的核心改进：<strong>依赖是声明式的，而不是靠脚本编号顺序</strong>。</p>
+<table>
+<thead>
+<tr>
+<th>指令</th>
+<th>语义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong><code>Wants=</code></strong></td>
+<td><strong>弱依赖</strong>：尽量一起启动，对方失败<strong>不影响</strong>自己（<strong>推荐默认用这个</strong>）</td>
+</tr>
+<tr>
+<td><strong><code>Requires=</code></strong></td>
+<td><strong>强依赖</strong>：对方启动失败则自己也失败；对方停止则自己也停止</td>
+</tr>
+<tr>
+<td><code>Requisite=</code></td>
+<td>要求对方<strong>已经</strong>启动，否则立即失败（不主动拉起）</td>
+</tr>
+<tr>
+<td><code>BindsTo=</code></td>
+<td>比 <code>Requires</code> 更强：对方<strong>意外</strong>退出也会导致自己停止</td>
+</tr>
+<tr>
+<td><code>PartOf=</code></td>
+<td>单向绑定：对方 restart/stop 时自己也跟着，反之不影响</td>
+</tr>
+<tr>
+<td><strong><code>After=</code></strong></td>
+<td><strong>启动顺序</strong>：在对方之后启动（<strong>只管顺序，不管依赖</strong>）</td>
+</tr>
+<tr>
+<td><strong><code>Before=</code></strong></td>
+<td>在对方之前启动</td>
+</tr>
+<tr>
+<td><code>Conflicts=</code></td>
+<td>互斥：启动自己会停止对方</td>
+</tr>
+<tr>
+<td><code>OnFailure=</code></td>
+<td>自己失败时启动指定的 unit（<strong>用于告警</strong>）</td>
+</tr>
+<tr>
+<td><code>OnSuccess=</code></td>
+<td>成功时启动指定 unit（systemd 249+）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>最容易搞错的一点：<code>Requires</code> 与 <code>After</code> 是两个正交的概念。</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="c1"># ❌ 只写 Requires 不写 After：两者会【同时】启动，可能数据库还没就绪</span>
+</span></span><span class="line"><span class="cl"><span class="k">[Unit]</span>
+</span></span><span class="line"><span class="cl"><span class="na">Requires</span><span class="o">=</span><span class="s">postgresql.service</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 依赖 + 顺序都要写</span>
+</span></span><span class="line"><span class="cl"><span class="k">[Unit]</span>
+</span></span><span class="line"><span class="cl"><span class="na">Requires</span><span class="o">=</span><span class="s">postgresql.service</span>
+</span></span><span class="line"><span class="cl"><span class="na">After</span><span class="o">=</span><span class="s">postgresql.service</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 更常见的生产写法：用 Wants（数据库暂时不可用时服务仍启动，靠应用自己重试）</span>
+</span></span><span class="line"><span class="cl"><span class="k">[Unit]</span>
+</span></span><span class="line"><span class="cl"><span class="na">Wants</span><span class="o">=</span><span class="s">postgresql.service</span>
+</span></span><span class="line"><span class="cl"><span class="na">After</span><span class="o">=</span><span class="s">postgresql.service network-online.target</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">systemctl list-dependencies nginx           <span class="c1"># 看它依赖谁（树形）</span>
+</span></span><span class="line"><span class="cl">systemctl list-dependencies --reverse nginx <span class="c1"># ✅ 看谁依赖它（改动前必查）</span>
+</span></span><span class="line"><span class="cl">systemctl list-dependencies --all nginx
+</span></span><span class="line"><span class="cl">systemctl list-dependencies multi-user.target   <span class="c1"># 看这个 target 拉起哪些服务</span>
+</span></span></code></pre></div><h2 id="15-target替代-runlevel">1.5 target：替代 runlevel</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">systemctl get-default                       <span class="c1"># multi-user.target（服务器默认）</span>
+</span></span><span class="line"><span class="cl">systemctl set-default multi-user.target     <span class="c1"># 设置默认启动目标</span>
+</span></span><span class="line"><span class="cl">systemctl list-units --type<span class="o">=</span>target          <span class="c1"># 当前激活的 target</span>
+</span></span></code></pre></div><table>
+<thead>
+<tr>
+<th>target</th>
+<th>对应 runlevel</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>poweroff.target</code></td>
+<td>0</td>
+<td>关机</td>
+</tr>
+<tr>
+<td><code>rescue.target</code></td>
+<td>1</td>
+<td>单用户救援模式</td>
+</tr>
+<tr>
+<td><strong><code>multi-user.target</code></strong></td>
+<td>3</td>
+<td><strong>多用户命令行（服务器标准）</strong></td>
+</tr>
+<tr>
+<td><code>graphical.target</code></td>
+<td>5</td>
+<td>图形界面</td>
+</tr>
+<tr>
+<td><code>reboot.target</code></td>
+<td>6</td>
+<td>重启</td>
+</tr>
+<tr>
+<td><code>emergency.target</code></td>
+<td>—</td>
+<td>紧急模式（只挂载根分区、只启动一个 shell）</td>
+</tr>
+<tr>
+<td><strong><code>network-online.target</code></strong></td>
+<td>—</td>
+<td><strong>网络真正可用</strong>（不只是网卡起来了）</td>
+</tr>
+<tr>
+<td><code>basic.target</code></td>
+<td>—</td>
+<td>基础系统就绪</td>
+</tr>
+<tr>
+<td><code>sysinit.target</code></td>
+<td>—</td>
+<td>系统初始化完成</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ⚠️ network.target 与 network-online.target 的区别（常见错误来源）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># network.target        = 网络【栈】已初始化（不保证有 IP、不保证能连外网）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># network-online.target = 网络【真正可用】（有 IP、路由就绪）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 需要联网的服务必须用后者，且要启用对应的等待服务</span>
+</span></span><span class="line"><span class="cl"><span class="o">[</span>Unit<span class="o">]</span>
+</span></span><span class="line"><span class="cl"><span class="nv">Wants</span><span class="o">=</span>network-online.target
+</span></span><span class="line"><span class="cl"><span class="nv">After</span><span class="o">=</span>network-online.target
+</span></span><span class="line"><span class="cl"><span class="c1"># 并确保 systemd-networkd-wait-online 或 NetworkManager-wait-online 已启用</span>
+</span></span><span class="line"><span class="cl">systemctl is-enabled systemd-networkd-wait-online.service
+</span></span></code></pre></div><h1 id="2-systemctl-完整用法">2. systemctl 完整用法</h1>
+<h2 id="21-开篇第二问start-与-enable">2.1 开篇第二问：start 与 enable</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">sudo systemctl start nginx          <span class="c1"># 【立即】启动（重启后不会自动启动）</span>
+</span></span><span class="line"><span class="cl">sudo systemctl <span class="nb">enable</span> nginx         <span class="c1"># 设置【开机自启】（现在不启动）</span>
+</span></span><span class="line"><span class="cl">sudo systemctl <span class="nb">enable</span> --now nginx   <span class="c1"># ✅ 两件事一起做（最常用）</span>
+</span></span></code></pre></div><p><strong><code>enable</code> 的本质是创建一个软链接</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">sudo systemctl <span class="nb">enable</span> nginx
+</span></span><span class="line"><span class="cl"><span class="c1"># Created symlink /etc/systemd/system/multi-user.target.wants/nginx.service</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#              → /usr/lib/systemd/system/nginx.service</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ 就是往 target 的 .wants 目录里放个链接</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">ls -l /etc/systemd/system/multi-user.target.wants/
+</span></span><span class="line"><span class="cl"><span class="c1"># 这个链接放在哪个 target 的 .wants 里，由 unit 的 [Install] 段决定：</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># [Install]</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># WantedBy=multi-user.target</span>
+</span></span></code></pre></div><p><strong>所以 <code>static</code> 状态的 unit 无法 enable</strong> —— 它没有 <code>[Install]</code> 段，systemd 不知道该把链接放进哪个 target。</p>
+<h2 id="22-生命周期操作">2.2 生命周期操作</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">sudo systemctl start myapp
+</span></span><span class="line"><span class="cl">sudo systemctl stop myapp
+</span></span><span class="line"><span class="cl">sudo systemctl restart myapp                <span class="c1"># 停止再启动（有服务中断）</span>
+</span></span><span class="line"><span class="cl">sudo systemctl reload myapp                 <span class="c1"># 重载配置（需 unit 定义了 ExecReload）</span>
+</span></span><span class="line"><span class="cl">sudo systemctl reload-or-restart myapp      <span class="c1"># ✅ 能 reload 就 reload，否则 restart</span>
+</span></span><span class="line"><span class="cl">sudo systemctl try-restart myapp            <span class="c1"># 只在【正在运行】时才重启</span>
+</span></span><span class="line"><span class="cl">sudo systemctl <span class="nb">kill</span> myapp                   <span class="c1"># 发信号（默认 SIGTERM）</span>
+</span></span><span class="line"><span class="cl">sudo systemctl <span class="nb">kill</span> -s SIGQUIT myapp        <span class="c1"># 指定信号（Go 服务打 goroutine 栈）</span>
+</span></span><span class="line"><span class="cl">sudo systemctl <span class="nb">kill</span> --kill-whom<span class="o">=</span>main -s HUP myapp   <span class="c1"># 只发给主进程</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># reload vs restart 的区别（生产上很重要）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># reload  = 不中断服务，通常是给进程发 SIGHUP 让它重读配置</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># restart = 进程真的退出再启动，会有中断窗口</span>
+</span></span><span class="line"><span class="cl">systemctl show nginx -p ExecReload           <span class="c1"># 看它支持什么 reload 方式</span>
+</span></span></code></pre></div><h2 id="23-开机自启与屏蔽">2.3 开机自启与屏蔽</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">sudo systemctl <span class="nb">enable</span> myapp
+</span></span><span class="line"><span class="cl">sudo systemctl disable myapp
+</span></span><span class="line"><span class="cl">sudo systemctl disable --now myapp          <span class="c1"># 禁用并立即停止</span>
+</span></span><span class="line"><span class="cl">sudo systemctl is-enabled myapp             <span class="c1"># 查询（脚本用，看退出码）</span>
+</span></span><span class="line"><span class="cl">sudo systemctl reenable myapp               <span class="c1"># 先 disable 再 enable（修复错乱的链接）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># mask：比 disable 更彻底</span>
+</span></span><span class="line"><span class="cl">sudo systemctl mask myapp                   <span class="c1"># 软链接到 /dev/null，【任何方式都无法启动】</span>
+</span></span><span class="line"><span class="cl">sudo systemctl unmask myapp
+</span></span><span class="line"><span class="cl"><span class="c1"># 用途：彻底禁止某个服务（如禁掉发行版自带的 apache 防止它抢 80 端口）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#      disable 只是不自动启动，但依赖它的服务仍可能拉起它；mask 能彻底阻止</span>
+</span></span></code></pre></div><h2 id="24-查询与诊断">2.4 查询与诊断</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">systemctl status myapp                      <span class="c1"># ✅ 状态 + 最近 10 行日志</span>
+</span></span><span class="line"><span class="cl">systemctl status myapp -l --no-pager        <span class="c1"># 不截断、不分页</span>
+</span></span><span class="line"><span class="cl">systemctl status myapp -n <span class="m">50</span>                <span class="c1"># 显示 50 行日志</span>
+</span></span><span class="line"><span class="cl">systemctl is-active myapp                   <span class="c1"># active / inactive / failed（脚本用）</span>
+</span></span><span class="line"><span class="cl">systemctl is-failed myapp
+</span></span><span class="line"><span class="cl">systemctl cat myapp                         <span class="c1"># ✅ 看完整配置（含 drop-in，标注来源文件）</span>
+</span></span><span class="line"><span class="cl">systemctl show myapp                        <span class="c1"># 所有属性的最终值</span>
+</span></span><span class="line"><span class="cl">systemctl show myapp -p MainPID -p Type -p Restart -p LimitNOFILE
+</span></span><span class="line"><span class="cl">systemctl <span class="nb">help</span> myapp                        <span class="c1"># 打开该服务的 man 页</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 找出所有失败的服务（登录机器后的例行检查）</span>
+</span></span><span class="line"><span class="cl">systemctl --failed
+</span></span><span class="line"><span class="cl">systemctl list-units --state<span class="o">=</span>failed
+</span></span><span class="line"><span class="cl">sudo systemctl reset-failed                 <span class="c1"># 清除失败计数（被 StartLimit 挡住时需要）</span>
+</span></span><span class="line"><span class="cl">sudo systemctl reset-failed myapp
+</span></span></code></pre></div><h2 id="25-启动性能分析">2.5 启动性能分析</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">systemd-analyze                             <span class="c1"># 总启动时间</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Startup finished in 3.２s (kernel) + 8.5s (userspace) = 11.7s</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">systemd-analyze blame                       <span class="c1"># ✅ 按耗时排序，找出拖慢启动的服务</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 4.521s NetworkManager-wait-online.service</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 2.103s snapd.service</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 1.234s docker.service</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">systemd-analyze critical-chain              <span class="c1"># 关键路径（真正影响启动时间的链条）</span>
+</span></span><span class="line"><span class="cl">systemd-analyze critical-chain myapp.service
+</span></span><span class="line"><span class="cl">systemd-analyze plot &gt; boot.svg             <span class="c1"># 生成可视化时序图</span>
+</span></span><span class="line"><span class="cl">systemd-analyze verify /etc/systemd/system/myapp.service    <span class="c1"># ✅ 语法检查</span>
+</span></span><span class="line"><span class="cl">systemd-analyze security myapp.service      <span class="c1"># ✅ 安全加固评分（0~10，越低越好）</span>
+</span></span><span class="line"><span class="cl">systemd-analyze calendar <span class="s1">&#39;Mon *-*-* 02:30&#39;</span>  <span class="c1"># ✅ 验证 OnCalendar 表达式</span>
+</span></span><span class="line"><span class="cl">systemd-analyze timespan <span class="s1">&#39;2h 30min&#39;</span>         <span class="c1"># 验证时间跨度表达式</span>
+</span></span></code></pre></div><h2 id="26-开篇第三问为什么要-daemon-reload">2.6 开篇第三问：为什么要 daemon-reload</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">sudo vim /etc/systemd/system/myapp.service
+</span></span><span class="line"><span class="cl">sudo systemctl restart myapp
+</span></span><span class="line"><span class="cl"><span class="c1"># Warning: The unit file, source configuration file or drop-ins of myapp.service changed</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#          on disk. Run &#39;systemctl daemon-reload&#39; to reload units.</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">sudo systemctl daemon-reload                <span class="c1"># ✅ 让 systemd 重新读取所有 unit 文件</span>
+</span></span><span class="line"><span class="cl">sudo systemctl restart myapp
+</span></span></code></pre></div><p><strong>原因</strong>：systemd 在启动时把所有 unit 文件<strong>解析成内存里的对象</strong>，之后一直用内存里的版本。你改了磁盘上的文件，systemd 并不知道。<code>daemon-reload</code> 让它重新扫描并解析。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 记忆规则</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 改了 unit 【文件】        -&gt; daemon-reload + restart</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 改了服务自己的【配置文件】 -&gt; 只需 reload（如 nginx.conf → systemctl reload nginx）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 升级了 systemd 本身       -&gt; daemon-reexec（重新执行 systemd 自己，不重启系统）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">sudo systemctl daemon-reload                <span class="c1"># 重新加载 unit 定义</span>
+</span></span><span class="line"><span class="cl">sudo systemctl daemon-reexec                <span class="c1"># 重新执行 systemd 进程本身</span>
+</span></span></code></pre></div><h2 id="27-系统控制">2.7 系统控制</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">sudo systemctl reboot                       <span class="c1"># 重启</span>
+</span></span><span class="line"><span class="cl">sudo systemctl poweroff                     <span class="c1"># 关机</span>
+</span></span><span class="line"><span class="cl">sudo systemctl <span class="nb">suspend</span> / hibernate          <span class="c1"># 挂起/休眠</span>
+</span></span><span class="line"><span class="cl">sudo systemctl rescue                       <span class="c1"># 切到救援模式</span>
+</span></span><span class="line"><span class="cl">sudo systemctl isolate multi-user.target    <span class="c1"># 切换到指定 target（停掉不属于它的服务）</span>
+</span></span><span class="line"><span class="cl">sudo systemctl list-jobs                    <span class="c1"># 正在进行的启动/停止任务（卡住时看它）</span>
+</span></span></code></pre></div><h1 id="3-写一个生产级-unit">3. 写一个生产级 unit</h1>
+<h2 id="31-unit-段">3.1 <code>[Unit]</code> 段</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="k">[Unit]</span>
+</span></span><span class="line"><span class="cl"><span class="na">Description</span><span class="o">=</span><span class="s">My Go API Service              # 一句话描述（systemctl status 会显示）</span>
+</span></span><span class="line"><span class="cl"><span class="na">Documentation</span><span class="o">=</span><span class="s">https://wiki.internal/myapp  # 文档链接（systemctl help 会用）</span>
+</span></span><span class="line"><span class="cl"><span class="na">After</span><span class="o">=</span><span class="s">network-online.target postgresql.service</span>
+</span></span><span class="line"><span class="cl"><span class="na">Wants</span><span class="o">=</span><span class="s">network-online.target</span>
+</span></span><span class="line"><span class="cl"><span class="na">Requires</span><span class="o">=</span>                                  <span class="s"># 强依赖（慎用）</span>
+</span></span><span class="line"><span class="cl"><span class="na">PartOf</span><span class="o">=</span>                                    <span class="s"># 被谁的 restart 带动</span>
+</span></span><span class="line"><span class="cl"><span class="na">Conflicts</span><span class="o">=</span>                                 <span class="s"># 与谁互斥</span>
+</span></span><span class="line"><span class="cl"><span class="na">OnFailure</span><span class="o">=</span><span class="s">notify-failure@%n.service        # ✅ 失败时触发告警服务（%n = 本 unit 名）</span>
+</span></span><span class="line"><span class="cl"><span class="na">StartLimitIntervalSec</span><span class="o">=</span><span class="s">300                  # 在 300 秒窗口内</span>
+</span></span><span class="line"><span class="cl"><span class="na">StartLimitBurst</span><span class="o">=</span><span class="s">5                          # 最多允许启动 5 次（超了就拒绝再启动）</span>
+</span></span><span class="line"><span class="cl"><span class="na">ConditionPathExists</span><span class="o">=</span><span class="s">/etc/myapp/config.yaml # 条件：文件不存在则跳过（不算失败）</span>
+</span></span><span class="line"><span class="cl"><span class="na">AssertPathExists</span><span class="o">=</span><span class="s">/var/lib/myapp            # 断言：不满足则【失败】</span>
+</span></span></code></pre></div><p><strong><code>StartLimitBurst</code> 是个容易踩的坑</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 服务反复崩溃 -&gt; 达到启动次数限制 -&gt; systemd 拒绝再启动</span>
+</span></span><span class="line"><span class="cl">systemctl status myapp
+</span></span><span class="line"><span class="cl"><span class="c1"># Active: failed (Result: start-limit-hit)</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                         ^^^^^^^^^^^^^^^ 撞上了启动频率限制</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">sudo systemctl reset-failed myapp           <span class="c1"># ✅ 清除计数后才能再启动</span>
+</span></span><span class="line"><span class="cl">sudo systemctl start myapp
+</span></span></code></pre></div><h2 id="32-service-段核心字段">3.2 <code>[Service]</code> 段核心字段</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="k">[Service]</span>
+</span></span><span class="line"><span class="cl"><span class="na">Type</span><span class="o">=</span><span class="s">notify                                # 见第 4 章</span>
+</span></span><span class="line"><span class="cl"><span class="na">User</span><span class="o">=</span><span class="s">myapp                                 # 以哪个用户运行（10 篇讲的专用账号）</span>
+</span></span><span class="line"><span class="cl"><span class="na">Group</span><span class="o">=</span><span class="s">myapp</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="na">WorkingDirectory</span><span class="o">=</span><span class="s">/var/lib/myapp            # cwd</span>
+</span></span><span class="line"><span class="cl"><span class="na">ExecStartPre</span><span class="o">=</span><span class="s">/usr/local/bin/myapp check    # 启动前执行（失败则不启动）</span>
+</span></span><span class="line"><span class="cl"><span class="na">ExecStart</span><span class="o">=</span><span class="s">/usr/local/bin/myapp --config /etc/myapp/config.yaml</span>
+</span></span><span class="line"><span class="cl"><span class="na">ExecStartPost</span><span class="o">=</span><span class="s">/bin/sleep 1                 # 启动后执行</span>
+</span></span><span class="line"><span class="cl"><span class="na">ExecReload</span><span class="o">=</span><span class="s">/bin/kill -HUP $MAINPID         # ✅ 定义 reload 行为</span>
+</span></span><span class="line"><span class="cl"><span class="na">ExecStop</span><span class="o">=</span>                                  <span class="s"># 自定义停止命令（默认发 SIGTERM）</span>
+</span></span><span class="line"><span class="cl"><span class="na">ExecStopPost</span><span class="o">=</span>                              <span class="s"># 停止后清理</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="na">Restart</span><span class="o">=</span><span class="s">on-failure                         # 重启策略，见 3.3</span>
+</span></span><span class="line"><span class="cl"><span class="na">RestartSec</span><span class="o">=</span><span class="s">5                               # 重启前等 5 秒</span>
+</span></span><span class="line"><span class="cl"><span class="na">TimeoutStartSec</span><span class="o">=</span><span class="s">30                         # 启动超时（Type=notify 时超时算失败）</span>
+</span></span><span class="line"><span class="cl"><span class="na">TimeoutStopSec</span><span class="o">=</span><span class="s">30                          # ✅ 停止超时（超了发 SIGKILL）</span>
+</span></span><span class="line"><span class="cl"><span class="na">KillSignal</span><span class="o">=</span><span class="s">SIGTERM                         # 停止时先发什么信号</span>
+</span></span><span class="line"><span class="cl"><span class="na">KillMode</span><span class="o">=</span><span class="s">mixed                             # 主进程发 TERM，其余发 KILL</span>
+</span></span><span class="line"><span class="cl"><span class="na">SendSIGKILL</span><span class="o">=</span><span class="s">yes                            # 超时后是否强杀（默认 yes）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="na">Environment</span><span class="o">=</span><span class="s">GOMAXPROCS=4                   # 环境变量</span>
+</span></span><span class="line"><span class="cl"><span class="na">Environment</span><span class="o">=</span><span class="s">&#34;LOG_LEVEL=info&#34; &#34;TZ=Asia/Shanghai&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="na">EnvironmentFile</span><span class="o">=</span><span class="s">-/etc/default/myapp        # 从文件读（- 表示文件不存在也不报错）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="na">StandardOutput</span><span class="o">=</span><span class="s">journal                     # stdout 去哪（journal/null/file:/path/append:/path）</span>
+</span></span><span class="line"><span class="cl"><span class="na">StandardError</span><span class="o">=</span><span class="s">journal</span>
+</span></span><span class="line"><span class="cl"><span class="na">SyslogIdentifier</span><span class="o">=</span><span class="s">myapp                     # 日志里的标识名</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 目录：systemd 自动创建 + 设好属主，停止时按需清理</span>
+</span></span><span class="line"><span class="cl"><span class="na">RuntimeDirectory</span><span class="o">=</span><span class="s">myapp                     # /run/myapp（停止时删除）</span>
+</span></span><span class="line"><span class="cl"><span class="na">RuntimeDirectoryMode</span><span class="o">=</span><span class="s">0750</span>
+</span></span><span class="line"><span class="cl"><span class="na">StateDirectory</span><span class="o">=</span><span class="s">myapp                       # /var/lib/myapp（保留）</span>
+</span></span><span class="line"><span class="cl"><span class="na">CacheDirectory</span><span class="o">=</span><span class="s">myapp                       # /var/cache/myapp</span>
+</span></span><span class="line"><span class="cl"><span class="na">LogsDirectory</span><span class="o">=</span><span class="s">myapp                        # /var/log/myapp</span>
+</span></span><span class="line"><span class="cl"><span class="na">ConfigurationDirectory</span><span class="o">=</span><span class="s">myapp               # /etc/myapp</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 资源限制（底层是 cgroup）</span>
+</span></span><span class="line"><span class="cl"><span class="na">LimitNOFILE</span><span class="o">=</span><span class="s">65535                          # ✅ fd 上限（limits.conf 对服务无效！见 13 篇）</span>
+</span></span><span class="line"><span class="cl"><span class="na">LimitNPROC</span><span class="o">=</span><span class="s">4096</span>
+</span></span><span class="line"><span class="cl"><span class="na">LimitCORE</span><span class="o">=</span><span class="s">infinity</span>
+</span></span><span class="line"><span class="cl"><span class="na">CPUQuota</span><span class="o">=</span><span class="s">200%                              # 最多用 2 核</span>
+</span></span><span class="line"><span class="cl"><span class="na">MemoryMax</span><span class="o">=</span><span class="s">2G                               # 内存硬限制</span>
+</span></span><span class="line"><span class="cl"><span class="na">MemoryHigh</span><span class="o">=</span><span class="s">1.5G                            # 软限制（超了激进回收）</span>
+</span></span><span class="line"><span class="cl"><span class="na">TasksMax</span><span class="o">=</span><span class="s">4096</span>
+</span></span><span class="line"><span class="cl"><span class="na">OOMScoreAdjust</span><span class="o">=</span><span class="s">-500                        # 降低被 OOM 杀的概率</span>
+</span></span><span class="line"><span class="cl"><span class="na">Nice</span><span class="o">=</span><span class="s">0</span>
+</span></span><span class="line"><span class="cl"><span class="na">IOWeight</span><span class="o">=</span><span class="s">100</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">[Install]</span>
+</span></span><span class="line"><span class="cl"><span class="na">WantedBy</span><span class="o">=</span><span class="s">multi-user.target                 # enable 时链接到哪个 target</span>
+</span></span></code></pre></div><h2 id="33-重启策略">3.3 重启策略</h2>
+<table>
+<thead>
+<tr>
+<th><code>Restart=</code></th>
+<th>何时重启</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>no</code></td>
+<td>从不（默认）</td>
+</tr>
+<tr>
+<td><strong><code>on-failure</code></strong></td>
+<td><strong>非零退出码、被信号杀死、超时、看门狗触发</strong>（最常用）</td>
+</tr>
+<tr>
+<td><code>always</code></td>
+<td>总是重启（<strong>包括正常退出</strong>）</td>
+</tr>
+<tr>
+<td><code>on-success</code></td>
+<td>只在正常退出（exit 0）时</td>
+</tr>
+<tr>
+<td><code>on-abnormal</code></td>
+<td>被信号杀死、超时、看门狗（不含非零退出码）</td>
+</tr>
+<tr>
+<td><code>on-abort</code></td>
+<td>只在收到未捕获的信号时</td>
+</tr>
+<tr>
+<td><code>on-watchdog</code></td>
+<td>只在看门狗超时时</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="c1"># 长驻服务的典型配置</span>
+</span></span><span class="line"><span class="cl"><span class="na">Restart</span><span class="o">=</span><span class="s">always</span>
+</span></span><span class="line"><span class="cl"><span class="na">RestartSec</span><span class="o">=</span><span class="s">5</span>
+</span></span><span class="line"><span class="cl"><span class="na">StartLimitIntervalSec</span><span class="o">=</span><span class="s">300</span>
+</span></span><span class="line"><span class="cl"><span class="na">StartLimitBurst</span><span class="o">=</span><span class="s">5</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 含义：崩了就重启，间隔 5 秒；但 5 分钟内超过 5 次就停止尝试（避免无意义的疯狂重启）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 一次性任务（数据库迁移、初始化）</span>
+</span></span><span class="line"><span class="cl"><span class="na">Type</span><span class="o">=</span><span class="s">oneshot</span>
+</span></span><span class="line"><span class="cl"><span class="na">RemainAfterExit</span><span class="o">=</span><span class="s">yes                        # 执行完仍显示 active（表示&#34;已完成&#34;）</span>
+</span></span><span class="line"><span class="cl"><span class="na">Restart</span><span class="o">=</span><span class="s">no</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 排除特定退出码不触发重启</span>
+</span></span><span class="line"><span class="cl"><span class="na">RestartPreventExitStatus</span><span class="o">=</span><span class="s">42                # 退出码 42 时不重启（应用用它表达&#34;配置错误，别重试&#34;）</span>
+</span></span><span class="line"><span class="cl"><span class="na">SuccessExitStatus</span><span class="o">=</span><span class="s">143                      # 把 143（SIGTERM）也视为成功</span>
+</span></span></code></pre></div><h2 id="34-完整的-go-服务模板">3.4 完整的 Go 服务模板</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="c1"># /etc/systemd/system/myapp.service</span>
+</span></span><span class="line"><span class="cl"><span class="k">[Unit]</span>
+</span></span><span class="line"><span class="cl"><span class="na">Description</span><span class="o">=</span><span class="s">MyApp Go API Service</span>
+</span></span><span class="line"><span class="cl"><span class="na">Documentation</span><span class="o">=</span><span class="s">https://wiki.internal/myapp</span>
+</span></span><span class="line"><span class="cl"><span class="na">Wants</span><span class="o">=</span><span class="s">network-online.target</span>
+</span></span><span class="line"><span class="cl"><span class="na">After</span><span class="o">=</span><span class="s">network-online.target postgresql.service</span>
+</span></span><span class="line"><span class="cl"><span class="na">OnFailure</span><span class="o">=</span><span class="s">alert@%n.service</span>
+</span></span><span class="line"><span class="cl"><span class="na">StartLimitIntervalSec</span><span class="o">=</span><span class="s">300</span>
+</span></span><span class="line"><span class="cl"><span class="na">StartLimitBurst</span><span class="o">=</span><span class="s">5</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">[Service]</span>
+</span></span><span class="line"><span class="cl"><span class="na">Type</span><span class="o">=</span><span class="s">notify                                # 用 sd_notify 精确上报就绪状态（见第 4 章）</span>
+</span></span><span class="line"><span class="cl"><span class="na">NotifyAccess</span><span class="o">=</span><span class="s">main</span>
+</span></span><span class="line"><span class="cl"><span class="na">WatchdogSec</span><span class="o">=</span><span class="s">30                             # 应用需每 &lt;30s 发一次心跳，否则被判定为卡死并重启</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="na">User</span><span class="o">=</span><span class="s">myapp</span>
+</span></span><span class="line"><span class="cl"><span class="na">Group</span><span class="o">=</span><span class="s">myapp</span>
+</span></span><span class="line"><span class="cl"><span class="na">WorkingDirectory</span><span class="o">=</span><span class="s">/var/lib/myapp</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="na">ExecStartPre</span><span class="o">=</span><span class="s">/usr/local/bin/myapp validate --config /etc/myapp/config.yaml</span>
+</span></span><span class="line"><span class="cl"><span class="na">ExecStart</span><span class="o">=</span><span class="s">/usr/local/bin/myapp serve --config /etc/myapp/config.yaml</span>
+</span></span><span class="line"><span class="cl"><span class="na">ExecReload</span><span class="o">=</span><span class="s">/bin/kill -HUP $MAINPID</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="na">Restart</span><span class="o">=</span><span class="s">always</span>
+</span></span><span class="line"><span class="cl"><span class="na">RestartSec</span><span class="o">=</span><span class="s">5</span>
+</span></span><span class="line"><span class="cl"><span class="na">TimeoutStopSec</span><span class="o">=</span><span class="s">45                          # 要大于代码里 srv.Shutdown 的超时</span>
+</span></span><span class="line"><span class="cl"><span class="na">KillMode</span><span class="o">=</span><span class="s">mixed</span>
+</span></span><span class="line"><span class="cl"><span class="na">KillSignal</span><span class="o">=</span><span class="s">SIGTERM</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="na">EnvironmentFile</span><span class="o">=</span><span class="s">-/etc/default/myapp</span>
+</span></span><span class="line"><span class="cl"><span class="na">Environment</span><span class="o">=</span><span class="s">GOMAXPROCS=4</span>
+</span></span><span class="line"><span class="cl"><span class="na">Environment</span><span class="o">=</span><span class="s">GOMEMLIMIT=1800MiB             # ✅ 略小于 MemoryMax，让 GC 提前工作</span>
+</span></span><span class="line"><span class="cl"><span class="na">Environment</span><span class="o">=</span><span class="s">TZ=Asia/Shanghai</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="na">StandardOutput</span><span class="o">=</span><span class="s">journal</span>
+</span></span><span class="line"><span class="cl"><span class="na">StandardError</span><span class="o">=</span><span class="s">journal</span>
+</span></span><span class="line"><span class="cl"><span class="na">SyslogIdentifier</span><span class="o">=</span><span class="s">myapp</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="na">RuntimeDirectory</span><span class="o">=</span><span class="s">myapp</span>
+</span></span><span class="line"><span class="cl"><span class="na">StateDirectory</span><span class="o">=</span><span class="s">myapp</span>
+</span></span><span class="line"><span class="cl"><span class="na">LogsDirectory</span><span class="o">=</span><span class="s">myapp</span>
+</span></span><span class="line"><span class="cl"><span class="na">ConfigurationDirectory</span><span class="o">=</span><span class="s">myapp</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="na">LimitNOFILE</span><span class="o">=</span><span class="s">65535</span>
+</span></span><span class="line"><span class="cl"><span class="na">MemoryMax</span><span class="o">=</span><span class="s">2G</span>
+</span></span><span class="line"><span class="cl"><span class="na">MemoryHigh</span><span class="o">=</span><span class="s">1800M</span>
+</span></span><span class="line"><span class="cl"><span class="na">CPUQuota</span><span class="o">=</span><span class="s">400%</span>
+</span></span><span class="line"><span class="cl"><span class="na">TasksMax</span><span class="o">=</span><span class="s">4096</span>
+</span></span><span class="line"><span class="cl"><span class="na">OOMScoreAdjust</span><span class="o">=</span><span class="s">-500</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 安全加固（10 篇 8 章讲过，用 systemd-analyze security 检查评分）</span>
+</span></span><span class="line"><span class="cl"><span class="na">NoNewPrivileges</span><span class="o">=</span><span class="s">yes</span>
+</span></span><span class="line"><span class="cl"><span class="na">ProtectSystem</span><span class="o">=</span><span class="s">strict</span>
+</span></span><span class="line"><span class="cl"><span class="na">ProtectHome</span><span class="o">=</span><span class="s">yes</span>
+</span></span><span class="line"><span class="cl"><span class="na">PrivateTmp</span><span class="o">=</span><span class="s">yes</span>
+</span></span><span class="line"><span class="cl"><span class="na">PrivateDevices</span><span class="o">=</span><span class="s">yes</span>
+</span></span><span class="line"><span class="cl"><span class="na">ProtectKernelTunables</span><span class="o">=</span><span class="s">yes</span>
+</span></span><span class="line"><span class="cl"><span class="na">ProtectKernelModules</span><span class="o">=</span><span class="s">yes</span>
+</span></span><span class="line"><span class="cl"><span class="na">ProtectControlGroups</span><span class="o">=</span><span class="s">yes</span>
+</span></span><span class="line"><span class="cl"><span class="na">RestrictSUIDSGID</span><span class="o">=</span><span class="s">yes</span>
+</span></span><span class="line"><span class="cl"><span class="na">RestrictNamespaces</span><span class="o">=</span><span class="s">yes</span>
+</span></span><span class="line"><span class="cl"><span class="na">RestrictRealtime</span><span class="o">=</span><span class="s">yes</span>
+</span></span><span class="line"><span class="cl"><span class="na">LockPersonality</span><span class="o">=</span><span class="s">yes</span>
+</span></span><span class="line"><span class="cl"><span class="na">MemoryDenyWriteExecute</span><span class="o">=</span><span class="s">no                  # ⚠️ Go 不需要 JIT，可以设 yes；但 cgo/某些库会崩</span>
+</span></span><span class="line"><span class="cl"><span class="na">SystemCallFilter</span><span class="o">=</span><span class="s">@system-service</span>
+</span></span><span class="line"><span class="cl"><span class="na">SystemCallErrorNumber</span><span class="o">=</span><span class="s">EPERM</span>
+</span></span><span class="line"><span class="cl"><span class="na">ReadWritePaths</span><span class="o">=</span><span class="s">/var/lib/myapp /var/log/myapp</span>
+</span></span><span class="line"><span class="cl"><span class="na">CapabilityBoundingSet</span><span class="o">=</span><span class="s">CAP_NET_BIND_SERVICE # 只保留绑定低端口的能力</span>
+</span></span><span class="line"><span class="cl"><span class="na">AmbientCapabilities</span><span class="o">=</span><span class="s">CAP_NET_BIND_SERVICE</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">[Install]</span>
+</span></span><span class="line"><span class="cl"><span class="na">WantedBy</span><span class="o">=</span><span class="s">multi-user.target</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 部署流程</span>
+</span></span><span class="line"><span class="cl">sudo systemd-analyze verify /etc/systemd/system/myapp.service   <span class="c1"># ① 语法检查</span>
+</span></span><span class="line"><span class="cl">sudo systemctl daemon-reload                                     <span class="c1"># ② 重新加载</span>
+</span></span><span class="line"><span class="cl">sudo systemctl <span class="nb">enable</span> --now myapp                                <span class="c1"># ③ 启用并启动</span>
+</span></span><span class="line"><span class="cl">systemctl status myapp                                           <span class="c1"># ④ 确认</span>
+</span></span><span class="line"><span class="cl">sudo systemd-analyze security myapp                              <span class="c1"># ⑤ 看加固评分</span>
+</span></span><span class="line"><span class="cl">journalctl -u myapp -f                                           <span class="c1"># ⑥ 跟随日志</span>
+</span></span></code></pre></div><h1 id="4-开篇第一问type-怎么选">4. 开篇第一问：Type 怎么选</h1>
+<p><strong><code>Type=</code> 决定 systemd 如何判断「服务已经启动成功」</strong>，选错会导致依赖顺序错乱或状态显示错误。</p>
+<table>
+<thead>
+<tr>
+<th>Type</th>
+<th>systemd 认为「启动完成」的时机</th>
+<th>适用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong><code>simple</code></strong></td>
+<td><strong><code>ExecStart</code> 的进程一被 fork 出来</strong>（不等它就绪）</td>
+<td><strong>默认值</strong>；前台运行的程序</td>
+</tr>
+<tr>
+<td><code>exec</code></td>
+<td>进程被 <code>execve()</code> 成功执行后</td>
+<td>比 simple 略准确（能捕获「二进制不存在」）</td>
+</tr>
+<tr>
+<td><strong><code>forking</code></strong></td>
+<td><strong>父进程退出</strong>后（传统守护进程的 double-fork）</td>
+<td>老式 daemon（自己 fork 到后台）</td>
+</tr>
+<tr>
+<td><strong><code>notify</code></strong></td>
+<td><strong>进程主动发送 <code>READY=1</code></strong> 通知</td>
+<td><strong>最准确</strong>，需要应用支持 sd_notify</td>
+</tr>
+<tr>
+<td><code>notify-reload</code></td>
+<td>同上，且支持 reload 时上报（systemd 253+）</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>oneshot</code></td>
+<td>进程<strong>执行完毕退出</strong>后</td>
+<td>一次性任务（迁移、初始化、timer 触发的任务）</td>
+</tr>
+<tr>
+<td><code>dbus</code></td>
+<td>进程在 D-Bus 上注册了指定名字后</td>
+<td>桌面/D-Bus 服务</td>
+</tr>
+<tr>
+<td><code>idle</code></td>
+<td>延迟到其他任务都完成后才启动</td>
+<td>避免输出与启动信息交错</td>
+</tr>
+</tbody>
+</table>
+<h2 id="41-选错的后果">4.1 选错的后果</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="c1"># ❌ 错误一：程序自己 fork 到后台，但写了 Type=simple</span>
+</span></span><span class="line"><span class="cl"><span class="na">Type</span><span class="o">=</span><span class="s">simple</span>
+</span></span><span class="line"><span class="cl"><span class="na">ExecStart</span><span class="o">=</span><span class="s">/usr/sbin/mydaemon         # 这个程序会 fork 然后父进程退出</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 后果：systemd 看到&#34;主进程&#34;退出了，认为服务挂了 -&gt; 立即报 failed 并（按策略）重启</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#      形成无限重启循环</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 修法一：改成 forking</span>
+</span></span><span class="line"><span class="cl"><span class="na">Type</span><span class="o">=</span><span class="s">forking</span>
+</span></span><span class="line"><span class="cl"><span class="na">PIDFile</span><span class="o">=</span><span class="s">/run/mydaemon.pid            # 告诉 systemd 去哪找真正的主进程 PID</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 修法二（更好）：让程序【不要 fork】，以前台方式运行</span>
+</span></span><span class="line"><span class="cl"><span class="na">Type</span><span class="o">=</span><span class="s">simple</span>
+</span></span><span class="line"><span class="cl"><span class="na">ExecStart</span><span class="o">=</span><span class="s">/usr/sbin/mydaemon --foreground</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 现代最佳实践：程序前台运行，进程管理交给 systemd</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># nginx: daemon off;    /  php-fpm: --nodaemonize  /  Go 服务天然前台</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="c1"># ❌ 错误二：服务需要 10 秒才能就绪，但用了 Type=simple</span>
+</span></span><span class="line"><span class="cl"><span class="na">Type</span><span class="o">=</span><span class="s">simple</span>
+</span></span><span class="line"><span class="cl"><span class="na">ExecStart</span><span class="o">=</span><span class="s">/usr/local/bin/myapp       # 启动后要 10 秒才能接受请求</span>
+</span></span><span class="line"><span class="cl"><span class="na">After</span><span class="o">=</span><span class="s">myapp.service                  # 依赖它的服务</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 后果：systemd 一 fork 出进程就认为&#34;启动完成&#34;，</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#      依赖它的服务立即启动 -&gt; 连不上 -&gt; 失败</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 用 Type=notify，让应用自己上报就绪</span>
+</span></span><span class="line"><span class="cl"><span class="na">Type</span><span class="o">=</span><span class="s">notify</span>
+</span></span></code></pre></div><h2 id="42-go-服务实现-sd_notify">4.2 Go 服务实现 sd_notify</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kn">import</span> <span class="s">&#34;github.com/coreos/go-systemd/v22/daemon&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">main</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">srv</span> <span class="o">:=</span> <span class="o">&amp;</span><span class="nx">http</span><span class="p">.</span><span class="nx">Server</span><span class="p">{</span><span class="nx">Addr</span><span class="p">:</span> <span class="s">&#34;:8080&#34;</span><span class="p">,</span> <span class="nx">Handler</span><span class="p">:</span> <span class="nx">router</span><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// 先完成所有初始化：连数据库、加载配置、预热缓存
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">if</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nf">initEverything</span><span class="p">();</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">log</span><span class="p">.</span><span class="nf">Fatalf</span><span class="p">(</span><span class="s">&#34;初始化失败: %v&#34;</span><span class="p">,</span> <span class="nx">err</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="nx">ln</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">net</span><span class="p">.</span><span class="nf">Listen</span><span class="p">(</span><span class="s">&#34;tcp&#34;</span><span class="p">,</span> <span class="s">&#34;:8080&#34;</span><span class="p">)</span>     <span class="c1">// 端口已经在监听
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">if</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span> <span class="nx">log</span><span class="p">.</span><span class="nf">Fatal</span><span class="p">(</span><span class="nx">err</span><span class="p">)</span> <span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// ✅ 到这里才算真正就绪，通知 systemd
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">if</span> <span class="nx">sent</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">daemon</span><span class="p">.</span><span class="nf">SdNotify</span><span class="p">(</span><span class="kc">false</span><span class="p">,</span> <span class="nx">daemon</span><span class="p">.</span><span class="nx">SdNotifyReady</span><span class="p">);</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">log</span><span class="p">.</span><span class="nf">Printf</span><span class="p">(</span><span class="s">&#34;sd_notify 失败: %v&#34;</span><span class="p">,</span> <span class="nx">err</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span> <span class="k">else</span> <span class="k">if</span> <span class="nx">sent</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">log</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="s">&#34;已上报 READY=1&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// 看门狗心跳（配合 WatchdogSec=30）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">if</span> <span class="nx">interval</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">daemon</span><span class="p">.</span><span class="nf">SdWatchdogEnabled</span><span class="p">(</span><span class="kc">false</span><span class="p">);</span> <span class="nx">err</span> <span class="o">==</span> <span class="kc">nil</span> <span class="o">&amp;&amp;</span> <span class="nx">interval</span> <span class="p">&gt;</span> <span class="mi">0</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">go</span> <span class="kd">func</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">tick</span> <span class="o">:=</span> <span class="nx">time</span><span class="p">.</span><span class="nf">NewTicker</span><span class="p">(</span><span class="nx">interval</span> <span class="o">/</span> <span class="mi">2</span><span class="p">)</span>    <span class="c1">// 按间隔的一半发送
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>            <span class="k">defer</span> <span class="nx">tick</span><span class="p">.</span><span class="nf">Stop</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">            <span class="k">for</span> <span class="k">range</span> <span class="nx">tick</span><span class="p">.</span><span class="nx">C</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">                <span class="c1">// ✅ 这里应该做真实的健康检查，而不是无脑发心跳
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>                <span class="k">if</span> <span class="nf">healthy</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">                    <span class="nx">daemon</span><span class="p">.</span><span class="nf">SdNotify</span><span class="p">(</span><span class="kc">false</span><span class="p">,</span> <span class="nx">daemon</span><span class="p">.</span><span class="nx">SdNotifyWatchdog</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">                <span class="p">}</span>
+</span></span><span class="line"><span class="cl">            <span class="p">}</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}()</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="k">go</span> <span class="nx">srv</span><span class="p">.</span><span class="nf">Serve</span><span class="p">(</span><span class="nx">ln</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// 优雅退出（13 篇 5.3）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">quit</span> <span class="o">:=</span> <span class="nb">make</span><span class="p">(</span><span class="kd">chan</span> <span class="nx">os</span><span class="p">.</span><span class="nx">Signal</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">signal</span><span class="p">.</span><span class="nf">Notify</span><span class="p">(</span><span class="nx">quit</span><span class="p">,</span> <span class="nx">syscall</span><span class="p">.</span><span class="nx">SIGTERM</span><span class="p">,</span> <span class="nx">syscall</span><span class="p">.</span><span class="nx">SIGINT</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="o">&lt;-</span><span class="nx">quit</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="nx">daemon</span><span class="p">.</span><span class="nf">SdNotify</span><span class="p">(</span><span class="kc">false</span><span class="p">,</span> <span class="nx">daemon</span><span class="p">.</span><span class="nx">SdNotifyStopping</span><span class="p">)</span>   <span class="c1">// 上报「正在停止」
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">ctx</span><span class="p">,</span> <span class="nx">cancel</span> <span class="o">:=</span> <span class="nx">context</span><span class="p">.</span><span class="nf">WithTimeout</span><span class="p">(</span><span class="nx">context</span><span class="p">.</span><span class="nf">Background</span><span class="p">(),</span> <span class="mi">30</span><span class="o">*</span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">defer</span> <span class="nf">cancel</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">srv</span><span class="p">.</span><span class="nf">Shutdown</span><span class="p">(</span><span class="nx">ctx</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><strong>不想引入依赖时，sd_notify 的协议其实很简单</strong>（往 <code>$NOTIFY_SOCKET</code> 这个 unix datagram socket 写一行）：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">sdNotify</span><span class="p">(</span><span class="nx">state</span> <span class="kt">string</span><span class="p">)</span> <span class="kt">error</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">addr</span> <span class="o">:=</span> <span class="nx">os</span><span class="p">.</span><span class="nf">Getenv</span><span class="p">(</span><span class="s">&#34;NOTIFY_SOCKET&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">addr</span> <span class="o">==</span> <span class="s">&#34;&#34;</span> <span class="p">{</span> <span class="k">return</span> <span class="kc">nil</span> <span class="p">}</span>               <span class="c1">// 不在 systemd 下运行时静默跳过
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">if</span> <span class="nx">addr</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">==</span> <span class="sc">&#39;@&#39;</span> <span class="p">{</span> <span class="nx">addr</span> <span class="p">=</span> <span class="s">&#34;\x00&#34;</span> <span class="o">+</span> <span class="nx">addr</span><span class="p">[</span><span class="mi">1</span><span class="p">:]</span> <span class="p">}</span>   <span class="c1">// 抽象命名空间
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">conn</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">net</span><span class="p">.</span><span class="nf">DialUnix</span><span class="p">(</span><span class="s">&#34;unixgram&#34;</span><span class="p">,</span> <span class="kc">nil</span><span class="p">,</span> <span class="o">&amp;</span><span class="nx">net</span><span class="p">.</span><span class="nx">UnixAddr</span><span class="p">{</span><span class="nx">Name</span><span class="p">:</span> <span class="nx">addr</span><span class="p">,</span> <span class="nx">Net</span><span class="p">:</span> <span class="s">&#34;unixgram&#34;</span><span class="p">})</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span> <span class="k">return</span> <span class="nx">err</span> <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="k">defer</span> <span class="nx">conn</span><span class="p">.</span><span class="nf">Close</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">_</span><span class="p">,</span> <span class="nx">err</span> <span class="p">=</span> <span class="nx">conn</span><span class="p">.</span><span class="nf">Write</span><span class="p">([]</span><span class="nb">byte</span><span class="p">(</span><span class="nx">state</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="nx">err</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="c1">// sdNotify(&#34;READY=1&#34;)
+</span></span></span><span class="line"><span class="cl"><span class="c1">// sdNotify(&#34;STATUS=处理中 1234 个请求&#34;)     // 会显示在 systemctl status 里
+</span></span></span><span class="line"><span class="cl"><span class="c1">// sdNotify(&#34;WATCHDOG=1&#34;)
+</span></span></span><span class="line"><span class="cl"><span class="c1">// sdNotify(&#34;STOPPING=1&#34;)
+</span></span></span></code></pre></div><h1 id="5-drop-in正确的覆盖方式">5. drop-in：正确的覆盖方式</h1>
+<p><strong>不要直接改发行版提供的 unit 文件</strong>（升级会覆盖）。用 drop-in 片段来追加或覆盖字段：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">sudo systemctl edit nginx                   <span class="c1"># ✅ 自动创建 drop-in 并打开编辑器</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 它会创建 /etc/systemd/system/nginx.service.d/override.conf</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">sudo systemctl edit --full nginx            <span class="c1"># 完整复制原文件到 /etc/（整体覆盖）</span>
+</span></span><span class="line"><span class="cl">sudo systemctl revert nginx                 <span class="c1"># ✅ 撤销所有 drop-in 与覆盖，回到原始状态</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 手动创建 drop-in</span>
+</span></span><span class="line"><span class="cl">sudo mkdir -p /etc/systemd/system/nginx.service.d/
+</span></span><span class="line"><span class="cl">sudo tee /etc/systemd/system/nginx.service.d/override.conf &gt; /dev/null <span class="s">&lt;&lt;&#39;EOF&#39;
+</span></span></span><span class="line"><span class="cl"><span class="s">[Service]
+</span></span></span><span class="line"><span class="cl"><span class="s">LimitNOFILE=65535
+</span></span></span><span class="line"><span class="cl"><span class="s">Environment=MY_VAR=value
+</span></span></span><span class="line"><span class="cl"><span class="s">EOF</span>
+</span></span><span class="line"><span class="cl">sudo systemctl daemon-reload
+</span></span><span class="line"><span class="cl">systemctl cat nginx                         <span class="c1"># ✅ 能看到原文件 + drop-in，并标注来源</span>
+</span></span></code></pre></div><p><strong>一个关键规则：列表型字段需要先清空再赋值。</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="c1"># ❌ 直接写会【追加】而不是替换（ExecStart 会变成两条，systemd 直接报错）</span>
+</span></span><span class="line"><span class="cl"><span class="k">[Service]</span>
+</span></span><span class="line"><span class="cl"><span class="na">ExecStart</span><span class="o">=</span><span class="s">/usr/local/bin/mynginx</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 先用空值清空，再赋新值</span>
+</span></span><span class="line"><span class="cl"><span class="k">[Service]</span>
+</span></span><span class="line"><span class="cl"><span class="na">ExecStart</span><span class="o">=</span>
+</span></span><span class="line"><span class="cl"><span class="na">ExecStart</span><span class="o">=</span><span class="s">/usr/local/bin/mynginx</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 同样需要这样处理的字段：ExecStartPre、ExecStartPost、ExecReload、</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                       Environment、After、Wants、ReadWritePaths 等</span>
+</span></span></code></pre></div><h1 id="6-journalctl">6. journalctl</h1>
+<h2 id="61-基本查询">6.1 基本查询</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">journalctl                                  <span class="c1"># 全部日志（从最早开始，按 q 退出）</span>
+</span></span><span class="line"><span class="cl">journalctl -e                               <span class="c1"># ✅ 跳到【末尾】</span>
+</span></span><span class="line"><span class="cl">journalctl -r                               <span class="c1"># 倒序（最新在前）</span>
+</span></span><span class="line"><span class="cl">journalctl -n <span class="m">100</span>                           <span class="c1"># 最近 100 行</span>
+</span></span><span class="line"><span class="cl">journalctl -f                               <span class="c1"># ✅ 跟随（等价 tail -f）</span>
+</span></span><span class="line"><span class="cl">journalctl --no-pager                        <span class="c1"># 不分页（脚本/管道用）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 按服务 ──</span>
+</span></span><span class="line"><span class="cl">journalctl -u myapp                         <span class="c1"># ✅ 最常用</span>
+</span></span><span class="line"><span class="cl">journalctl -u myapp -f                      <span class="c1"># 跟随某个服务</span>
+</span></span><span class="line"><span class="cl">journalctl -u myapp -n <span class="m">50</span> --no-pager
+</span></span><span class="line"><span class="cl">journalctl -u nginx -u php-fpm              <span class="c1"># 多个服务</span>
+</span></span><span class="line"><span class="cl">journalctl -u <span class="s1">&#39;myapp*&#39;</span>                      <span class="c1"># 通配</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 按时间 ──</span>
+</span></span><span class="line"><span class="cl">journalctl --since today
+</span></span><span class="line"><span class="cl">journalctl --since yesterday --until today
+</span></span><span class="line"><span class="cl">journalctl --since <span class="s1">&#39;1 hour ago&#39;</span>
+</span></span><span class="line"><span class="cl">journalctl --since <span class="s1">&#39;2026-08-12 14:00&#39;</span> --until <span class="s1">&#39;2026-08-12 15:00&#39;</span>
+</span></span><span class="line"><span class="cl">journalctl --since <span class="s1">&#39;-30min&#39;</span>                 <span class="c1"># 30 分钟内</span>
+</span></span><span class="line"><span class="cl">journalctl -u myapp --since <span class="s1">&#39;10 min ago&#39;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 按优先级 ──</span>
+</span></span><span class="line"><span class="cl">journalctl -p err                           <span class="c1"># ✅ 只看 error 及以上</span>
+</span></span><span class="line"><span class="cl">journalctl -p warning..err                  <span class="c1"># 区间</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 级别：emerg(0) alert(1) crit(2) err(3) warning(4) notice(5) info(6) debug(7)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 按其他维度 ──</span>
+</span></span><span class="line"><span class="cl">journalctl -k                               <span class="c1"># ✅ 只看内核消息（等价 dmesg）</span>
+</span></span><span class="line"><span class="cl">journalctl -k -p err --since today          <span class="c1"># 今天的内核错误</span>
+</span></span><span class="line"><span class="cl">journalctl <span class="nv">_PID</span><span class="o">=</span><span class="m">1234</span>                        <span class="c1"># 按 PID</span>
+</span></span><span class="line"><span class="cl">journalctl <span class="nv">_UID</span><span class="o">=</span><span class="m">1000</span>                        <span class="c1"># 按用户</span>
+</span></span><span class="line"><span class="cl">journalctl <span class="nv">_COMM</span><span class="o">=</span>sshd                       <span class="c1"># 按命令名</span>
+</span></span><span class="line"><span class="cl">journalctl -t myapp                         <span class="c1"># 按 SyslogIdentifier</span>
+</span></span><span class="line"><span class="cl">journalctl /usr/local/bin/myapp             <span class="c1"># 按可执行文件路径</span>
+</span></span><span class="line"><span class="cl">journalctl -b                               <span class="c1"># 本次启动以来</span>
+</span></span><span class="line"><span class="cl">journalctl -b -1                            <span class="c1"># ✅ 【上一次】启动的日志（排查崩溃重启必用）</span>
+</span></span><span class="line"><span class="cl">journalctl --list-boots                     <span class="c1"># 列出所有启动记录</span>
+</span></span><span class="line"><span class="cl">journalctl -u myapp --grep <span class="s1">&#39;timeout&#39;</span>        <span class="c1"># ✅ 内置正则过滤（比 | grep 高效）</span>
+</span></span><span class="line"><span class="cl">journalctl -u myapp --grep <span class="s1">&#39;error&#39;</span> -p err
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 输出格式 ──</span>
+</span></span><span class="line"><span class="cl">journalctl -u myapp -o short                <span class="c1"># 默认</span>
+</span></span><span class="line"><span class="cl">journalctl -u myapp -o cat                  <span class="c1"># ✅ 只输出消息本身（**给 jq 用**）</span>
+</span></span><span class="line"><span class="cl">journalctl -u myapp -o json                 <span class="c1"># JSON（一行一条）</span>
+</span></span><span class="line"><span class="cl">journalctl -u myapp -o json-pretty          <span class="c1"># 格式化 JSON</span>
+</span></span><span class="line"><span class="cl">journalctl -u myapp -o verbose              <span class="c1"># 显示所有字段（看有哪些字段可过滤）</span>
+</span></span><span class="line"><span class="cl">journalctl -u myapp -o short-iso            <span class="c1"># ISO 时间格式</span>
+</span></span><span class="line"><span class="cl">journalctl -u myapp -o short-precise        <span class="c1"># 微秒精度</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 结构化日志：Go 服务输出 JSON 时的组合 ──</span>
+</span></span><span class="line"><span class="cl">journalctl -u myapp -o cat -f <span class="p">|</span> jq -r <span class="s1">&#39;select(.level==&#34;error&#34;) | &#34;\(.time) \(.msg)&#34;&#39;</span>
+</span></span><span class="line"><span class="cl">journalctl -u myapp -o cat --since <span class="s1">&#39;1h ago&#39;</span> <span class="p">|</span> jq -s <span class="s1">&#39;group_by(.level) | map({level: .[0].level, n: length})&#39;</span>
+</span></span></code></pre></div><h2 id="62-磁盘占用与持久化">6.2 磁盘占用与持久化</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">journalctl --disk-usage                     <span class="c1"># 当前占用</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Archived and active journals take up 1.2G in the file system.</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">sudo journalctl --vacuum-size<span class="o">=</span>500M          <span class="c1"># ✅ 压到 500MB 以内</span>
+</span></span><span class="line"><span class="cl">sudo journalctl --vacuum-time<span class="o">=</span>7d            <span class="c1"># 只保留 7 天</span>
+</span></span><span class="line"><span class="cl">sudo journalctl --vacuum-files<span class="o">=</span><span class="m">5</span>            <span class="c1"># 只保留 5 个归档文件</span>
+</span></span><span class="line"><span class="cl">journalctl --verify                         <span class="c1"># 校验日志完整性</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 持久化配置（默认可能只存在内存里，重启就没了！）</span>
+</span></span><span class="line"><span class="cl">sudo mkdir -p /var/log/journal              <span class="c1"># ✅ 这个目录存在 = 持久化</span>
+</span></span><span class="line"><span class="cl">sudo systemd-tmpfiles --create --prefix /var/log/journal
+</span></span><span class="line"><span class="cl">sudo systemctl restart systemd-journald
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">sudo vim /etc/systemd/journald.conf
+</span></span><span class="line"><span class="cl"><span class="c1"># [Journal]</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Storage=persistent        # volatile(仅内存) / persistent(落盘) / auto(有目录就落盘) / none</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># SystemMaxUse=2G           # 最多用多少磁盘</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># SystemKeepFree=1G         # 至少保留多少空闲</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># SystemMaxFileSize=128M    # 单个文件最大</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># MaxRetentionSec=1month    # 最长保留时间</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># MaxFileSec=1week          # 单文件最长时间跨度</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># RateLimitIntervalSec=30s  # ⚠️ 限流窗口</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># RateLimitBurst=10000      # ⚠️ 窗口内最多多少条（超了会【丢日志】并提示 &#34;Suppressed N messages&#34;）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ForwardToSyslog=no        # 是否转发给 rsyslog（不需要就关，省一半 IO）</span>
+</span></span><span class="line"><span class="cl">sudo systemctl restart systemd-journald
+</span></span></code></pre></div><p><strong>一个容易忽略的坑</strong>：journald 有<strong>限流</strong>，日志量大时会静默丢弃并打印 <code>Suppressed 1234 messages</code>。高日志量的服务要调 <code>RateLimitBurst</code> 或直接写文件。</p>
+<h1 id="7-systemd-timer">7. systemd timer</h1>
+<h2 id="71-timer--service-配对">7.1 timer + service 配对</h2>
+<p>一个定时任务需要<strong>两个文件</strong>：<code>.service</code> 定义「做什么」，<code>.timer</code> 定义「什么时候做」。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="c1"># /etc/systemd/system/backup.service</span>
+</span></span><span class="line"><span class="cl"><span class="k">[Unit]</span>
+</span></span><span class="line"><span class="cl"><span class="na">Description</span><span class="o">=</span><span class="s">Nightly backup</span>
+</span></span><span class="line"><span class="cl"><span class="na">OnFailure</span><span class="o">=</span><span class="s">alert@%n.service           # ✅ 失败时告警（cron 做不到）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">[Service]</span>
+</span></span><span class="line"><span class="cl"><span class="na">Type</span><span class="o">=</span><span class="s">oneshot</span>
+</span></span><span class="line"><span class="cl"><span class="na">User</span><span class="o">=</span><span class="s">backup</span>
+</span></span><span class="line"><span class="cl"><span class="na">ExecStart</span><span class="o">=</span><span class="s">/usr/local/bin/backup.sh</span>
+</span></span><span class="line"><span class="cl"><span class="na">Nice</span><span class="o">=</span><span class="s">19                              # 降低优先级，别影响线上</span>
+</span></span><span class="line"><span class="cl"><span class="na">IOSchedulingClass</span><span class="o">=</span><span class="s">idle               # IO 也降到最低</span>
+</span></span><span class="line"><span class="cl"><span class="na">TimeoutStartSec</span><span class="o">=</span><span class="s">2h                   # 超过 2 小时算失败</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="c1"># /etc/systemd/system/backup.timer</span>
+</span></span><span class="line"><span class="cl"><span class="k">[Unit]</span>
+</span></span><span class="line"><span class="cl"><span class="na">Description</span><span class="o">=</span><span class="s">Run backup nightly</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">[Timer]</span>
+</span></span><span class="line"><span class="cl"><span class="na">OnCalendar</span><span class="o">=</span><span class="s">*-*-* 02:30:00            # 每天 02:30</span>
+</span></span><span class="line"><span class="cl"><span class="na">Persistent</span><span class="o">=</span><span class="s">true                      # ✅ 关机期间错过的任务，开机后补跑</span>
+</span></span><span class="line"><span class="cl"><span class="na">RandomizedDelaySec</span><span class="o">=</span><span class="s">600               # ✅ 随机延迟 0~600 秒（避免集群同时打爆存储）</span>
+</span></span><span class="line"><span class="cl"><span class="na">AccuracySec</span><span class="o">=</span><span class="s">1m                       # 精度（默认 1min，越大越省电）</span>
+</span></span><span class="line"><span class="cl"><span class="na">Unit</span><span class="o">=</span><span class="s">backup.service                  # 触发哪个 service（默认同名）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">[Install]</span>
+</span></span><span class="line"><span class="cl"><span class="na">WantedBy</span><span class="o">=</span><span class="s">timers.target</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">sudo systemctl daemon-reload
+</span></span><span class="line"><span class="cl">sudo systemctl <span class="nb">enable</span> --now backup.timer    <span class="c1"># ✅ enable 的是 .timer，不是 .service</span>
+</span></span><span class="line"><span class="cl">systemctl list-timers                       <span class="c1"># ✅ 看所有定时器与下次触发时间</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># NEXT                        LEFT     LAST                        PASSED  UNIT          ACTIVATES</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Wed 2026-08-13 02:30:00 CST 9h left  Tue 2026-08-12 02:30:12 CST 14h ago backup.timer  backup.service</span>
+</span></span><span class="line"><span class="cl">systemctl list-timers --all
+</span></span><span class="line"><span class="cl">sudo systemctl start backup.service         <span class="c1"># ✅ 手动触发一次（测试用）</span>
+</span></span><span class="line"><span class="cl">journalctl -u backup.service -n <span class="m">50</span>          <span class="c1"># 看执行日志</span>
+</span></span></code></pre></div><h2 id="72-oncalendar-语法">7.2 OnCalendar 语法</h2>
+<pre tabindex="0"><code>格式：DayOfWeek Year-Month-Day Hour:Minute:Second
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="nv">OnCalendar</span><span class="o">=</span>*-*-* 02:30:00              <span class="c1"># 每天 02:30</span>
+</span></span><span class="line"><span class="cl"><span class="nv">OnCalendar</span><span class="o">=</span>*-*-* *:00:00               <span class="c1"># 每小时整点</span>
+</span></span><span class="line"><span class="cl"><span class="nv">OnCalendar</span><span class="o">=</span>*-*-* *:*:00                <span class="c1"># 每分钟</span>
+</span></span><span class="line"><span class="cl"><span class="nv">OnCalendar</span><span class="o">=</span>*-*-* *:0/15:00             <span class="c1"># 每 15 分钟（0,15,30,45）</span>
+</span></span><span class="line"><span class="cl"><span class="nv">OnCalendar</span><span class="o">=</span>Mon-Fri 09:00               <span class="c1"># 工作日 09:00</span>
+</span></span><span class="line"><span class="cl"><span class="nv">OnCalendar</span><span class="o">=</span>Mon *-*-* 02:00:00          <span class="c1"># 每周一 02:00</span>
+</span></span><span class="line"><span class="cl"><span class="nv">OnCalendar</span><span class="o">=</span>Sat,Sun 03:00               <span class="c1"># 周末</span>
+</span></span><span class="line"><span class="cl"><span class="nv">OnCalendar</span><span class="o">=</span>*-*-01 04:00:00             <span class="c1"># 每月 1 号</span>
+</span></span><span class="line"><span class="cl"><span class="nv">OnCalendar</span><span class="o">=</span>*-01,04,07,10-01 05:00:00   <span class="c1"># 每季度第一天</span>
+</span></span><span class="line"><span class="cl"><span class="nv">OnCalendar</span><span class="o">=</span>2026-12-25 00:00:00         <span class="c1"># 一次性</span>
+</span></span><span class="line"><span class="cl"><span class="nv">OnCalendar</span><span class="o">=</span>daily                       <span class="c1"># 简写：每天 00:00</span>
+</span></span><span class="line"><span class="cl"><span class="nv">OnCalendar</span><span class="o">=</span>weekly                      <span class="c1"># 每周一 00:00</span>
+</span></span><span class="line"><span class="cl"><span class="nv">OnCalendar</span><span class="o">=</span>monthly / yearly / hourly / minutely
+</span></span><span class="line"><span class="cl"><span class="nv">OnCalendar</span><span class="o">=</span>*-*-* 02:30:00 Asia/Shanghai   <span class="c1"># ✅ 指定时区（systemd 249+）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 写完一定要验证</span>
+</span></span><span class="line"><span class="cl">systemd-analyze calendar <span class="s1">&#39;*-*-* 02:30:00&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Normalized form: *-*-* 02:30:00</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#     Next elapse: Wed 2026-08-13 02:30:00 CST</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#        From now: 9h left</span>
+</span></span><span class="line"><span class="cl">systemd-analyze calendar <span class="s1">&#39;Mon-Fri 09:00&#39;</span> --iterations<span class="o">=</span><span class="m">5</span>    <span class="c1"># 看接下来 5 次触发时间</span>
+</span></span></code></pre></div><p><strong>其他触发方式</strong>（相对时间，cron 完全做不到）：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="k">[Timer]</span>
+</span></span><span class="line"><span class="cl"><span class="na">OnBootSec</span><span class="o">=</span><span class="s">5min                       # 开机后 5 分钟</span>
+</span></span><span class="line"><span class="cl"><span class="na">OnStartupSec</span><span class="o">=</span><span class="s">10min                   # systemd 启动后 10 分钟</span>
+</span></span><span class="line"><span class="cl"><span class="na">OnUnitActiveSec</span><span class="o">=</span><span class="s">1h                   # ✅ 上次【运行完】之后 1 小时（避免任务重叠）</span>
+</span></span><span class="line"><span class="cl"><span class="na">OnUnitInactiveSec</span><span class="o">=</span><span class="s">30min              # 上次停止后 30 分钟</span>
+</span></span><span class="line"><span class="cl"><span class="na">OnActiveSec</span><span class="o">=</span><span class="s">1h                       # timer 激活后 1 小时</span>
+</span></span></code></pre></div><p><strong><code>OnUnitActiveSec</code> 解决了 cron 的一个经典问题</strong>：cron 是「每小时的固定时刻执行」，如果任务跑了 70 分钟，下一次会在上一次还没结束时就启动（任务重叠）。而 <code>OnUnitActiveSec=1h</code> 是「上次跑完后再等 1 小时」，天然不会重叠。</p>
+<h2 id="73-开篇第五问timer-相比-cron-的优势">7.3 开篇第五问：timer 相比 cron 的优势</h2>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>cron</th>
+<th>systemd timer</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>日志</strong></td>
+<td>需自己重定向，或靠邮件</td>
+<td>✅ <strong>自动进 journald</strong>，<code>journalctl -u x</code> 直接看</td>
+</tr>
+<tr>
+<td><strong>失败告警</strong></td>
+<td>❌ 无（除了发邮件）</td>
+<td>✅ <strong><code>OnFailure=</code></strong> 触发告警 unit</td>
+</tr>
+<tr>
+<td><strong>执行环境</strong></td>
+<td>⚠️ <strong>极简 PATH、无用户环境</strong>（坑的根源）</td>
+<td>✅ 显式声明 <code>Environment</code>/<code>EnvironmentFile</code></td>
+</tr>
+<tr>
+<td><strong>依赖管理</strong></td>
+<td>❌ 无</td>
+<td>✅ <code>After=</code>/<code>Requires=</code></td>
+</tr>
+<tr>
+<td><strong>资源限制</strong></td>
+<td>❌ 无（要自己 nice/ionice）</td>
+<td>✅ <code>MemoryMax</code>/<code>CPUQuota</code>/<code>Nice</code>/<code>IOSchedulingClass</code></td>
+</tr>
+<tr>
+<td><strong>补跑错过的任务</strong></td>
+<td>❌（anacron 部分支持）</td>
+<td>✅ <strong><code>Persistent=true</code></strong></td>
+</tr>
+<tr>
+<td><strong>随机延迟</strong></td>
+<td>需自己 <code>sleep $RANDOM</code></td>
+<td>✅ <strong><code>RandomizedDelaySec</code></strong></td>
+</tr>
+<tr>
+<td><strong>防重叠</strong></td>
+<td>需自己加 <code>flock</code></td>
+<td>✅ <strong><code>OnUnitActiveSec</code></strong> 或 unit 天然不会并发</td>
+</tr>
+<tr>
+<td><strong>超时控制</strong></td>
+<td>需自己 <code>timeout</code></td>
+<td>✅ <code>TimeoutStartSec</code></td>
+</tr>
+<tr>
+<td><strong>查看下次执行</strong></td>
+<td>要自己算</td>
+<td>✅ <strong><code>systemctl list-timers</code></strong></td>
+</tr>
+<tr>
+<td><strong>权限/沙箱</strong></td>
+<td>只能 <code>su</code>/<code>sudo</code></td>
+<td>✅ <code>User=</code> + 全套沙箱选项</td>
+</tr>
+<tr>
+<td><strong>语法验证</strong></td>
+<td>❌ 写错了要等到执行时才发现</td>
+<td>✅ <code>systemd-analyze calendar</code></td>
+</tr>
+<tr>
+<td>配置复杂度</td>
+<td>✅ <strong>一行搞定</strong></td>
+<td>❌ 要两个文件</td>
+</tr>
+<tr>
+<td>可移植性</td>
+<td>✅ 所有 Unix</td>
+<td>❌ 仅 systemd 系统</td>
+</tr>
+</tbody>
+</table>
+<p><strong>结论</strong>：<strong>生产环境的定时任务应该用 timer</strong>（可观测性和可靠性是决定性的），临时的、简单的用 cron。</p>
+<h1 id="8-cron">8. cron</h1>
+<h2 id="81-语法">8.1 语法</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">crontab -e                           <span class="c1"># ✅ 编辑当前用户的 crontab（会做语法检查）</span>
+</span></span><span class="line"><span class="cl">crontab -l                           <span class="c1"># 列出</span>
+</span></span><span class="line"><span class="cl">crontab -r                           <span class="c1"># ⚠️ 删除【全部】（没有确认提示，容易误操作）</span>
+</span></span><span class="line"><span class="cl">crontab -l &gt; backup.cron             <span class="c1"># ✅ 改之前先备份</span>
+</span></span><span class="line"><span class="cl">crontab -u app -l                    <span class="c1"># 查看其他用户的（需 root）</span>
+</span></span><span class="line"><span class="cl">crontab file                         <span class="c1"># 从文件导入（会覆盖现有的！）</span>
+</span></span></code></pre></div><pre tabindex="0"><code># ┌───────────── 分钟 (0-59)
+# │ ┌─────────── 小时 (0-23)
+# │ │ ┌───────── 日   (1-31)
+# │ │ │ ┌─────── 月   (1-12)
+# │ │ │ │ ┌───── 星期 (0-7，0 和 7 都是周日)
+# │ │ │ │ │
+  * * * * *  command
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="m">30</span> <span class="m">2</span> * * *      /usr/local/bin/backup.sh        <span class="c1"># 每天 02:30</span>
+</span></span><span class="line"><span class="cl"><span class="m">0</span> * * * *       /usr/local/bin/hourly.sh        <span class="c1"># 每小时整点</span>
+</span></span><span class="line"><span class="cl">*/15 * * * *    /usr/local/bin/check.sh         <span class="c1"># 每 15 分钟</span>
+</span></span><span class="line"><span class="cl"><span class="m">0</span> <span class="m">9</span> * * 1-5     /usr/local/bin/workday.sh       <span class="c1"># 工作日 09:00</span>
+</span></span><span class="line"><span class="cl"><span class="m">0</span> <span class="m">0</span> <span class="m">1</span> * *       /usr/local/bin/monthly.sh       <span class="c1"># 每月 1 号</span>
+</span></span><span class="line"><span class="cl"><span class="m">0</span> <span class="m">3</span> * * <span class="m">0</span>       /usr/local/bin/weekly.sh        <span class="c1"># 每周日 03:00</span>
+</span></span><span class="line"><span class="cl"><span class="m">0</span> 2,14 * * *    /usr/local/bin/twice.sh         <span class="c1"># 每天 02:00 和 14:00</span>
+</span></span><span class="line"><span class="cl"><span class="m">0</span> 0-6 * * *     /usr/local/bin/night.sh         <span class="c1"># 0~6 点每小时</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 特殊字符串</span>
+</span></span><span class="line"><span class="cl">@reboot         /usr/local/bin/on-boot.sh       <span class="c1"># ✅ 开机时执行一次</span>
+</span></span><span class="line"><span class="cl">@daily / @midnight    <span class="o">=</span> <span class="m">0</span> <span class="m">0</span> * * *
+</span></span><span class="line"><span class="cl">@hourly               <span class="o">=</span> <span class="m">0</span> * * * *
+</span></span><span class="line"><span class="cl">@weekly               <span class="o">=</span> <span class="m">0</span> <span class="m">0</span> * * <span class="m">0</span>
+</span></span><span class="line"><span class="cl">@monthly              <span class="o">=</span> <span class="m">0</span> <span class="m">0</span> <span class="m">1</span> * *
+</span></span><span class="line"><span class="cl">@yearly / @annually   <span class="o">=</span> <span class="m">0</span> <span class="m">0</span> <span class="m">1</span> <span class="m">1</span> *
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ⚠️ 「日」和「星期」同时指定时是【或】关系，不是与！</span>
+</span></span><span class="line"><span class="cl"><span class="m">0</span> <span class="m">0</span> <span class="m">13</span> * <span class="m">5</span>      <span class="c1"># 每月 13 号【或】每个周五都执行（不是&#34;13 号且是周五&#34;）</span>
+</span></span></code></pre></div><h2 id="82-配置文件的层次">8.2 配置文件的层次</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">crontab -e                           <span class="c1"># 用户级：存在 /var/spool/cron/crontabs/&lt;user&gt;</span>
+</span></span><span class="line"><span class="cl">sudo vim /etc/crontab                <span class="c1"># 系统级：⚠️ 多一个【用户名】字段</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 30 2 * * * root /usr/local/bin/backup.sh</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#            ^^^^ 系统级 crontab 要指定运行用户</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">sudo vim /etc/cron.d/myapp           <span class="c1"># ✅ 推荐：一个任务一个文件（便于自动化投放）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 格式同 /etc/crontab（有用户名字段）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 30 2 * * * app /usr/local/bin/backup.sh</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">ls /etc/cron.<span class="o">{</span>hourly,daily,weekly,monthly<span class="o">}</span>/       <span class="c1"># 放【可执行脚本】（不是 crontab 格式）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 由 run-parts 执行；文件名不能有点（.）否则被忽略！</span>
+</span></span><span class="line"><span class="cl">sudo run-parts --test /etc/cron.daily             <span class="c1"># 测试哪些脚本会被执行</span>
+</span></span></code></pre></div><h2 id="83-开篇第四问为什么-cron-里就失败">8.3 开篇第四问：为什么 cron 里就失败</h2>
+<p><strong>cron 提供的执行环境极其精简</strong>，这是 90% 的 cron 问题的根源：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 亲自看看 cron 里的环境有多简陋</span>
+</span></span><span class="line"><span class="cl">* * * * * env &gt; /tmp/cron-env.txt
+</span></span><span class="line"><span class="cl"><span class="c1"># 一分钟后</span>
+</span></span><span class="line"><span class="cl">cat /tmp/cron-env.txt
+</span></span><span class="line"><span class="cl"><span class="c1"># HOME=/home/lhx</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># LOGNAME=lhx</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># PATH=/usr/bin:/bin                    &lt;- ⚠️ 只有这两个！</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># SHELL=/bin/sh                         &lt;- ⚠️ 是 sh 不是 bash！</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># PWD=/home/lhx</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 就这么几个，没有 LANG、没有你 .bashrc 里的一切</span>
+</span></span></code></pre></div><p><strong>五个具体原因与对策</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ① PATH 太短 -&gt; command not found</span>
+</span></span><span class="line"><span class="cl"><span class="m">30</span> <span class="m">2</span> * * * /usr/local/bin/mytool                      <span class="c1"># ✅ 用绝对路径</span>
+</span></span><span class="line"><span class="cl"><span class="nv">PATH</span><span class="o">=</span>/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+</span></span><span class="line"><span class="cl"><span class="m">30</span> <span class="m">2</span> * * * mytool                                      <span class="c1"># ✅ 或在 crontab 顶部设 PATH</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ② SHELL 是 sh 不是 bash -&gt; bash 特有语法失效</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    （[[ ]]、数组、进程替换 &lt;()、$&#39;...&#39; 全都不能用）</span>
+</span></span><span class="line"><span class="cl"><span class="nv">SHELL</span><span class="o">=</span>/bin/bash                                        <span class="c1"># ✅ 在 crontab 顶部声明</span>
+</span></span><span class="line"><span class="cl"><span class="m">30</span> <span class="m">2</span> * * * /bin/bash /path/script.sh                   <span class="c1"># ✅ 或显式用 bash 执行</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 脚本里也要写 #!/bin/bash 而不是 #!/bin/sh</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ③ 不读 .bashrc/.profile -&gt; 你配的环境变量全都没有</span>
+</span></span><span class="line"><span class="cl"><span class="m">30</span> <span class="m">2</span> * * * . /etc/profile<span class="p">;</span> . ~/.bashrc<span class="p">;</span> /path/script.sh    <span class="c1"># 显式 source</span>
+</span></span><span class="line"><span class="cl"><span class="m">30</span> <span class="m">2</span> * * * bash -lc <span class="s1">&#39;/path/script.sh&#39;</span>                      <span class="c1"># ✅ 或用登录 shell</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 更好的做法：让脚本自己 source 需要的配置，不依赖交互式环境</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ④ 没有 LANG/LC_ALL -&gt; 中文乱码、日期格式不同、sort 顺序不同</span>
+</span></span><span class="line"><span class="cl"><span class="nv">LANG</span><span class="o">=</span>en_US.UTF-8
+</span></span><span class="line"><span class="cl"><span class="nv">LC_ALL</span><span class="o">=</span>en_US.UTF-8
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ⑤ cwd 是家目录 -&gt; 相对路径全错</span>
+</span></span><span class="line"><span class="cl"><span class="m">30</span> <span class="m">2</span> * * * <span class="nb">cd</span> /opt/myapp <span class="o">&amp;&amp;</span> ./run.sh                   <span class="c1"># ✅ 显式 cd</span>
+</span></span></code></pre></div><p><strong>调试 cron 任务的标准流程</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ① 让任务把输出和错误都记下来（cron 的默认行为是发邮件，而机器通常没配邮件）</span>
+</span></span><span class="line"><span class="cl"><span class="m">30</span> <span class="m">2</span> * * * /path/script.sh &gt;&gt; /var/log/myjob.log 2&gt;<span class="p">&amp;</span><span class="m">1</span>
+</span></span><span class="line"><span class="cl"><span class="m">30</span> <span class="m">2</span> * * * /path/script.sh 2&gt;<span class="p">&amp;</span><span class="m">1</span> <span class="p">|</span> logger -t myjob      <span class="c1"># ✅ 或者送进 syslog/journal</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ② 用最小环境模拟 cron 来测试</span>
+</span></span><span class="line"><span class="cl">env -i <span class="nv">SHELL</span><span class="o">=</span>/bin/sh <span class="nv">PATH</span><span class="o">=</span>/usr/bin:/bin <span class="nv">HOME</span><span class="o">=</span><span class="s2">&#34;</span><span class="nv">$HOME</span><span class="s2">&#34;</span> /bin/sh -c <span class="s1">&#39;/path/script.sh&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   ^^ -i 清空所有环境变量，最接近 cron 的真实环境</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ③ 看 cron 自己的日志（确认任务有没有被触发）</span>
+</span></span><span class="line"><span class="cl">sudo journalctl -u cron -f                             <span class="c1"># Debian</span>
+</span></span><span class="line"><span class="cl">sudo journalctl -u crond -f                            <span class="c1"># RHEL</span>
+</span></span><span class="line"><span class="cl">sudo grep CRON /var/log/syslog <span class="p">|</span> tail
+</span></span><span class="line"><span class="cl"><span class="c1"># Aug 12 02:30:01 host CRON[12345]: (lhx) CMD (/path/script.sh)</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                                          ^^^ 有这行说明触发了，问题在脚本内部</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ④ 检查任务有没有被邮件&#34;吞掉&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="nv">MAILTO</span><span class="o">=</span>ops@example.com                                  <span class="c1"># 有输出时发到这</span>
+</span></span><span class="line"><span class="cl"><span class="nv">MAILTO</span><span class="o">=</span><span class="s2">&#34;&#34;</span>                                               <span class="c1"># 不发邮件（丢弃输出）</span>
+</span></span><span class="line"><span class="cl">sudo cat /var/mail/<span class="nv">$USER</span>                                <span class="c1"># 看本地邮件里的错误信息</span>
+</span></span></code></pre></div><h2 id="84-cron-的其他坑">8.4 cron 的其他坑</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ① % 必须转义（cron 里 % 是换行的意思）</span>
+</span></span><span class="line"><span class="cl"><span class="m">0</span> <span class="m">2</span> * * * <span class="nb">echo</span> <span class="k">$(</span>date +%Y-%m-%d<span class="k">)</span>                        <span class="c1"># ❌ 会被截断</span>
+</span></span><span class="line"><span class="cl"><span class="m">0</span> <span class="m">2</span> * * * <span class="nb">echo</span> <span class="k">$(</span>date +<span class="se">\%</span>Y-<span class="se">\%</span>m-<span class="se">\%</span>d<span class="k">)</span>                     <span class="c1"># ✅ 转义</span>
+</span></span><span class="line"><span class="cl"><span class="m">0</span> <span class="m">2</span> * * * /path/script.sh                                <span class="c1"># ✅ 更好：复杂逻辑放脚本里</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ② 任务重叠（上一次没跑完，下一次又启动了）</span>
+</span></span><span class="line"><span class="cl">*/5 * * * * flock -n /tmp/myjob.lock /path/script.sh    <span class="c1"># ✅ 用 flock 加锁</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                  ^^ -n 表示拿不到锁就立即退出（不等待）</span>
+</span></span><span class="line"><span class="cl">*/5 * * * * flock -w <span class="m">10</span> /tmp/myjob.lock /path/script.sh <span class="c1"># 或等 10 秒</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ③ 超时失控（任务卡死后永远占着资源）</span>
+</span></span><span class="line"><span class="cl"><span class="m">0</span> <span class="m">2</span> * * * timeout <span class="m">3600</span> /path/script.sh                  <span class="c1"># ✅ 最多跑 1 小时</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ④ 时区与 DST</span>
+</span></span><span class="line"><span class="cl">timedatectl                                              <span class="c1"># 确认系统时区</span>
+</span></span><span class="line"><span class="cl"><span class="nv">CRON_TZ</span><span class="o">=</span>Asia/Shanghai                                    <span class="c1"># ✅ 在 crontab 里指定时区</span>
+</span></span><span class="line"><span class="cl"><span class="m">0</span> <span class="m">2</span> * * * /path/script.sh
+</span></span><span class="line"><span class="cl"><span class="c1"># ⚠️ 夏令时切换那天，凌晨 2:00~3:00 的任务可能【不执行或执行两次】</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    关键任务避开 0:00~4:00，或用 UTC</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ⑤ crontab -r 手滑删掉全部</span>
+</span></span><span class="line"><span class="cl">crontab -l &gt; ~/crontab.bak                               <span class="c1"># ✅ 改前必备份</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 更好的做法：crontab 内容进 git，用 /etc/cron.d/ 投放</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ⑥ 用户被删/被锁后 crontab 仍然存在（但执行失败）</span>
+</span></span><span class="line"><span class="cl">sudo ls -l /var/spool/cron/crontabs/
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ⑦ 脚本没有执行权限、或 shebang 写错</span>
+</span></span><span class="line"><span class="cl">chmod +x /path/script.sh
+</span></span><span class="line"><span class="cl">head -1 /path/script.sh                                  <span class="c1"># #!/bin/bash 且【无 CRLF】（05 篇）</span>
+</span></span></code></pre></div><h2 id="85-anacron-与-at">8.5 anacron 与 at</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># anacron：为「不常开机的机器」设计 —— 错过的任务开机后补跑</span>
+</span></span><span class="line"><span class="cl">cat /etc/anacrontab
+</span></span><span class="line"><span class="cl"><span class="c1"># period  delay  job-identifier  command</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 1       5      cron.daily      run-parts --report /etc/cron.daily</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#  ^ 天数  ^ 开机后延迟几分钟</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 服务器 7×24 开机通常用不到；systemd timer 的 Persistent=true 是它的现代替代</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># at：一次性延迟任务</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;/path/script.sh&#34;</span> <span class="p">|</span> at 02:30                <span class="c1"># 今天 02:30 执行一次</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;reboot&#34;</span> <span class="p">|</span> at now + <span class="m">2</span> hours
+</span></span><span class="line"><span class="cl">at -l                                            <span class="c1"># 列出待执行的（等价 atq）</span>
+</span></span><span class="line"><span class="cl">at -c <span class="m">5</span>                                          <span class="c1"># 查看任务 5 的内容</span>
+</span></span><span class="line"><span class="cl">atrm <span class="m">5</span>                                           <span class="c1"># 删除任务 5</span>
+</span></span><span class="line"><span class="cl">sudo systemctl <span class="nb">enable</span> --now atd                  <span class="c1"># 需要 atd 服务在跑</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># systemd 的等价物（不需要 atd）</span>
+</span></span><span class="line"><span class="cl">sudo systemd-run --on-active<span class="o">=</span>2h /path/script.sh          <span class="c1"># 2 小时后执行一次</span>
+</span></span><span class="line"><span class="cl">sudo systemd-run --on-calendar<span class="o">=</span><span class="s1">&#39;02:30&#39;</span> /path/script.sh   <span class="c1"># 指定时刻</span>
+</span></span><span class="line"><span class="cl">sudo systemd-run --unit<span class="o">=</span>myjob --on-active<span class="o">=</span>30min /path/x  <span class="c1"># 命名，便于取消</span>
+</span></span></code></pre></div><h1 id="9-socket-激活简介">9. socket 激活（简介）</h1>
+<p>systemd 的一个特色能力：<strong>由 systemd 持有监听端口，有连接进来时才启动服务</strong>。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="c1"># /etc/systemd/system/myapp.socket</span>
+</span></span><span class="line"><span class="cl"><span class="k">[Unit]</span>
+</span></span><span class="line"><span class="cl"><span class="na">Description</span><span class="o">=</span><span class="s">MyApp socket</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">[Socket]</span>
+</span></span><span class="line"><span class="cl"><span class="na">ListenStream</span><span class="o">=</span><span class="s">8080</span>
+</span></span><span class="line"><span class="cl"><span class="na">Accept</span><span class="o">=</span><span class="s">no                            # no = 把监听 fd 传给服务（服务自己 accept）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">[Install]</span>
+</span></span><span class="line"><span class="cl"><span class="na">WantedBy</span><span class="o">=</span><span class="s">sockets.target</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">sudo systemctl <span class="nb">enable</span> --now myapp.socket     <span class="c1"># 只启用 socket，service 暂不运行</span>
+</span></span><span class="line"><span class="cl">curl localhost:8080                          <span class="c1"># 第一次访问时 systemd 才启动 myapp.service</span>
+</span></span></code></pre></div><p><strong>三个价值</strong>：</p>
+<ol>
+<li><strong>消除启动顺序依赖</strong> —— 端口一直在监听（由 systemd 持有），依赖它的服务可以随时连接，连接会被缓冲直到服务就绪</li>
+<li><strong>零停机重启</strong> —— 重启服务时端口不关闭，客户端连接只是稍等而不是被拒绝</li>
+<li><strong>按需启动</strong> —— 不常用的服务不必常驻内存</li>
+</ol>
+<p>Go 里通过 <code>go-systemd/activation</code> 拿到传入的 fd：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kn">import</span> <span class="s">&#34;github.com/coreos/go-systemd/v22/activation&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="nx">listeners</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">activation</span><span class="p">.</span><span class="nf">Listeners</span><span class="p">()</span>     <span class="c1">// 从 systemd 继承的监听 fd
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">if</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="o">||</span> <span class="nb">len</span><span class="p">(</span><span class="nx">listeners</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// 没有的话自己监听（便于本地开发）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">ln</span><span class="p">,</span> <span class="nx">_</span> <span class="p">=</span> <span class="nx">net</span><span class="p">.</span><span class="nf">Listen</span><span class="p">(</span><span class="s">&#34;tcp&#34;</span><span class="p">,</span> <span class="s">&#34;:8080&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">ln</span> <span class="p">=</span> <span class="nx">listeners</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="nx">http</span><span class="p">.</span><span class="nf">Serve</span><span class="p">(</span><span class="nx">ln</span><span class="p">,</span> <span class="nx">handler</span><span class="p">)</span>
+</span></span></code></pre></div><h1 id="10-知识点扩展">10. 知识点扩展</h1>
+<h2 id="101-systemctl-速查">10.1 systemctl 速查</h2>
+<table>
+<thead>
+<tr>
+<th>操作</th>
+<th>命令</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>启动/停止/重启</td>
+<td><code>systemctl start/stop/restart myapp</code></td>
+</tr>
+<tr>
+<td><strong>重载配置</strong>（不中断）</td>
+<td><code>systemctl reload myapp</code> / <code>reload-or-restart</code></td>
+</tr>
+<tr>
+<td><strong>开机自启 + 立即启动</strong></td>
+<td><code>systemctl enable --now myapp</code></td>
+</tr>
+<tr>
+<td>禁用 + 立即停止</td>
+<td><code>systemctl disable --now myapp</code></td>
+</tr>
+<tr>
+<td><strong>彻底屏蔽</strong></td>
+<td><code>systemctl mask myapp</code> / <code>unmask</code></td>
+</tr>
+<tr>
+<td>状态 + 最近日志</td>
+<td><code>systemctl status myapp -n 50 -l</code></td>
+</tr>
+<tr>
+<td><strong>看生效的完整配置</strong></td>
+<td><code>systemctl cat myapp</code></td>
+</tr>
+<tr>
+<td>看某个属性</td>
+<td><code>systemctl show myapp -p Type -p Restart</code></td>
+</tr>
+<tr>
+<td><strong>改配置（drop-in）</strong></td>
+<td><code>systemctl edit myapp</code> / <code>edit --full</code> / <code>revert</code></td>
+</tr>
+<tr>
+<td><strong>改完 unit 文件</strong></td>
+<td><code>systemctl daemon-reload</code></td>
+</tr>
+<tr>
+<td>依赖关系</td>
+<td><code>systemctl list-dependencies [--reverse] myapp</code></td>
+</tr>
+<tr>
+<td><strong>失败的服务</strong></td>
+<td><code>systemctl --failed</code></td>
+</tr>
+<tr>
+<td>清除失败计数</td>
+<td><code>systemctl reset-failed myapp</code></td>
+</tr>
+<tr>
+<td>所有定时器</td>
+<td><code>systemctl list-timers --all</code></td>
+</tr>
+<tr>
+<td>发信号</td>
+<td><code>systemctl kill -s SIGQUIT myapp</code></td>
+</tr>
+<tr>
+<td><strong>启动耗时排名</strong></td>
+<td><code>systemd-analyze blame</code></td>
+</tr>
+<tr>
+<td><strong>语法检查</strong></td>
+<td><code>systemd-analyze verify /path/x.service</code></td>
+</tr>
+<tr>
+<td><strong>安全评分</strong></td>
+<td><code>systemd-analyze security myapp</code></td>
+</tr>
+<tr>
+<td><strong>验证 OnCalendar</strong></td>
+<td><code>systemd-analyze calendar '*-*-* 02:30'</code></td>
+</tr>
+<tr>
+<td>按 cgroup 看资源</td>
+<td><code>systemd-cgtop</code> / <code>systemctl status</code></td>
+</tr>
+<tr>
+<td>临时带限制跑命令</td>
+<td><code>systemd-run --scope -p MemoryMax=1G cmd</code></td>
+</tr>
+<tr>
+<td>一次性定时任务</td>
+<td><code>systemd-run --on-active=2h cmd</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="102-journalctl-速查">10.2 journalctl 速查</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">journalctl -u myapp -f                       <span class="c1"># 跟随某服务</span>
+</span></span><span class="line"><span class="cl">journalctl -u myapp -n <span class="m">100</span> --no-pager        <span class="c1"># 最近 100 行</span>
+</span></span><span class="line"><span class="cl">journalctl -u myapp --since <span class="s1">&#39;1h ago&#39;</span> -p err  <span class="c1"># 一小时内的错误</span>
+</span></span><span class="line"><span class="cl">journalctl -u myapp --grep <span class="s1">&#39;timeout&#39;</span>         <span class="c1"># 内置正则过滤</span>
+</span></span><span class="line"><span class="cl">journalctl -b -1 -u myapp                    <span class="c1"># 【上次启动】的日志（查崩溃原因）</span>
+</span></span><span class="line"><span class="cl">journalctl -k -p err                         <span class="c1"># 内核错误</span>
+</span></span><span class="line"><span class="cl">journalctl -u myapp -o cat <span class="p">|</span> jq .            <span class="c1"># 结构化日志给 jq</span>
+</span></span><span class="line"><span class="cl">journalctl --disk-usage                      <span class="c1"># 占用</span>
+</span></span><span class="line"><span class="cl">sudo journalctl --vacuum-time<span class="o">=</span>7d             <span class="c1"># 清理</span>
+</span></span></code></pre></div><h2 id="103-unit-字段速查按用途">10.3 unit 字段速查（按用途）</h2>
+<table>
+<thead>
+<tr>
+<th>用途</th>
+<th>字段</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>依赖</td>
+<td><code>Wants=</code>（弱，推荐）<code>Requires=</code>（强）<code>After=</code>/<code>Before=</code>（顺序）</td>
+</tr>
+<tr>
+<td>身份</td>
+<td><code>User=</code> <code>Group=</code> <code>WorkingDirectory=</code></td>
+</tr>
+<tr>
+<td>启动</td>
+<td><code>Type=</code> <code>ExecStartPre=</code> <code>ExecStart=</code> <code>ExecStartPost=</code></td>
+</tr>
+<tr>
+<td>重载/停止</td>
+<td><code>ExecReload=</code> <code>ExecStop=</code> <code>KillSignal=</code> <code>KillMode=</code> <code>TimeoutStopSec=</code></td>
+</tr>
+<tr>
+<td>重启</td>
+<td><code>Restart=on-failure</code> <code>RestartSec=</code> <code>StartLimitBurst=</code> <code>RestartPreventExitStatus=</code></td>
+</tr>
+<tr>
+<td>环境</td>
+<td><code>Environment=</code> <code>EnvironmentFile=-/path</code></td>
+</tr>
+<tr>
+<td>目录</td>
+<td><code>RuntimeDirectory=</code> <code>StateDirectory=</code> <code>CacheDirectory=</code> <code>LogsDirectory=</code> <code>ConfigurationDirectory=</code></td>
+</tr>
+<tr>
+<td>日志</td>
+<td><code>StandardOutput=journal</code> <code>StandardError=</code> <code>SyslogIdentifier=</code></td>
+</tr>
+<tr>
+<td>限制</td>
+<td><code>LimitNOFILE=</code> <code>MemoryMax=</code> <code>MemoryHigh=</code> <code>CPUQuota=</code> <code>TasksMax=</code> <code>OOMScoreAdjust=</code></td>
+</tr>
+<tr>
+<td>加固</td>
+<td><code>NoNewPrivileges=</code> <code>ProtectSystem=strict</code> <code>PrivateTmp=</code> <code>SystemCallFilter=</code> <code>ReadWritePaths=</code> <code>CapabilityBoundingSet=</code></td>
+</tr>
+<tr>
+<td>就绪/健康</td>
+<td><code>Type=notify</code> <code>NotifyAccess=</code> <code>WatchdogSec=</code></td>
+</tr>
+<tr>
+<td>告警</td>
+<td><code>OnFailure=</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="104-常用占位符">10.4 常用占位符</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="na">%n    完整 unit 名（myapp.service）</span>
+</span></span><span class="line"><span class="cl"><span class="na">%N    unit 名（不含后缀，myapp）</span>
+</span></span><span class="line"><span class="cl"><span class="na">%p    实例化 unit 的前缀部分</span>
+</span></span><span class="line"><span class="cl"><span class="na">%i    实例化 unit 的参数部分（myapp@prod.service 里的 prod）</span>
+</span></span><span class="line"><span class="cl"><span class="na">%I    同 %i 但反转转义</span>
+</span></span><span class="line"><span class="cl"><span class="na">%H    主机名</span>
+</span></span><span class="line"><span class="cl"><span class="na">%u    User</span><span class="o">=</span> <span class="s">指定的用户名</span>
+</span></span><span class="line"><span class="cl"><span class="na">%U    对应的 uid</span>
+</span></span><span class="line"><span class="cl"><span class="na">%h    用户家目录</span>
+</span></span><span class="line"><span class="cl"><span class="na">%t    运行时目录（/run 或 /run/user/UID）</span>
+</span></span><span class="line"><span class="cl"><span class="na">%S    状态目录（/var/lib）</span>
+</span></span><span class="line"><span class="cl"><span class="na">%C    缓存目录（/var/cache）</span>
+</span></span><span class="line"><span class="cl"><span class="na">%L    日志目录（/var/log）</span>
+</span></span><span class="line"><span class="cl"><span class="na">%E    配置目录（/etc）</span>
+</span></span><span class="line"><span class="cl"><span class="na">%%    字面的百分号</span>
+</span></span></code></pre></div><p><strong>模板 unit（一份配置跑多个实例）</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="c1"># /etc/systemd/system/myapp@.service        &lt;- 注意文件名里的 @</span>
+</span></span><span class="line"><span class="cl"><span class="k">[Service]</span>
+</span></span><span class="line"><span class="cl"><span class="na">ExecStart</span><span class="o">=</span><span class="s">/usr/local/bin/myapp --env %i --port 80%i</span>
+</span></span><span class="line"><span class="cl"><span class="na">EnvironmentFile</span><span class="o">=</span><span class="s">/etc/myapp/%i.env</span>
+</span></span><span class="line"><span class="cl"><span class="na">StateDirectory</span><span class="o">=</span><span class="s">myapp-%i</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">sudo systemctl <span class="nb">enable</span> --now myapp@prod.service      <span class="c1"># %i = prod</span>
+</span></span><span class="line"><span class="cl">sudo systemctl <span class="nb">enable</span> --now myapp@staging.service   <span class="c1"># %i = staging</span>
+</span></span><span class="line"><span class="cl">systemctl status <span class="s1">&#39;myapp@*&#39;</span>
+</span></span></code></pre></div><h1 id="11-面试题">11. 面试题</h1>
+<p><strong>Q：<code>Type=simple</code>、<code>forking</code>、<code>notify</code> 有什么区别？选错会怎样？</strong></p>
+<p><code>Type=</code> 决定 <strong>systemd 如何判断「服务已启动成功」</strong>：</p>
+<ul>
+<li><strong><code>simple</code></strong>（默认）：<code>ExecStart</code> 的进程一被 fork 出来就认为成功，<strong>不等它真正就绪</strong></li>
+<li><strong><code>forking</code></strong>：等父进程退出（传统 daemon 的 double-fork 模式），通常配 <code>PIDFile=</code></li>
+<li><strong><code>notify</code></strong>：等进程主动通过 <code>sd_notify</code> 发送 <code>READY=1</code>，<strong>最准确</strong></li>
+</ul>
+<p>选错的两种典型后果：</p>
+<ol>
+<li><strong>程序自己 fork 到后台却写了 <code>Type=simple</code></strong> —— systemd 看到「主进程」退出，判定服务挂了，立即报 failed 并按策略重启，形成<strong>无限重启循环</strong>。修法是改 <code>Type=forking</code> + <code>PIDFile=</code>，但<strong>更好的做法是让程序前台运行</strong>（<code>nginx: daemon off</code>、<code>php-fpm --nodaemonize</code>，Go 服务天然前台），把进程管理完全交给 systemd</li>
+<li><strong>服务需要 10 秒预热却用 <code>simple</code></strong> —— systemd 一 fork 就认为就绪，<code>After=</code> 依赖它的服务立即启动然后连不上。要用 <code>Type=notify</code> 让应用在真正 ready（数据库连上、端口开始监听）后才上报</li>
+</ol>
+<p><strong>Q：<code>systemctl enable</code> 和 <code>start</code> 有什么区别？<code>static</code> 状态是什么意思？</strong></p>
+<p><code>start</code> 是<strong>立即启动</strong>（重启后不会自启），<code>enable</code> 是<strong>设置开机自启</strong>（现在不启动）。合起来是 <code>enable --now</code>。</p>
+<p><code>enable</code> 的本质是<strong>创建一个软链接</strong>：把 unit 链接到 <code>[Install]</code> 段里 <code>WantedBy=</code> 指定的那个 target 的 <code>.wants/</code> 目录下。所以：</p>
+<ul>
+<li><strong><code>static</code></strong> = unit <strong>没有 <code>[Install]</code> 段</strong>，systemd 不知道该把链接放哪，因此无法 enable。这类 unit 通常是被别的 unit 依赖时才启动</li>
+<li><strong><code>masked</code></strong> = 被软链接到 <code>/dev/null</code>，<strong>任何方式都无法启动</strong>。它比 <code>disable</code> 更彻底 —— <code>disable</code> 只是不自动启动，但依赖它的服务仍可能拉起它</li>
+</ul>
+<p><strong>Q：为什么改了 unit 文件必须 <code>daemon-reload</code>？</strong></p>
+<p>因为 systemd 在启动时把所有 unit 文件<strong>解析成内存中的对象</strong>，之后一直使用内存里的版本，不会去检查磁盘文件是否变化。<code>daemon-reload</code> 让它重新扫描并解析。</p>
+<p>记忆规则：<strong>改 unit 文件 → <code>daemon-reload</code> + <code>restart</code></strong>；改服务自己的配置文件（如 <code>nginx.conf</code>）→ 只需 <code>systemctl reload</code>；升级了 systemd 本身 → <code>daemon-reexec</code>。</p>
+<p>顺带一个相关的最佳实践：<strong>不要直接编辑 <code>/usr/lib/systemd/system/</code> 下的文件</strong>（软件包升级会覆盖）。用 <strong><code>systemctl edit myapp</code></strong> 创建 drop-in 片段，它会生成 <code>/etc/systemd/system/myapp.service.d/override.conf</code>。注意<strong>列表型字段要先用空值清空再赋值</strong>（<code>ExecStart=</code> 然后 <code>ExecStart=/new/path</code>），否则会变成追加而报错。</p>
+<p><strong>Q：<code>Requires=</code> 和 <code>After=</code> 有什么区别？</strong></p>
+<p>它们是<strong>两个正交的概念</strong>：<code>Requires=</code> 表达<strong>依赖关系</strong>（对方失败我也失败、对方停止我也停止），<code>After=</code> 表达<strong>启动顺序</strong>（在对方之后启动）。</p>
+<p>只写 <code>Requires=postgresql.service</code> 不写 <code>After=</code> 的话，<strong>两者会同时启动</strong>，你的服务可能在数据库就绪前就开始连接。所以依赖和顺序通常要一起写。</p>
+<p>生产上更推荐 <strong><code>Wants=</code> + <code>After=</code></strong> 的组合：<code>Wants</code> 是弱依赖，数据库暂时不可用时服务仍会启动，靠应用自己重试 —— 这比整个服务栈连锁失败更健壮。</p>
+<p>另一个高频错误是混淆 <strong><code>network.target</code> 和 <code>network-online.target</code></strong>：前者只表示网络栈已初始化（不保证有 IP），需要联网的服务必须用后者，并确保对应的 <code>*-wait-online.service</code> 已启用。</p>
+<p><strong>Q：脚本手动跑正常，放进 cron 就失败，为什么？</strong></p>
+<p>因为 <strong>cron 提供的执行环境极其精简</strong>。实测 <code>* * * * * env &gt; /tmp/e.txt</code> 会发现只有几个变量：</p>
+<ul>
+<li><strong><code>PATH=/usr/bin:/bin</code></strong> —— 只有两个目录，<code>/usr/local/bin</code> 里的命令全部 <code>command not found</code></li>
+<li><strong><code>SHELL=/bin/sh</code></strong> —— 不是 bash！所以 <code>[[ ]]</code>、数组、进程替换 <code>&lt;()</code>、<code>$'...'</code> 全部失效</li>
+<li><strong>不读 <code>.bashrc</code>/<code>.profile</code></strong> —— 你配的环境变量、代理、语言设置全都没有</li>
+<li><strong>没有 <code>LANG</code>/<code>LC_ALL</code></strong> —— 中文乱码、日期格式和 <code>sort</code> 顺序都可能变</li>
+<li><strong>cwd 是家目录</strong> —— 相对路径全错</li>
+</ul>
+<p>对策：命令用<strong>绝对路径</strong>、在 crontab 顶部声明 <code>SHELL=/bin/bash</code> 和 <code>PATH=</code>、显式 <code>cd</code>、把复杂逻辑放进脚本而不是写在 crontab 一行里。</p>
+<p>调试的关键是<strong>先让输出可见</strong>（<code>&gt;&gt; /var/log/x.log 2&gt;&amp;1</code> 或 <code>| logger -t myjob</code>），因为 cron 默认把输出发邮件而机器通常没配邮件系统。用 <code>env -i SHELL=/bin/sh PATH=/usr/bin:/bin /bin/sh -c '脚本'</code> 可以在本地模拟 cron 的最小环境。还要看 <code>journalctl -u cron</code> 确认任务到底有没有被触发。</p>
+<p><strong>Q：systemd timer 相比 cron 有什么优势？</strong></p>
+<p>最决定性的三点是<strong>可观测性</strong>：</p>
+<ol>
+<li><strong>日志自动进 journald</strong> —— <code>journalctl -u backup.service</code> 直接看，不用自己重定向</li>
+<li><strong>失败可告警</strong> —— <code>OnFailure=alert@%n.service</code>，cron 只能发邮件</li>
+<li><strong><code>systemctl list-timers</code></strong> 直接看到下次执行时间，不用自己算 cron 表达式</li>
+</ol>
+<p>其他优势：<strong>执行环境明确</strong>（<code>Environment=</code>/<code>EnvironmentFile=</code>，不会有 cron 的 PATH 坑）、<strong><code>Persistent=true</code></strong> 补跑关机期间错过的任务、<strong><code>RandomizedDelaySec</code></strong> 避免集群同时打爆存储、<strong><code>OnUnitActiveSec</code></strong> 天然防任务重叠（cron 需要自己加 <code>flock</code>）、<strong>资源限制与沙箱</strong>（<code>MemoryMax</code>/<code>Nice</code>/<code>IOSchedulingClass</code>/<code>ProtectSystem</code>）、<strong><code>systemd-analyze calendar</code> 能验证表达式</strong>（cron 写错要等执行时才知道）。</p>
+<p>代价是要写两个文件（<code>.timer</code> + <code>.service</code>）且只能在 systemd 系统上用。结论：<strong>生产任务用 timer，临时/简单的用 cron</strong>。</p>
+<p><strong>Q：cron 里 <code>*/5 * * * *</code> 的任务可能会重叠执行，怎么防？</strong></p>
+<p>cron 只负责「到点触发」，<strong>不检查上一次是否还在运行</strong>。如果任务偶尔跑超过 5 分钟，就会出现多个实例并发，可能导致数据竞争、资源耗尽或重复处理。</p>
+<p>三种防护：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">*/5 * * * * flock -n /tmp/myjob.lock /path/script.sh    <span class="c1"># ✅ 拿不到锁就跳过</span>
+</span></span><span class="line"><span class="cl">*/5 * * * * timeout <span class="m">240</span> flock -w <span class="m">10</span> /tmp/x.lock /path/script.sh   <span class="c1"># 锁 + 超时</span>
+</span></span></code></pre></div><p>systemd timer 用 <strong><code>OnUnitActiveSec=5min</code></strong> 从根本上避免 —— 它的语义是「上次<strong>跑完之后</strong>再等 5 分钟」，而且同一个 unit 本身不会并发启动。</p>
+<p>cron 的其他经典坑：<strong><code>%</code> 必须转义</strong>（cron 里 <code>%</code> 表示换行，<code>date +%Y</code> 会被截断）、<code>crontab -r</code> 无确认地删除全部（改前先 <code>crontab -l &gt; backup</code>）、<strong>夏令时切换那天</strong> 0:00~4:00 的任务可能不执行或执行两次。</p>
+<p><strong>Q：怎么让 systemd 准确知道 Go 服务已经就绪、以及是否卡死？</strong></p>
+<p>用 <strong><code>Type=notify</code> + <code>sd_notify</code></strong>：应用在完成所有初始化（连数据库、加载配置、开始监听端口）之后，发送 <code>READY=1</code>。这样 systemd 的 <code>After=</code> 依赖才是真实可靠的，<code>systemctl start</code> 也会阻塞到真正就绪。</p>
+<p>卡死检测用 <strong><code>WatchdogSec=30</code></strong> + 应用定期发送 <code>WATCHDOG=1</code>（建议按间隔的一半发）。超时未收到心跳，systemd 判定服务卡死并按 <code>Restart=</code> 策略重启。<strong>关键是心跳里要做真实的健康检查</strong>（能否访问数据库、队列是否积压），而不是无脑发送 —— 否则死锁的服务照样能发心跳。</p>
+<p>协议本身很简单（往 <code>$NOTIFY_SOCKET</code> 这个 unix datagram socket 写一行文本），不想引依赖可以手写十几行。还能发 <code>STATUS=当前处理 1234 个请求</code>，这段文字会显示在 <code>systemctl status</code> 里，对运维很友好。</p>
+<hr>
+<h1 id="小结">小结</h1>
+<ul>
+<li><strong>unit 是统一抽象</strong>（service/timer/socket/mount/target/slice），<code>/etc/systemd/system/</code> 优先级最高，<strong>不要改 <code>/usr/lib/</code> 下的文件</strong></li>
+<li><strong><code>enable</code> 只是创建软链接</strong>到 target 的 <code>.wants/</code>；<code>static</code> 是没有 <code>[Install]</code> 段，<code>mask</code> 是链到 <code>/dev/null</code></li>
+<li><strong><code>Requires</code> 管依赖、<code>After</code> 管顺序</strong>，两个正交概念；生产上推荐 <code>Wants</code> + <code>After</code> 的弱依赖组合</li>
+<li><strong>改 unit 文件必须 <code>daemon-reload</code></strong>（systemd 用的是内存里解析好的版本）</li>
+<li><strong><code>Type</code> 选错会导致无限重启或依赖失效</strong>：程序自己 fork 要用 <code>forking</code>，最好的做法是让程序前台运行 + <code>Type=notify</code></li>
+<li><strong>drop-in（<code>systemctl edit</code>）是唯一正确的覆盖方式</strong>，列表型字段要先清空</li>
+<li><strong><code>journalctl -b -1 -u x</code></strong> 看上次启动的日志是查崩溃原因的关键；journald 有<strong>限流</strong>会静默丢日志</li>
+<li><strong>timer 相比 cron 的核心优势是可观测性</strong>：日志进 journald、<code>OnFailure=</code> 告警、<code>list-timers</code> 看下次执行</li>
+<li><strong>cron 失败的头号原因是环境</strong>（PATH 只有两个目录、SHELL 是 sh、不读 profile），调试第一步是<strong>让输出可见</strong></li>
+<li><strong><code>LimitNOFILE</code> 要写在 unit 里</strong>（<code>limits.conf</code> 对 systemd 服务无效）</li>
+</ul>
+<p>下一篇讲 <strong>网络操作与排查</strong>：<code>ip</code> 命令替代 <code>ifconfig</code> 之后各子命令怎么用、<code>ss</code> 的状态过滤、<code>curl -w</code> 精确定位耗时在哪一段、DNS 解析的完整链路（为什么容器里解析行为不同）、以及 <code>tcpdump</code> 抓包的基本套路。</p>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2026-08-12</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/linux/">linux</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/linux/linux_15_%E7%BD%91%E7%BB%9C%E6%93%8D%E4%BD%9C%E4%B8%8E%E6%8E%92%E6%9F%A5/" class="prev" rel="prev" title="Linux-15 网络操作与排查：ip/ss 的正确用法、curl -w 定位耗时、DNS 链路与 ndots 陷阱"><i class="fas fa-angle-left fa-fw"></i>Linux-15 网络操作与排查：ip/ss 的正确用法、curl -w 定位耗时、DNS 链路与 ndots 陷阱</a>
+            <a href="/posts/linux/linux_13_%E8%BF%9B%E7%A8%8B%E4%B8%8E%E4%BD%9C%E4%B8%9A%E6%8E%A7%E5%88%B6/" class="next" rel="next" title="Linux-13 进程与作业控制：ps 每一列、D 状态为什么杀不掉、nohup 与 setsid 的区别">Linux-13 进程与作业控制：ps 每一列、D 状态为什么杀不掉、nohup 与 setsid 的区别<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2026-08-12T17:00:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Linux-14 systemd 与定时任务：写一个生产级 unit、Type 怎么选、cron 的经典坑"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

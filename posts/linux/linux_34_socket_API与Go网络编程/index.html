@@ -1,0 +1,842 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>Linux-34 socket API 与 Go 网络编程：一个 fd 如何代表一条连接 - xingliuhua博客</title><meta name="Description" content="socket 为什么被设计成文件描述符、bind/listen/accept/connect 分别改变什么内核状态、短读短写与半关闭为何是字节流的必然结果、deadline 和 socket option 如何映射到 Go net 包，以及连接泄漏、端口耗尽和慢客户端怎样分层排查。"><meta property="og:title" content="Linux-34 socket API 与 Go 网络编程：一个 fd 如何代表一条连接" />
+<meta property="og:description" content="socket 为什么被设计成文件描述符、bind/listen/accept/connect 分别改变什么内核状态、短读短写与半关闭为何是字节流的必然结果、deadline 和 socket option 如何映射到 Go net 包，以及连接泄漏、端口耗尽和慢客户端怎样分层排查。" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/linux/linux_34_socket_API%E4%B8%8EGo%E7%BD%91%E7%BB%9C%E7%BC%96%E7%A8%8B/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2026-08-12T07:00:00+08:00" />
+<meta property="article:modified_time" content="2026-08-12T07:00:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="Linux-34 socket API 与 Go 网络编程：一个 fd 如何代表一条连接"/>
+<meta name="twitter:description" content="socket 为什么被设计成文件描述符、bind/listen/accept/connect 分别改变什么内核状态、短读短写与半关闭为何是字节流的必然结果、deadline 和 socket option 如何映射到 Go net 包，以及连接泄漏、端口耗尽和慢客户端怎样分层排查。"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/linux/linux_34_socket_API%E4%B8%8EGo%E7%BD%91%E7%BB%9C%E7%BC%96%E7%A8%8B/" /><link rel="prev" href="https://xingliuhua.github.io/posts/linux/linux_35_%E8%99%9A%E6%8B%9F%E7%BD%91%E7%BB%9C%E5%AE%B9%E5%99%A8%E4%B8%BA%E4%BB%80%E4%B9%88%E8%83%BD%E9%80%9A/" /><link rel="next" href="https://xingliuhua.github.io/posts/linux/linux_33_%E4%B8%80%E4%B8%AA%E5%8C%85%E5%9C%A8%E5%86%85%E6%A0%B8%E9%87%8C%E7%9A%84%E6%97%85%E7%A8%8B/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Linux-34 socket API 与 Go 网络编程：一个 fd 如何代表一条连接",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_34_socket_API%E4%B8%8EGo%E7%BD%91%E7%BB%9C%E7%BC%96%E7%A8%8B\/"
+        },"genre": "posts","keywords": "linux","wordcount":  10432 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_34_socket_API%E4%B8%8EGo%E7%BD%91%E7%BB%9C%E7%BC%96%E7%A8%8B\/","datePublished": "2026-08-12T07:00:00+08:00","dateModified": "2026-08-12T07:00:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "socket 为什么被设计成文件描述符、bind/listen/accept/connect 分别改变什么内核状态、短读短写与半关闭为何是字节流的必然结果、deadline 和 socket option 如何映射到 Go net 包，以及连接泄漏、端口耗尽和慢客户端怎样分层排查。"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">Linux-34 socket API 与 Go 网络编程：一个 fd 如何代表一条连接</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2026-08-12">2026-08-12</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 10432 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 21 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-socket-为什么也是文件描述符">1. socket 为什么也是文件描述符</a>
+      <ol>
+        <li><a href="#11-socket-先创建一个内核通信端点">1.1 <code>socket()</code> 先创建一个内核通信端点</a></li>
+        <li><a href="#12-fd-是能力句柄不是连接永久身份">1.2 fd 是能力句柄，不是连接永久身份</a></li>
+        <li><a href="#13-socket-与普通文件相同和不同的地方">1.3 socket 与普通文件相同和不同的地方</a></li>
+      </ol>
+    </li>
+    <li><a href="#2-服务端状态机bindlistenaccept">2. 服务端状态机：bind、listen、accept</a>
+      <ol>
+        <li><a href="#21-bind声明本地地址不是开始接客">2.1 bind：声明本地地址，不是开始接客</a></li>
+        <li><a href="#22-listen从主动-socket-变为监听-socket">2.2 listen：从主动 socket 变为监听 socket</a></li>
+        <li><a href="#23-accept-为什么返回新-fd">2.3 accept 为什么返回新 fd</a></li>
+        <li><a href="#24-非阻塞-accept-必须处理一组结果">2.4 非阻塞 accept 必须处理一组结果</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-客户端-connect阻塞完成与异步完成">3. 客户端 connect：阻塞完成与异步完成</a>
+      <ol>
+        <li><a href="#31-connect-会隐式选择本地端点">3.1 connect 会隐式选择本地端点</a></li>
+        <li><a href="#32-为什么不能只靠应用-sleep-后重试">3.2 为什么不能只靠应用 sleep 后重试</a></li>
+        <li><a href="#33-临时端口为什么会耗尽">3.3 临时端口为什么会耗尽</a></li>
+      </ol>
+    </li>
+    <li><a href="#4-tcp-是字节流短读粘包与消息边界">4. TCP 是字节流：短读、粘包与消息边界</a>
+      <ol>
+        <li><a href="#41-一次-write-不对应一次-read">4.1 一次 Write 不对应一次 Read</a></li>
+        <li><a href="#42-应用协议必须自己-framing">4.2 应用协议必须自己 framing</a></li>
+        <li><a href="#43-短写也必须处理">4.3 短写也必须处理</a></li>
+      </ol>
+    </li>
+    <li><a href="#5-关闭不是一个动作finrst-与半关闭">5. 关闭不是一个动作：FIN、RST 与半关闭</a>
+      <ol>
+        <li><a href="#51-eof-只关闭一个方向">5.1 EOF 只关闭一个方向</a></li>
+        <li><a href="#52-closeshutdown-与-linger">5.2 close、shutdown 与 linger</a></li>
+        <li><a href="#53-rst-表达异常终止">5.3 RST 表达异常终止</a></li>
+        <li><a href="#54-未读数据时粗暴关闭的风险">5.4 未读数据时粗暴关闭的风险</a></li>
+      </ol>
+    </li>
+    <li><a href="#6-阻塞非阻塞与-deadline-的真实关系">6. 阻塞、非阻塞与 deadline 的真实关系</a>
+      <ol>
+        <li><a href="#61-阻塞是线程语义不是协议语义">6.1 阻塞是线程语义，不是协议语义</a></li>
+        <li><a href="#62-超时与-deadline-不一样">6.2 超时与 deadline 不一样</a></li>
+        <li><a href="#63-deadline-如何在-go-runtime-中生效">6.3 deadline 如何在 Go runtime 中生效</a></li>
+        <li><a href="#64-context-不会自动中断所有-conn-操作">6.4 context 不会自动中断所有 Conn 操作</a></li>
+      </ol>
+    </li>
+    <li><a href="#7-go-net-包怎样映射-socket-生命周期">7. Go net 包怎样映射 socket 生命周期</a>
+      <ol>
+        <li><a href="#71-服务端listen-与-accept">7.1 服务端：Listen 与 Accept</a></li>
+        <li><a href="#72-防止连接与-goroutine-泄漏">7.2 防止连接与 goroutine 泄漏</a></li>
+        <li><a href="#73-netdialer-比裸-netdialtimeout-更可控">7.3 <code>net.Dialer</code> 比裸 <code>net.DialTimeout</code> 更可控</a></li>
+        <li><a href="#74-syscallconn-是逃生口不是常规路径">7.4 <code>SyscallConn</code> 是逃生口，不是常规路径</a></li>
+      </ol>
+    </li>
+    <li><a href="#8-socket-option每个开关都在交换东西">8. Socket option：每个开关都在交换东西</a>
+      <ol>
+        <li><a href="#81-so_reuseaddr-与-so_reuseport-不是同义词">8.1 SO_REUSEADDR 与 SO_REUSEPORT 不是同义词</a></li>
+        <li><a href="#82-tcp_nodelay延迟与小包效率的取舍">8.2 TCP_NODELAY：延迟与小包效率的取舍</a></li>
+        <li><a href="#83-so_keepalive-不是请求-deadline">8.3 SO_KEEPALIVE 不是请求 deadline</a></li>
+        <li><a href="#84-so_rcvbufso_sndbuf-不是越大越好">8.4 SO_RCVBUF/SO_SNDBUF 不是越大越好</a></li>
+        <li><a href="#85-option-的设置时机也有语义">8.5 option 的设置时机也有语义</a></li>
+      </ol>
+    </li>
+    <li><a href="#9-udp-反例同一个-socket-api不同传输语义">9. UDP 反例：同一个 socket API，不同传输语义</a>
+      <ol>
+        <li><a href="#91-udp-保留-datagram-边界">9.1 UDP 保留 datagram 边界</a></li>
+        <li><a href="#92-udp-send-成功更弱">9.2 UDP send 成功更弱</a></li>
+        <li><a href="#93-go-packetconn-的并发边界">9.3 Go PacketConn 的并发边界</a></li>
+      </ol>
+    </li>
+    <li><a href="#10-错误处理不要把所有网络失败都重试">10. 错误处理：不要把所有网络失败都重试</a>
+      <ol>
+        <li><a href="#101-错误必须结合操作阶段">10.1 错误必须结合操作阶段</a></li>
+        <li><a href="#102-go-中保留错误链">10.2 Go 中保留错误链</a></li>
+        <li><a href="#103-重试要有预算退避和抖动">10.3 重试要有预算、退避和抖动</a></li>
+      </ol>
+    </li>
+    <li><a href="#11-线上排查从状态与所有权入手">11. 线上排查：从状态与所有权入手</a>
+      <ol>
+        <li><a href="#111-先看-socket-状态分布">11.1 先看 socket 状态分布</a></li>
+        <li><a href="#112-fd-多不等于一定泄漏">11.2 fd 多不等于一定泄漏</a></li>
+        <li><a href="#113-端口耗尽与-time_wait">11.3 端口耗尽与 TIME_WAIT</a></li>
+        <li><a href="#114-syscall-与-go-观测结合">11.4 syscall 与 Go 观测结合</a></li>
+      </ol>
+    </li>
+    <li><a href="#12-常用命令知识点扩展">12. 常用命令知识点扩展</a></li>
+    <li><a href="#13-面试题">13. 面试题</a></li>
+    <li><a href="#小结">小结</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><p>上一篇沿着收包路径，从网卡 DMA、NAPI、<code>sk_buff</code> 一直走到 socket 接收队列。这一篇站到应用侧：<strong>为什么一个普通整数 fd 能代表一条跨机器的 TCP 连接，而 <code>Read</code>、<code>Write</code>、<code>Close</code> 几个看似简单的调用背后却有如此多状态？</strong></p>
+<p>socket API 的成功之处在于把网络通信纳入 Unix 文件描述符模型：应用可以用类似文件的接口读写连接，又通过地址、协议和 option 表达网络特性。它的危险也来自这种简洁——TCP 是全双工字节流，不是文件、消息队列或一次请求；<code>write</code> 成功不代表对端处理，<code>read</code> 返回短数据不代表一个业务消息结束，<code>close</code> 也不总是“双方立刻消失”。</p>
+<p>先看五个问题：</p>
+<ol>
+<li><code>socket()</code> 创建的 fd 指向什么？为什么 socket 可以被 <code>read/write</code>、epoll、dup 和 fork 共同操作？</li>
+<li><code>bind</code>、<code>listen</code>、<code>accept</code>、<code>connect</code> 分别改变哪一段内核状态？为什么 <code>accept</code> 返回一个新 fd？</li>
+<li>TCP 为什么必然出现短读、短写、粘包、半关闭与 reset？应用如何在字节流上恢复消息边界？</li>
+<li>Go 的 <code>net.Conn</code> 看起来阻塞，runtime 如何借助 nonblocking fd、netpoll 和 deadline 保持 goroutine 可扩展？</li>
+<li><code>SO_REUSEADDR</code>、<code>SO_REUSEPORT</code>、keepalive、buffer、<code>TCP_NODELAY</code> 各解决什么，为什么不存在一组通用“高性能参数”？</li>
+</ol>
+<hr>
+<h1 id="1-socket-为什么也是文件描述符">1. socket 为什么也是文件描述符</h1>
+<h2 id="11-socket-先创建一个内核通信端点">1.1 <code>socket()</code> 先创建一个内核通信端点</h2>
+<p>典型 TCP 服务端从下面的调用开始：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="kt">int</span> <span class="n">fd</span> <span class="o">=</span> <span class="n">socket</span><span class="p">(</span><span class="n">AF_INET</span><span class="p">,</span> <span class="n">SOCK_STREAM</span> <span class="o">|</span> <span class="n">SOCK_NONBLOCK</span> <span class="o">|</span> <span class="n">SOCK_CLOEXEC</span><span class="p">,</span> <span class="mi">0</span><span class="p">);</span>
+</span></span></code></pre></div><p>参数分别表达：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">AF_INET       -&gt; IPv4 地址族
+</span></span><span class="line"><span class="cl">SOCK_STREAM   -&gt; 有序可靠字节流语义
+</span></span><span class="line"><span class="cl">IPPROTO_TCP   -&gt; 通常由前两者推导为 TCP
+</span></span><span class="line"><span class="cl">NONBLOCK      -&gt; 调用不能立即完成时返回 EAGAIN/EINPROGRESS
+</span></span><span class="line"><span class="cl">CLOEXEC       -&gt; exec 新程序时不要意外继承 fd
+</span></span></code></pre></div><p>返回的整数只是当前进程 fd table 的下标。它指向一个 open file description，再关联内核 <code>struct socket</code>、协议层 <code>struct sock</code> 以及 TCP 控制块等状态。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">process fd table
+</span></span><span class="line"><span class="cl">  fd 7
+</span></span><span class="line"><span class="cl">    -&gt; struct file
+</span></span><span class="line"><span class="cl">       -&gt; struct socket
+</span></span><span class="line"><span class="cl">          -&gt; struct sock / TCP state
+</span></span><span class="line"><span class="cl">             local address
+</span></span><span class="line"><span class="cl">             peer address
+</span></span><span class="line"><span class="cl">             send/receive queues
+</span></span><span class="line"><span class="cl">             sequence/window/timers
+</span></span><span class="line"><span class="cl">             wait queue and callbacks
+</span></span></code></pre></div><p>因此 socket 能复用 Unix fd 的引用计数、权限边界、poll、dup、fork 和 close 模型，同时由 socket 层提供地址与协议操作。</p>
+<h2 id="12-fd-是能力句柄不是连接永久身份">1.2 fd 是能力句柄，不是连接永久身份</h2>
+<p>拿到 fd 的进程就拥有对该打开对象执行相应操作的能力。<code>dup</code> 后多个 fd 可指向同一个 socket；<code>fork</code> 后父子进程也可能共同持有它。只有最后一个引用关闭，底层对象才进入真正释放流程。</p>
+<p>反过来，整数 fd 会快速复用：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">fd 7 -&gt; connection A
+</span></span><span class="line"><span class="cl">close(7)
+</span></span><span class="line"><span class="cl">accept() -&gt; fd 7 -&gt; connection B
+</span></span></code></pre></div><p>若异步回调只保存整数 7，延迟事件可能误作用到 B。成熟服务器会让连接对象包含 generation、所有权或引用生命周期，并让关闭操作在负责该连接的 event loop 中串行完成。</p>
+<h2 id="13-socket-与普通文件相同和不同的地方">1.3 socket 与普通文件相同和不同的地方</h2>
+<p>共同点：</p>
+<ul>
+<li>都由 fd 引用，可 <code>read/write/close</code></li>
+<li>都能设置 <code>O_NONBLOCK</code>、<code>FD_CLOEXEC</code></li>
+<li>都可被 epoll/poll 观察</li>
+<li>都有内核对象、等待队列和引用计数</li>
+</ul>
+<p>差异：</p>
+<ul>
+<li>TCP 没有可任意 seek 的文件偏移</li>
+<li>连接有远端状态、拥塞控制、重传和超时</li>
+<li><code>read==0</code> 表示对端发送方向 EOF，不等于本端不能继续写</li>
+<li><code>write</code> 只把字节交给本机协议栈，不表示远端应用已消费</li>
+<li>错误可能在早先异步网络事件后，延迟到下一次调用才报告</li>
+</ul>
+<p>“everything is a file”是统一接口的抽象，不是说所有 fd 都有磁盘文件语义。</p>
+<hr>
+<h1 id="2-服务端状态机bindlistenaccept">2. 服务端状态机：bind、listen、accept</h1>
+<h2 id="21-bind声明本地地址不是开始接客">2.1 bind：声明本地地址，不是开始接客</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="k">struct</span> <span class="n">sockaddr_in</span> <span class="n">addr</span> <span class="o">=</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="p">.</span><span class="n">sin_family</span> <span class="o">=</span> <span class="n">AF_INET</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="p">.</span><span class="n">sin_port</span> <span class="o">=</span> <span class="n">htons</span><span class="p">(</span><span class="mi">8080</span><span class="p">),</span>
+</span></span><span class="line"><span class="cl">    <span class="p">.</span><span class="n">sin_addr</span><span class="p">.</span><span class="n">s_addr</span> <span class="o">=</span> <span class="n">htonl</span><span class="p">(</span><span class="n">INADDR_ANY</span><span class="p">),</span>
+</span></span><span class="line"><span class="cl"><span class="p">};</span>
+</span></span><span class="line"><span class="cl"><span class="n">bind</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span> <span class="p">(</span><span class="k">struct</span> <span class="n">sockaddr</span> <span class="o">*</span><span class="p">)</span><span class="o">&amp;</span><span class="n">addr</span><span class="p">,</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">addr</span><span class="p">));</span>
+</span></span></code></pre></div><p><code>bind</code> 将 socket 与本地地址/端口建立关系。<code>0.0.0.0:8080</code> 表示匹配本 network namespace 中适用的所有本地 IPv4 地址，并不是一个可以路由到的真实远端地址。</p>
+<p>绑定可能失败：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">EADDRINUSE      端口/地址与已有 socket 冲突
+</span></span><span class="line"><span class="cl">EADDRNOTAVAIL   地址不属于当前 namespace/interface
+</span></span><span class="line"><span class="cl">EACCES          低端口权限或安全策略限制
+</span></span></code></pre></div><p>不显式 bind 的客户端在 <code>connect</code> 时由内核选择源地址和临时端口。服务端通常显式 bind，才能提供稳定入口。</p>
+<h2 id="22-listen从主动-socket-变为监听-socket">2.2 listen：从主动 socket 变为监听 socket</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="n">listen</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span> <span class="mi">4096</span><span class="p">);</span>
+</span></span></code></pre></div><p><code>listen</code> 让流式 socket 进入被动监听状态，并建立 TCP 建连所需的数据结构。上一篇已区分 SYN 请求队列和完成握手后等待应用的 accept queue。<code>backlog</code> 影响后者容量，但最终值还受 <code>net.core.somaxconn</code>、内核实现和语言 runtime 截断规则影响。</p>
+<p><code>listen</code> 成功只表示内核可接收连接请求，不代表应用已经拿到任何连接；监听 fd 不承载某个客户端的业务字节。</p>
+<h2 id="23-accept-为什么返回新-fd">2.3 accept 为什么返回新 fd</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="kt">int</span> <span class="n">cfd</span> <span class="o">=</span> <span class="n">accept4</span><span class="p">(</span><span class="n">lfd</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="n">SOCK_NONBLOCK</span> <span class="o">|</span> <span class="n">SOCK_CLOEXEC</span><span class="p">);</span>
+</span></span></code></pre></div><p>监听 socket 必须持续存在并接受后续客户端。每个已建立 TCP 连接又需要独立四元组、序号、窗口、缓冲和错误状态，所以 <code>accept</code> 从完成队列取出一个子 socket，并给它分配新 fd：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">listen fd 3: 0.0.0.0:8080
+</span></span><span class="line"><span class="cl">  |
+</span></span><span class="line"><span class="cl">  +-- accept -&gt; fd 8: 10.0.0.10:8080 &lt;-&gt; 10.0.0.21:52100
+</span></span><span class="line"><span class="cl">  +-- accept -&gt; fd 9: 10.0.0.10:8080 &lt;-&gt; 10.0.0.22:43812
+</span></span></code></pre></div><p>关闭 fd 8 不影响监听 fd 3 或 fd 9。关闭监听 fd 会停止接收新连接，但已 accept 的连接仍由各自引用和状态决定。</p>
+<h2 id="24-非阻塞-accept-必须处理一组结果">2.4 非阻塞 accept 必须处理一组结果</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="k">for</span> <span class="p">(;;)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="kt">int</span> <span class="n">cfd</span> <span class="o">=</span> <span class="n">accept4</span><span class="p">(</span><span class="n">lfd</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="n">SOCK_NONBLOCK</span> <span class="o">|</span> <span class="n">SOCK_CLOEXEC</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="p">(</span><span class="n">cfd</span> <span class="o">&gt;=</span> <span class="mi">0</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="n">register_connection</span><span class="p">(</span><span class="n">cfd</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">        <span class="k">continue</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="p">(</span><span class="n">errno</span> <span class="o">==</span> <span class="n">EINTR</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="k">continue</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="p">(</span><span class="n">errno</span> <span class="o">==</span> <span class="n">EAGAIN</span> <span class="o">||</span> <span class="n">errno</span> <span class="o">==</span> <span class="n">EWOULDBLOCK</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="k">break</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="p">(</span><span class="n">errno</span> <span class="o">==</span> <span class="n">EMFILE</span> <span class="o">||</span> <span class="n">errno</span> <span class="o">==</span> <span class="n">ENFILE</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="n">enter_overload_mode</span><span class="p">();</span>
+</span></span><span class="line"><span class="cl">        <span class="k">break</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="n">log_accept_error</span><span class="p">(</span><span class="n">errno</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">    <span class="k">break</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>ET 模式要 drain 到 <code>EAGAIN</code>；LT 模式也常批量 accept 以摊销事件成本。<code>EMFILE</code> 是进程 fd 用尽，<code>ENFILE</code> 是系统打开文件表压力。它们不是普通瞬时网络错误：监听 fd 可能持续可读，若立即重试会形成错误忙循环。</p>
+<hr>
+<h1 id="3-客户端-connect阻塞完成与异步完成">3. 客户端 connect：阻塞完成与异步完成</h1>
+<h2 id="31-connect-会隐式选择本地端点">3.1 connect 会隐式选择本地端点</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="n">connect</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span> <span class="p">(</span><span class="k">struct</span> <span class="n">sockaddr</span> <span class="o">*</span><span class="p">)</span><span class="o">&amp;</span><span class="n">server</span><span class="p">,</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">server</span><span class="p">));</span>
+</span></span></code></pre></div><p>若 socket 尚未 bind，内核依据路由选择源 IP，并从临时端口范围选源端口，然后发 SYN、等待握手。阻塞 socket 通常等到连接成功、超时或失败；非阻塞 socket 常立即返回 <code>-1/EINPROGRESS</code>。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">nonblocking connect
+</span></span><span class="line"><span class="cl">  -&gt; EINPROGRESS
+</span></span><span class="line"><span class="cl">  -&gt; epoll 等 EPOLLOUT/ERR
+</span></span><span class="line"><span class="cl">  -&gt; getsockopt(SOL_SOCKET, SO_ERROR)
+</span></span><span class="line"><span class="cl">       0          成功
+</span></span><span class="line"><span class="cl">       ECONNREFUSED / ETIMEDOUT / ... 失败
+</span></span></code></pre></div><p>“fd 可写”不等于 connect 一定成功；失败也会令等待结束。必须读取 <code>SO_ERROR</code> 得到最终结果。</p>
+<h2 id="32-为什么不能只靠应用-sleep-后重试">3.2 为什么不能只靠应用 sleep 后重试</h2>
+<p>TCP 自身有 SYN 重传和超时策略。应用还应有业务 deadline，因为内核默认超时可能远长于请求可接受延迟。连接超时与 DNS、TLS handshake、请求响应超时应分开统计：它们发生在不同阶段，统一报“timeout”会让排障失去方向。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">DNS deadline
+</span></span><span class="line"><span class="cl">  -&gt; TCP connect deadline
+</span></span><span class="line"><span class="cl">     -&gt; TLS handshake deadline
+</span></span><span class="line"><span class="cl">        -&gt; request write deadline
+</span></span><span class="line"><span class="cl">           -&gt; response header/body deadline
+</span></span></code></pre></div><p>总 deadline 可以约束整个操作，但可观测性应记录具体阶段。</p>
+<h2 id="33-临时端口为什么会耗尽">3.3 临时端口为什么会耗尽</h2>
+<p>客户端连接由四元组区分。对固定目标大量新建短连接时，本地源 IP 和临时端口是有限组合；加上 TIME_WAIT，可能找不到可用端口，出现 <code>EADDRNOTAVAIL</code> 等失败。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">一个源 IP -&gt; 一个固定目标 IP:port
+</span></span><span class="line"><span class="cl">可用源端口数量有限
+</span></span><span class="line"><span class="cl">连接创建速率很高 + 生命周期/TIME_WAIT 较长
+</span></span><span class="line"><span class="cl">  -&gt; 临时端口压力
+</span></span></code></pre></div><p>优先修复连接复用：HTTP keep-alive、连接池、HTTP/2 多路复用；必要时再做多源 IP、代理/负载均衡架构和受验证的端口范围规划。盲目缩短 TIME_WAIT 是把协议安全边界换成偶发故障。</p>
+<hr>
+<h1 id="4-tcp-是字节流短读粘包与消息边界">4. TCP 是字节流：短读、粘包与消息边界</h1>
+<h2 id="41-一次-write-不对应一次-read">4.1 一次 Write 不对应一次 Read</h2>
+<p>发送方：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="nx">conn</span><span class="p">.</span><span class="nf">Write</span><span class="p">([]</span><span class="nb">byte</span><span class="p">(</span><span class="s">&#34;hello&#34;</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl"><span class="nx">conn</span><span class="p">.</span><span class="nf">Write</span><span class="p">([]</span><span class="nb">byte</span><span class="p">(</span><span class="s">&#34;world&#34;</span><span class="p">))</span>
+</span></span></code></pre></div><p>接收方可能看到：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Read 1 -&gt; &#34;hell&#34;
+</span></span><span class="line"><span class="cl">Read 2 -&gt; &#34;oworld&#34;
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">或
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">Read 1 -&gt; &#34;helloworld&#34;
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">或更多其他切分
+</span></span></code></pre></div><p>TCP 保证字节有序可靠，不保存应用 <code>Write</code> 调用边界。网卡 MTU、TCP 分段、GSO/GRO、拥塞窗口、发送缓冲、接收时机都会改变 chunk。所谓“粘包”不是 TCP 把包错误粘住，而是应用没有定义字节流上的消息 framing。</p>
+<h2 id="42-应用协议必须自己-framing">4.2 应用协议必须自己 framing</h2>
+<p>常见方式：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">固定长度：每条记录恰好 N 字节
+</span></span><span class="line"><span class="cl">分隔符：HTTP/1 header 行使用 CRLF
+</span></span><span class="line"><span class="cl">长度前缀：[4-byte length][payload]
+</span></span><span class="line"><span class="cl">自描述协议：能从语法确定消息结尾
+</span></span><span class="line"><span class="cl">连接关闭：某些简单协议用 EOF 表示 body 结束
+</span></span></code></pre></div><p>长度前缀解析必须限制最大值，否则攻击者或错误客户端可声明超大长度，诱导内存分配或长期等待。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">var</span> <span class="nx">n</span> <span class="kt">uint32</span>
+</span></span><span class="line"><span class="cl"><span class="k">if</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">binary</span><span class="p">.</span><span class="nf">Read</span><span class="p">(</span><span class="nx">conn</span><span class="p">,</span> <span class="nx">binary</span><span class="p">.</span><span class="nx">BigEndian</span><span class="p">,</span> <span class="o">&amp;</span><span class="nx">n</span><span class="p">);</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="nx">err</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="k">if</span> <span class="nx">n</span> <span class="p">&gt;</span> <span class="mi">8</span><span class="o">&lt;&lt;</span><span class="mi">20</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="nx">errors</span><span class="p">.</span><span class="nf">New</span><span class="p">(</span><span class="s">&#34;frame too large&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="nx">buf</span> <span class="o">:=</span> <span class="nb">make</span><span class="p">([]</span><span class="kt">byte</span><span class="p">,</span> <span class="nx">n</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="nx">_</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">io</span><span class="p">.</span><span class="nf">ReadFull</span><span class="p">(</span><span class="nx">conn</span><span class="p">,</span> <span class="nx">buf</span><span class="p">)</span>
+</span></span></code></pre></div><p><code>io.ReadFull</code> 的意义是循环读取到指定长度或返回明确错误；不能假设一次 <code>Read(buf)</code> 填满 buf。</p>
+<h2 id="43-短写也必须处理">4.3 短写也必须处理</h2>
+<p>POSIX <code>write/send</code> 可成功写入少于请求长度，尤其在非阻塞 socket、信号、资源压力或自定义 wrapper 下。正确发送要维护剩余区间：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="k">while</span> <span class="p">(</span><span class="n">off</span> <span class="o">&lt;</span> <span class="n">len</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="n">ssize_t</span> <span class="n">n</span> <span class="o">=</span> <span class="n">send</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span> <span class="n">buf</span> <span class="o">+</span> <span class="n">off</span><span class="p">,</span> <span class="n">len</span> <span class="o">-</span> <span class="n">off</span><span class="p">,</span> <span class="n">MSG_NOSIGNAL</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="p">(</span><span class="n">n</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span> <span class="p">{</span> <span class="n">off</span> <span class="o">+=</span> <span class="n">n</span><span class="p">;</span> <span class="k">continue</span><span class="p">;</span> <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="p">(</span><span class="n">n</span> <span class="o">&lt;</span> <span class="mi">0</span> <span class="o">&amp;&amp;</span> <span class="n">errno</span> <span class="o">==</span> <span class="n">EINTR</span><span class="p">)</span> <span class="k">continue</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="p">(</span><span class="n">n</span> <span class="o">&lt;</span> <span class="mi">0</span> <span class="o">&amp;&amp;</span> <span class="p">(</span><span class="n">errno</span> <span class="o">==</span> <span class="n">EAGAIN</span> <span class="o">||</span> <span class="n">errno</span> <span class="o">==</span> <span class="n">EWOULDBLOCK</span><span class="p">))</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="n">queue_remaining</span><span class="p">(</span><span class="n">buf</span> <span class="o">+</span> <span class="n">off</span><span class="p">,</span> <span class="n">len</span> <span class="o">-</span> <span class="n">off</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">        <span class="n">enable_epollout</span><span class="p">(</span><span class="n">fd</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">        <span class="k">break</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="n">fail_connection</span><span class="p">();</span>
+</span></span><span class="line"><span class="cl">    <span class="k">break</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>Go 的 <code>net.Conn.Write</code> 契约通常在 <code>n &lt; len(p)</code> 时返回非 nil error，但调用者仍应按接口检查 <code>n</code> 和 <code>err</code>。更高层可用 <code>io.Copy</code>/<code>io.WriteString</code>，也不能忽略返回错误。</p>
+<hr>
+<h1 id="5-关闭不是一个动作finrst-与半关闭">5. 关闭不是一个动作：FIN、RST 与半关闭</h1>
+<h2 id="51-eof-只关闭一个方向">5.1 EOF 只关闭一个方向</h2>
+<p>TCP 全双工连接有两个独立方向。对端发送 FIN 表示“以后不再发送字节”，本端 <code>Read</code> 在读完队列后返回 <code>0, EOF</code>；本端仍可能继续 <code>Write</code> 响应。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">client -- request bytes + FIN --&gt; server
+</span></span><span class="line"><span class="cl">client &lt;-- response bytes ------ server
+</span></span></code></pre></div><p>这适合“发送完请求后关闭写方向，但继续等响应”的协议。Unix 可用 <code>shutdown(fd, SHUT_WR)</code>；Go <code>*net.TCPConn</code> 提供 <code>CloseWrite</code> 和 <code>CloseRead</code>。</p>
+<h2 id="52-closeshutdown-与-linger">5.2 close、shutdown 与 linger</h2>
+<ul>
+<li><code>close(fd)</code>：释放当前 fd 引用；最后一个引用关闭时启动协议关闭语义</li>
+<li><code>shutdown(SHUT_WR)</code>：发送方向不再接受新数据，通常触发 FIN</li>
+<li><code>shutdown(SHUT_RD)</code>：本地停止接收语义，具体未读数据处理需谨慎</li>
+<li><code>SO_LINGER</code>：改变 close 在未发送数据存在时的行为，错误设置可能阻塞或产生 RST</li>
+</ul>
+<p>应用层“优雅关闭”通常不是只调用 close：先停止新请求，等待在途请求，按协议发送响应/GOAWAY，设置上限时间，最终才关闭连接。网络对端不配合时必须有 deadline，否则 shutdown 可以无限拖延。</p>
+<h2 id="53-rst-表达异常终止">5.3 RST 表达异常终止</h2>
+<p>RST 表示连接状态无法继续，例如向不存在的端口连接、对端已无对应 socket、某些 abortive close，或在一方认为连接有效时另一方已丢失状态。应用可能看到：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">ECONNRESET：读取时发现对端 reset
+</span></span><span class="line"><span class="cl">EPIPE：向已关闭方向写
+</span></span><span class="line"><span class="cl">SIGPIPE：传统 Unix 对 EPIPE 写入还可能发信号
+</span></span></code></pre></div><p>Go runtime 通常把它们转为 error；错误文本还可能被 <code>net.OpError</code> 包装。不能依赖字符串比较，应使用 <code>errors.Is</code>、<code>errors.As</code>、<code>net.Error</code> 及平台 errno 语义分类。</p>
+<h2 id="54-未读数据时粗暴关闭的风险">5.4 未读数据时粗暴关闭的风险</h2>
+<p>若应用在接收缓冲仍有对端数据时异常关闭，内核可能用 RST 告诉对端这些数据未被应用接受。对端此前成功 <code>write</code> 的字节仍可能最终得到 reset；这再次说明 write 成功只表示本地内核接收，不是远端业务 commit。</p>
+<p>需要可靠业务确认的协议必须由应用返回 ACK/响应，并定义重试与幂等，不能把 TCP ACK 当作“订单已写数据库”。</p>
+<hr>
+<h1 id="6-阻塞非阻塞与-deadline-的真实关系">6. 阻塞、非阻塞与 deadline 的真实关系</h1>
+<h2 id="61-阻塞是线程语义不是协议语义">6.1 阻塞是线程语义，不是协议语义</h2>
+<p>阻塞 socket 的 <code>read</code> 在没有数据时让调用线程睡眠；非阻塞 socket 返回 <code>EAGAIN</code>。二者收到的 TCP 字节、重传和顺序保证相同，区别是等待责任在哪里。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">blocking：内核把当前线程挂到 socket wait queue
+</span></span><span class="line"><span class="cl">nonblocking + epoll：应用事件循环统一等待很多 socket
+</span></span><span class="line"><span class="cl">io_uring：应用先提交具体请求，再等 completion
+</span></span></code></pre></div><p>Go 对应用提供阻塞风格，却在 runtime 内部使用 nonblocking fd + netpoll，因此阻塞一个 goroutine 通常不会阻塞一个内核线程。</p>
+<h2 id="62-超时与-deadline-不一样">6.2 超时与 deadline 不一样</h2>
+<p>“每次操作最多 5 秒”与“整个请求必须在绝对时刻前结束”不同。若每轮读取都重置 5 秒，慢客户端可以每 4.9 秒发一个字节，永久占住连接。绝对 deadline 能限制总时间：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="nx">deadline</span> <span class="o">:=</span> <span class="nx">time</span><span class="p">.</span><span class="nf">Now</span><span class="p">().</span><span class="nf">Add</span><span class="p">(</span><span class="mi">10</span> <span class="o">*</span> <span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="k">if</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">conn</span><span class="p">.</span><span class="nf">SetDeadline</span><span class="p">(</span><span class="nx">deadline</span><span class="p">);</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="nx">err</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><code>SetDeadline</code> 同时影响读写；<code>SetReadDeadline</code>、<code>SetWriteDeadline</code> 分别控制方向。deadline 是 fd 状态，会影响当前和后续操作，成功后不会自动清除：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="nx">conn</span><span class="p">.</span><span class="nf">SetReadDeadline</span><span class="p">(</span><span class="nx">time</span><span class="p">.</span><span class="nf">Now</span><span class="p">().</span><span class="nf">Add</span><span class="p">(</span><span class="mi">5</span> <span class="o">*</span> <span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl"><span class="c1">// 完成带时限阶段后清除
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">conn</span><span class="p">.</span><span class="nf">SetReadDeadline</span><span class="p">(</span><span class="nx">time</span><span class="p">.</span><span class="nx">Time</span><span class="p">{})</span>
+</span></span></code></pre></div><h2 id="63-deadline-如何在-go-runtime-中生效">6.3 deadline 如何在 Go runtime 中生效</h2>
+<p>Go 不需要为每个连接创建一个睡眠线程。runtime 的 poll descriptor 关联读/写等待 goroutine和定时器：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">G 调 Read -&gt; recv 返回 EAGAIN -&gt; G park
+</span></span><span class="line"><span class="cl">  |
+</span></span><span class="line"><span class="cl">  +-- fd readiness 先到 -&gt; netpoll 唤醒 -&gt; 重试 recv
+</span></span><span class="line"><span class="cl">  |
+</span></span><span class="line"><span class="cl">  +-- deadline 先到 -&gt; timer 唤醒 -&gt; 返回 timeout error
+</span></span></code></pre></div><p>readiness 与 timer 可能竞争，runtime 必须防止同一 waiter 被错误重复唤醒，并识别 deadline generation。应用层同样要接受边界竞态：超时发生时，部分字节可能已经读写，返回的 <code>n</code> 不能忽略。</p>
+<h2 id="64-context-不会自动中断所有-conn-操作">6.4 context 不会自动中断所有 Conn 操作</h2>
+<p>普通 <code>net.Conn.Read</code> 不接收 <code>context.Context</code>。取消 context 只有在调用栈显式观察它、设置 deadline 或关闭连接时才能中断阻塞操作。<code>http.Request.Context()</code> 由 HTTP 栈绑定连接生命周期，但自定义协议必须自己设计：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">readWithContext</span><span class="p">(</span><span class="nx">ctx</span> <span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span> <span class="nx">c</span> <span class="nx">net</span><span class="p">.</span><span class="nx">Conn</span><span class="p">,</span> <span class="nx">p</span> <span class="p">[]</span><span class="kt">byte</span><span class="p">)</span> <span class="p">(</span><span class="kt">int</span><span class="p">,</span> <span class="kt">error</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">done</span> <span class="o">:=</span> <span class="nb">make</span><span class="p">(</span><span class="kd">chan</span> <span class="kd">struct</span><span class="p">{})</span>
+</span></span><span class="line"><span class="cl">    <span class="k">defer</span> <span class="nb">close</span><span class="p">(</span><span class="nx">done</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="k">go</span> <span class="kd">func</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">select</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">case</span> <span class="o">&lt;-</span><span class="nx">ctx</span><span class="p">.</span><span class="nf">Done</span><span class="p">():</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">_</span> <span class="p">=</span> <span class="nx">c</span><span class="p">.</span><span class="nf">SetReadDeadline</span><span class="p">(</span><span class="nx">time</span><span class="p">.</span><span class="nf">Now</span><span class="p">())</span>
+</span></span><span class="line"><span class="cl">        <span class="k">case</span> <span class="o">&lt;-</span><span class="nx">done</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}()</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="nx">c</span><span class="p">.</span><span class="nf">Read</span><span class="p">(</span><span class="nx">p</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>这个示例展示机制，但每次 Read 创建 goroutine 并不适合高频生产代码。更常见做法是协议/请求级统一设置 deadline，或由 connection owner 在取消时关闭连接。</p>
+<hr>
+<h1 id="7-go-net-包怎样映射-socket-生命周期">7. Go net 包怎样映射 socket 生命周期</h1>
+<h2 id="71-服务端listen-与-accept">7.1 服务端：Listen 与 Accept</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="nx">ln</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">net</span><span class="p">.</span><span class="nf">Listen</span><span class="p">(</span><span class="s">&#34;tcp&#34;</span><span class="p">,</span> <span class="s">&#34;:8080&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="k">if</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="nx">err</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="k">defer</span> <span class="nx">ln</span><span class="p">.</span><span class="nf">Close</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">for</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">conn</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">ln</span><span class="p">.</span><span class="nf">Accept</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="nx">errors</span><span class="p">.</span><span class="nf">Is</span><span class="p">(</span><span class="nx">err</span><span class="p">,</span> <span class="nx">net</span><span class="p">.</span><span class="nx">ErrClosed</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="k">return</span> <span class="kc">nil</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">log</span><span class="p">.</span><span class="nf">Printf</span><span class="p">(</span><span class="s">&#34;accept: %v&#34;</span><span class="p">,</span> <span class="nx">err</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="k">continue</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="k">go</span> <span class="nf">handle</span><span class="p">(</span><span class="nx">conn</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><code>net.Listen</code> 完成 socket、必要 option、bind 和 listen；<code>Accept</code> 返回新的 <code>net.Conn</code>。runtime 在 Linux 上将 fd 纳入 netpoll。API 简洁不代表资源无限：每连接 goroutine 很轻，但 fd、socket buffer、TLS 状态、业务队列和栈仍占内存。</p>
+<h2 id="72-防止连接与-goroutine-泄漏">7.2 防止连接与 goroutine 泄漏</h2>
+<p>handler 必须明确所有退出路径：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">handle</span><span class="p">(</span><span class="nx">c</span> <span class="nx">net</span><span class="p">.</span><span class="nx">Conn</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">defer</span> <span class="nx">c</span><span class="p">.</span><span class="nf">Close</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">_</span> <span class="p">=</span> <span class="nx">c</span><span class="p">.</span><span class="nf">SetDeadline</span><span class="p">(</span><span class="nx">time</span><span class="p">.</span><span class="nf">Now</span><span class="p">().</span><span class="nf">Add</span><span class="p">(</span><span class="mi">30</span> <span class="o">*</span> <span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="nx">r</span> <span class="o">:=</span> <span class="nx">bufio</span><span class="p">.</span><span class="nf">NewReader</span><span class="p">(</span><span class="nx">c</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">for</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">line</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">r</span><span class="p">.</span><span class="nf">ReadString</span><span class="p">(</span><span class="sc">&#39;\n&#39;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="k">if</span> <span class="p">!</span><span class="nx">errors</span><span class="p">.</span><span class="nf">Is</span><span class="p">(</span><span class="nx">err</span><span class="p">,</span> <span class="nx">io</span><span class="p">.</span><span class="nx">EOF</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">                <span class="nx">log</span><span class="p">.</span><span class="nf">Printf</span><span class="p">(</span><span class="s">&#34;read: %v&#34;</span><span class="p">,</span> <span class="nx">err</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">            <span class="p">}</span>
+</span></span><span class="line"><span class="cl">            <span class="k">return</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="nx">line</span><span class="p">)</span> <span class="p">&gt;</span> <span class="mi">64</span><span class="o">&lt;&lt;</span><span class="mi">10</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="k">return</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="nx">_</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">io</span><span class="p">.</span><span class="nf">WriteString</span><span class="p">(</span><span class="nx">c</span><span class="p">,</span> <span class="s">&#34;ok\n&#34;</span><span class="p">);</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="k">return</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>注意这个示例的 <code>ReadString</code> 仍可能在遇到分隔符前积累数据；严肃协议应使用有上限的 framing reader，而不只是读完后检查长度。deadline 应按协议阶段更新，不能机械给长连接设置固定 30 秒总寿命。</p>
+<h2 id="73-netdialer-比裸-netdialtimeout-更可控">7.3 <code>net.Dialer</code> 比裸 <code>net.DialTimeout</code> 更可控</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="nx">d</span> <span class="o">:=</span> <span class="nx">net</span><span class="p">.</span><span class="nx">Dialer</span><span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">Timeout</span><span class="p">:</span>   <span class="mi">3</span> <span class="o">*</span> <span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">KeepAlive</span><span class="p">:</span> <span class="mi">30</span> <span class="o">*</span> <span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="nx">conn</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">d</span><span class="p">.</span><span class="nf">DialContext</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span> <span class="s">&#34;tcp&#34;</span><span class="p">,</span> <span class="s">&#34;example.com:443&#34;</span><span class="p">)</span>
+</span></span></code></pre></div><p><code>DialContext</code> 让 DNS/候选地址/connect 与 context 共同受控，但具体阶段和并行地址策略由 Go 版本与 resolver 决定。生产观测要区分 DNS、connect、TLS、首字节，不能只统计整个 Dial。</p>
+<p>连接池还必须设置：最大空闲数、每目标最大连接、空闲超时、连接寿命和等待队列。无限建连不是“没有池配置”的中性默认，而是把背压转成端口、fd 和下游过载。</p>
+<h2 id="74-syscallconn-是逃生口不是常规路径">7.4 <code>SyscallConn</code> 是逃生口，不是常规路径</h2>
+<p>Go 提供 <code>TCPConn.SyscallConn()</code> 在受控回调中访问底层 fd，以设置标准库未暴露的 option。不能调用 <code>File()</code> 拿 fd 后随意和 <code>net.Conn</code> 并发操作：dup、blocking mode、runtime poll ownership 与 close 生命周期会变复杂。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="nx">raw</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">tcpConn</span><span class="p">.</span><span class="nf">SyscallConn</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl"><span class="k">if</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span> <span class="k">return</span> <span class="nx">err</span> <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="nx">err</span> <span class="p">=</span> <span class="nx">raw</span><span class="p">.</span><span class="nf">Control</span><span class="p">(</span><span class="kd">func</span><span class="p">(</span><span class="nx">fd</span> <span class="kt">uintptr</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// 回调内调用平台 setsockopt；只做不会阻塞的控制操作
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">})</span>
+</span></span></code></pre></div><p>平台相关 option 应封装在带 build tag 的小范围代码中，并用故障测试验证，而不是让业务代码依赖 fd 整数。</p>
+<hr>
+<h1 id="8-socket-option每个开关都在交换东西">8. Socket option：每个开关都在交换东西</h1>
+<h2 id="81-so_reuseaddr-与-so_reuseport-不是同义词">8.1 SO_REUSEADDR 与 SO_REUSEPORT 不是同义词</h2>
+<p><code>SO_REUSEADDR</code> 常用于服务重启后重新绑定本地地址，但具体冲突规则受操作系统、socket 状态与绑定地址影响；它不是让任意两个活跃服务安全监听同一地址。</p>
+<p><code>SO_REUSEPORT</code> 允许多个监听 socket 绑定同一地址/端口，由内核将新流分配给其中一个，常用于每 worker 独立 listener、降低共享锁与改善 CPU 局部性。代价是负载分布、滚动升级和一致性更复杂。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">REUSEADDR：主要改变地址复用/重绑判定
+</span></span><span class="line"><span class="cl">REUSEPORT：建立一组并行监听 socket 做流量分配
+</span></span></code></pre></div><p>不同平台语义不完全相同，跨平台程序不能照搬 Linux 假设。</p>
+<h2 id="82-tcp_nodelay延迟与小包效率的取舍">8.2 TCP_NODELAY：延迟与小包效率的取舍</h2>
+<p>Nagle 算法试图在存在未确认小数据时合并后续小写，减少 tiny packet。<code>TCP_NODELAY</code> 禁用这种等待，使交互式小消息更快发出，但可能增加包率、header 开销和拥塞。</p>
+<p>它也不是所有延迟的根源：应用缓冲、TLS record、调度、Delayed ACK、拥塞和下游处理都可能更重要。Go TCP 连接的默认行为和版本需查对应文档；优化前应用级 trace 应证明延迟卡在发送聚合而非别处。</p>
+<h2 id="83-so_keepalive-不是请求-deadline">8.3 SO_KEEPALIVE 不是请求 deadline</h2>
+<p>TCP keepalive 在连接长时间空闲后发送探测，以发现断网、NAT 状态丢失或对端崩溃。其默认 idle、interval、count 常很长，适合清理失效连接，不适合保证“请求 2 秒内返回”。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">业务 deadline：限制一次请求/阶段能等多久
+</span></span><span class="line"><span class="cl">TCP keepalive：探测长期空闲连接是否仍存活
+</span></span><span class="line"><span class="cl">应用 heartbeat：还能验证协议进程是否健康及携带业务状态
+</span></span></code></pre></div><p>三者目的不同，可同时存在。</p>
+<h2 id="84-so_rcvbufso_sndbuf-不是越大越好">8.4 SO_RCVBUF/SO_SNDBUF 不是越大越好</h2>
+<p>更大 socket buffer 可吸收 bandwidth-delay product 和瞬时调度抖动，提高长肥网络吞吐；也会让每连接潜在内存、排队延迟和慢消费者积压增加。Linux 还有 autotuning、上限和记账规则，<code>getsockopt</code> 看到的值可能与用户设置呈现不同关系。</p>
+<p>调优前先看：带宽、RTT、拥塞窗口、应用读写速率、内存压力和连接数量。十万连接每条多占几百 KB，远比单连接 benchmark 的收益昂贵。</p>
+<h2 id="85-option-的设置时机也有语义">8.5 option 的设置时机也有语义</h2>
+<p>有些 option 要在 <code>bind/listen</code> 前设置，有些作用于监听 socket并可能被子 socket 继承，有些必须对 accept 后的连接设置。错误时机可能导致无效、只影响新连接或直接报错。应使用最小实验和 <code>getsockopt</code> 验证当前内核/语言版本，而不是假定配置文件出现该名字就已生效。</p>
+<hr>
+<h1 id="9-udp-反例同一个-socket-api不同传输语义">9. UDP 反例：同一个 socket API，不同传输语义</h1>
+<h2 id="91-udp-保留-datagram-边界">9.1 UDP 保留 datagram 边界</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="kt">int</span> <span class="n">fd</span> <span class="o">=</span> <span class="n">socket</span><span class="p">(</span><span class="n">AF_INET</span><span class="p">,</span> <span class="n">SOCK_DGRAM</span><span class="p">,</span> <span class="mi">0</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="n">recvfrom</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span> <span class="n">buf</span><span class="p">,</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">buf</span><span class="p">),</span> <span class="mi">0</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">peer</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">peerlen</span><span class="p">);</span>
+</span></span></code></pre></div><p>UDP 的一次发送对应一个 datagram；接收 buffer 太小时，多余部分可能被截断，而不是下一次继续读取。因此 TCP 的 <code>io.ReadFull</code> framing 方法不能原样用于 UDP。</p>
+<p>UDP 无连接握手不等于没有状态：<code>connect</code> 一个 UDP socket 可固定默认 peer、过滤接收来源并让错误报告更直接，但不会建立 TCP 式可靠通道。</p>
+<h2 id="92-udp-send-成功更弱">9.2 UDP send 成功更弱</h2>
+<p><code>sendto</code> 成功只表示本机接受 datagram，不能保证网络交付、顺序、唯一性或远端监听。ICMP 错误也可能异步出现或不出现。需要可靠性的协议必须在应用/上层协议实现重传、序号、拥塞控制和认证；QUIC 正是在 UDP 上构建这些机制，而不是“UDP 天生更快且无代价”。</p>
+<h2 id="93-go-packetconn-的并发边界">9.3 Go PacketConn 的并发边界</h2>
+<p>Go 的 <code>net.PacketConn</code> 用 <code>ReadFrom</code>/<code>WriteTo</code> 保留报文与地址。多个 goroutine 可依据接口文档并发调用，但应用仍需处理每报文 buffer 生命周期、最大 datagram、来源验证、放大攻击和队列过载。无连接服务器不能因为没有 accept 就无限接收来源。</p>
+<hr>
+<h1 id="10-错误处理不要把所有网络失败都重试">10. 错误处理：不要把所有网络失败都重试</h1>
+<h2 id="101-错误必须结合操作阶段">10.1 错误必须结合操作阶段</h2>
+<p>相同 errno 在不同阶段的意义不同：</p>
+<table>
+<thead>
+<tr>
+<th>阶段</th>
+<th>典型错误</th>
+<th>常见含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>bind</td>
+<td><code>EADDRINUSE</code></td>
+<td>地址冲突或复用规则不满足</td>
+</tr>
+<tr>
+<td>connect</td>
+<td><code>ECONNREFUSED</code></td>
+<td>目标主动拒绝/无监听</td>
+</tr>
+<tr>
+<td>connect</td>
+<td><code>ETIMEDOUT</code></td>
+<td>握手或网络路径未在期限内完成</td>
+</tr>
+<tr>
+<td>accept</td>
+<td><code>EMFILE</code></td>
+<td>进程 fd 耗尽</td>
+</tr>
+<tr>
+<td>read</td>
+<td>EOF</td>
+<td>对端发送方向正常关闭</td>
+</tr>
+<tr>
+<td>read</td>
+<td><code>ECONNRESET</code></td>
+<td>对端/路径异常 reset</td>
+</tr>
+<tr>
+<td>write</td>
+<td><code>EPIPE</code></td>
+<td>对端已关闭相关方向</td>
+</tr>
+<tr>
+<td>nonblocking IO</td>
+<td><code>EAGAIN</code></td>
+<td>当前暂不可完成，不是永久失败</td>
+</tr>
+</tbody>
+</table>
+<p>重试策略必须区分瞬时资源、永久配置、过载和未知结果。比如 POST 写到一半连接 reset，客户端无法仅凭 TCP error 知道服务端是否已提交；自动重试会重复业务，必须依赖幂等 key 或事务查询。</p>
+<h2 id="102-go-中保留错误链">10.2 Go 中保留错误链</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="nx">n</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">conn</span><span class="p">.</span><span class="nf">Read</span><span class="p">(</span><span class="nx">buf</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="k">if</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">errors</span><span class="p">.</span><span class="nf">Is</span><span class="p">(</span><span class="nx">err</span><span class="p">,</span> <span class="nx">os</span><span class="p">.</span><span class="nx">ErrDeadlineExceeded</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="c1">// deadline
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="kd">var</span> <span class="nx">ne</span> <span class="nx">net</span><span class="p">.</span><span class="nx">Error</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">errors</span><span class="p">.</span><span class="nf">As</span><span class="p">(</span><span class="nx">err</span><span class="p">,</span> <span class="o">&amp;</span><span class="nx">ne</span><span class="p">)</span> <span class="o">&amp;&amp;</span> <span class="nx">ne</span><span class="p">.</span><span class="nf">Timeout</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="c1">// 网络超时类别；仍应记录操作阶段
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="kd">var</span> <span class="nx">op</span> <span class="o">*</span><span class="nx">net</span><span class="p">.</span><span class="nx">OpError</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">errors</span><span class="p">.</span><span class="nf">As</span><span class="p">(</span><span class="nx">err</span><span class="p">,</span> <span class="o">&amp;</span><span class="nx">op</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">log</span><span class="p">.</span><span class="nf">Printf</span><span class="p">(</span><span class="s">&#34;op=%s net=%s source=%v addr=%v err=%v&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">op</span><span class="p">.</span><span class="nx">Op</span><span class="p">,</span> <span class="nx">op</span><span class="p">.</span><span class="nx">Net</span><span class="p">,</span> <span class="nx">op</span><span class="p">.</span><span class="nx">Source</span><span class="p">,</span> <span class="nx">op</span><span class="p">.</span><span class="nx">Addr</span><span class="p">,</span> <span class="nx">op</span><span class="p">.</span><span class="nx">Err</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="nx">_</span> <span class="p">=</span> <span class="nx">n</span> <span class="c1">// err 非 nil 时 n 仍可能大于 0
+</span></span></span></code></pre></div><p>不要只比较 <code>err.Error()</code>；文本可因 OS、Go 版本和包装层变化。日志应记录方向、local/remote address、阶段、deadline、已传字节和连接 ID，同时避免泄露敏感 payload。</p>
+<h2 id="103-重试要有预算退避和抖动">10.3 重试要有预算、退避和抖动</h2>
+<p>立即无限重试会把一次下游故障放大成连接风暴：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">下游变慢
+</span></span><span class="line"><span class="cl">  -&gt; 请求超时
+</span></span><span class="line"><span class="cl">  -&gt; 所有客户端立即重连重试
+</span></span><span class="line"><span class="cl">  -&gt; SYN/accept/handler 队列更满
+</span></span><span class="line"><span class="cl">  -&gt; 下游更慢
+</span></span></code></pre></div><p>正确策略包括有限次数、指数退避、随机 jitter、全局 retry budget、熔断/并发限制，并且只重试语义安全或具备幂等保护的操作。</p>
+<hr>
+<h1 id="11-线上排查从状态与所有权入手">11. 线上排查：从状态与所有权入手</h1>
+<h2 id="111-先看-socket-状态分布">11.1 先看 socket 状态分布</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 汇总 TCP 状态</span>
+</span></span><span class="line"><span class="cl">ss -s
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 查看服务端口监听、队列与进程</span>
+</span></span><span class="line"><span class="cl">ss -ltnp <span class="s1">&#39;( sport = :8080 )&#39;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 查看已建立连接的队列与 TCP 信息</span>
+</span></span><span class="line"><span class="cl">ss -tinp state established <span class="s1">&#39;( sport = :8080 )&#39;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 各状态数量</span>
+</span></span><span class="line"><span class="cl">ss -tan <span class="p">|</span> awk <span class="s1">&#39;NR&gt;1 {count[$1]++} END {for (s in count) print s, count[s]}&#39;</span>
+</span></span></code></pre></div><p><code>Recv-Q/Send-Q</code> 对监听 socket 和已连接 socket 含义不同。已建立连接上持续增大的 <code>Recv-Q</code> 常表示应用没及时读，<code>Send-Q</code> 积压可能是对端慢、网络拥塞或应用写入超过发送能力。监听 socket 则要结合 backlog 和内核版本解释。</p>
+<h2 id="112-fd-多不等于一定泄漏">11.2 fd 多不等于一定泄漏</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">ls /proc/<span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span>/fd <span class="p">|</span> wc -l
+</span></span><span class="line"><span class="cl">cat /proc/<span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span>/limits <span class="p">|</span> grep -i <span class="s1">&#39;open files&#39;</span>
+</span></span><span class="line"><span class="cl">lsof -nP -p <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span> <span class="p">|</span> grep -E <span class="s1">&#39;TCP|UDP&#39;</span>
+</span></span></code></pre></div><p>长连接服务本来就有大量 fd。泄漏的证据是：连接业务生命周期结束后 fd/连接对象不回落、状态分布异常、goroutine 同步增长、引用 owner 找不到。应结合连接建立/关闭计数，而不是看到 5 万 fd 就报警。</p>
+<h2 id="113-端口耗尽与-time_wait">11.3 端口耗尽与 TIME_WAIT</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">cat /proc/sys/net/ipv4/ip_local_port_range
+</span></span><span class="line"><span class="cl">ss -tan state time-wait <span class="p">|</span> wc -l
+</span></span><span class="line"><span class="cl">ss -tan state syn-sent <span class="p">|</span> wc -l
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 按目标聚合连接，定位是否对单一 upstream 高频建连</span>
+</span></span><span class="line"><span class="cl">ss -Htan <span class="p">|</span> awk <span class="s1">&#39;{print $5}&#39;</span> <span class="p">|</span> sort <span class="p">|</span> uniq -c <span class="p">|</span> sort -nr <span class="p">|</span> head
+</span></span></code></pre></div><p>命令输出列受 <code>ss</code> 版本、IPv6 格式和选项影响，聚合脚本只适合作为线索。进一步应从应用连接池指标确认新建率、复用率、池等待和关闭原因。</p>
+<h2 id="114-syscall-与-go-观测结合">11.4 syscall 与 Go 观测结合</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 短时查看网络调用与错误；strace 会扰动时序</span>
+</span></span><span class="line"><span class="cl">sudo strace -ff -ttT -p <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  -e <span class="nv">trace</span><span class="o">=</span>accept4,connect,recvfrom,sendto,shutdown,close
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># CPU / goroutine / block 线索</span>
+</span></span><span class="line"><span class="cl">curl -o cpu.pprof <span class="s1">&#39;http://127.0.0.1:6060/debug/pprof/profile?seconds=30&#39;</span>
+</span></span><span class="line"><span class="cl">curl -o goroutines.txt <span class="s1">&#39;http://127.0.0.1:6060/debug/pprof/goroutine?debug=2&#39;</span>
+</span></span><span class="line"><span class="cl">go tool pprof -http<span class="o">=</span>:8081 cpu.pprof
+</span></span></code></pre></div><p>Go runtime 可能使用 <code>read/write</code>、<code>recvfrom/sendto</code> 或其他变体，系统调用选择会随版本和协议变化。抓不到某个调用不代表没有网络 IO；先用概要跟踪确认实际路径，再缩小过滤范围。</p>
+<hr>
+<h1 id="12-常用命令知识点扩展">12. 常用命令知识点扩展</h1>
+<table>
+<thead>
+<tr>
+<th>短参</th>
+<th>长参</th>
+<th>英文全称</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ss -a</code></td>
+<td><code>ss --all</code></td>
+<td>all</td>
+<td>显示监听和非监听 socket</td>
+</tr>
+<tr>
+<td><code>ss -l</code></td>
+<td><code>ss --listening</code></td>
+<td>listening</td>
+<td>只显示监听 socket</td>
+</tr>
+<tr>
+<td><code>ss -n</code></td>
+<td><code>ss --numeric</code></td>
+<td>numeric</td>
+<td>不解析主机名与服务名</td>
+</tr>
+<tr>
+<td><code>ss -p</code></td>
+<td><code>ss --processes</code></td>
+<td>processes</td>
+<td>显示 socket 所属进程</td>
+</tr>
+<tr>
+<td><code>ss -i</code></td>
+<td><code>ss --info</code></td>
+<td>internal TCP information</td>
+<td>显示拥塞、RTT 等 TCP 信息</td>
+</tr>
+<tr>
+<td><code>lsof -n</code></td>
+<td><code>lsof -n</code></td>
+<td>no hostname conversion</td>
+<td>不做主机名解析</td>
+</tr>
+<tr>
+<td><code>lsof -P</code></td>
+<td><code>lsof -P</code></td>
+<td>no port conversion</td>
+<td>端口保持数字显示</td>
+</tr>
+<tr>
+<td><code>strace -T</code></td>
+<td><code>strace --syscall-times</code></td>
+<td>syscall times</td>
+<td>显示系统调用耗时</td>
+</tr>
+<tr>
+<td><code>strace -tt</code></td>
+<td><code>strace --absolute-timestamps</code></td>
+<td>timestamps</td>
+<td>显示更精细时间戳</td>
+</tr>
+</tbody>
+</table>
+<p>场景配方：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 谁占用了 8080</span>
+</span></span><span class="line"><span class="cl">ss -ltnp <span class="s1">&#39;( sport = :8080 )&#39;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 哪些进程持有某端口连接</span>
+</span></span><span class="line"><span class="cl">lsof -nP -iTCP:8080
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 观察连接状态每秒变化</span>
+</span></span><span class="line"><span class="cl">watch -n <span class="m">1</span> <span class="s1">&#39;ss -s; ss -tan state syn-recv | wc -l&#39;</span>
+</span></span></code></pre></div><hr>
+<h1 id="13-面试题">13. 面试题</h1>
+<p><strong>Q：socket fd 在内核中指向什么？</strong></p>
+<p>fd 是进程 fd table 的整数下标，指向 <code>struct file</code>，再关联 socket 抽象、协议层 <code>struct sock</code> 和 TCP 状态。它继承 fd 的引用计数、dup/fork、poll 和 close 能力；整数会复用，不能把 fd number 当永久连接身份，异步程序还需要 owner、generation 和安全回收协议。</p>
+<p><strong>Q：bind、listen、accept 分别做什么？</strong></p>
+<p>bind 把 socket 与本地地址/端口关联；listen 将流式 socket 变为被动监听端点并建立建连/完成队列；accept 从已完成握手队列取出一个子 socket，返回代表具体客户端连接的新 fd。监听 fd 继续接收新连接，子 fd 各自保存四元组和传输状态。</p>
+<p><strong>Q：非阻塞 connect 返回 EINPROGRESS 后如何判断结果？</strong></p>
+<p>把 fd 注册到 epoll 等待可写/错误；事件到达后调用 <code>getsockopt(SOL_SOCKET, SO_ERROR)</code>。返回 0 才表示握手成功，<code>ECONNREFUSED</code>、<code>ETIMEDOUT</code> 等表示失败。可写仅表示 connect 已结束，不保证成功。</p>
+<p><strong>Q：为什么一次 TCP Write 不对应一次 Read？</strong></p>
+<p>TCP 提供有序可靠字节流，不保留应用调用边界。分段、合并、缓冲和调度可让两次 Write 被一次 Read 取走，也可让一次 Write 分多次 Read。协议必须用固定长度、分隔符、长度前缀或语法定义 framing，并限制消息最大长度。</p>
+<p><strong>Q：Read 返回 EOF 后还能 Write 吗？</strong></p>
+<p>可能可以。EOF 表示对端已用 FIN 关闭其发送方向，本端接收队列已读完；TCP 是全双工的，本端发送方向可能仍开放，可继续写剩余响应。是否应继续由应用协议决定。RST 或本地错误则可能使连接无法继续。</p>
+<p><strong>Q：write 成功为什么不等于远端业务成功？</strong></p>
+<p>write 通常只表示本机内核接受了字节；后面还有发送队列、网络、对端 TCP 接收、对端应用读取和业务事务。即使 TCP ACK 也只确认远端协议栈收到字节，不确认数据库提交。业务需要应用级响应、请求 ID、幂等和查询/恢复协议。</p>
+<p><strong>Q：Go net.Conn 看起来阻塞，为什么不会一连接占一个线程？</strong></p>
+<p>runtime 把网络 fd 设为 nonblocking。Read/Write 遇到 EAGAIN 时 park 当前 goroutine，并由 netpoller 用 epoll 统一等待；fd ready 后对应 goroutine 被 goready 再次尝试 syscall。等待单位是 goroutine，不是固定内核线程，但 fd、buffer 和业务状态仍消耗资源。</p>
+<p><strong>Q：Go deadline 与 context cancel 有什么关系？</strong></p>
+<p>deadline 是 <code>net.Conn</code> 的读写状态，runtime timer 到期会唤醒等待者并令操作返回超时；context 只是取消信号，普通 Conn 方法不会自动观察它。调用方需要用 DialContext、高层 API，或在取消时设置 deadline/关闭连接。deadline 会影响当前和后续操作，阶段结束后要更新或清除。</p>
+<p><strong>Q：SO_KEEPALIVE 能替代请求超时吗？</strong></p>
+<p>不能。keepalive 用长周期探测空闲 TCP 连接是否仍存活；请求 deadline 限制一次业务操作可等待多久；应用 heartbeat 还能验证对端进程和协议状态。三者时间尺度和故障语义不同。</p>
+<p><strong>Q：TCP_NODELAY 是否应该总是开启？</strong></p>
+<p>它禁用 Nagle 对小写的等待，可能降低交互延迟，也可能增加小包率、CPU 和网络开销。应用缓冲、TLS、Delayed ACK、调度或拥塞也可能才是主因。应根据消息模式与 profile 测试，不能把它当通用高性能开关。</p>
+<p><strong>Q：SO_REUSEADDR 与 SO_REUSEPORT 的区别？</strong></p>
+<p>在 Linux 常见语义下，REUSEADDR 主要放宽地址冲突和重启重绑规则；REUSEPORT 允许多个独立 listener 绑定同一地址/端口，由内核分流新连接。后者可改善多 worker 局部性，但带来分布、升级和状态协调问题；精确规则还依平台和设置时机。</p>
+<p><strong>Q：客户端临时端口耗尽应优先怎么解决？</strong></p>
+<p>先减少对同一目标的短连接创建：使用连接池、keep-alive、HTTP/2/QUIC 多路复用，并限制并发与重试风暴；再评估多源 IP、代理分片和合理端口范围。要结合 TIME_WAIT、连接新建率和目标分布验证，不能先粗暴缩短 TCP 状态。</p>
+<p><strong>Q：如何判断慢连接发生在哪一侧？</strong></p>
+<p>看已连接 socket 的 <code>Recv-Q/Send-Q</code>、RTT/重传、TCP window、应用读写指标和 goroutine 状态。服务端 Recv-Q 增长通常说明服务未及时读；Send-Q 增长可能是对端未读、拥塞或本端写过快；两者都要与 CPU quota、handler/downstream 延迟及对端观测对齐，单个队列值不能独立定责。</p>
+<p><strong>Q：网络错误为什么不能全部自动重试？</strong></p>
+<p>错误可能发生在请求未发、部分发送、远端已执行但响应丢失等不同点；客户端仅凭 reset/timeout 无法知道业务是否提交。无限重试还会放大故障。只应对语义安全或有幂等 key 的操作，在有限预算、退避、jitter、并发限制下重试。</p>
+<hr>
+<h1 id="小结">小结</h1>
+<ul>
+<li>socket fd 是进程能力句柄，背后关联 file、socket、协议控制块与收发队列；fd number 会复用，异步系统必须管理对象生命周期</li>
+<li>bind 选择本地端点，listen 建立被动监听状态，accept 为每条完成握手的连接返回独立 fd；监听队列容量不能替代及时 accept</li>
+<li>非阻塞 connect 的 EINPROGRESS 不是失败，等待结束后必须读取 SO_ERROR；短连接高创建率还会遭遇临时端口与 TIME_WAIT 压力</li>
+<li>TCP 是有序字节流，不保留 Write 边界；协议必须 framing，并正确处理短读、短写、长度上限和部分成功</li>
+<li>FIN 只关闭一个方向，EOF 后可能仍可写；RST 表示异常终止，TCP 成功也不等于业务事务成功</li>
+<li>Go 用 nonblocking fd、epoll、gopark/goready 提供阻塞风格 net.Conn；deadline 由 runtime timer 参与，context 本身不会自动中断普通 Conn</li>
+<li>REUSEADDR、REUSEPORT、NODELAY、keepalive 和 socket buffer 都在交换启动语义、CPU、延迟、内存或故障检测，没有通用最优组合</li>
+<li>TCP 与 UDP 共用 socket 抽象，却分别提供字节流与 datagram 语义，应用不能混用读取和可靠性假设</li>
+<li>排查应联合 socket 状态、队列、fd、端口、syscall、Go profile 与业务阶段，并为重试建立幂等、预算和退避</li>
+</ul>
+<p>下一篇讲 <strong>虚拟网络：容器为什么能通</strong> —— network namespace、veth pair、bridge、路由、NAT 与 conntrack 如何拼出容器网络，为什么容器里的 <code>localhost</code> 不是宿主机，以及一次容器出网和端口映射分别经过哪些内核对象。</p>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2026-08-12</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/linux/">linux</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/linux/linux_35_%E8%99%9A%E6%8B%9F%E7%BD%91%E7%BB%9C%E5%AE%B9%E5%99%A8%E4%B8%BA%E4%BB%80%E4%B9%88%E8%83%BD%E9%80%9A/" class="prev" rel="prev" title="Linux-35 虚拟网络：容器为什么能通"><i class="fas fa-angle-left fa-fw"></i>Linux-35 虚拟网络：容器为什么能通</a>
+            <a href="/posts/linux/linux_33_%E4%B8%80%E4%B8%AA%E5%8C%85%E5%9C%A8%E5%86%85%E6%A0%B8%E9%87%8C%E7%9A%84%E6%97%85%E7%A8%8B/" class="next" rel="next" title="Linux-33 一个包在内核里的旅程：从网卡 DMA 到 Go 的 Read">Linux-33 一个包在内核里的旅程：从网卡 DMA 到 Go 的 Read<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2026-08-12T07:00:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Linux-34 socket API 与 Go 网络编程：一个 fd 如何代表一条连接"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

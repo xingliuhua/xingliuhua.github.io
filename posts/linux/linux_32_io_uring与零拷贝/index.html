@@ -1,0 +1,877 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>Linux-32 io_uring 与零拷贝：少陷入一次，少复制一次 - xingliuhua博客</title><meta name="Description" content="io_uring 的共享 SQ/CQ 如何降低系统调用与数据拷贝、SQPOLL 与注册资源各解决什么、sendfile/splice/copy_file_range 分别省掉哪一次复制、DMA 与 TLS 为什么让零拷贝不是魔法，以及 Go 的 io.Copy 何时能走 sendfile。"><meta property="og:title" content="Linux-32 io_uring 与零拷贝：少陷入一次，少复制一次" />
+<meta property="og:description" content="io_uring 的共享 SQ/CQ 如何降低系统调用与数据拷贝、SQPOLL 与注册资源各解决什么、sendfile/splice/copy_file_range 分别省掉哪一次复制、DMA 与 TLS 为什么让零拷贝不是魔法，以及 Go 的 io.Copy 何时能走 sendfile。" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/linux/linux_32_io_uring%E4%B8%8E%E9%9B%B6%E6%8B%B7%E8%B4%9D/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2026-08-12T08:00:00+08:00" />
+<meta property="article:modified_time" content="2026-08-12T08:00:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="Linux-32 io_uring 与零拷贝：少陷入一次，少复制一次"/>
+<meta name="twitter:description" content="io_uring 的共享 SQ/CQ 如何降低系统调用与数据拷贝、SQPOLL 与注册资源各解决什么、sendfile/splice/copy_file_range 分别省掉哪一次复制、DMA 与 TLS 为什么让零拷贝不是魔法，以及 Go 的 io.Copy 何时能走 sendfile。"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/linux/linux_32_io_uring%E4%B8%8E%E9%9B%B6%E6%8B%B7%E8%B4%9D/" /><link rel="prev" href="https://xingliuhua.github.io/posts/linux/linux_33_%E4%B8%80%E4%B8%AA%E5%8C%85%E5%9C%A8%E5%86%85%E6%A0%B8%E9%87%8C%E7%9A%84%E6%97%85%E7%A8%8B/" /><link rel="next" href="https://xingliuhua.github.io/posts/linux/linux_31_IO%E6%A8%A1%E5%9E%8B%E6%BC%94%E8%BF%9B%E9%98%BB%E5%A1%9E%E5%88%B0epoll/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Linux-32 io_uring 与零拷贝：少陷入一次，少复制一次",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_32_io_uring%E4%B8%8E%E9%9B%B6%E6%8B%B7%E8%B4%9D\/"
+        },"genre": "posts","keywords": "linux","wordcount":  10262 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_32_io_uring%E4%B8%8E%E9%9B%B6%E6%8B%B7%E8%B4%9D\/","datePublished": "2026-08-12T08:00:00+08:00","dateModified": "2026-08-12T08:00:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "io_uring 的共享 SQ/CQ 如何降低系统调用与数据拷贝、SQPOLL 与注册资源各解决什么、sendfile/splice/copy_file_range 分别省掉哪一次复制、DMA 与 TLS 为什么让零拷贝不是魔法，以及 Go 的 io.Copy 何时能走 sendfile。"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">Linux-32 io_uring 与零拷贝：少陷入一次，少复制一次</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2026-08-12">2026-08-12</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 10262 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 21 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-一次普通-io-的成本">1. 一次普通 IO 的成本</a>
+      <ol>
+        <li><a href="#11-readwrite-不只是调用一个函数">1.1 read/write 不只是“调用一个函数”</a></li>
+        <li><a href="#12-批量是减少固定成本的第一步">1.2 批量是减少固定成本的第一步</a></li>
+        <li><a href="#13-非阻塞--epoll-解决了什么没解决什么">1.3 非阻塞 + epoll 解决了什么，没解决什么</a></li>
+      </ol>
+    </li>
+    <li><a href="#2-io_uring提交队列与完成队列">2. io_uring：提交队列与完成队列</a>
+      <ol>
+        <li><a href="#21-两个环形队列">2.1 两个环形队列</a></li>
+        <li><a href="#22-一次批量提交">2.2 一次批量提交</a></li>
+        <li><a href="#23-共享-ring-如何避免双方踩-headtail">2.3 共享 ring 如何避免双方踩 head/tail</a></li>
+        <li><a href="#24-io_uring-不等于每个请求都不进内核">2.4 io_uring 不等于每个请求都不进内核</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-io_uring-的提交与等待模式">3. io_uring 的提交与等待模式</a>
+      <ol>
+        <li><a href="#31-io_uring_enter-的两个角色">3.1 <code>io_uring_enter</code> 的两个角色</a></li>
+        <li><a href="#32-sqpoll让内核线程替你观察-sq">3.2 SQPOLL：让内核线程替你观察 SQ</a></li>
+        <li><a href="#33-iopoll设备完成也主动轮询">3.3 IOPOLL：设备完成也主动轮询</a></li>
+        <li><a href="#34-注册-fdbuffer-与-personality">3.4 注册 fd、buffer 与 personality</a></li>
+        <li><a href="#35-共享-ring-的生命周期">3.5 共享 ring 的生命周期</a></li>
+      </ol>
+    </li>
+    <li><a href="#4-io_uring-的操作模型与错误边界">4. io_uring 的操作模型与错误边界</a>
+      <ol>
+        <li><a href="#41-一个-ring-可以提交的不只是-readwrite">4.1 一个 ring 可以提交的不只是 read/write</a></li>
+        <li><a href="#42-cqe-的-res-不是布尔值">4.2 CQE 的 <code>res</code> 不是布尔值</a></li>
+        <li><a href="#43-linkhardlink-与取消">4.3 link、hardlink 与取消</a></li>
+        <li><a href="#44-multishot一个-sqe-对应多个-cqe">4.4 multishot：一个 SQE 对应多个 CQE</a></li>
+        <li><a href="#45-安全历史提醒">4.5 安全历史提醒</a></li>
+      </ol>
+    </li>
+    <li><a href="#5-零拷贝先问哪一次复制没了">5. 零拷贝：先问“哪一次复制没了”</a>
+      <ol>
+        <li><a href="#51-四种常被混在一起的零拷贝">5.1 四种常被混在一起的“零拷贝”</a></li>
+        <li><a href="#52-普通文件发送的两次-cpu-copy">5.2 普通文件发送的两次 CPU copy</a></li>
+        <li><a href="#53-sendfile-的边界">5.3 sendfile 的边界</a></li>
+      </ol>
+    </li>
+    <li><a href="#6-splicetee-与-copy_file_range">6. splice、tee 与 copy_file_range</a>
+      <ol>
+        <li><a href="#61-splice在-fd-之间搬页引用">6.1 splice：在 fd 之间搬页引用</a></li>
+        <li><a href="#62-tee复制引用不复制页面">6.2 tee：复制引用，不复制页面</a></li>
+        <li><a href="#63-copy_file_range文件到文件的内核复制">6.3 copy_file_range：文件到文件的内核复制</a></li>
+        <li><a href="#64-sendfilesplicecopy_file_range-对比">6.4 sendfile、splice、copy_file_range 对比</a></li>
+      </ol>
+    </li>
+    <li><a href="#7-msg_zerocopy用户-buffer-的生命周期交换">7. MSG_ZEROCOPY：用户 buffer 的生命周期交换</a>
+      <ol>
+        <li><a href="#71-它省的是什么">7.1 它省的是什么</a></li>
+        <li><a href="#72-不是小包优化">7.2 不是小包优化</a></li>
+      </ol>
+    </li>
+    <li><a href="#8-tls压缩与协议变换零拷贝的硬边界">8. TLS、压缩与协议变换：零拷贝的硬边界</a>
+      <ol>
+        <li><a href="#81-一旦改字节就必须有新字节">8.1 一旦改字节，就必须有新字节</a></li>
+        <li><a href="#82-ktls-不是一个开关">8.2 kTLS 不是一个开关</a></li>
+        <li><a href="#83-缓存压缩和网络三者的取舍">8.3 缓存、压缩和网络三者的取舍</a></li>
+      </ol>
+    </li>
+    <li><a href="#9-go-的-iocopy接口简单路径按类型分派">9. Go 的 io.Copy：接口简单，路径按类型分派</a>
+      <ol>
+        <li><a href="#91-首先看-writertoreaderfrom">9.1 首先看 WriterTo/ReaderFrom</a></li>
+        <li><a href="#92-什么时候可能走-sendfile">9.2 什么时候可能走 sendfile</a></li>
+        <li><a href="#93-iocopybuffer-不一定更快">9.3 <code>io.CopyBuffer</code> 不一定更快</a></li>
+        <li><a href="#94-go-http-文件服务的真实边界">9.4 Go HTTP 文件服务的真实边界</a></li>
+      </ol>
+    </li>
+    <li><a href="#10-线上评估先证明瓶颈再换模型">10. 线上评估：先证明瓶颈，再换模型</a>
+      <ol>
+        <li><a href="#101-io_uring-不适合的典型情况">10.1 io_uring 不适合的典型情况</a></li>
+        <li><a href="#102-什么信号说明值得评估">10.2 什么信号说明值得评估</a></li>
+        <li><a href="#103-io_uring-可观测性">10.3 io_uring 可观测性</a></li>
+        <li><a href="#104-零拷贝怎么验证">10.4 零拷贝怎么验证</a></li>
+      </ol>
+    </li>
+    <li><a href="#11-常用命令知识点扩展">11. 常用命令知识点扩展</a>
+      <ol>
+        <li><a href="#111-工具与参数">11.1 工具与参数</a></li>
+        <li><a href="#112-用-strace-区分路径">11.2 用 strace 区分路径</a></li>
+      </ol>
+    </li>
+    <li><a href="#12-面试题">12. 面试题</a></li>
+    <li><a href="#小结">小结</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><p>上一篇讲 epoll 如何告诉应用“哪个 fd 现在可以读写”。这一篇继续沿着 IO 路径往下走：<strong>如果连每次提交 IO 都要一次系统调用，数据还要在用户态和内核态来回复制，能不能把这两部分固定成本也省掉？</strong></p>
+<p>答案不是一句“io_uring 就是异步 IO、sendfile 就是零拷贝”那么简单。它们分别优化两条不同的路径：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">控制面成本：应用如何提交/收取 IO 请求？
+</span></span><span class="line"><span class="cl">  read() / write() / epoll_wait() -&gt; 系统调用、参数检查、上下文切换
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">数据面成本：字节在 CPU 和内存之间搬了几次？
+</span></span><span class="line"><span class="cl">  磁盘 -&gt; 内核缓冲 -&gt; 用户 buffer -&gt; socket buffer -&gt; 网卡
+</span></span></code></pre></div><p><code>io_uring</code> 主要优化控制面；<code>sendfile</code>、<code>splice</code> 等主要优化数据面。遇到 TLS、压缩、协议解析或慢下游时，所谓“零拷贝”还会退回普通路径或只是减少其中一段复制。</p>
+<p>先看五个问题：</p>
+<ol>
+<li><code>read</code>/<code>write</code> 每次系统调用到底贵在哪里？io_uring 的 SQ/CQ 如何把提交和完成批量化？</li>
+<li>SQE/CQE 为什么要用共享环形队列？用户态和内核如何避免同时改同一个 head/tail？</li>
+<li>SQPOLL、固定 buffer、注册 fd 分别省掉哪部分成本？什么时候反而浪费 CPU？</li>
+<li><code>sendfile</code>、<code>splice</code>、<code>copy_file_range</code> 各自连接什么对象、减少哪一次复制？</li>
+<li>Go 的 <code>io.Copy</code> 什么时候走 <code>sendfile</code>？TLS、限速、<code>ReaderFrom</code> 和 <code>WriterTo</code> 为什么会改变路径？</li>
+</ol>
+<hr>
+<h1 id="1-一次普通-io-的成本">1. 一次普通 IO 的成本</h1>
+<h2 id="11-readwrite-不只是调用一个函数">1.1 read/write 不只是“调用一个函数”</h2>
+<p>以磁盘文件读入 socket 为例，朴素代码通常是：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="kt">char</span> <span class="n">buf</span><span class="p">[</span><span class="mi">128</span> <span class="o">*</span> <span class="mi">1024</span><span class="p">];</span>
+</span></span><span class="line"><span class="cl"><span class="n">ssize_t</span> <span class="n">n</span> <span class="o">=</span> <span class="n">read</span><span class="p">(</span><span class="n">filefd</span><span class="p">,</span> <span class="n">buf</span><span class="p">,</span> <span class="k">sizeof</span> <span class="n">buf</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="n">ssize_t</span> <span class="n">m</span> <span class="o">=</span> <span class="n">write</span><span class="p">(</span><span class="n">sock</span><span class="p">,</span> <span class="n">buf</span><span class="p">,</span> <span class="n">n</span><span class="p">);</span>
+</span></span></code></pre></div><p>数据大致经历：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">磁盘 / page cache
+</span></span><span class="line"><span class="cl">       |
+</span></span><span class="line"><span class="cl">       | copy_to_user
+</span></span><span class="line"><span class="cl">       v
+</span></span><span class="line"><span class="cl">用户态 buf
+</span></span><span class="line"><span class="cl">       |
+</span></span><span class="line"><span class="cl">       | copy_from_user
+</span></span><span class="line"><span class="cl">       v
+</span></span><span class="line"><span class="cl">socket send buffer
+</span></span><span class="line"><span class="cl">       |
+</span></span><span class="line"><span class="cl">       v
+</span></span><span class="line"><span class="cl">TCP / NIC DMA
+</span></span></code></pre></div><p>如果文件已经在页缓存里，磁盘不需要物理 IO，但 CPU 仍要执行两次跨边界复制，并为每个 syscall 做：</p>
+<ul>
+<li>从用户态切入内核态、再返回</li>
+<li>验证 fd、地址、长度和权限</li>
+<li>查找 file/socket 对象</li>
+<li>更新偏移、队列和引用计数</li>
+<li>处理阻塞、信号、cgroup 和审计路径</li>
+</ul>
+<p>小 IO 高频调用时，固定成本可能比真正搬运的字节还大；大 IO 时，内存带宽和 cache 污染又会成为主成本。</p>
+<h2 id="12-批量是减少固定成本的第一步">1.2 批量是减少固定成本的第一步</h2>
+<p>即使不用 io_uring，也可以通过批量减少调用次数：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">1000 次 write(4KB)
+</span></span><span class="line"><span class="cl">  -&gt; 1000 次 syscall、1000 次参数检查、1000 次调度入口
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">1 次 writev(1000 个 iovec)
+</span></span><span class="line"><span class="cl">  -&gt; 1 次 syscall，内核批量处理多个 buffer
+</span></span></code></pre></div><p><code>readv/writev</code>（scatter/gather）减少的是 syscall 次数和用户 buffer 拼接；它不一定消除内核与用户之间的复制。<code>sendmmsg/recvmmsg</code> 也把多个消息打包提交，适合 UDP 等场景。</p>
+<p>io_uring 进一步把“准备请求”和“进入内核”拆开，让应用可以在用户态连续填写多个请求，再以一次或少量 syscall 通知内核。</p>
+<h2 id="13-非阻塞--epoll-解决了什么没解决什么">1.3 非阻塞 + epoll 解决了什么，没解决什么</h2>
+<p>上一篇的 epoll 把“等待哪个 fd 就绪”变得高效：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">epoll_wait() -&gt; 返回 fd 已就绪
+</span></span><span class="line"><span class="cl">read(fd)     -&gt; 仍要一次 syscall
+</span></span><span class="line"><span class="cl">write(fd)    -&gt; 仍要一次 syscall
+</span></span></code></pre></div><p>epoll 是 readiness 模型：应用得到通知后主动执行 IO。它减少了空 fd 扫描，却没有把具体读写请求提交给内核，更没有替应用搬运数据。高并发事件循环常见的 syscall 来源仍是：</p>
+<ul>
+<li>accept/recv/send</li>
+<li>epoll_wait/epoll_ctl</li>
+<li>timerfd/eventfd</li>
+<li>文件 read/write/fsync</li>
+</ul>
+<p>io_uring 试图让提交、等待和完成通知都变成共享队列操作。</p>
+<hr>
+<h1 id="2-io_uring提交队列与完成队列">2. io_uring：提交队列与完成队列</h1>
+<h2 id="21-两个环形队列">2.1 两个环形队列</h2>
+<p>用户通过 <code>io_uring_setup()</code> 创建 ring，再用 <code>mmap()</code> 把内核管理的区域映射到用户态。概念上有两个队列：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">应用线程                         内核
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">SQ（Submission Queue）
+</span></span><span class="line"><span class="cl">  SQE 0: READV fd=3, buf=A  ---&gt; 读取 SQE，提交到 IO 子系统
+</span></span><span class="line"><span class="cl">  SQE 1: SEND fd=8, buf=B   ---&gt;
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">CQ（Completion Queue）
+</span></span><span class="line"><span class="cl">  &lt;--- CQE 0: user_data=A, res=4096
+</span></span><span class="line"><span class="cl">  &lt;--- CQE 1: user_data=B, res=-EPIPE
+</span></span></code></pre></div><ul>
+<li><strong>SQE（submission queue entry）</strong>：应用填写的请求描述</li>
+<li><strong>SQ（submission queue）</strong>：指向待提交 SQE 的索引环</li>
+<li><strong>CQE（completion queue entry）</strong>：内核写回的完成结果</li>
+<li><strong>CQ（completion queue）</strong>：应用消费完成事件的索引环</li>
+</ul>
+<p>SQE 里可以放 opcode、fd、buffer、长度、offset、flags 和 <code>user_data</code>。<code>user_data</code> 不由内核解释，应用可以放请求对象指针、ID 或 generation，用于把异步完成对应回自己的状态机。</p>
+<h2 id="22-一次批量提交">2.2 一次批量提交</h2>
+<p>伪代码流程：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="k">struct</span> <span class="n">io_uring</span> <span class="n">ring</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="n">io_uring_queue_init</span><span class="p">(</span><span class="mi">256</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">ring</span><span class="p">,</span> <span class="mi">0</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">batch</span><span class="p">;</span> <span class="n">i</span><span class="o">++</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">struct</span> <span class="n">io_uring_sqe</span> <span class="o">*</span><span class="n">sqe</span> <span class="o">=</span> <span class="n">io_uring_get_sqe</span><span class="p">(</span><span class="o">&amp;</span><span class="n">ring</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">    <span class="n">io_uring_prep_read</span><span class="p">(</span><span class="n">sqe</span><span class="p">,</span> <span class="n">fd</span><span class="p">[</span><span class="n">i</span><span class="p">],</span> <span class="n">buf</span><span class="p">[</span><span class="n">i</span><span class="p">],</span> <span class="n">len</span><span class="p">[</span><span class="n">i</span><span class="p">],</span> <span class="n">off</span><span class="p">[</span><span class="n">i</span><span class="p">]);</span>
+</span></span><span class="line"><span class="cl">    <span class="n">io_uring_sqe_set_data64</span><span class="p">(</span><span class="n">sqe</span><span class="p">,</span> <span class="n">request_id</span><span class="p">[</span><span class="n">i</span><span class="p">]);</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="n">io_uring_submit</span><span class="p">(</span><span class="o">&amp;</span><span class="n">ring</span><span class="p">);</span>       <span class="c1">// 可一次提交多个 SQE
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl"><span class="k">while</span> <span class="p">(</span><span class="n">need_more_completions</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">struct</span> <span class="n">io_uring_cqe</span> <span class="o">*</span><span class="n">cqe</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="n">io_uring_wait_cqe</span><span class="p">(</span><span class="o">&amp;</span><span class="n">ring</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">cqe</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">    <span class="n">handle</span><span class="p">(</span><span class="n">cqe</span><span class="o">-&gt;</span><span class="n">user_data</span><span class="p">,</span> <span class="n">cqe</span><span class="o">-&gt;</span><span class="n">res</span><span class="p">,</span> <span class="n">cqe</span><span class="o">-&gt;</span><span class="n">flags</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">    <span class="n">io_uring_cqe_seen</span><span class="p">(</span><span class="o">&amp;</span><span class="n">ring</span><span class="p">,</span> <span class="n">cqe</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>无论使用 liburing 还是直接 syscall，核心思想都一样：应用先在共享内存写请求，提交时批量通知内核；完成结果也批量放回共享内存，应用不必为每个结果单独 syscall。</p>
+<h2 id="23-共享-ring-如何避免双方踩-headtail">2.3 共享 ring 如何避免双方踩 head/tail</h2>
+<p>SQ 和 CQ 不是“用户态和内核同时随便写一个数组”。它们有生产者/消费者边界：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">SQ：
+</span></span><span class="line"><span class="cl">应用生产 SQE / 更新 tail
+</span></span><span class="line"><span class="cl">内核消费 SQE / 更新 head
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">CQ：
+</span></span><span class="line"><span class="cl">内核生产 CQE / 更新 tail
+</span></span><span class="line"><span class="cl">应用消费 CQE / 更新 head
+</span></span></code></pre></div><p>每一方只修改自己拥有的索引，另一方只读取；在发布 tail/head 前后需要内存序，确保“内容先写完，再让消费者看见索引”。可以把它看成单生产者/单消费者环形队列的变体。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">应用：
+</span></span><span class="line"><span class="cl">  填 SQE
+</span></span><span class="line"><span class="cl">  store-release(SQ tail)
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">内核：
+</span></span><span class="line"><span class="cl">  load-acquire(SQ tail)
+</span></span><span class="line"><span class="cl">  读取已发布 SQE
+</span></span><span class="line"><span class="cl">  执行 IO
+</span></span><span class="line"><span class="cl">  填 CQE
+</span></span><span class="line"><span class="cl">  store-release(CQ tail)
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">应用：
+</span></span><span class="line"><span class="cl">  load-acquire(CQ tail)
+</span></span><span class="line"><span class="cl">  读取完整 CQE
+</span></span></code></pre></div><p>实际 ring 还有 SQ array、CQ overflow、并发提交和内核版本差异；不要手写同步协议，优先使用 liburing 或语言绑定。</p>
+<h2 id="24-io_uring-不等于每个请求都不进内核">2.4 io_uring 不等于每个请求都不进内核</h2>
+<p>默认模式下，应用仍要调用 <code>io_uring_enter()</code> 告知内核有新 SQE，或等待 CQE。它减少的是：</p>
+<ul>
+<li>多个请求合并为一次 enter</li>
+<li>SQE/CQE 参数和结果通过映射内存传递</li>
+<li>完成结果不必逐个 syscall 返回</li>
+</ul>
+<p>如果每次只提交一个请求、每次都同步等待，一个 io_uring 程序可能和普通 syscall 差别不大，甚至因 ring 管理增加开销。</p>
+<hr>
+<h1 id="3-io_uring-的提交与等待模式">3. io_uring 的提交与等待模式</h1>
+<h2 id="31-io_uring_enter-的两个角色">3.1 <code>io_uring_enter</code> 的两个角色</h2>
+<p>一次 <code>io_uring_enter</code> 可以用于：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">提交：告诉内核 SQ 中有 N 个新请求
+</span></span><span class="line"><span class="cl">等待：要求至少有 M 个 CQE 后再返回
+</span></span><span class="line"><span class="cl">提交 + 等待：批量提交后直接等完成
+</span></span></code></pre></div><p>应用可以让一个线程生产 SQE，另一个线程消费 CQE；也可以单线程批量提交和处理。并发场景要自己保证 SQE 不被重复使用、请求对象生命周期覆盖整个异步操作。</p>
+<h2 id="32-sqpoll让内核线程替你观察-sq">3.2 SQPOLL：让内核线程替你观察 SQ</h2>
+<p>启用 <code>IORING_SETUP_SQPOLL</code> 后，内核创建一个 polling thread，持续查看 SQ。应用只要把 SQE 写入共享 ring 并更新 tail，内核线程就能发现并提交；部分情况下可以减少应用线程调用 <code>io_uring_enter</code> 的次数。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">普通：
+</span></span><span class="line"><span class="cl">应用填 SQE -&gt; enter syscall -&gt; 内核读取 SQ
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">SQPOLL：
+</span></span><span class="line"><span class="cl">应用填 SQE -&gt; 更新 tail -&gt; 内核 polling thread 自动读取
+</span></span></code></pre></div><p>代价也很直接：</p>
+<ul>
+<li>polling thread 持续占用 CPU，即使没有 IO</li>
+<li>NUMA/CPU affinity 不合适会增加 cache 传递</li>
+<li>权限、idle/非 idle 行为和内核版本需要验证</li>
+<li>低延迟、高 IO 速率才可能摊平轮询成本</li>
+</ul>
+<p>“少 syscall”不等于“少 CPU”。空闲服务启用 SQPOLL 可能是反优化。</p>
+<h2 id="33-iopoll设备完成也主动轮询">3.3 IOPOLL：设备完成也主动轮询</h2>
+<p><code>IORING_SETUP_IOPOLL</code> 主要面向支持轮询完成的块设备（常见是特定 NVMe/O_DIRECT 路径），应用/内核不依赖普通中断等待完成。它可能降低中断延迟，但会持续占用 CPU，并有严格的文件系统/设备条件。</p>
+<p>SQPOLL 是轮询提交队列；IOPOLL 是轮询设备完成，两者不要混淆。</p>
+<h2 id="34-注册-fdbuffer-与-personality">3.4 注册 fd、buffer 与 personality</h2>
+<p>默认每个请求都可能需要引用/验证 fd、pin 用户页、准备 IO 上下文。io_uring 支持预注册资源：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">register files：预先登记一组 fd
+</span></span><span class="line"><span class="cl">register buffers：预先登记固定 buffer
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">请求使用 index -&gt; 内核少做重复查找/锁定
+</span></span></code></pre></div><p>固定 buffer 需要 pin 住物理页，消耗内存和 <code>RLIMIT_MEMLOCK</code> 等资源；注册 fd 会让关闭/替换生命周期更复杂。它适合长期运行、高吞吐、固定连接/缓冲池，不适合每个短请求都注册注销。</p>
+<h2 id="35-共享-ring-的生命周期">3.5 共享 ring 的生命周期</h2>
+<p>ring 的 mmap 区、SQE、buffer、<code>user_data</code> 指向的请求对象都必须活到内核完成 CQE。错误的释放顺序可能造成：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">应用释放 request / buffer
+</span></span><span class="line"><span class="cl">  -&gt; 内核稍后完成 IO
+</span></span><span class="line"><span class="cl">  -&gt; 写入已复用的地址或读取旧 buffer
+</span></span><span class="line"><span class="cl">  -&gt; 数据损坏 / use-after-free
+</span></span></code></pre></div><p>异步 API 的第一安全规则是：<strong>提交成功不等于使用结束，CQE 才是资源可回收边界。</strong> 取消请求也不代表已经完成；要等待取消的 CQE/最终完成，并设计请求 generation 防止迟到结果作用到新对象。</p>
+<hr>
+<h1 id="4-io_uring-的操作模型与错误边界">4. io_uring 的操作模型与错误边界</h1>
+<h2 id="41-一个-ring-可以提交的不只是-readwrite">4.1 一个 ring 可以提交的不只是 read/write</h2>
+<p>常见 opcode 包括：</p>
+<table>
+<thead>
+<tr>
+<th>类别</th>
+<th>典型操作</th>
+<th>意义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>文件</td>
+<td><code>READ/WRITE/READV/WRITEV</code></td>
+<td>普通或 vectored 文件 IO</td>
+</tr>
+<tr>
+<td>网络</td>
+<td><code>ACCEPT/CONNECT/RECV/SEND</code></td>
+<td>提交 socket 操作</td>
+</tr>
+<tr>
+<td>readiness</td>
+<td><code>POLL_ADD/POLL_REMOVE</code></td>
+<td>监听 fd 可读写等状态</td>
+</tr>
+<tr>
+<td>时间</td>
+<td><code>TIMEOUT/TIMEOUT_REMOVE</code></td>
+<td>completion 驱动的超时</td>
+</tr>
+<tr>
+<td>控制</td>
+<td><code>ASYNC_CANCEL</code></td>
+<td>尝试取消已提交请求</td>
+</tr>
+<tr>
+<td>同步</td>
+<td><code>FSYNC</code></td>
+<td>提交文件同步</td>
+</tr>
+<tr>
+<td>零拷贝相关</td>
+<td><code>SPLICE/SEND_ZC</code> 等</td>
+<td>依内核/协议能力优化数据路径</td>
+</tr>
+</tbody>
+</table>
+<p>这让一个系统可把 accept、recv、send、timeout、文件 IO 的完成统一放在 CQ 中。统一不等于简单：每个 opcode 的成功长度、<code>-errno</code>、取消和链接语义都不同。</p>
+<h2 id="42-cqe-的-res-不是布尔值">4.2 CQE 的 <code>res</code> 不是布尔值</h2>
+<p>CQE 的 <code>res</code> 常见含义：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">res &gt;= 0：成功的返回值
+</span></span><span class="line"><span class="cl">  READ/RECV：实际读到的字节数，0 通常是 EOF
+</span></span><span class="line"><span class="cl">  WRITE/SEND：实际写入的字节数，可能短写
+</span></span><span class="line"><span class="cl">  ACCEPT：新的 fd
+</span></span><span class="line"><span class="cl">  FSYNC：通常 0 表示成功
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">res &lt; 0：负 errno
+</span></span><span class="line"><span class="cl">  -EAGAIN、-ECANCELED、-ETIME、-EPIPE、-EBADF ...
+</span></span></code></pre></div><p>不能把“有 CQE”理解为“请求成功”，也不能把一次成功 write 理解为全部 buffer 已发送。异步 API 仍要求正确处理 partial IO、EOF、超时与重试，区别只是错误在 CQE 中返回，而不是 syscall 返回。</p>
+<h2 id="43-linkhardlink-与取消">4.3 link、hardlink 与取消</h2>
+<p>io_uring 可把多个 SQE 链接：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">READ file -&gt; WRITE socket -&gt; FSYNC file
+</span></span></code></pre></div><p>普通 link 中，前一请求失败时后续请求可能被取消；hardlink 可改变失败传播策略。它有助于表达部分依赖，但不自动让多请求成为 ACID 事务：</p>
+<ul>
+<li>已执行的 write 不会因为后续失败自动回滚</li>
+<li>网络 send 无法撤回已发字节</li>
+<li>文件系统持久化顺序仍要按具体操作和错误处理验证</li>
+</ul>
+<p><code>ASYNC_CANCEL</code> 也是请求，不是即时打断按钮。目标可能已完成、正在设备中、无法取消或竞争完成；应用必须处理“原请求完成”和“取消请求完成”以任一顺序到达。</p>
+<h2 id="44-multishot一个-sqe-对应多个-cqe">4.4 multishot：一个 SQE 对应多个 CQE</h2>
+<p>某些操作支持 multishot，例如接收多个连接/数据报或持续 poll：提交一次 SQE，随后可得到多个 CQE，直到最后一个 CQE 不再带 <code>IORING_CQE_F_MORE</code>。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">1 个 multishot ACCEPT SQE
+</span></span><span class="line"><span class="cl">  -&gt; CQE: fd=101, F_MORE
+</span></span><span class="line"><span class="cl">  -&gt; CQE: fd=102, F_MORE
+</span></span><span class="line"><span class="cl">  -&gt; CQE: fd=103, no F_MORE  （结束）
+</span></span></code></pre></div><p>它减少重复提交，但把生命周期变成“最后 CQE 才能回收 SQE 的关联状态”。每个 CQE 都要检查 flags，不要按一请求一结果的旧思维写状态机。</p>
+<h2 id="45-安全历史提醒">4.5 安全历史提醒</h2>
+<p>io_uring 的灵活性意味着内核暴露了大量复杂异步对象交互。早期内核版本曾出现多项严重安全漏洞，部分容器平台因此限制或禁用非特权 <code>io_uring_setup</code>。这不是“io_uring 天生不安全”，而是提醒：</p>
+<ul>
+<li>使用受支持、及时更新的内核</li>
+<li>在容器/多租户环境确认 seccomp、LSM、系统策略是否允许</li>
+<li>不要为绕过安全策略而寻找替代入口</li>
+<li>只授予应用需要的 fd、buffer 和资源上限</li>
+</ul>
+<p>性能接口也属于攻击面；生产启用前要经过内核版本、权限模型、资源限制和故障测试评估。</p>
+<hr>
+<h1 id="5-零拷贝先问哪一次复制没了">5. 零拷贝：先问“哪一次复制没了”</h1>
+<h2 id="51-四种常被混在一起的零拷贝">5.1 四种常被混在一起的“零拷贝”</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">① DMA：设备与内核页之间直接搬运
+</span></span><span class="line"><span class="cl">   磁盘/NIC DMA 通常本来就不经过 CPU copy
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">② 减少 user &lt;-&gt; kernel copy：
+</span></span><span class="line"><span class="cl">   sendfile/splice 让页缓存页直接进入 socket 路径
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">③ scatter/gather：
+</span></span><span class="line"><span class="cl">   writev/sendmsg 避免应用先拼成连续大 buffer
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">④ NIC offload / MSG_ZEROCOPY：
+</span></span><span class="line"><span class="cl">   尽量避免内核把用户 buffer 复制到发送页，但需要等完成通知
+</span></span></code></pre></div><p>它们优化的位置、约束和生命周期完全不同。说“零拷贝”时必须回答：<strong>源在哪里、目的在哪里、少的是 CPU copy、syscall，还是 DMA？</strong></p>
+<h2 id="52-普通文件发送的两次-cpu-copy">5.2 普通文件发送的两次 CPU copy</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">file page cache
+</span></span><span class="line"><span class="cl">  | copy_to_user
+</span></span><span class="line"><span class="cl">  v
+</span></span><span class="line"><span class="cl">user buffer
+</span></span><span class="line"><span class="cl">  | copy_from_user
+</span></span><span class="line"><span class="cl">  v
+</span></span><span class="line"><span class="cl">socket send buffer
+</span></span><span class="line"><span class="cl">  | NIC DMA
+</span></span><span class="line"><span class="cl">  v
+</span></span><span class="line"><span class="cl">network
+</span></span></code></pre></div><p><code>sendfile(out_socket, in_file, ...)</code> 让内核直接把文件页缓存页引用/映射进 socket 发送路径：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">file page cache
+</span></span><span class="line"><span class="cl">  | page reference / pipe-like transfer
+</span></span><span class="line"><span class="cl">  v
+</span></span><span class="line"><span class="cl">socket/TCP send path
+</span></span><span class="line"><span class="cl">  | NIC DMA
+</span></span><span class="line"><span class="cl">  v
+</span></span><span class="line"><span class="cl">network
+</span></span></code></pre></div><p>通常省掉的是 file page cache 到用户 buffer、用户 buffer 到 socket buffer 的两次 CPU copy；它不是磁盘直接把数据“穿过 CPU”送到网卡，也不保证所有内核、NIC、协议都走完全相同的页引用路径。</p>
+<h2 id="53-sendfile-的边界">5.3 sendfile 的边界</h2>
+<p>Linux <code>sendfile</code> 最常见组合是<strong>普通文件 → socket</strong>。它适合静态文件下载、对象存储代理的未变换内容等。它不适合或会失去优势的情况：</p>
+<ul>
+<li>应用必须修改字节：压缩、转码、替换、协议封装</li>
+<li>TLS 在用户态加密：发送前必须取得明文并加密成密文</li>
+<li>源不是受支持的 regular file</li>
+<li>需要复杂跨平台行为</li>
+</ul>
+<p>内核 TLS（kTLS）可以让部分 TLS 发送加密留在内核，从而重新打开某些零拷贝机会，但 cipher、内核、库和协议路径都有条件，不能只因启用了 TLS 就假定 sendfile 仍有效。</p>
+<hr>
+<h1 id="6-splicetee-与-copy_file_range">6. splice、tee 与 copy_file_range</h1>
+<h2 id="61-splice在-fd-之间搬页引用">6.1 splice：在 fd 之间搬页引用</h2>
+<p><code>splice()</code> 以 pipe 为中介，在支持的 fd 之间移动数据：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">file -&gt; pipe -&gt; socket
+</span></span><span class="line"><span class="cl">socket -&gt; pipe -&gt; file
+</span></span></code></pre></div><p>pipe 在这里不是让数据进入用户态的 <code>read/write</code> 缓冲，而是内核中一组 pipe buffer/page 引用。常见用法：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="n">splice</span><span class="p">(</span><span class="n">filefd</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="n">pipefd</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="nb">NULL</span><span class="p">,</span> <span class="n">len</span><span class="p">,</span> <span class="mi">0</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="n">splice</span><span class="p">(</span><span class="n">pipefd</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="nb">NULL</span><span class="p">,</span> <span class="n">sockfd</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="n">len</span><span class="p">,</span> <span class="mi">0</span><span class="p">);</span>
+</span></span></code></pre></div><p>它可以构建代理、转发和内核内数据管道；但 API 更复杂，要处理 pipe 容量、短传输、阻塞/nonblocking、异常和可移植性。</p>
+<h2 id="62-tee复制引用不复制页面">6.2 tee：复制引用，不复制页面</h2>
+<p><code>tee()</code> 在两个 pipe 之间复制 pipe buffer 的引用：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">input pipe --tee--&gt; audit pipe
+</span></span><span class="line"><span class="cl">     |
+</span></span><span class="line"><span class="cl">     +-----------&gt; main pipe
+</span></span></code></pre></div><p>它适合一份流同时送多个消费者的内核管道场景。数据页不会因为 tee 被立即复制，但每个消费者仍必须消费引用，慢消费者会制造背压和内存占用。</p>
+<h2 id="63-copy_file_range文件到文件的内核复制">6.3 copy_file_range：文件到文件的内核复制</h2>
+<p><code>copy_file_range()</code> 针对文件到文件的复制：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="n">copy_file_range</span><span class="p">(</span><span class="n">srcfd</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">src_off</span><span class="p">,</span> <span class="n">dstfd</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">dst_off</span><span class="p">,</span> <span class="n">len</span><span class="p">,</span> <span class="mi">0</span><span class="p">);</span>
+</span></span></code></pre></div><p>同一文件系统上，它可能利用 extent clone/reflink 或内核内部 copy，避免用户态 buffer；跨文件系统、特殊文件或某些内核版本可能返回错误、退化或语义有限。应用必须处理短复制与 fallback <code>read/write</code>，不能把它当跨文件系统永远零拷贝的保证。</p>
+<p><code>cp --reflink=auto</code> 和 Copy-on-Write 文件系统上的克隆还可能做到“元数据级复制”：新文件先共享 extent，写时才复制。这比数据搬运更少，但语义依赖文件系统，不是 <code>copy_file_range</code> 的通用必然结果。</p>
+<h2 id="64-sendfilesplicecopy_file_range-对比">6.4 sendfile、splice、copy_file_range 对比</h2>
+<table>
+<thead>
+<tr>
+<th>API</th>
+<th>常见方向</th>
+<th>用户态数据 buffer</th>
+<th>典型用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>sendfile</code></td>
+<td>file → socket</td>
+<td>不需要</td>
+<td>静态文件网络发送</td>
+</tr>
+<tr>
+<td><code>splice</code></td>
+<td>fd ↔ pipe ↔ fd</td>
+<td>不需要</td>
+<td>代理、流转发</td>
+</tr>
+<tr>
+<td><code>tee</code></td>
+<td>pipe → pipe</td>
+<td>不需要</td>
+<td>一份流分支</td>
+</tr>
+<tr>
+<td><code>copy_file_range</code></td>
+<td>file → file</td>
+<td>不需要</td>
+<td>文件复制/克隆优化</td>
+</tr>
+<tr>
+<td><code>read/write</code></td>
+<td>任意支持 fd</td>
+<td>需要</td>
+<td>通用 fallback、需要变换</td>
+</tr>
+</tbody>
+</table>
+<p>“无需用户 buffer”不等于无任何内核复制；数据路径依设备、文件系统、socket、协议和内核版本决定。正确做法是将它们看作<strong>减少拷贝机会的专用 API</strong>。</p>
+<hr>
+<h1 id="7-msg_zerocopy用户-buffer-的生命周期交换">7. MSG_ZEROCOPY：用户 buffer 的生命周期交换</h1>
+<h2 id="71-它省的是什么">7.1 它省的是什么</h2>
+<p>普通 <code>send()</code> 要把应用用户 buffer 复制到内核 socket buffer，调用返回后应用即可复用原 buffer。<code>MSG_ZEROCOPY</code> 尝试让内核直接引用用户页面，由 NIC DMA 发送，避免那次 copy。</p>
+<p>代价是：调用返回不代表内核已不再使用 buffer。应用必须从 socket error queue 接收完成通知，确认对应范围已释放后才能复用/释放 buffer。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">sendmsg(MSG_ZEROCOPY) returns
+</span></span><span class="line"><span class="cl">  -&gt; 用户 buffer 仍被内核/NIC 引用
+</span></span><span class="line"><span class="cl">  -&gt; 稍后从 error queue 得到 completion
+</span></span><span class="line"><span class="cl">  -&gt; 此时才能归还 buffer 给内存池
+</span></span></code></pre></div><h2 id="72-不是小包优化">7.2 不是小包优化</h2>
+<p>注册/锁定页、completion、error queue 和复杂生命周期有固定成本。小消息通常 copy 更快；它更适合大块、高吞吐发送，并需要基准验证。内核也可能在某些情况下退回 copy 路径，但仍会产生相关 completion 语义。</p>
+<p><code>MSG_ZEROCOPY</code> 与 <code>sendfile</code> 解决的源不同：前者源是用户 buffer，后者源是文件页缓存。两者都不代表“网络端到端没有复制”。</p>
+<hr>
+<h1 id="8-tls压缩与协议变换零拷贝的硬边界">8. TLS、压缩与协议变换：零拷贝的硬边界</h1>
+<h2 id="81-一旦改字节就必须有新字节">8.1 一旦改字节，就必须有新字节</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">文件原文 ----&gt; TLS encrypt ----&gt; 密文
+</span></span><span class="line"><span class="cl">          或 -&gt; gzip ---------&gt; 压缩后的新字节
+</span></span><span class="line"><span class="cl">          或 -&gt; JSON rewrite -&gt; 新字节
+</span></span></code></pre></div><p>若应用必须读出内容、检查、修改并产生不同输出，就不可能把原文件页原封不动挂到 socket。至少在变换点需要 CPU 处理和新的输出 buffer。</p>
+<p>这并不是 zero-copy “失效”，而是数据语义改变了；没有任何内核 API 能省去生成新字节这个事实。</p>
+<h2 id="82-ktls-不是一个开关">8.2 kTLS 不是一个开关</h2>
+<p>kTLS 把部分 record encryption 移到内核，可能让应用在 TLS 连接上使用更多内核发送优化。但它依赖：</p>
+<ul>
+<li>TLS 版本、cipher 和库支持</li>
+<li>send/record 边界和错误处理</li>
+<li>内核版本与 NIC offload 能力</li>
+<li>renegotiation、key update、协议功能等限制</li>
+</ul>
+<p>很多 HTTP/TLS 栈仍以用户态 TLS 为主。启用 kTLS 前应先用 profile 证明 CPU copy/加密是热点，再验证正确性、可观测性和真实吞吐，不要把“静态文件 + HTTPS”自动等同“sendfile 零拷贝”。</p>
+<h2 id="83-缓存压缩和网络三者的取舍">8.3 缓存、压缩和网络三者的取舍</h2>
+<p>静态资源服务常有三种路径：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">未压缩文件 -&gt; sendfile                 少 CPU copy，网络字节多
+</span></span><span class="line"><span class="cl">预压缩文件 -&gt; sendfile                 少 CPU，网络字节少，需要存多份
+</span></span><span class="line"><span class="cl">动态压缩   -&gt; read + compress + write  CPU 高，可能节省带宽
+</span></span></code></pre></div><p>哪条更好取决于 CPU、网卡、文件命中率、客户端能力、TLS 和 CDN。先选正确缓存/压缩策略，再看是否值得为最后两次 copy 引入专用路径。</p>
+<hr>
+<h1 id="9-go-的-iocopy接口简单路径按类型分派">9. Go 的 io.Copy：接口简单，路径按类型分派</h1>
+<h2 id="91-首先看-writertoreaderfrom">9.1 首先看 WriterTo/ReaderFrom</h2>
+<p><code>io.Copy(dst, src)</code> 不保证永远走一个内部循环。它会优先尝试：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">src 实现 io.WriterTo
+</span></span><span class="line"><span class="cl">  -&gt; src.WriteTo(dst)
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">否则 dst 实现 io.ReaderFrom
+</span></span><span class="line"><span class="cl">  -&gt; dst.ReadFrom(src)
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">否则 -&gt; 通用 Read buffer -&gt; Write 循环
+</span></span></code></pre></div><p>因此调用点看起来相同，实际路径由源/目的的动态类型决定。包装一层 <code>bufio.Reader</code>、限速 reader、hash reader、gzip writer 或 metrics wrapper，都可能改变接口实现和优化路径。</p>
+<h2 id="92-什么时候可能走-sendfile">9.2 什么时候可能走 sendfile</h2>
+<p>在 Linux 上，Go 标准库的 <code>*os.File</code> 与 <code>*net.TCPConn</code> 等组合会尽量利用平台支持的高效路径，其中可能包括 <code>sendfile</code>。典型候选是：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="nx">io</span><span class="p">.</span><span class="nf">Copy</span><span class="p">(</span><span class="nx">tcpConn</span><span class="p">,</span> <span class="nx">file</span><span class="p">)</span>
+</span></span></code></pre></div><p>但它取决于 Go 版本、源/目的具体类型、fd 状态、文件类型和错误 fallback。以下常让路径退化为用户态 copy：</p>
+<ul>
+<li>目的不是普通 TCP connection</li>
+<li>HTTPS：<code>crypto/tls.Conn</code> 需要用户态加密</li>
+<li>中间有 gzip、限速、hash、内容修改等 wrapper</li>
+<li>源不是普通文件，或平台/API 不支持</li>
+<li>发生短传输、错误或特殊选项时 fallback</li>
+</ul>
+<p>不能通过“用了 <code>io.Copy</code>”就断言使用了 sendfile。要用 tracing、性能测试或查看对应 Go 版本源码验证。</p>
+<h2 id="93-iocopybuffer-不一定更快">9.3 <code>io.CopyBuffer</code> 不一定更快</h2>
+<p><code>io.CopyBuffer</code> 允许提供复用 buffer，适合通用 fallback 路径减少分配；但若 <code>src</code> 实现 <code>WriterTo</code> 或 <code>dst</code> 实现 <code>ReaderFrom</code>，传入 buffer 可能根本不参与。它也不会强制走或禁止 sendfile。</p>
+<p>优化前先 profile：若瓶颈在 TLS 加密、磁盘、网络、handler 或对象分配，手调 buffer 可能没有意义。</p>
+<h2 id="94-go-http-文件服务的真实边界">9.4 Go HTTP 文件服务的真实边界</h2>
+<p><code>http.ServeFile</code>/<code>ServeContent</code> 要处理 range、conditional request、MIME、HEAD、错误和可能的 wrapper。是否走零拷贝会受 HTTP 协议层、ResponseWriter 类型、TLS、HTTP/2、压缩中间件以及 Go 版本影响。</p>
+<p>对大文件下载，先测：</p>
+<ul>
+<li>plain HTTP 与 HTTPS 吞吐/CPU</li>
+<li>是否启用了压缩、代理、CDN</li>
+<li>pprof 中 copy、TLS、syscall、page fault 的占比</li>
+<li>客户端实际读取速度与发送队列积压</li>
+</ul>
+<p>不要把某一条内核优化当作文件服务设计的中心。</p>
+<hr>
+<h1 id="10-线上评估先证明瓶颈再换模型">10. 线上评估：先证明瓶颈，再换模型</h1>
+<h2 id="101-io_uring-不适合的典型情况">10.1 io_uring 不适合的典型情况</h2>
+<p>以下情况通常不该为了“先进”立刻切 io_uring：</p>
+<ul>
+<li>每次只有一个小请求并同步等待，无法批量</li>
+<li>真正瓶颈是数据库、TLS、压缩、应用锁或下游排队</li>
+<li>现有 epoll/event loop 已稳定，改造会引入大量生命周期风险</li>
+<li>内核版本/容器策略不满足需要的 opcode 或注册资源能力</li>
+<li>团队缺少处理 CQE 错误、取消、buffer ownership 的测试体系</li>
+</ul>
+<p>选择 IO 模型是系统架构决策，不是将 <code>read</code> 替换成另一个 API 的局部微优化。</p>
+<h2 id="102-什么信号说明值得评估">10.2 什么信号说明值得评估</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">系统调用 profile：
+</span></span><span class="line"><span class="cl">  recv/send/accept/epoll_wait 占明显 CPU
+</span></span><span class="line"><span class="cl">  且请求可以批量/流水线化
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">内存 profile：
+</span></span><span class="line"><span class="cl">  user&lt;-&gt;kernel copy / buffer 分配成为热点
+</span></span><span class="line"><span class="cl">  且数据不需要改写
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">延迟 profile：
+</span></span><span class="line"><span class="cl">  syscall 固定开销显著，设备/网络本身并未饱和
+</span></span></code></pre></div><p>先用测量确定是控制面还是数据面问题：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 进程的 syscall/CPU 热点</span>
+</span></span><span class="line"><span class="cl">sudo perf record -F <span class="m">199</span> -g -p <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span> -- sleep <span class="m">30</span>
+</span></span><span class="line"><span class="cl">sudo perf report
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 看系统调用频率（短时，strace 会扰动性能）</span>
+</span></span><span class="line"><span class="cl">sudo strace -ff -c -p <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># IO 吞吐与设备队列</span>
+</span></span><span class="line"><span class="cl">pidstat -d -p <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span> <span class="m">1</span>
+</span></span><span class="line"><span class="cl">iostat -xz <span class="m">1</span>
+</span></span></code></pre></div><p><code>strace -c</code> 得到的是被追踪后系统的行为，适合发现数量级，不适合精确 benchmark。生产更适合 perf、eBPF 和应用指标。</p>
+<h2 id="103-io_uring-可观测性">10.3 io_uring 可观测性</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 本机内核是否导出了 io_uring tracepoints</span>
+</span></span><span class="line"><span class="cl">sudo perf list <span class="p">|</span> grep -i io_uring
+</span></span><span class="line"><span class="cl">sudo ls /sys/kernel/tracing/events/io_uring 2&gt;/dev/null
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 用 trace-cmd/perf record 记录（名称随内核变化）</span>
+</span></span><span class="line"><span class="cl">sudo perf record -e io_uring:* -a -- sleep <span class="m">10</span>
+</span></span><span class="line"><span class="cl">sudo perf script
+</span></span></code></pre></div><p>关注：提交量、CQE 延迟、CQ overflow、取消率、<code>-EAGAIN/-ECANCELED</code>、固定资源占用、队列深度和尾延迟。只看 IOPS 增加可能掩盖取消风暴、buffer 泄漏或 P99 恶化。</p>
+<h2 id="104-零拷贝怎么验证">10.4 零拷贝怎么验证</h2>
+<p>验证不应只 grep “sendfile”：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 直接观察 syscall 路径（受 Go 版本/实现影响）</span>
+</span></span><span class="line"><span class="cl">sudo strace -ff -e <span class="nv">trace</span><span class="o">=</span>sendfile,splice,copy_file_range,read,write -p <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 检查 CPU profile 是否真的从 copy/memmove 转移</span>
+</span></span><span class="line"><span class="cl">sudo perf top -p <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 同时对照吞吐、P99、RSS、发送队列和网络重传</span>
+</span></span><span class="line"><span class="cl">ss -tinp
+</span></span><span class="line"><span class="cl">pidstat -r -u -p <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span> <span class="m">1</span>
+</span></span></code></pre></div><p><code>sendfile</code> 出现并不等于端到端更快：TLS 可能仍是热点，慢客户端会让 socket 发送队列持有更多页，内存压力可能上升。指标必须包括 CPU、带宽、内存、延迟和错误率。</p>
+<hr>
+<h1 id="11-常用命令知识点扩展">11. 常用命令知识点扩展</h1>
+<h2 id="111-工具与参数">11.1 工具与参数</h2>
+<table>
+<thead>
+<tr>
+<th>短参</th>
+<th>长参</th>
+<th>英文全称</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>strace -c</code></td>
+<td><code>strace --summary-only</code></td>
+<td>summary only</td>
+<td>汇总 syscall 次数/时间</td>
+</tr>
+<tr>
+<td><code>strace -f</code></td>
+<td><code>strace --follow-forks</code></td>
+<td>follow forks</td>
+<td>跟踪线程/子进程</td>
+</tr>
+<tr>
+<td><code>strace -e</code></td>
+<td><code>strace --trace=EXPR</code></td>
+<td>trace expression</td>
+<td>过滤 sendfile/splice 等调用</td>
+</tr>
+<tr>
+<td><code>perf record -g</code></td>
+<td><code>perf record --call-graph</code></td>
+<td>call graph</td>
+<td>记录调用栈</td>
+</tr>
+<tr>
+<td><code>perf list</code></td>
+<td>无统一长参</td>
+<td>list events</td>
+<td>列出本机性能事件</td>
+</tr>
+<tr>
+<td><code>iostat -x</code></td>
+<td><code>iostat --extended</code></td>
+<td>extended statistics</td>
+<td>显示队列/利用率等扩展磁盘指标</td>
+</tr>
+<tr>
+<td><code>iostat -z</code></td>
+<td><code>iostat --zero</code></td>
+<td>omit zero devices</td>
+<td>隐藏空闲设备</td>
+</tr>
+<tr>
+<td><code>pidstat -d</code></td>
+<td>无统一长参</td>
+<td>disk I/O statistics</td>
+<td>按进程显示 IO</td>
+</tr>
+</tbody>
+</table>
+<h2 id="112-用-strace-区分路径">11.2 用 strace 区分路径</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 文件到 HTTP 客户端的进程，短时观察路径</span>
+</span></span><span class="line"><span class="cl">sudo strace -ff -ttT -p <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  -e <span class="nv">trace</span><span class="o">=</span>sendfile,splice,copy_file_range,read,readv,write,writev,sendto,sendmsg
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># io_uring 程序的 setup/enter/register 轮廓</span>
+</span></span><span class="line"><span class="cl">sudo strace -ff -ttT -p <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  -e <span class="nv">trace</span><span class="o">=</span>io_uring_setup,io_uring_enter,io_uring_register
+</span></span></code></pre></div><p>看不到 <code>sendfile</code> 不代表性能差，可能是 TLS、压缩或实现选择使用户态 copy 更合理；看到 <code>io_uring_enter</code> 也不说明每个请求都批量，仍要看一次 enter 提交多少 SQE 和 CQE 延迟。</p>
+<hr>
+<h1 id="12-面试题">12. 面试题</h1>
+<p><strong>Q：io_uring 相比 epoll 主要减少什么？</strong></p>
+<p>epoll 优化很多 fd 的 readiness 等待，但事件返回后应用仍逐个调用 read/write/accept。io_uring 用共享 SQ/CQ 把请求描述和完成结果放入映射内存，可批量提交和批量收取，减少每个请求的 syscall、参数拷贝与进入内核固定成本。它不自动减少数据 copy，也不保证每次操作都无需 io_uring_enter。</p>
+<p><strong>Q：SQ/CQ 为什么需要 release/acquire 内存序？</strong></p>
+<p>生产者必须先完整填入 SQE/CQE 内容，再发布 tail；消费者看到 tail 后才能读取完整条目。release store 保证此前内容写入先可见，acquire load 保证随后读取不会越过该发布。双方各自只修改一侧 index，避免数据竞争；否则消费者可能看到更新后的 tail 却读到半初始化请求。</p>
+<p><strong>Q：io_uring 的 CQE 为什么不能简单当“成功回调”？</strong></p>
+<p>CQE 的 res 是 syscall 风格结果：read/recv 可短读或 EOF，write/send 可短写，负数是负 errno；取消、timeout 和链接请求也会产生不同结果。一个 CQE 只说明操作达到完成状态，应用仍需按 opcode 处理部分结果、错误、重试、资源释放和状态机推进。</p>
+<p><strong>Q：SQPOLL 和 IOPOLL 有何区别？</strong></p>
+<p>SQPOLL 用内核 polling thread 观察 submission queue，减少应用为通知新 SQE 调用 enter 的次数；IOPOLL 面向支持轮询完成的块设备路径，减少等待设备中断的延迟。二者都可能持续耗 CPU，适合条件不同，不能因名字相似混为一谈。</p>
+<p><strong>Q：注册 buffer/fd 为什么可能更快，也可能更危险？</strong></p>
+<p>它们减少每请求的 fd 查找、用户页 pin/验证和准备成本，适合长期高吞吐固定资源；但注册 buffer 会固定物理页并消耗 memlock，注册 fd 增加 close/替换生命周期复杂度。异步请求完成前资源不能回收，错误处理不当会造成 pin 泄漏、use-after-free 或错误 fd 复用。</p>
+<p><strong>Q：取消一个 io_uring 请求后能立刻释放 buffer 吗？</strong></p>
+<p>不能。取消本身也是异步请求，目标可能已完成、正在执行或不能取消；原操作与取消结果的 CQE 可任意先后到达。只有确认目标请求不再可能访问 buffer 后才能回收，通常要把最终 CQE 与 generation/ownership 协议作为边界。</p>
+<p><strong>Q：sendfile 省掉了什么复制？</strong></p>
+<p>普通 file→socket 路径通常从 page cache copy 到用户 buffer，再 copy 到 socket send buffer。sendfile 允许文件页直接参与 socket 发送路径，通常省两次 user/kernel CPU copy；NIC DMA、文件系统、TCP 和设备内部仍有自己的数据移动，因此不能理解成字节完全不动。</p>
+<p><strong>Q：splice 与 copy_file_range 的区别？</strong></p>
+<p>splice 通过 pipe 在支持的 fd 间移动内核页/pipe buffer 引用，适合 file/socket/pipe 的流转发；copy_file_range 面向 file→file，可能利用文件系统内部 copy 或 reflink。两者都需处理短传输、文件系统/对象限制和 fallback，不能承诺所有场景零拷贝。</p>
+<p><strong>Q：为什么 TLS 会破坏普通 sendfile 路径？</strong></p>
+<p>用户态 TLS 需要把明文文件字节读到用户态并生成不同的密文，再发送密文；原 page cache 页不能原封不动送给 socket。kTLS 在有限条件下能把部分加密下沉内核，但依赖 cipher、内核和库支持。内容压缩、转码、模板渲染同理：一旦输出字节变了，就必须产生新 buffer。</p>
+<p><strong>Q：MSG_ZEROCOPY 的代价是什么？</strong></p>
+<p>它尝试避免把用户 buffer copy 到内核发送页，但内核/NIC 在 send 返回后仍可能引用这些页面。应用必须从 error queue 接收完成通知才能复用 buffer，并承担 page pin、completion、错误和内存池生命周期复杂度。小包的固定成本通常不值得，适合大块高吞吐并经测试的路径。</p>
+<p><strong>Q：Go io.Copy 是否一定走 sendfile？</strong></p>
+<p>不一定。io.Copy 会优先使用源的 WriterTo 或目的的 ReaderFrom，动态类型与 Go 版本决定后续路径。<code>*os.File</code> 到 <code>*net.TCPConn</code> 在 Linux 上可能利用 sendfile；TLS Conn、gzip/限速/hash wrapper、非普通文件或特殊错误通常会走用户态 copy/fallback。应通过源码、strace 和基准确认，不能仅由调用名称推断。</p>
+<p><strong>Q：选择 io_uring 前应先验证什么？</strong></p>
+<p>先证明控制面 syscall 开销是热点且能批量/流水线化，确认内核版本、容器权限、opcode 和资源限制支持；设计 CQE 错误、短 IO、取消、buffer/fd 生命周期、overflow 和降级路径；再以吞吐、P50/P99、CPU、RSS、错误率和故障恢复做对照。若瓶颈在 TLS、数据库或业务锁，换 IO 模型通常不会改善结果。</p>
+<hr>
+<h1 id="小结">小结</h1>
+<ul>
+<li>普通 IO 的成本分为控制面（syscall/参数/调度入口）和数据面（CPU copy/cache 带宽）；io_uring 与零拷贝分别针对不同部分</li>
+<li>io_uring 用共享 SQ/CQ 实现批量提交和完成，生产者/消费者通过 head/tail 所有权与 release/acquire 保证正确发布</li>
+<li>默认 io_uring 仍需要 enter；单请求同步等待可能没有收益，SQPOLL/IOPOLL 也可能以 CPU 换延迟</li>
+<li>CQE 是 syscall 风格结果，不是成功回调；短 IO、负 errno、取消、multishot 和资源生命周期必须纳入状态机</li>
+<li>异步请求只有最终 CQE 才能回收相关 buffer/fd/request；取消不是立即安全点</li>
+<li>sendfile、splice、copy_file_range、MSG_ZEROCOPY 分别减少不同位置的复制或 syscall，不能笼统称为“完全零拷贝”</li>
+<li>TLS、压缩、转码和协议改写必须产生新字节，是零拷贝的物理边界；kTLS 只在受限条件下改变路径</li>
+<li>Go <code>io.Copy</code> 按 WriterTo/ReaderFrom 动态分派，可能利用 sendfile，也可能因 TLS/包装器退化；必须测量验证</li>
+<li>是否采用 io_uring 要由 profile、内核/权限、批量机会、生命周期复杂度与端到端指标决定，而不是技术潮流</li>
+</ul>
+<p>下一篇讲 <strong>一个包在内核里的旅程</strong> —— 从网卡 DMA、中断、NAPI、<code>sk_buff</code>、协议栈到 socket 接收队列，再解释 TCP 半连接/全连接队列、SYN flood 与 TIME_WAIT 为什么无法简单删掉。</p>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2026-08-12</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/linux/">linux</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/linux/linux_33_%E4%B8%80%E4%B8%AA%E5%8C%85%E5%9C%A8%E5%86%85%E6%A0%B8%E9%87%8C%E7%9A%84%E6%97%85%E7%A8%8B/" class="prev" rel="prev" title="Linux-33 一个包在内核里的旅程：从网卡 DMA 到 Go 的 Read"><i class="fas fa-angle-left fa-fw"></i>Linux-33 一个包在内核里的旅程：从网卡 DMA 到 Go 的 Read</a>
+            <a href="/posts/linux/linux_31_IO%E6%A8%A1%E5%9E%8B%E6%BC%94%E8%BF%9B%E9%98%BB%E5%A1%9E%E5%88%B0epoll/" class="next" rel="next" title="Linux-31 IO 模型演进：阻塞 → epoll">Linux-31 IO 模型演进：阻塞 → epoll<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2026-08-12T08:00:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Linux-32 io_uring 与零拷贝：少陷入一次，少复制一次"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

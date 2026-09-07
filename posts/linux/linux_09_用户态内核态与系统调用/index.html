@@ -1,740 +1,286 @@
-<!DOCTYPE html>
-<html lang="zh-CN">
-    <head>
-        <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <meta name="robots" content="noodp" />
-        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
-        <title>Linux-09 用户态、内核态与系统调用 - xingliuhua博客</title><meta name="Description" content="CPU 特权环与用户态内核态的划分、系统调用的完整触发路径、glibc wrapper 与系统调用号、vDSO 为什么能让 gettimeofday 不进内核、strace 观测系统调用、减少系统调用的优化手段"><meta property="og:title" content="Linux-09 用户态、内核态与系统调用" />
-<meta property="og:description" content="CPU 特权环与用户态内核态的划分、系统调用的完整触发路径、glibc wrapper 与系统调用号、vDSO 为什么能让 gettimeofday 不进内核、strace 观测系统调用、减少系统调用的优化手段" />
-<meta property="og:type" content="article" />
-<meta property="og:url" content="https://xingliuhua.github.io/posts/linux/linux_09_%E7%94%A8%E6%88%B7%E6%80%81%E5%86%85%E6%A0%B8%E6%80%81%E4%B8%8E%E7%B3%BB%E7%BB%9F%E8%B0%83%E7%94%A8/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
-<meta property="article:published_time" content="2026-08-06T19:00:00+08:00" />
-<meta property="article:modified_time" content="2026-08-06T19:00:00+08:00" />
-
-<meta name="twitter:card" content="summary_large_image"/>
-<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
-
-<meta name="twitter:title" content="Linux-09 用户态、内核态与系统调用"/>
-<meta name="twitter:description" content="CPU 特权环与用户态内核态的划分、系统调用的完整触发路径、glibc wrapper 与系统调用号、vDSO 为什么能让 gettimeofday 不进内核、strace 观测系统调用、减少系统调用的优化手段"/>
-<meta name="application-name" content="xingliuhua博客">
-<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
-        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
-        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/linux/linux_09_%E7%94%A8%E6%88%B7%E6%80%81%E5%86%85%E6%A0%B8%E6%80%81%E4%B8%8E%E7%B3%BB%E7%BB%9F%E8%B0%83%E7%94%A8/" /><link rel="prev" href="https://xingliuhua.github.io/posts/linux/linux_10_%E5%86%85%E5%AD%98%E7%AE%A1%E7%90%86/" /><link rel="next" href="https://xingliuhua.github.io/posts/linux/linux_08_%E4%BF%A1%E5%8F%B7%E4%B8%8E%E8%BF%9B%E7%A8%8B%E9%97%B4%E9%80%9A%E4%BF%A1/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
-    {
-        "@context": "http://schema.org",
-        "@type": "BlogPosting",
-        "headline": "Linux-09 用户态、内核态与系统调用",
-        "inLanguage": "zh-CN",
-        "mainEntityOfPage": {
-            "@type": "WebPage",
-            "@id": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_09_%E7%94%A8%E6%88%B7%E6%80%81%E5%86%85%E6%A0%B8%E6%80%81%E4%B8%8E%E7%B3%BB%E7%BB%9F%E8%B0%83%E7%94%A8\/"
-        },"genre": "posts","keywords": "linux","wordcount":  8192 ,
-        "url": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_09_%E7%94%A8%E6%88%B7%E6%80%81%E5%86%85%E6%A0%B8%E6%80%81%E4%B8%8E%E7%B3%BB%E7%BB%9F%E8%B0%83%E7%94%A8\/","datePublished": "2026-08-06T19:00:00+08:00","dateModified": "2026-08-06T19:00:00+08:00","publisher": {
-            "@type": "Organization",
-            "name": "xingliuhua"},"author": {
-                "@type": "Person",
-                "name": "xingliuhua"
-            },"description": "CPU 特权环与用户态内核态的划分、系统调用的完整触发路径、glibc wrapper 与系统调用号、vDSO 为什么能让 gettimeofday 不进内核、strace 观测系统调用、减少系统调用的优化手段"
-    }
-    </script></head>
-    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
-
-        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
-    <div class="header-wrapper">
-        <div class="header-title">
-            <a href="/" title="xingliuhua博客"><img
-        class="lazyload logo"
-        src="/svg/loading.min.svg"
-        data-src="/logo.png"
-        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
-        data-sizes="auto"
-        alt="/logo.png"
-        title="/logo.png" />xingliuhua</a>
-        </div>
-        <div class="menu">
-            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
-                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
-                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
-                            <i class="fas fa-search fa-fw"></i>
-                        </a>
-                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
-                            <i class="fas fa-times-circle fa-fw"></i>
-                        </a>
-                        <span class="search-button search-loading" id="search-loading-desktop">
-                            <i class="fas fa-spinner fa-fw fa-spin"></i>
-                        </span>
-                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
-                    <i class="fas fa-adjust fa-fw"></i>
-                </a>
-            </div>
-        </div>
-    </div>
-</header><header class="mobile" id="header-mobile">
-    <div class="header-container">
-        <div class="header-wrapper">
-            <div class="header-title">
-                <a href="/" title="xingliuhua博客"><img
-        class="lazyload logo"
-        src="/svg/loading.min.svg"
-        data-src="/logo.png"
-        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
-        data-sizes="auto"
-        alt="/logo.png"
-        title="/logo.png" />xingliuhua</a>
-            </div>
-            <div class="menu-toggle" id="menu-toggle-mobile">
-                <span></span><span></span><span></span>
-            </div>
-        </div>
-        <div class="menu" id="menu-mobile"><div class="search-wrapper">
-                    <div class="search mobile" id="search-mobile">
-                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
-                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
-                            <i class="fas fa-search fa-fw"></i>
-                        </a>
-                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
-                            <i class="fas fa-times-circle fa-fw"></i>
-                        </a>
-                        <span class="search-button search-loading" id="search-loading-mobile">
-                            <i class="fas fa-spinner fa-fw fa-spin"></i>
-                        </span>
-                    </div>
-                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
-                        取消
-                    </a>
-                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
-                <i class="fas fa-adjust fa-fw"></i>
-            </a></div>
-    </div>
-</header>
-<div class="search-dropdown desktop">
-    <div id="search-dropdown-desktop"></div>
-</div>
-<div class="search-dropdown mobile">
-    <div id="search-dropdown-mobile"></div>
-</div>
-<main class="main">
-                <div class="container"><div class="toc" id="toc-auto">
-            <h2 class="toc-title">目录</h2>
-            <div class="toc-content" id="toc-content-auto"></div>
-        </div><article class="page single"><h1 class="single-title animated flipInX">Linux-09 用户态、内核态与系统调用</h1><div class="post-meta">
-            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
-            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2026-08-06">2026-08-06</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 8192 字&nbsp;
-                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 17 分钟&nbsp;</div>
-        </div><div class="details toc" id="toc-static"  kept="">
-                <div class="details-summary toc-title">
-                    <span>目录</span>
-                    <span><i class="details-icon fas fa-angle-right"></i></span>
-                </div>
-                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
-  <ol>
-    <li><a href="#1-为什么要分用户态和内核态">1. 为什么要分用户态和内核态</a>
-      <ol>
-        <li><a href="#11-cpu-的特权环">1.1 CPU 的特权环</a></li>
-        <li><a href="#12-同一个进程的两种状态">1.2 同一个进程的两种状态</a></li>
-      </ol>
-    </li>
-    <li><a href="#2-一次系统调用的完整路径">2. 一次系统调用的完整路径</a>
-      <ol>
-        <li><a href="#21-系统调用号与调用表">2.1 系统调用号与调用表</a></li>
-        <li><a href="#22-glibc-wrapper-不只是转发">2.2 glibc wrapper 不只是转发</a></li>
-      </ol>
-    </li>
-    <li><a href="#3-vdso不进内核的系统调用">3. vDSO：不进内核的「系统调用」</a></li>
-    <li><a href="#4-strace看进程在做什么系统调用">4. strace：看进程在做什么系统调用</a>
-      <ol>
-        <li><a href="#41-基本用法">4.1 基本用法</a></li>
-        <li><a href="#42-统计模式最有用">4.2 统计模式最有用</a></li>
-        <li><a href="#43-常用选项">4.3 常用选项</a></li>
-        <li><a href="#44-三个实战场景">4.4 三个实战场景</a></li>
-        <li><a href="#45-strace-的代价">4.5 strace 的代价</a></li>
-      </ol>
-    </li>
-    <li><a href="#5-减少系统调用性能优化的重要方向">5. 减少系统调用：性能优化的重要方向</a>
-      <ol>
-        <li><a href="#51-批量化">5.1 批量化</a></li>
-        <li><a href="#52-零拷贝">5.2 零拷贝</a></li>
-        <li><a href="#53-io_uring批量提交的终极形态">5.3 io_uring：批量提交的终极形态</a></li>
-      </ol>
-    </li>
-    <li><a href="#6-实战一个莫名很慢的服务">6. 实战：一个「莫名很慢」的服务</a></li>
-    <li><a href="#7-一些量级感">7. 一些量级感</a></li>
-    <li><a href="#8-面试题">8. 面试题</a></li>
-  </ol>
-</nav></div>
-            </div><div class="content" id="content"><blockquote>
-<p>前置阅读：<a href="../linux_07_%e8%bf%9b%e7%a8%8b%e8%b0%83%e5%ba%a6%e4%b8%8e%e4%b8%8a%e4%b8%8b%e6%96%87%e5%88%87%e6%8d%a2/" rel="">Linux-07 进程调度与上下文切换</a></p>
-</blockquote>
-<p>「系统调用」这个词在前面几篇里出现了几十次，但一直没有正面讲它。这一篇补上——<strong>系统调用是用户程序与内核之间唯一的合法通道</strong>，理解它的成本和机制，是理解一切 IO 性能优化的前提。</p>
-<p>本篇会解释：为什么要有用户态和内核态之分、一次 <code>read()</code> 到底经过了什么、为什么 <code>time.Now()</code> 比 <code>os.Getpid()</code> 快十倍、以及怎么用 <code>strace</code> 找出「进程到底卡在哪」。</p>
-<h1 id="1-为什么要分用户态和内核态">1. 为什么要分用户态和内核态</h1>
-<p>一句话：<strong>因为不能让应用程序直接碰硬件。</strong></p>
-<p>如果任何程序都能直接读写磁盘、访问任意内存、操作网卡，那么一个有 bug 的程序就能把整台机器搞崩，一个恶意程序能读取所有其他进程的数据。所以 CPU 硬件层面提供了<strong>特权级</strong>机制。</p>
-<h2 id="11-cpu-的特权环">1.1 CPU 的特权环</h2>
-<p>x86 架构提供四个特权级（Ring 0 ~ Ring 3），但 Linux 只用了两个：</p>
-<p><img
-        class="lazyload"
-        src="/svg/loading.min.svg"
-        data-src="./%e7%89%b9%e6%9d%83%e7%8e%af.png"
-        data-srcset="./%e7%89%b9%e6%9d%83%e7%8e%af.png, ./%e7%89%b9%e6%9d%83%e7%8e%af.png 1.5x, ./%e7%89%b9%e6%9d%83%e7%8e%af.png 2x"
-        data-sizes="auto"
-        alt="./特权环.png"
-        title="CPU 特权环：内核运行在 Ring 0，应用运行在 Ring 3" /></p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Ring 0  内核空间  最高权限，可以执行任何指令、访问任何内存和硬件
-</span></span><span class="line"><span class="cl">Ring 1  （未使用）
-</span></span><span class="line"><span class="cl">Ring 2  （未使用）
-</span></span><span class="line"><span class="cl">Ring 3  用户空间  受限权限，不能执行特权指令，不能直接访问硬件
-</span></span></code></pre></div><p><strong>Ring 3 被禁止的事情</strong>：</p>
-<ul>
-<li>执行特权指令（<code>hlt</code> 停机、<code>lgdt</code> 加载描述符表、<code>cli</code> 关中断）</li>
-<li>直接访问硬件端口（<code>in</code>/<code>out</code> 指令）</li>
-<li>访问被标记为内核所有的内存页</li>
-<li>修改页表、切换地址空间</li>
-</ul>
-<p>一旦 Ring 3 的代码尝试这些操作，CPU 立刻触发<strong>保护异常</strong>（General Protection Fault），内核接管并通常给进程发 <code>SIGSEGV</code>。</p>
-<p><strong>「段错误」的本质就是这个</strong>——你的代码试图访问不属于它的内存，CPU 硬件层面拦住了。</p>
-<h2 id="12-同一个进程的两种状态">1.2 同一个进程的两种状态</h2>
-<p>这里有个常见的误解：<strong>用户态和内核态不是两类进程，而是同一个进程的两种运行状态。</strong></p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">一个进程的生命周期里，不断在两种状态之间来回：
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">用户态执行业务代码 --系统调用--&gt; 内核态执行内核代码 --返回--&gt; 用户态
-</span></span><span class="line"><span class="cl">     (Ring 3)                        (Ring 0)                (Ring 3)
-</span></span><span class="line"><span class="cl">     
-</span></span><span class="line"><span class="cl">     同一个进程，同一个 task_struct，只是特权级变了
-</span></span></code></pre></div><p><code>top</code> 里的 <code>us</code> 和 <code>sy</code> 就是这两种状态的时间统计：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">top
-</span></span><span class="line"><span class="cl"><span class="c1"># %Cpu(s): 23.1 us, 8.4 sy, 0.0 ni, 68.5 id</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#          ^^^^^^^ 进程在用户态跑业务逻辑的时间</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#                  ^^^^^^ 进程陷入内核执行系统调用的时间</span>
-</span></span></code></pre></div><p><strong><code>sy</code> 高说明程序在频繁进出内核</strong>——大量系统调用、频繁的上下文切换、或者中断处理繁重。这是判断问题方向的重要依据（第 7 篇讲过）。</p>
-<p>每个进程都有<strong>两个栈</strong>：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 用户栈：在进程的虚拟地址空间里，业务代码用</span>
-</span></span><span class="line"><span class="cl">cat /proc/self/maps <span class="p">|</span> grep stack
-</span></span><span class="line"><span class="cl"><span class="c1"># 7ffd8c3e1000-7ffd8c402000 rw-p ... [stack]</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># 内核栈：进入内核时使用，很小（通常 8KB 或 16KB）</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># 每个线程一个，在内核内存里，用户态完全无法访问</span>
-</span></span></code></pre></div><p><strong>内核栈只有 8~16KB</strong>，这是内核代码里禁止大数组和深递归的原因——栈溢出会直接踩坏相邻的内核数据结构。</p>
-<h1 id="2-一次系统调用的完整路径">2. 一次系统调用的完整路径</h1>
-<p>以 <code>read(fd, buf, 1024)</code> 为例，走完全程：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">① 用户代码调用 glibc 的 read()
-</span></span><span class="line"><span class="cl">     v
-</span></span><span class="line"><span class="cl">② glibc 把系统调用号放进 rax 寄存器（read = 0），
-</span></span><span class="line"><span class="cl">   参数依次放进 rdi, rsi, rdx, r10, r8, r9
-</span></span><span class="line"><span class="cl">     v
-</span></span><span class="line"><span class="cl">③ 执行 syscall 指令  &lt;- 这一条指令触发 Ring 3 -&gt; Ring 0 的切换
-</span></span><span class="line"><span class="cl">     v
-</span></span><span class="line"><span class="cl">   【CPU 硬件动作】
-</span></span><span class="line"><span class="cl">   - 保存用户态的 rip（返回地址）到 rcx
-</span></span><span class="line"><span class="cl">   - 保存 rflags 到 r11
-</span></span><span class="line"><span class="cl">   - 从 MSR_LSTAR 寄存器加载内核入口地址
-</span></span><span class="line"><span class="cl">   - 切换到 Ring 0，切换到内核栈
-</span></span><span class="line"><span class="cl">     v
-</span></span><span class="line"><span class="cl">④ 内核入口 entry_SYSCALL_64
-</span></span><span class="line"><span class="cl">   - 保存全部用户态寄存器到内核栈
-</span></span><span class="line"><span class="cl">   - 用 rax 的值查系统调用表 sys_call_table[]
-</span></span><span class="line"><span class="cl">     v
-</span></span><span class="line"><span class="cl">⑤ 执行 sys_read()
-</span></span><span class="line"><span class="cl">   - 检查 fd 合法性、检查 buf 是否在合法的用户地址空间
-</span></span><span class="line"><span class="cl">   - 走 VFS -&gt; 具体文件系统 -&gt; 块设备层
-</span></span><span class="line"><span class="cl">   - 如果数据在 page cache 里 -&gt; 直接 copy_to_user()
-</span></span><span class="line"><span class="cl">   - 如果不在 -&gt; 发起磁盘 IO，进程进入 D 状态睡眠，等待唤醒
-</span></span><span class="line"><span class="cl">     v
-</span></span><span class="line"><span class="cl">⑥ sysret 指令返回
-</span></span><span class="line"><span class="cl">   - 恢复寄存器，切回 Ring 3
-</span></span><span class="line"><span class="cl">   - 返回值放在 rax（读到的字节数，或负的错误码）
-</span></span><span class="line"><span class="cl">     v
-</span></span><span class="line"><span class="cl">⑦ glibc 检查返回值，若为负则设置 errno 并返回 -1
-</span></span></code></pre></div><p><strong>注意第 ⑤ 步的分支</strong>——这是理解 IO 性能的关键：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">数据在 page cache 里  -&gt; 纯内存拷贝，约 1~2 μs        （快）
-</span></span><span class="line"><span class="cl">数据不在             -&gt; 磁盘 IO，进程睡眠 50μs ~ 10ms （慢，且进入 D 状态）
-</span></span></code></pre></div><p>**同一个 <code>read()</code> 调用，耗时可以差 3 个数量级。**这就是「page cache 命中率」如此重要的原因，也是第 11 篇要展开的内容。</p>
-<h2 id="21-系统调用号与调用表">2.1 系统调用号与调用表</h2>
-<p>系统调用靠<strong>编号</strong>而不是名字来分发：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 查看系统调用号（x86_64）</span>
-</span></span><span class="line"><span class="cl">grep -E <span class="s2">&#34;^(0|1|2|3|60|257)\s&#34;</span> /usr/include/asm/unistd_64.h 2&gt;/dev/null <span class="o">||</span> <span class="se">\
-</span></span></span><span class="line"><span class="cl"><span class="se"></span>ausyscall --dump 2&gt;/dev/null <span class="p">|</span> head -8
-</span></span><span class="line"><span class="cl"><span class="c1"># 0    read</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># 1    write</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># 2    open</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># 3    close</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># 60   exit</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># 257  openat</span>
-</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="c1">// 内核里的分发表（简化）
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">const</span> <span class="n">sys_call_ptr_t</span> <span class="n">sys_call_table</span><span class="p">[]</span> <span class="o">=</span> <span class="p">{</span>
-</span></span><span class="line"><span class="cl">    <span class="p">[</span><span class="mi">0</span><span class="p">]</span>   <span class="o">=</span> <span class="n">sys_read</span><span class="p">,</span>
-</span></span><span class="line"><span class="cl">    <span class="p">[</span><span class="mi">1</span><span class="p">]</span>   <span class="o">=</span> <span class="n">sys_write</span><span class="p">,</span>
-</span></span><span class="line"><span class="cl">    <span class="p">[</span><span class="mi">2</span><span class="p">]</span>   <span class="o">=</span> <span class="n">sys_open</span><span class="p">,</span>
-</span></span><span class="line"><span class="cl">    <span class="p">[</span><span class="mi">3</span><span class="p">]</span>   <span class="o">=</span> <span class="n">sys_close</span><span class="p">,</span>
-</span></span><span class="line"><span class="cl">    <span class="cm">/* ... 约 350 个 */</span>
-</span></span><span class="line"><span class="cl"><span class="p">};</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1">// entry_SYSCALL_64 里的核心分发逻辑
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">if</span> <span class="p">(</span><span class="n">nr</span> <span class="o">&lt;</span> <span class="n">NR_syscalls</span><span class="p">)</span>
-</span></span><span class="line"><span class="cl">    <span class="n">regs</span><span class="o">-&gt;</span><span class="n">ax</span> <span class="o">=</span> <span class="n">sys_call_table</span><span class="p">[</span><span class="n">nr</span><span class="p">](</span><span class="n">regs</span><span class="p">);</span>
-</span></span></code></pre></div><p><strong>「系统调用号永不改变」是 Linux ABI 稳定性的基石</strong>。<code>read</code> 在 x86_64 上永远是 0——新增功能只能追加新号，绝不能改动已有的。这就是第 1 篇讲的「we do not break userspace」在实现层面的体现，也是为什么十年前编译的静态二进制今天还能运行。</p>
-<blockquote>
-<p>注意：<strong>系统调用号是架构相关的</strong>。<code>read</code> 在 x86_64 上是 0，在 ARM64 上是 63。所以直接写死系统调用号的代码无法跨架构移植，必须用 glibc 的封装或 <code>SYS_read</code> 宏。</p>
-</blockquote>
-<h2 id="22-glibc-wrapper-不只是转发">2.2 glibc wrapper 不只是转发</h2>
-<p><code>read()</code> 这个 C 函数并不是系统调用本身，而是 glibc 提供的<strong>封装</strong>。它做了几件用户看不见的事：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="c1">// glibc 的 read 大致等价于
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">ssize_t</span> <span class="nf">read</span><span class="p">(</span><span class="kt">int</span> <span class="n">fd</span><span class="p">,</span> <span class="kt">void</span> <span class="o">*</span><span class="n">buf</span><span class="p">,</span> <span class="n">size_t</span> <span class="n">count</span><span class="p">)</span> <span class="p">{</span>
-</span></span><span class="line"><span class="cl">    <span class="kt">long</span> <span class="n">ret</span> <span class="o">=</span> <span class="n">syscall_asm</span><span class="p">(</span><span class="n">SYS_read</span><span class="p">,</span> <span class="n">fd</span><span class="p">,</span> <span class="n">buf</span><span class="p">,</span> <span class="n">count</span><span class="p">);</span>   <span class="c1">// 真正的 syscall 指令
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">if</span> <span class="p">(</span><span class="n">ret</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">)</span> <span class="p">{</span>
-</span></span><span class="line"><span class="cl">        <span class="n">errno</span> <span class="o">=</span> <span class="o">-</span><span class="n">ret</span><span class="p">;</span>         <span class="c1">// 内核返回负错误码，glibc 转成 errno
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="k">return</span> <span class="o">-</span><span class="mi">1</span><span class="p">;</span>
-</span></span><span class="line"><span class="cl">    <span class="p">}</span>
-</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="n">ret</span><span class="p">;</span>
-</span></span><span class="line"><span class="cl"><span class="p">}</span>
-</span></span></code></pre></div><p><strong>内核的错误约定与用户态不同</strong>：内核返回 <code>-EAGAIN</code>（负数），glibc 把它转成「返回 -1 + 设置 <code>errno = EAGAIN</code>」。这是 C 语言里必须检查 <code>errno</code> 而不是返回值本身的原因。</p>
-<p><strong>有些 libc 函数根本不是系统调用</strong>：</p>
-<table>
-<thead>
-<tr>
-<th>函数</th>
-<th>是系统调用吗</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>read</code> / <code>write</code> / <code>open</code></td>
-<td><strong>是</strong></td>
-<td>一对一封装</td>
-</tr>
-<tr>
-<td><code>malloc</code> / <code>free</code></td>
-<td><strong>不是</strong></td>
-<td>用户态内存池，只在需要时调 <code>brk</code>/<code>mmap</code></td>
-</tr>
-<tr>
-<td><code>printf</code></td>
-<td><strong>不是</strong></td>
-<td>格式化 + 缓冲，攒够了才调 <code>write</code></td>
-</tr>
-<tr>
-<td><code>fopen</code> / <code>fread</code></td>
-<td><strong>不是</strong></td>
-<td>带缓冲的封装，底层是 <code>open</code>/<code>read</code></td>
-</tr>
-<tr>
-<td><code>pthread_create</code></td>
-<td>是（<code>clone</code>）</td>
-<td></td>
-</tr>
-<tr>
-<td><code>pthread_mutex_lock</code></td>
-<td><strong>看情况</strong></td>
-<td>无竞争时纯用户态 CAS，竞争时才调 <code>futex</code></td>
-</tr>
-</tbody>
-</table>
-<p><strong><code>malloc</code> 不是系统调用这一点很重要</strong>。它维护一个用户态内存池，大部分 <code>malloc</code> 只是在池子里划一块，不进内核。只有池子不够了才调用 <code>brk</code>（扩展堆）或 <code>mmap</code>（映射新区域）。所以 <code>malloc</code> 的平均开销是几十纳秒，而不是系统调用的上百纳秒。</p>
-<p><strong><code>pthread_mutex_lock</code> 的两阶段设计</strong>同理：无竞争时只是一次原子 CAS（约 20ns），有竞争才调 <code>futex</code> 陷入内核睡眠（微秒级）。这解释了第 7 篇实战案例里「<code>futex</code> 调用暴增 = 锁竞争激烈」的判断依据。</p>
-<h1 id="3-vdso不进内核的系统调用">3. vDSO：不进内核的「系统调用」</h1>
-<p>有些系统调用被调用得极其频繁但又非常简单——最典型的是获取当前时间。每条日志、每个 metric、每次超时判断都要取一次时间，如果每次都陷入内核，开销相当可观。</p>
-<p><strong>vDSO（virtual Dynamic Shared Object）的解法：内核把一小段代码和数据映射到每个进程的地址空间里，让进程在用户态直接读。</strong></p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 每个进程的地址空间里都有 vdso 和 vvar</span>
-</span></span><span class="line"><span class="cl">cat /proc/self/maps <span class="p">|</span> grep -E <span class="s2">&#34;vdso|vvar&#34;</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># 7ffd8c5f5000-7ffd8c5f9000 r-xp 00000000 00:00 0    [vdso]</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#                            ^^^ 可读可执行的代码</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># 7ffd8c5f1000-7ffd8c5f5000 r--p 00000000 00:00 0    [vvar]</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#                            ^^^ 只读数据：内核持续更新的时间戳就放这里</span>
-</span></span></code></pre></div><p><strong>工作原理</strong>：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">内核每次时钟中断都把当前时间写入 vvar 页
-</span></span><span class="line"><span class="cl">                    v
-</span></span><span class="line"><span class="cl">进程调用 gettimeofday()
-</span></span><span class="line"><span class="cl">                    v
-</span></span><span class="line"><span class="cl">glibc 发现有 vDSO -&gt; 跳转到 vdso 里的实现
-</span></span><span class="line"><span class="cl">                    v
-</span></span><span class="line"><span class="cl">直接从 vvar 页【读取】时间值，做点换算，返回
-</span></span><span class="line"><span class="cl">                    v
-</span></span><span class="line"><span class="cl">        全程在 Ring 3，【没有 syscall 指令】，没有特权级切换
-</span></span></code></pre></div><p><strong>通过 vDSO 实现的调用</strong>（x86_64）：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 只有这几个</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># __vdso_clock_gettime</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># __vdso_gettimeofday</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># __vdso_time</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># __vdso_getcpu</span>
-</span></span></code></pre></div><p><strong>性能差距实测</strong>：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="c1">// bench.c
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="cp">#include</span> <span class="cpf">&lt;time.h&gt;</span><span class="cp">
-</span></span></span><span class="line"><span class="cl"><span class="cp">#include</span> <span class="cpf">&lt;unistd.h&gt;</span><span class="cp">
-</span></span></span><span class="line"><span class="cl"><span class="cp">#include</span> <span class="cpf">&lt;sys/syscall.h&gt;</span><span class="cp">
-</span></span></span><span class="line"><span class="cl"><span class="cp">#include</span> <span class="cpf">&lt;stdio.h&gt;</span><span class="cp">
-</span></span></span><span class="line"><span class="cl"><span class="cp"></span>
-</span></span><span class="line"><span class="cl"><span class="kt">int</span> <span class="nf">main</span><span class="p">()</span> <span class="p">{</span>
-</span></span><span class="line"><span class="cl">    <span class="k">struct</span> <span class="n">timespec</span> <span class="n">ts</span><span class="p">;</span>
-</span></span><span class="line"><span class="cl">    <span class="c1">// ① 走 vDSO
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="mi">10000000</span><span class="p">;</span> <span class="n">i</span><span class="o">++</span><span class="p">)</span> <span class="n">clock_gettime</span><span class="p">(</span><span class="n">CLOCK_MONOTONIC</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">ts</span><span class="p">);</span>
-</span></span><span class="line"><span class="cl">    <span class="c1">// ② 强制走真正的系统调用
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="mi">10000000</span><span class="p">;</span> <span class="n">i</span><span class="o">++</span><span class="p">)</span> <span class="n">syscall</span><span class="p">(</span><span class="n">SYS_clock_gettime</span><span class="p">,</span> <span class="n">CLOCK_MONOTONIC</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">ts</span><span class="p">);</span>
-</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="mi">0</span><span class="p">;</span>
-</span></span><span class="line"><span class="cl"><span class="p">}</span>
-</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">① clock_gettime（vDSO）        约 20 ~ 25 ns/次
-</span></span><span class="line"><span class="cl">② syscall(SYS_clock_gettime)   约 150 ~ 250 ns/次
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">差距约 8 ~ 10 倍
-</span></span></code></pre></div><p><strong>规律：<code>time.Now()</code> 之所以可以随便调，是因为它走 vDSO；而 <code>os.Getpid()</code> 这类没有 vDSO 实现的调用要真正陷入内核。</strong></p>
-<blockquote>
-<p>坑：<strong><code>clocksource</code> 配置错误会让 vDSO 失效</strong>。如果虚拟机的时钟源是 <code>xen</code> 或 <code>acpi_pm</code> 而不是 <code>tsc</code>，内核无法保证用户态读取的一致性，vDSO 会退化为真正的系统调用，性能骤降。这在云主机上是个真实的性能陷阱：</p>
-</blockquote>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">cat /sys/devices/system/clocksource/clocksource0/current_clocksource
-</span></span><span class="line"><span class="cl"><span class="c1"># tsc              &lt;- ✅ 最快，vDSO 生效</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># kvm-clock        &lt;- ✅ 虚拟机上正常</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># xen / acpi_pm / hpet  &lt;- ❌ vDSO 失效，每次取时间都进内核</span>
-</span></span></code></pre></div><p>高并发服务在这种机器上，仅「取时间」一项就可能吃掉 10% 以上的 CPU。</p>
-<h1 id="4-strace看进程在做什么系统调用">4. strace：看进程在做什么系统调用</h1>
-<p><code>strace</code> 是排查「进程卡住了」「进程为什么这么慢」的第一工具。它基于 <code>ptrace</code> 系统调用，拦截目标进程的每次系统调用。</p>
-<h2 id="41-基本用法">4.1 基本用法</h2>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 跟踪一个新启动的命令</span>
-</span></span><span class="line"><span class="cl">strace ls /tmp
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># 附加到已运行的进程（最常用）</span>
-</span></span><span class="line"><span class="cl">strace -p <span class="m">1234</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># 跟踪所有线程和子进程 &lt;- 多线程服务必须加 -f</span>
-</span></span><span class="line"><span class="cl">strace -f -p <span class="m">1234</span>
-</span></span></code></pre></div><h2 id="42-统计模式最有用">4.2 统计模式最有用</h2>
-<p><strong>排查性能问题时，先用 <code>-c</code> 拿到全局分布，而不是看逐条输出</strong>：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">strace -c -f -p <span class="m">1234</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># 按 Ctrl+C 停止后输出统计</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># % time     seconds  usecs/call     calls    errors syscall</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># ------ ----------- ----------- --------- --------- ----------------</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#  68.21   12.340219         138     89234           futex</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#  15.10    2.734012          11    234012           epoll_wait</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#   8.32    1.505234           6    234011           read</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#   4.11    0.743012           3    234010           write</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#   2.01    0.363901        3639       100        12 connect</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># ------ ----------- ----------- --------- --------- ----------------</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># 100.00   18.096378                  791367        12 total</span>
-</span></span></code></pre></div><p>从这张表能直接读出结论：</p>
-<ul>
-<li><code>futex</code> 占 68% → <strong>锁竞争严重</strong>（第 7 篇的案例就是这么定位的）</li>
-<li><code>connect</code> 单次 3.6ms 且有 12 个错误 → 连接下游有问题</li>
-<li><code>read</code>/<code>write</code> 调用次数相同且都是 23 万 → 一读一写配对，说明是请求-响应模式</li>
-</ul>
-<h2 id="43-常用选项">4.3 常用选项</h2>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">-c              只输出统计，不输出每条调用      &lt;- 性能排查首选
-</span></span><span class="line"><span class="cl">-f              跟踪子进程和线程               &lt;- 几乎总要加
-</span></span><span class="line"><span class="cl">-e <span class="nv">trace</span><span class="o">=</span>...    只跟踪指定的调用
-</span></span><span class="line"><span class="cl">-T              显示每个调用的耗时             &lt;- 找慢调用
-</span></span><span class="line"><span class="cl">-tt             显示微秒级时间戳
-</span></span><span class="line"><span class="cl">-s <span class="m">1024</span>         字符串参数显示长度（默认只有 32，太短）
-</span></span><span class="line"><span class="cl">-o file         输出到文件
-</span></span><span class="line"><span class="cl">-y              把 fd 显示成实际的文件名/socket &lt;- 很实用
-</span></span><span class="line"><span class="cl">-p PID          附加到进程
-</span></span></code></pre></div><p><strong>按类别过滤</strong>：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">strace -e <span class="nv">trace</span><span class="o">=</span>file    -p <span class="m">1234</span>    <span class="c1"># 只看文件操作（open/stat/unlink...）</span>
-</span></span><span class="line"><span class="cl">strace -e <span class="nv">trace</span><span class="o">=</span>network -p <span class="m">1234</span>    <span class="c1"># 只看网络（socket/connect/send...）</span>
-</span></span><span class="line"><span class="cl">strace -e <span class="nv">trace</span><span class="o">=</span>process -p <span class="m">1234</span>    <span class="c1"># 只看进程操作（fork/exec/wait...）</span>
-</span></span><span class="line"><span class="cl">strace -e <span class="nv">trace</span><span class="o">=</span>openat,read,write -p <span class="m">1234</span>   <span class="c1"># 指定几个</span>
-</span></span></code></pre></div><h2 id="44-三个实战场景">4.4 三个实战场景</h2>
-<p><strong>场景一：找出程序在读哪个配置文件</strong></p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">strace -f -e <span class="nv">trace</span><span class="o">=</span>openat -y ./myapp 2&gt;<span class="p">&amp;</span><span class="m">1</span> <span class="p">|</span> grep -v ENOENT
-</span></span><span class="line"><span class="cl"><span class="c1"># openat(AT_FDCWD, &#34;/etc/myapp/config.yaml&#34;, O_RDONLY) = 3&lt;/etc/myapp/config.yaml&gt;</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#                  ^^^^^^^^^^^^^^^^^^^^^^^ 找到了，原来读的是这个路径</span>
-</span></span></code></pre></div><p>「程序说找不到配置文件」但你确定文件存在时，这一招能立刻看出它在找哪个路径。过滤掉 <code>ENOENT</code> 是因为动态库查找会产生大量正常的失败尝试。</p>
-<p><strong>场景二：进程卡住了，在等什么</strong></p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">strace -p <span class="m">1234</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># futex(0x7f8c4c0e9128, FUTEX_WAIT_PRIVATE, 2, NULL</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># ^ 挂在这里不动了 -&gt; 在等一把锁，死锁或长时间持锁</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># 另一种</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># read(8, ^ 卡住</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># 用 -y 看 fd 8 是什么</span>
-</span></span><span class="line"><span class="cl">strace -y -p <span class="m">1234</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># read(8&lt;/dev/pts/2&gt;, ...          &lt;- 在等终端输入</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># read(8&lt;socket:[12345]&gt;, ...      &lt;- 在等网络对端</span>
-</span></span></code></pre></div><p><strong>配合 <code>/proc</code> 交叉验证</strong>：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">ls -l /proc/1234/fd/8
-</span></span><span class="line"><span class="cl"><span class="c1"># lrwx------ 1 app app 64 Aug 6 22:00 8 -&gt; socket:[89234]</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">ss -tanp <span class="p">|</span> grep <span class="m">89234</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># ESTAB 0 0 10.0.0.5:45678 10.0.3.9:3306   users:((&#34;myapp&#34;,pid=1234,fd=8))</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#                                    ^^^^ 在等 MySQL 响应 -&gt; 查慢 SQL</span>
-</span></span></code></pre></div><p><strong>这个链路（strace 找到卡住的 fd → /proc 查 fd 是什么 → ss 查对端是谁）是排查「服务无响应」的标准套路。</strong></p>
-<p><strong>场景三：找出慢的系统调用</strong></p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">strace -T -f -p <span class="m">1234</span> 2&gt;<span class="p">&amp;</span><span class="m">1</span> <span class="p">|</span> awk -F<span class="s1">&#39;&lt;&#39;</span> <span class="s1">&#39;$2+0 &gt; 0.1 {print}&#39;</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># read(8, &#34;...&#34;, 4096) = 234 &lt;2.845123&gt;</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#                             ^^^^^^^^ 这次 read 花了 2.8 秒</span>
-</span></span></code></pre></div><h2 id="45-strace-的代价">4.5 strace 的代价</h2>
-<p><strong><code>strace</code> 会让目标进程慢 10~100 倍</strong>，因为每次系统调用都要陷入 <code>ptrace</code> 让 tracer 处理，等于给每个系统调用增加了两次上下文切换。</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">正常：      syscall -&gt; 内核处理 -&gt; 返回
-</span></span><span class="line"><span class="cl">被 strace： syscall -&gt; 内核停下进程 -&gt; 唤醒 strace -&gt; strace 处理 -&gt; 恢复进程 -&gt; ...
-</span></span></code></pre></div><p><strong>生产环境使用的纪律</strong>：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ✅ 短时间采样，用 timeout 强制结束</span>
-</span></span><span class="line"><span class="cl">timeout <span class="m">10</span> strace -c -f -p <span class="m">1234</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 只跟踪关心的调用，减少拦截次数</span>
-</span></span><span class="line"><span class="cl">strace -c -e <span class="nv">trace</span><span class="o">=</span>read,write -p <span class="m">1234</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># ❌ 不要长时间挂着 strace 跑一个高 QPS 的服务</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># ❌ 不要对 QPS 上万的进程无过滤地 strace</span>
-</span></span></code></pre></div><blockquote>
-<p>坑：<code>strace -p</code> 需要 <code>ptrace</code> 权限。容器里或开了 <code>kernel.yama.ptrace_scope=1</code> 的系统上会报 <code>Operation not permitted</code>。容器里需要 <code>--cap-add=SYS_PTRACE</code>，K8s 里需要 <code>securityContext.capabilities.add: [&quot;SYS_PTRACE&quot;]</code>。</p>
-</blockquote>
-<p><strong>替代方案</strong>：现代内核上 <code>perf trace</code> 和 <code>bpftrace</code> 基于 eBPF，开销小得多（通常 &lt; 5%），适合生产环境常态观测。第 18 篇会讲。</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># perf trace：开销远小于 strace</span>
-</span></span><span class="line"><span class="cl">perf trace -p <span class="m">1234</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># bpftrace：统计系统调用分布，几乎无侵入</span>
-</span></span><span class="line"><span class="cl">bpftrace -e <span class="s1">&#39;tracepoint:raw_syscalls:sys_enter /pid == 1234/ { @[probe] = count(); }&#39;</span>
-</span></span></code></pre></div><h1 id="5-减少系统调用性能优化的重要方向">5. 减少系统调用：性能优化的重要方向</h1>
-<p>既然一次系统调用要 100~200ns（而普通函数调用只要 1~2ns），减少次数就是实打实的优化。</p>
-<h2 id="51-批量化">5.1 批量化</h2>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="c1">// ❌ 每写一行调用一次 write —— 1 万次系统调用
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="mi">10000</span><span class="p">;</span> <span class="n">i</span><span class="o">++</span><span class="p">)</span> <span class="p">{</span>
-</span></span><span class="line"><span class="cl">    <span class="n">write</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span> <span class="n">line</span><span class="p">[</span><span class="n">i</span><span class="p">],</span> <span class="n">len</span><span class="p">[</span><span class="n">i</span><span class="p">]);</span>
-</span></span><span class="line"><span class="cl"><span class="p">}</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1">// ✅ 用 writev 一次提交多个缓冲区 —— 1 次系统调用
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">struct</span> <span class="n">iovec</span> <span class="n">iov</span><span class="p">[</span><span class="mi">10000</span><span class="p">];</span>
-</span></span><span class="line"><span class="cl"><span class="cm">/* 填充 iov */</span>
-</span></span><span class="line"><span class="cl"><span class="n">writev</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span> <span class="n">iov</span><span class="p">,</span> <span class="mi">10000</span><span class="p">);</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1">// ✅ 或者用户态缓冲，攒够再写 —— 这就是 stdio 和 bufio 的原理
-</span></span></span></code></pre></div><p><strong>这正是 <code>printf</code> 比 <code>write</code> 快的原因</strong>——它在用户态攒缓冲，攒到 4KB 或遇到换行才真正调一次 <code>write</code>。</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// Go 里的对应实践
-</span></span></span><span class="line"><span class="cl"><span class="c1">// ❌ 每次 Write 都是一次系统调用
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">for</span> <span class="nx">_</span><span class="p">,</span> <span class="nx">line</span> <span class="o">:=</span> <span class="k">range</span> <span class="nx">lines</span> <span class="p">{</span>
-</span></span><span class="line"><span class="cl">    <span class="nx">file</span><span class="p">.</span><span class="nf">Write</span><span class="p">(</span><span class="nx">line</span><span class="p">)</span>
-</span></span><span class="line"><span class="cl"><span class="p">}</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1">// ✅ 用 bufio 包一层，默认 4KB 缓冲
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">w</span> <span class="o">:=</span> <span class="nx">bufio</span><span class="p">.</span><span class="nf">NewWriterSize</span><span class="p">(</span><span class="nx">file</span><span class="p">,</span> <span class="mi">64</span><span class="o">*</span><span class="mi">1024</span><span class="p">)</span>
-</span></span><span class="line"><span class="cl"><span class="k">for</span> <span class="nx">_</span><span class="p">,</span> <span class="nx">line</span> <span class="o">:=</span> <span class="k">range</span> <span class="nx">lines</span> <span class="p">{</span>
-</span></span><span class="line"><span class="cl">    <span class="nx">w</span><span class="p">.</span><span class="nf">Write</span><span class="p">(</span><span class="nx">line</span><span class="p">)</span>
-</span></span><span class="line"><span class="cl"><span class="p">}</span>
-</span></span><span class="line"><span class="cl"><span class="nx">w</span><span class="p">.</span><span class="nf">Flush</span><span class="p">()</span>      <span class="c1">// 别忘了
-</span></span></span></code></pre></div><h2 id="52-零拷贝">5.2 零拷贝</h2>
-<p>「把文件内容发到网络」的传统方式要 4 次拷贝、2 次系统调用：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">传统 read + write：
-</span></span><span class="line"><span class="cl">  磁盘 -&gt; 内核 page cache --copy--&gt; 用户态 buffer --copy--&gt; 内核 socket buffer -&gt; 网卡
-</span></span><span class="line"><span class="cl">                          （系统调用①）              （系统调用②）
-</span></span><span class="line"><span class="cl">  4 次上下文切换，2 次多余的内存拷贝
-</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">sendfile：
-</span></span><span class="line"><span class="cl">  磁盘 -&gt; 内核 page cache ------直接----&gt; 内核 socket buffer -&gt; 网卡
-</span></span><span class="line"><span class="cl">                        （1 次系统调用，数据不进用户态）
-</span></span><span class="line"><span class="cl">  2 次上下文切换，0 次多余拷贝
-</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="c1">// 一个系统调用完成「读文件 + 发网络」
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">sendfile</span><span class="p">(</span><span class="n">out_socket_fd</span><span class="p">,</span> <span class="n">in_file_fd</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">offset</span><span class="p">,</span> <span class="n">count</span><span class="p">);</span>
-</span></span></code></pre></div><p><strong>nginx 的 <code>sendfile on;</code>、Kafka 的高吞吐、Go 的 <code>io.Copy</code>（对 <code>*os.File</code> → <code>*net.TCPConn</code> 会自动用 sendfile）都是这个机制。</strong></p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 验证 Go 的 io.Copy 用了 sendfile</span>
-</span></span><span class="line"><span class="cl">strace -f -e <span class="nv">trace</span><span class="o">=</span>sendfile,read,write ./fileserver
-</span></span><span class="line"><span class="cl"><span class="c1"># sendfile(6, 5, NULL, 1048576) = 1048576      &lt;- 走了零拷贝</span>
-</span></span></code></pre></div><p><strong>其他零拷贝手段</strong>：</p>
-<table>
-<thead>
-<tr>
-<th>机制</th>
-<th>适用场景</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>sendfile</code></td>
-<td>文件 → socket（最常用）</td>
-</tr>
-<tr>
-<td><code>splice</code></td>
-<td>两个 fd 之间，至少一端是管道</td>
-</tr>
-<tr>
-<td><code>mmap</code> + <code>write</code></td>
-<td>需要在用户态处理内容时</td>
-</tr>
-<tr>
-<td><code>MSG_ZEROCOPY</code></td>
-<td>大块网络发送（4.14+）</td>
-</tr>
-<tr>
-<td><code>io_uring</code></td>
-<td>通用异步 IO，批量提交（5.1+）</td>
-</tr>
-</tbody>
-</table>
-<h2 id="53-io_uring批量提交的终极形态">5.3 io_uring：批量提交的终极形态</h2>
-<p><code>io_uring</code>（5.1+，5.10 后成熟）用<strong>共享内存环形队列</strong>替代了「每个操作一次系统调用」的模型：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">传统：           每个 IO 一次系统调用
-</span></span><span class="line"><span class="cl">                 read() read() read() read()  -&gt; 4 次陷入内核
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">io_uring：       批量提交 + 批量收割
-</span></span><span class="line"><span class="cl">                 把 4 个请求写进 SQ（提交队列，共享内存）
-</span></span><span class="line"><span class="cl">                        v
-</span></span><span class="line"><span class="cl">                 io_uring_enter() 一次系统调用提交全部
-</span></span><span class="line"><span class="cl">                        v
-</span></span><span class="line"><span class="cl">                 从 CQ（完成队列）读结果，甚至可以完全不用系统调用（轮询模式）
-</span></span></code></pre></div><p>在高 IOPS 场景下，<code>io_uring</code> 相比 <code>epoll + read/write</code> 能有 2 倍以上的提升。但它要求内核 5.10+，且 API 复杂，目前主要在数据库、存储系统里使用。</p>
-<h1 id="6-实战一个莫名很慢的服务">6. 实战：一个「莫名很慢」的服务</h1>
-<p><strong>现象</strong>：一个 Go 写的日志聚合服务，QPS 只有 3000，但 CPU 已经占满 4 核。用 pprof 看不出明显热点，最大的函数只占 8%。</p>
-<p><strong>① 先看 CPU 时间的用户态/内核态分布</strong></p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">pidstat -u <span class="m">1</span> <span class="m">3</span> -p <span class="m">1234</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># 时间      UID  PID   %usr %system  %CPU  CPU  Command</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># 22:15:01    0 1234  92.00  308.00 400.00   3  logagg</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#                     ^^^^^   ^^^^^^ 内核态占了 308%，用户态只有 92%</span>
-</span></span></code></pre></div><p>**关键发现：77% 的 CPU 时间在内核态。**pprof 主要采样用户态代码，所以看不出问题——<strong>这就是 pprof 找不到热点的原因</strong>。</p>
-<p><strong>② 用 strace 统计看是什么系统调用</strong></p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">timeout <span class="m">10</span> strace -c -f -p <span class="m">1234</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># % time     seconds  usecs/call     calls    errors syscall</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># ------ ----------- ----------- --------- --------- ----------------</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#  71.23    8.234012           2   4012340           write</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#  12.01    1.388234           5    277612           epoll_pwait</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#   8.44    0.975623           3    325204           read</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#                              ^ 每次只 2μs，但调了 400 万次！</span>
-</span></span></code></pre></div><p><strong>400 万次 <code>write</code>，QPS 只有 3000</strong> —— 每个请求平均产生 1300 次 write。</p>
-<p><strong>③ 确认写的是什么</strong></p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">strace -f -y -e <span class="nv">trace</span><span class="o">=</span>write -p <span class="m">1234</span> 2&gt;<span class="p">&amp;</span><span class="m">1</span> <span class="p">|</span> head -5
-</span></span><span class="line"><span class="cl"><span class="c1"># write(2&lt;/var/log/logagg.log&gt;, &#34;level=debug msg=\&#34;parsing field\&#34;...&#34;, 48) = 48</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># write(2&lt;/var/log/logagg.log&gt;, &#34;level=debug msg=\&#34;field parsed\&#34;...&#34;, 45) = 45</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># write(2&lt;/var/log/logagg.log&gt;, &#34;level=debug msg=\&#34;validating\&#34;...&#34;, 42) = 42</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#       ^^^^^^^^^^^^^^^^^^^^^^ debug 日志，而且【每条都单独 write】</span>
-</span></span></code></pre></div><p><strong>原因</strong>：两个问题叠加。</p>
-<ol>
-<li>生产环境误开了 debug 日志级别，每处理一个字段都打一条</li>
-<li>日志库配置成了<strong>无缓冲直写</strong>（<code>os.Stderr</code> 没有包 <code>bufio</code>），每条日志一次 <code>write</code> 系统调用</li>
-</ol>
-<p>每次 <code>write</code> 只 2μs 看起来很快，但 400 万次 × 2μs = 8 秒的纯内核时间。</p>
-<p><strong>修复</strong>：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// ❌ 原来的配置：直接写 os.Stderr，无缓冲
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">logger</span> <span class="o">:=</span> <span class="nx">zerolog</span><span class="p">.</span><span class="nf">New</span><span class="p">(</span><span class="nx">os</span><span class="p">.</span><span class="nx">Stderr</span><span class="p">)</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1">// ✅ 加缓冲 + 调日志级别
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">zerolog</span><span class="p">.</span><span class="nf">SetGlobalLevel</span><span class="p">(</span><span class="nx">zerolog</span><span class="p">.</span><span class="nx">InfoLevel</span><span class="p">)</span>          <span class="c1">// 关掉 debug
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">bw</span> <span class="o">:=</span> <span class="nx">bufio</span><span class="p">.</span><span class="nf">NewWriterSize</span><span class="p">(</span><span class="nx">os</span><span class="p">.</span><span class="nx">Stderr</span><span class="p">,</span> <span class="mi">256</span><span class="o">*</span><span class="mi">1024</span><span class="p">)</span>     <span class="c1">// 256KB 缓冲
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">logger</span> <span class="o">:=</span> <span class="nx">zerolog</span><span class="p">.</span><span class="nf">New</span><span class="p">(</span><span class="nx">bw</span><span class="p">)</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1">// 定时 flush，保证低流量时日志也能及时落盘
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">go</span> <span class="kd">func</span><span class="p">()</span> <span class="p">{</span>
-</span></span><span class="line"><span class="cl">    <span class="nx">t</span> <span class="o">:=</span> <span class="nx">time</span><span class="p">.</span><span class="nf">NewTicker</span><span class="p">(</span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">)</span>
-</span></span><span class="line"><span class="cl">    <span class="k">for</span> <span class="k">range</span> <span class="nx">t</span><span class="p">.</span><span class="nx">C</span> <span class="p">{</span> <span class="nx">bw</span><span class="p">.</span><span class="nf">Flush</span><span class="p">()</span> <span class="p">}</span>
-</span></span><span class="line"><span class="cl"><span class="p">}()</span>
-</span></span><span class="line"><span class="cl"><span class="c1">// 别忘了在优雅关闭时 bw.Flush()（第 8 篇）
-</span></span></span></code></pre></div><p><strong>验证</strong>：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">timeout <span class="m">10</span> strace -c -f -p <span class="m">1234</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># % time     seconds  usecs/call     calls    errors syscall</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#  42.11    0.234012           8     29234           epoll_pwait</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#  21.03    0.116823           4     29230           read</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#  18.22    0.101234          32      3140           write</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#                                     ^^^^ 从 400 万降到 3140 次</span>
-</span></span></code></pre></div><p><strong>结果</strong>：<code>%system</code> 从 308% 降到 34%，QPS 从 3000 升到 41000，CPU 使用率反而从 400% 降到 120%。</p>
-<p><strong>规律：<code>%system</code> 远高于 <code>%usr</code> 时，pprof 帮不上忙——要用 <code>strace -c</code> 看系统调用分布。日志和 IO 的缓冲配置是最常见的元凶。</strong></p>
-<h1 id="7-一些量级感">7. 一些量级感</h1>
-<table>
-<thead>
-<tr>
-<th>操作</th>
-<th>开销</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>普通函数调用</td>
-<td>1 ~ 2 ns</td>
-</tr>
-<tr>
-<td>原子操作 / 无竞争的 mutex</td>
-<td>10 ~ 25 ns</td>
-</tr>
-<tr>
-<td><code>clock_gettime</code>（走 vDSO）</td>
-<td>20 ~ 25 ns</td>
-</tr>
-<tr>
-<td><code>malloc</code>（池内命中）</td>
-<td>20 ~ 50 ns</td>
-</tr>
-<tr>
-<td><strong>一次系统调用</strong>（如 <code>getpid</code>）</td>
-<td><strong>100 ~ 200 ns</strong></td>
-</tr>
-<tr>
-<td><code>clock_gettime</code>（vDSO 失效时）</td>
-<td>150 ~ 250 ns</td>
-</tr>
-<tr>
-<td>有竞争的 mutex（走 futex）</td>
-<td>1 ~ 5 μs</td>
-</tr>
-<tr>
-<td>线程上下文切换</td>
-<td>1 ~ 2 μs</td>
-</tr>
-<tr>
-<td><code>read</code> 命中 page cache（4KB）</td>
-<td>1 ~ 3 μs</td>
-</tr>
-<tr>
-<td><code>read</code> 未命中，SSD</td>
-<td>50 ~ 150 μs</td>
-</tr>
-<tr>
-<td><code>read</code> 未命中，机械盘</td>
-<td>5 ~ 10 ms</td>
-</tr>
-</tbody>
-</table>
-<p><strong>用法举例</strong>：一个接口如果调用了 500 次系统调用，光这部分就是 <code>500 × 150ns = 75μs</code>。对于目标 P99 = 10ms 的接口无所谓，但如果目标是 P99 = 200μs，这就占了 37%——高频交易、缓存代理这类场景必须逐个抠系统调用次数。</p>
-<h1 id="8-面试题">8. 面试题</h1>
-<p><strong>Q：为什么要区分用户态和内核态？</strong></p>
-<p>为了<strong>保护</strong>。如果应用程序能直接执行特权指令、访问任意内存和硬件，一个有 bug 的程序就能搞崩整台机器，恶意程序能读取所有进程的数据。所以 CPU 硬件提供特权级机制，x86 有 Ring 0~3，Linux 只用 Ring 0（内核）和 Ring 3（用户）。Ring 3 不能执行特权指令（<code>hlt</code>、<code>cli</code>、<code>in</code>/<code>out</code>）、不能访问内核内存页、不能修改页表，一旦尝试就触发保护异常——「段错误」就是这个机制在起作用。<strong>注意</strong>：用户态和内核态不是两类进程，而是<strong>同一个进程的两种运行状态</strong>，<code>top</code> 里的 <code>us</code> 和 <code>sy</code> 就是这两种状态的时间统计。</p>
-<p><strong>Q：一次系统调用的开销大概是多少？为什么比函数调用贵这么多？</strong></p>
-<p>约 <strong>100~200ns</strong>，而普通函数调用只有 1~2ns，差两个数量级。开销来自：执行 <code>syscall</code> 指令触发特权级切换、CPU 保存用户态的 <code>rip</code>/<code>rflags</code>、切换到内核栈、保存全部寄存器、查系统调用表分发、返回时恢复现场。此外还有隐性开销——进出内核会污染 CPU cache 和分支预测器。<strong>开了 Spectre/Meltdown 缓解（KPTI）的机器上开销会翻倍</strong>，因为进出内核要切换页表。这就是「减少系统调用次数」成为性能优化重要方向的原因：批量写（<code>writev</code>/<code>bufio</code>）、零拷贝（<code>sendfile</code>）、批量提交（<code>io_uring</code>）都在做这件事。</p>
-<p><strong>Q：<code>malloc</code> 是系统调用吗？</strong></p>
-<p><strong>不是</strong>。<code>malloc</code> 是 glibc 在用户态维护的内存池，大部分调用只是在已有的池子里划一块内存返回，全程不进内核，开销只有几十纳秒。只有当池子空间不足时，才会调用真正的系统调用 <code>brk</code>（扩展堆顶）或 <code>mmap</code>（映射新的内存区域）向内核申请。同理 <code>printf</code> 也不是系统调用——它在用户态格式化并缓冲，攒够 4KB 或遇到换行才调一次 <code>write</code>。<code>pthread_mutex_lock</code> 是两阶段的：无竞争时只做一次原子 CAS（约 20ns），有竞争才调 <code>futex</code> 陷入内核睡眠（微秒级）——所以 <code>strace</code> 里 <code>futex</code> 调用暴增就是锁竞争激烈的信号。</p>
-<p><strong>Q：vDSO 是什么？为什么 <code>gettimeofday</code> 不需要陷入内核？</strong></p>
-<p>vDSO（virtual Dynamic Shared Object）是内核映射到<strong>每个进程地址空间</strong>里的一小段代码和数据（<code>/proc/self/maps</code> 里的 <code>[vdso]</code> 和 <code>[vvar]</code>）。内核在每次时钟中断时把当前时间写入 <code>vvar</code> 页，进程调用 <code>clock_gettime</code> 时，glibc 跳转到 vdso 里的实现，<strong>直接从用户态读取那个内存页</strong>，全程没有 <code>syscall</code> 指令、没有特权级切换。性能差距约 8~10 倍（20ns vs 200ns）。这类调用只有 <code>clock_gettime</code>、<code>gettimeofday</code>、<code>time</code>、<code>getcpu</code> 几个——它们的共同特征是「调用极频繁 + 逻辑极简单 + 只读内核数据」。<strong>坑</strong>：如果虚拟机的 <code>clocksource</code> 不是 <code>tsc</code>/<code>kvm-clock</code>（比如是 <code>xen</code> 或 <code>acpi_pm</code>），内核无法保证用户态读取的一致性，vDSO 会退化成真正的系统调用，高并发服务仅取时间就可能吃掉 10% CPU。</p>
-<p><strong>Q：<code>strace</code> 的原理是什么？为什么会让程序变慢？生产环境能用吗？</strong></p>
-<p>基于 <code>ptrace</code> 系统调用。内核在目标进程每次进入和退出系统调用时<strong>停下它</strong>，唤醒 tracer（strace）去读取寄存器和参数，处理完再恢复目标进程。所以每次系统调用额外增加了两次上下文切换和两次进程停止/恢复，导致目标进程慢 <strong>10~100 倍</strong>。生产环境要用的话必须有纪律：用 <code>timeout 10</code> 限时、用 <code>-c</code> 只取统计而不逐条输出、用 <code>-e trace=</code> 限定范围，绝不长时间挂在高 QPS 服务上。更好的选择是基于 eBPF 的 <code>perf trace</code> 或 <code>bpftrace</code>，开销通常小于 5%，适合常态观测。<strong>注意</strong>：容器里用 strace 需要 <code>SYS_PTRACE</code> capability。</p>
-<p><strong>Q：怎么用 <code>strace</code> 排查一个「无响应」的服务？</strong></p>
-<p>三步链路。① <code>strace -p PID</code> 看它卡在哪个系统调用——卡在 <code>futex</code> 是等锁（死锁或长持锁），卡在 <code>read</code>/<code>epoll_wait</code> 是等外部数据。② 如果卡在 <code>read</code>，加 <code>-y</code> 让 strace 显示 fd 对应的实体，或者查 <code>ls -l /proc/PID/fd/N</code>。③ 如果是 socket，用 <code>ss -tanp | grep &lt;inode&gt;</code> 找出对端是谁——通常会发现在等数据库或下游服务响应，问题就转移到那边去了。多线程服务记得加 <code>-f</code>，否则只跟踪主线程会看不到真正卡住的那个。</p>
-<p><strong>Q：<code>sendfile</code> 为什么叫零拷贝？省掉了什么？</strong></p>
-<p>传统的「读文件发网络」要 <code>read</code> + <code>write</code> 两次系统调用、四次数据拷贝：磁盘 → 内核 page cache → <strong>用户态 buffer</strong> → 内核 socket buffer → 网卡。中间那两次「内核↔用户态」的拷贝是纯粹的浪费，因为应用根本不需要看这些数据。<code>sendfile</code> 让数据<strong>直接在内核内部</strong>从 page cache 送到 socket buffer，一次系统调用完成，省掉了两次内存拷贝和两次上下文切换。nginx 的 <code>sendfile on</code>、Kafka 的高吞吐都依赖它，Go 的 <code>io.Copy</code> 在 <code>*os.File</code> → <code>*net.TCPConn</code> 时会自动使用。<strong>代价</strong>是应用无法在传输过程中修改数据——需要处理内容（如加密、压缩）时就用不了，得退回 <code>mmap + write</code>。</p>
-<p><strong>Q：一个服务 CPU 占满但 pprof 看不出热点，怎么查？</strong></p>
-<p>先用 <code>pidstat -u -p PID</code> 看 <code>%usr</code> 和 <code>%system</code> 的比例。<strong>如果 <code>%system</code> 远高于 <code>%usr</code>，pprof 就帮不上忙</strong>——它主要采样用户态代码的调用栈，内核态的时间它看不见。这时候用 <code>strace -c -f -p PID</code> 看系统调用分布，通常能立刻发现问题：某个系统调用被调用了几百万次。最常见的元凶是<strong>日志无缓冲</strong>（每条日志一次 <code>write</code>）、误开 debug 级别、小块 IO 没有批量化。修复方式是加 <code>bufio</code> 缓冲、用 <code>writev</code> 批量提交。这类问题的特征很鲜明：单次系统调用很快（几微秒），但次数是业务 QPS 的成百上千倍。</p>
-<hr>
-<p>上一篇：<a href="../linux_08_%e4%bf%a1%e5%8f%b7%e4%b8%8e%e8%bf%9b%e7%a8%8b%e9%97%b4%e9%80%9a%e4%bf%a1/" rel="">Linux-08 信号与进程间通信</a> ｜ 下一篇：<a href="../linux_10_%e5%86%85%e5%ad%98%e7%ae%a1%e7%90%86/" rel="">Linux-10 内存管理</a></p>
-</div><div class="post-footer" id="post-footer">
-    <div class="post-info">
-        <div class="post-info-line">
-            <div class="post-info-mod">
-                <span>更新于 2026-08-06</span>
-            </div>
-            <div class="post-info-license"></div>
-        </div>
-        <div class="post-info-line">
-            <div class="post-info-md"></div>
-            <div class="post-info-share">
-                <span></span>
-            </div>
-        </div>
-    </div>
-
-    <div class="post-info-more">
-        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/linux/">linux</a></section>
-        <section>
-            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
-        </section>
-    </div>
-
-    <div class="post-nav"><a href="/posts/linux/linux_10_%E5%86%85%E5%AD%98%E7%AE%A1%E7%90%86/" class="prev" rel="prev" title="Linux-10 内存管理"><i class="fas fa-angle-left fa-fw"></i>Linux-10 内存管理</a>
-            <a href="/posts/linux/linux_08_%E4%BF%A1%E5%8F%B7%E4%B8%8E%E8%BF%9B%E7%A8%8B%E9%97%B4%E9%80%9A%E4%BF%A1/" class="next" rel="next" title="Linux-08 信号与进程间通信">Linux-08 信号与进程间通信<i class="fas fa-angle-right fa-fw"></i></a></div>
-</div>
-<div id="comments"><div id="gitalk" class="comment"></div><noscript>
-                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
-            </noscript></div></article></div>
-            </main><footer class="footer">
-        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
-                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
-        </div>
-    </footer></div>
-
-        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
-                <i class="fas fa-arrow-up fa-fw"></i>
-            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
-                <i class="fas fa-comment fa-fw"></i>
-            </a>
-        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2026-08-06T19:00:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Linux-09 用户态、内核态与系统调用"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
-</html>
+<!doctype html><html lang=zh-cn><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><meta name=robots content="noodp"><meta http-equiv=x-ua-compatible content="IE=edge, chrome=1"><title>Linux-09 用户态、内核态与系统调用 - xingliuhua博客</title><meta name=Description content="CPU 特权环与用户态内核态的划分、系统调用的完整触发路径、glibc wrapper 与系统调用号、vDSO 为什么能让 gettimeofday 不进内核、strace 观测系统调用、减少系统调用的优化手段"><meta property="og:title" content="Linux-09 用户态、内核态与系统调用"><meta property="og:description" content="CPU 特权环与用户态内核态的划分、系统调用的完整触发路径、glibc wrapper 与系统调用号、vDSO 为什么能让 gettimeofday 不进内核、strace 观测系统调用、减少系统调用的优化手段"><meta property="og:type" content="article"><meta property="og:url" content="https://xingliuhua.github.io/posts/linux/linux_09_%E7%94%A8%E6%88%B7%E6%80%81%E5%86%85%E6%A0%B8%E6%80%81%E4%B8%8E%E7%B3%BB%E7%BB%9F%E8%B0%83%E7%94%A8/"><meta property="og:image" content="https://xingliuhua.github.io/logo.png"><meta property="article:section" content="posts"><meta property="article:published_time" content="2026-08-06T19:00:00+08:00"><meta property="article:modified_time" content="2026-08-11T00:00:00+08:00"><meta name=twitter:card content="summary_large_image"><meta name=twitter:image content="https://xingliuhua.github.io/logo.png"><meta name=twitter:title content="Linux-09 用户态、内核态与系统调用"><meta name=twitter:description content="CPU 特权环与用户态内核态的划分、系统调用的完整触发路径、glibc wrapper 与系统调用号、vDSO 为什么能让 gettimeofday 不进内核、strace 观测系统调用、减少系统调用的优化手段"><meta name=application-name content="xingliuhua博客"><meta name=apple-mobile-web-app-title content="xingliuhua博客"><link rel="shortcut icon" type=image/x-icon href=/favicon.ico><link rel=icon type=image/png sizes=32x32 href=/favicon-32x32.png><link rel=icon type=image/png sizes=16x16 href=/favicon-16x16.png><link rel=apple-touch-icon sizes=180x180 href=/apple-touch-icon.png><link rel=manifest href=/site.webmanifest><link rel=canonical href=https://xingliuhua.github.io/posts/linux/linux_09_%E7%94%A8%E6%88%B7%E6%80%81%E5%86%85%E6%A0%B8%E6%80%81%E4%B8%8E%E7%B3%BB%E7%BB%9F%E8%B0%83%E7%94%A8/><link rel=prev href=https://xingliuhua.github.io/posts/linux/linux_10_%E5%86%85%E5%AD%98%E7%AE%A1%E7%90%86/><link rel=next href=https://xingliuhua.github.io/posts/linux/linux_08_%E4%BF%A1%E5%8F%B7%E4%B8%8E%E8%BF%9B%E7%A8%8B%E9%97%B4%E9%80%9A%E4%BF%A1/><link rel=stylesheet href=/lib/normalize/normalize.min.css><link rel=stylesheet href=/css/style.min.css><link rel=stylesheet href=/lib/fontawesome-free/all.min.css><link rel=stylesheet href=/lib/animate/animate.min.css><script type=application/ld+json>{"@context":"http://schema.org","@type":"BlogPosting","headline":"Linux-09 用户态、内核态与系统调用","inLanguage":"zh-CN","mainEntityOfPage":{"@type":"WebPage","@id":"https:\/\/xingliuhua.github.io\/posts\/linux\/linux_09_%E7%94%A8%E6%88%B7%E6%80%81%E5%86%85%E6%A0%B8%E6%80%81%E4%B8%8E%E7%B3%BB%E7%BB%9F%E8%B0%83%E7%94%A8\/"},"genre":"posts","keywords":"linux","wordcount":8485,"url":"https:\/\/xingliuhua.github.io\/posts\/linux\/linux_09_%E7%94%A8%E6%88%B7%E6%80%81%E5%86%85%E6%A0%B8%E6%80%81%E4%B8%8E%E7%B3%BB%E7%BB%9F%E8%B0%83%E7%94%A8\/","datePublished":"2026-08-06T19:00:00+08:00","dateModified":"2026-08-11T00:00:00+08:00","publisher":{"@type":"Organization","name":"xingliuhua"},"author":{"@type":"Person","name":"xingliuhua"},"description":"CPU 特权环与用户态内核态的划分、系统调用的完整触发路径、glibc wrapper 与系统调用号、vDSO 为什么能让 gettimeofday 不进内核、strace 观测系统调用、减少系统调用的优化手段"}</script></head><body header-desktop=fixed header-mobile=auto><script type=text/javascript>(window.localStorage&&localStorage.getItem("theme")?localStorage.getItem("theme")==="dark":"auto"==="auto"?window.matchMedia("(prefers-color-scheme: dark)").matches:"auto"==="dark")&&document.body.setAttribute("theme","dark")</script><div id=mask></div><div class=wrapper><header class=desktop id=header-desktop><div class=header-wrapper><div class=header-title><a href=/ title=xingliuhua博客><img class="lazyload logo" src=/svg/loading.min.svg data-src=/logo.png data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x" data-sizes=auto alt=/logo.png title=/logo.png>xingliuhua</a></div><div class=menu><div class=menu-inner><a class=menu-item href=/posts/>文章 </a><a class=menu-item href=/tags/>标签 </a><a class=menu-item href=/categories/>分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id=search-desktop>
+<input type=text placeholder=搜索文章标题或内容... id=search-input-desktop>
+<a href=javascript:void(0); class="search-button search-toggle" id=search-toggle-desktop title=搜索><i class="fas fa-search fa-fw"></i></a>
+<a href=javascript:void(0); class="search-button search-clear" id=search-clear-desktop title=清空><i class="fas fa-times-circle fa-fw"></i></a>
+<span class="search-button search-loading" id=search-loading-desktop><i class="fas fa-spinner fa-fw fa-spin"></i></span>
+</span><a href=javascript:void(0); class="menu-item theme-switch" title=切换主题><i class="fas fa-adjust fa-fw"></i></a></div></div></div></header><header class=mobile id=header-mobile><div class=header-container><div class=header-wrapper><div class=header-title><a href=/ title=xingliuhua博客><img class="lazyload logo" src=/svg/loading.min.svg data-src=/logo.png data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x" data-sizes=auto alt=/logo.png title=/logo.png>xingliuhua</a></div><div class=menu-toggle id=menu-toggle-mobile><span></span><span></span><span></span></div></div><div class=menu id=menu-mobile><div class=search-wrapper><div class="search mobile" id=search-mobile><input type=text placeholder=搜索文章标题或内容... id=search-input-mobile>
+<a href=javascript:void(0); class="search-button search-toggle" id=search-toggle-mobile title=搜索><i class="fas fa-search fa-fw"></i></a>
+<a href=javascript:void(0); class="search-button search-clear" id=search-clear-mobile title=清空><i class="fas fa-times-circle fa-fw"></i></a>
+<span class="search-button search-loading" id=search-loading-mobile><i class="fas fa-spinner fa-fw fa-spin"></i></span></div><a href=javascript:void(0); class=search-cancel id=search-cancel-mobile>取消</a></div><a class=menu-item href=/posts/ title>文章</a><a class=menu-item href=/tags/ title>标签</a><a class=menu-item href=/categories/ title>分类</a><a href=javascript:void(0); class="menu-item theme-switch" title=切换主题>
+<i class="fas fa-adjust fa-fw"></i></a></div></div></header><div class="search-dropdown desktop"><div id=search-dropdown-desktop></div></div><div class="search-dropdown mobile"><div id=search-dropdown-mobile></div></div><main class=main><div class=container><div class=toc id=toc-auto><h2 class=toc-title>目录</h2><div class=toc-content id=toc-content-auto></div></div><article class="page single"><h1 class="single-title animated flipInX">Linux-09 用户态、内核态与系统调用</h1><div class=post-meta><div class=post-meta-line><span class=post-author><a href=https://xingliuhua/github.com.io title=Author target=_blank rel="noopener noreffer author" class=author><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class=post-category>收录于 <a href=/categories/%E7%AC%94%E8%AE%B0/><i class="far fa-folder fa-fw"></i>笔记</a></span></div><div class=post-meta-line><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime=2026-08-06>2026-08-06</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 8485 字&nbsp;
+<i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 17 分钟&nbsp;</div></div><div class="details toc" id=toc-static kept><div class="details-summary toc-title"><span>目录</span>
+<span><i class="details-icon fas fa-angle-right"></i></span></div><div class="details-content toc-content" id=toc-content-static><nav id=TableOfContents><ol><li><a href=#1-为什么要分用户态和内核态>1. 为什么要分用户态和内核态</a><ol><li><a href=#11-cpu-的特权环>1.1 CPU 的特权环</a></li><li><a href=#12-同一个进程的两种状态>1.2 同一个进程的两种状态</a></li></ol></li><li><a href=#2-一次系统调用的完整路径>2. 一次系统调用的完整路径</a><ol><li><a href=#21-系统调用号与调用表>2.1 系统调用号与调用表</a></li><li><a href=#22-glibc-wrapper-不只是转发>2.2 glibc wrapper 不只是转发</a></li></ol></li><li><a href=#3-vdso不进内核的系统调用>3. vDSO：不进内核的「系统调用」</a></li><li><a href=#4-strace看进程在做什么系统调用>4. strace：看进程在做什么系统调用</a><ol><li><a href=#41-基本用法>4.1 基本用法</a></li><li><a href=#42-统计模式最有用>4.2 统计模式最有用</a></li><li><a href=#43-常用选项>4.3 常用选项</a></li><li><a href=#44-三个实战场景>4.4 三个实战场景</a></li><li><a href=#45-strace-的代价>4.5 strace 的代价</a></li></ol></li><li><a href=#5-减少系统调用性能优化的重要方向>5. 减少系统调用：性能优化的重要方向</a><ol><li><a href=#51-批量化>5.1 批量化</a></li><li><a href=#52-零拷贝>5.2 零拷贝</a></li><li><a href=#53-io_uring批量提交的终极形态>5.3 io_uring：批量提交的终极形态</a></li></ol></li><li><a href=#6-实战一个莫名很慢的服务>6. 实战：一个「莫名很慢」的服务</a></li><li><a href=#7-一些量级感>7. 一些量级感</a></li><li><a href=#命令附录系统调用观测命令>命令附录：系统调用观测命令</a><ol><li><a href=#名称与参数速查>名称与参数速查</a></li><li><a href=#组合参数怎么读>组合参数怎么读</a></li></ol></li><li><a href=#8-面试题>8. 面试题</a></li></ol></nav></div></div><div class=content id=content><blockquote><p>前置阅读：<a href=../linux_07_%e8%bf%9b%e7%a8%8b%e8%b0%83%e5%ba%a6%e4%b8%8e%e4%b8%8a%e4%b8%8b%e6%96%87%e5%88%87%e6%8d%a2/ rel>Linux-07 进程调度与上下文切换</a></p></blockquote><p>「系统调用」这个词在前面几篇里出现了几十次，但一直没有正面讲它。这一篇补上——<strong>系统调用是用户程序与内核之间唯一的合法通道</strong>，理解它的成本和机制，是理解一切 IO 性能优化的前提。</p><p>本篇会解释：为什么要有用户态和内核态之分、一次 <code>read()</code> 到底经过了什么、为什么 <code>time.Now()</code> 比 <code>os.Getpid()</code> 快十倍、以及怎么用 <code>strace</code> 找出「进程到底卡在哪」。</p><h1 id=1-为什么要分用户态和内核态>1. 为什么要分用户态和内核态</h1><p>一句话：<strong>因为不能让应用程序直接碰硬件。</strong></p><p>如果任何程序都能直接读写磁盘、访问任意内存、操作网卡，那么一个有 bug 的程序就能把整台机器搞崩，一个恶意程序能读取所有其他进程的数据。所以 CPU 硬件层面提供了<strong>特权级</strong>机制。</p><h2 id=11-cpu-的特权环>1.1 CPU 的特权环</h2><p>x86 架构提供四个特权级（Ring 0 ~ Ring 3），但 Linux 只用了两个：</p><p><img class=lazyload src=/svg/loading.min.svg data-src=./%e7%89%b9%e6%9d%83%e7%8e%af.png data-srcset="./%e7%89%b9%e6%9d%83%e7%8e%af.png, ./%e7%89%b9%e6%9d%83%e7%8e%af.png 1.5x, ./%e7%89%b9%e6%9d%83%e7%8e%af.png 2x" data-sizes=auto alt=./特权环.png title="CPU 特权环：内核运行在 Ring 0，应用运行在 Ring 3"></p><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>Ring 0  内核空间  最高权限，可以执行任何指令、访问任何内存和硬件
+</span></span><span class=line><span class=cl>Ring 1  （未使用）
+</span></span><span class=line><span class=cl>Ring 2  （未使用）
+</span></span><span class=line><span class=cl>Ring 3  用户空间  受限权限，不能执行特权指令，不能直接访问硬件
+</span></span></code></pre></div><p><strong>Ring 3 被禁止的事情</strong>：</p><ul><li>执行特权指令（<code>hlt</code> 停机、<code>lgdt</code> 加载描述符表、<code>cli</code> 关中断）</li><li>直接访问硬件端口（<code>in</code>/<code>out</code> 指令）</li><li>访问被标记为内核所有的内存页</li><li>修改页表、切换地址空间</li></ul><p>一旦 Ring 3 的代码尝试这些操作，CPU 立刻触发<strong>保护异常</strong>（General Protection Fault），内核接管并通常给进程发 <code>SIGSEGV</code>。</p><p><strong>「段错误」的本质就是这个</strong>——你的代码试图访问不属于它的内存，CPU 硬件层面拦住了。</p><h2 id=12-同一个进程的两种状态>1.2 同一个进程的两种状态</h2><p>这里有个常见的误解：<strong>用户态和内核态不是两类进程，而是同一个进程的两种运行状态。</strong></p><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>一个进程的生命周期里，不断在两种状态之间来回：
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>用户态执行业务代码 --系统调用--&gt; 内核态执行内核代码 --返回--&gt; 用户态
+</span></span><span class=line><span class=cl>     (Ring 3)                        (Ring 0)                (Ring 3)
+</span></span><span class=line><span class=cl>     
+</span></span><span class=line><span class=cl>     同一个进程，同一个 task_struct，只是特权级变了
+</span></span></code></pre></div><p><code>top</code> 里的 <code>us</code> 和 <code>sy</code> 就是这两种状态的时间统计：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>top
+</span></span><span class=line><span class=cl><span class=c1># %Cpu(s): 23.1 us, 8.4 sy, 0.0 ni, 68.5 id</span>
+</span></span><span class=line><span class=cl><span class=c1>#          ^^^^^^^ 进程在用户态跑业务逻辑的时间</span>
+</span></span><span class=line><span class=cl><span class=c1>#                  ^^^^^^ 进程陷入内核执行系统调用的时间</span>
+</span></span></code></pre></div><p><strong><code>sy</code> 高说明程序在频繁进出内核</strong>——大量系统调用、频繁的上下文切换、或者中断处理繁重。这是判断问题方向的重要依据（第 7 篇讲过）。</p><p>每个进程都有<strong>两个栈</strong>：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># 用户栈：在进程的虚拟地址空间里，业务代码用</span>
+</span></span><span class=line><span class=cl>cat /proc/self/maps <span class=p>|</span> grep stack
+</span></span><span class=line><span class=cl><span class=c1># 7ffd8c3e1000-7ffd8c402000 rw-p ... [stack]</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 内核栈：进入内核时使用，很小（通常 8KB 或 16KB）</span>
+</span></span><span class=line><span class=cl><span class=c1># 每个线程一个，在内核内存里，用户态完全无法访问</span>
+</span></span></code></pre></div><p><strong>内核栈只有 8~16KB</strong>，这是内核代码里禁止大数组和深递归的原因——栈溢出会直接踩坏相邻的内核数据结构。</p><h1 id=2-一次系统调用的完整路径>2. 一次系统调用的完整路径</h1><p>以 <code>read(fd, buf, 1024)</code> 为例，走完全程：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>① 用户代码调用 glibc 的 read()
+</span></span><span class=line><span class=cl>     v
+</span></span><span class=line><span class=cl>② glibc 把系统调用号放进 rax 寄存器（read = 0），
+</span></span><span class=line><span class=cl>   参数依次放进 rdi, rsi, rdx, r10, r8, r9
+</span></span><span class=line><span class=cl>     v
+</span></span><span class=line><span class=cl>③ 执行 syscall 指令  &lt;- 这一条指令触发 Ring 3 -&gt; Ring 0 的切换
+</span></span><span class=line><span class=cl>     v
+</span></span><span class=line><span class=cl>   【CPU 硬件动作】
+</span></span><span class=line><span class=cl>   - 保存用户态的 rip（返回地址）到 rcx
+</span></span><span class=line><span class=cl>   - 保存 rflags 到 r11
+</span></span><span class=line><span class=cl>   - 从 MSR_LSTAR 寄存器加载内核入口地址
+</span></span><span class=line><span class=cl>   - 切换到 Ring 0，切换到内核栈
+</span></span><span class=line><span class=cl>     v
+</span></span><span class=line><span class=cl>④ 内核入口 entry_SYSCALL_64
+</span></span><span class=line><span class=cl>   - 保存全部用户态寄存器到内核栈
+</span></span><span class=line><span class=cl>   - 用 rax 的值查系统调用表 sys_call_table[]
+</span></span><span class=line><span class=cl>     v
+</span></span><span class=line><span class=cl>⑤ 执行 sys_read()
+</span></span><span class=line><span class=cl>   - 检查 fd 合法性、检查 buf 是否在合法的用户地址空间
+</span></span><span class=line><span class=cl>   - 走 VFS -&gt; 具体文件系统 -&gt; 块设备层
+</span></span><span class=line><span class=cl>   - 如果数据在 page cache 里 -&gt; 直接 copy_to_user()
+</span></span><span class=line><span class=cl>   - 如果不在 -&gt; 发起磁盘 IO，进程进入 D 状态睡眠，等待唤醒
+</span></span><span class=line><span class=cl>     v
+</span></span><span class=line><span class=cl>⑥ sysret 指令返回
+</span></span><span class=line><span class=cl>   - 恢复寄存器，切回 Ring 3
+</span></span><span class=line><span class=cl>   - 返回值放在 rax（读到的字节数，或负的错误码）
+</span></span><span class=line><span class=cl>     v
+</span></span><span class=line><span class=cl>⑦ glibc 检查返回值，若为负则设置 errno 并返回 -1
+</span></span></code></pre></div><p><strong>注意第 ⑤ 步的分支</strong>——这是理解 IO 性能的关键：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>数据在 page cache 里  -&gt; 纯内存拷贝，约 1~2 μs        （快）
+</span></span><span class=line><span class=cl>数据不在             -&gt; 磁盘 IO，进程睡眠 50μs ~ 10ms （慢，且进入 D 状态）
+</span></span></code></pre></div><p>**同一个 <code>read()</code> 调用，耗时可以差 3 个数量级。**这就是「page cache 命中率」如此重要的原因，也是第 11 篇要展开的内容。</p><h2 id=21-系统调用号与调用表>2.1 系统调用号与调用表</h2><p>系统调用靠<strong>编号</strong>而不是名字来分发：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># 查看系统调用号（x86_64）</span>
+</span></span><span class=line><span class=cl>grep -E <span class=s2>&#34;^(0|1|2|3|60|257)\s&#34;</span> /usr/include/asm/unistd_64.h 2&gt;/dev/null <span class=o>||</span> <span class=se>\
+</span></span></span><span class=line><span class=cl><span class=se></span>ausyscall --dump 2&gt;/dev/null <span class=p>|</span> head -8
+</span></span><span class=line><span class=cl><span class=c1># 0    read</span>
+</span></span><span class=line><span class=cl><span class=c1># 1    write</span>
+</span></span><span class=line><span class=cl><span class=c1># 2    open</span>
+</span></span><span class=line><span class=cl><span class=c1># 3    close</span>
+</span></span><span class=line><span class=cl><span class=c1># 60   exit</span>
+</span></span><span class=line><span class=cl><span class=c1># 257  openat</span>
+</span></span></code></pre></div><div class=highlight><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// 内核里的分发表（简化）
+</span></span></span><span class=line><span class=cl><span class=c1></span><span class=k>const</span> <span class=n>sys_call_ptr_t</span> <span class=n>sys_call_table</span><span class=p>[]</span> <span class=o>=</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=p>[</span><span class=mi>0</span><span class=p>]</span>   <span class=o>=</span> <span class=n>sys_read</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=p>[</span><span class=mi>1</span><span class=p>]</span>   <span class=o>=</span> <span class=n>sys_write</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=p>[</span><span class=mi>2</span><span class=p>]</span>   <span class=o>=</span> <span class=n>sys_open</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=p>[</span><span class=mi>3</span><span class=p>]</span>   <span class=o>=</span> <span class=n>sys_close</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>    <span class=cm>/* ... 约 350 个 */</span>
+</span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1>// entry_SYSCALL_64 里的核心分发逻辑
+</span></span></span><span class=line><span class=cl><span class=c1></span><span class=k>if</span> <span class=p>(</span><span class=n>nr</span> <span class=o>&lt;</span> <span class=n>NR_syscalls</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=n>regs</span><span class=o>-&gt;</span><span class=n>ax</span> <span class=o>=</span> <span class=n>sys_call_table</span><span class=p>[</span><span class=n>nr</span><span class=p>](</span><span class=n>regs</span><span class=p>);</span>
+</span></span></code></pre></div><p><strong>「系统调用号永不改变」是 Linux ABI 稳定性的基石</strong>。<code>read</code> 在 x86_64 上永远是 0——新增功能只能追加新号，绝不能改动已有的。这就是第 1 篇讲的「we do not break userspace」在实现层面的体现，也是为什么十年前编译的静态二进制今天还能运行。</p><blockquote><p>注意：<strong>系统调用号是架构相关的</strong>。<code>read</code> 在 x86_64 上是 0，在 ARM64 上是 63。所以直接写死系统调用号的代码无法跨架构移植，必须用 glibc 的封装或 <code>SYS_read</code> 宏。</p></blockquote><h2 id=22-glibc-wrapper-不只是转发>2.2 glibc wrapper 不只是转发</h2><p><code>read()</code> 这个 C 函数并不是系统调用本身，而是 glibc 提供的<strong>封装</strong>。它做了几件用户看不见的事：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// glibc 的 read 大致等价于
+</span></span></span><span class=line><span class=cl><span class=c1></span><span class=n>ssize_t</span> <span class=nf>read</span><span class=p>(</span><span class=kt>int</span> <span class=n>fd</span><span class=p>,</span> <span class=kt>void</span> <span class=o>*</span><span class=n>buf</span><span class=p>,</span> <span class=n>size_t</span> <span class=n>count</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=kt>long</span> <span class=n>ret</span> <span class=o>=</span> <span class=n>syscall_asm</span><span class=p>(</span><span class=n>SYS_read</span><span class=p>,</span> <span class=n>fd</span><span class=p>,</span> <span class=n>buf</span><span class=p>,</span> <span class=n>count</span><span class=p>);</span>   <span class=c1>// 真正的 syscall 指令
+</span></span></span><span class=line><span class=cl><span class=c1></span>    <span class=k>if</span> <span class=p>(</span><span class=n>ret</span> <span class=o>&lt;</span> <span class=mi>0</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>errno</span> <span class=o>=</span> <span class=o>-</span><span class=n>ret</span><span class=p>;</span>         <span class=c1>// 内核返回负错误码，glibc 转成 errno
+</span></span></span><span class=line><span class=cl><span class=c1></span>        <span class=k>return</span> <span class=o>-</span><span class=mi>1</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=n>ret</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></div><p><strong>内核的错误约定与用户态不同</strong>：内核返回 <code>-EAGAIN</code>（负数），glibc 把它转成「返回 -1 + 设置 <code>errno = EAGAIN</code>」。这是 C 语言里必须检查 <code>errno</code> 而不是返回值本身的原因。</p><p><strong>有些 libc 函数根本不是系统调用</strong>：</p><table><thead><tr><th>函数</th><th>是系统调用吗</th><th>说明</th></tr></thead><tbody><tr><td><code>read</code> / <code>write</code> / <code>open</code></td><td><strong>是</strong></td><td>一对一封装</td></tr><tr><td><code>malloc</code> / <code>free</code></td><td><strong>不是</strong></td><td>用户态内存池，只在需要时调 <code>brk</code>/<code>mmap</code></td></tr><tr><td><code>printf</code></td><td><strong>不是</strong></td><td>格式化 + 缓冲，攒够了才调 <code>write</code></td></tr><tr><td><code>fopen</code> / <code>fread</code></td><td><strong>不是</strong></td><td>带缓冲的封装，底层是 <code>open</code>/<code>read</code></td></tr><tr><td><code>pthread_create</code></td><td>是（<code>clone</code>）</td><td></td></tr><tr><td><code>pthread_mutex_lock</code></td><td><strong>看情况</strong></td><td>无竞争时纯用户态 CAS，竞争时才调 <code>futex</code></td></tr></tbody></table><p><strong><code>malloc</code> 不是系统调用这一点很重要</strong>。它维护一个用户态内存池，大部分 <code>malloc</code> 只是在池子里划一块，不进内核。只有池子不够了才调用 <code>brk</code>（扩展堆）或 <code>mmap</code>（映射新区域）。所以 <code>malloc</code> 的平均开销是几十纳秒，而不是系统调用的上百纳秒。</p><p><strong><code>pthread_mutex_lock</code> 的两阶段设计</strong>同理：无竞争时只是一次原子 CAS（约 20ns），有竞争才调 <code>futex</code> 陷入内核睡眠（微秒级）。这解释了第 7 篇实战案例里「<code>futex</code> 调用暴增 = 锁竞争激烈」的判断依据。</p><h1 id=3-vdso不进内核的系统调用>3. vDSO：不进内核的「系统调用」</h1><p>有些系统调用被调用得极其频繁但又非常简单——最典型的是获取当前时间。每条日志、每个 metric、每次超时判断都要取一次时间，如果每次都陷入内核，开销相当可观。</p><p><strong>vDSO（virtual Dynamic Shared Object）的解法：内核把一小段代码和数据映射到每个进程的地址空间里，让进程在用户态直接读。</strong></p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># 每个进程的地址空间里都有 vdso 和 vvar</span>
+</span></span><span class=line><span class=cl>cat /proc/self/maps <span class=p>|</span> grep -E <span class=s2>&#34;vdso|vvar&#34;</span>
+</span></span><span class=line><span class=cl><span class=c1># 7ffd8c5f5000-7ffd8c5f9000 r-xp 00000000 00:00 0    [vdso]</span>
+</span></span><span class=line><span class=cl><span class=c1>#                            ^^^ 可读可执行的代码</span>
+</span></span><span class=line><span class=cl><span class=c1># 7ffd8c5f1000-7ffd8c5f5000 r--p 00000000 00:00 0    [vvar]</span>
+</span></span><span class=line><span class=cl><span class=c1>#                            ^^^ 只读数据：内核持续更新的时间戳就放这里</span>
+</span></span></code></pre></div><p><strong>工作原理</strong>：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>内核每次时钟中断都把当前时间写入 vvar 页
+</span></span><span class=line><span class=cl>                    v
+</span></span><span class=line><span class=cl>进程调用 gettimeofday()
+</span></span><span class=line><span class=cl>                    v
+</span></span><span class=line><span class=cl>glibc 发现有 vDSO -&gt; 跳转到 vdso 里的实现
+</span></span><span class=line><span class=cl>                    v
+</span></span><span class=line><span class=cl>直接从 vvar 页【读取】时间值，做点换算，返回
+</span></span><span class=line><span class=cl>                    v
+</span></span><span class=line><span class=cl>        全程在 Ring 3，【没有 syscall 指令】，没有特权级切换
+</span></span></code></pre></div><p><strong>通过 vDSO 实现的调用</strong>（x86_64）：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># 只有这几个</span>
+</span></span><span class=line><span class=cl><span class=c1># __vdso_clock_gettime</span>
+</span></span><span class=line><span class=cl><span class=c1># __vdso_gettimeofday</span>
+</span></span><span class=line><span class=cl><span class=c1># __vdso_time</span>
+</span></span><span class=line><span class=cl><span class=c1># __vdso_getcpu</span>
+</span></span></code></pre></div><p><strong>性能差距实测</strong>：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// bench.c
+</span></span></span><span class=line><span class=cl><span class=c1></span><span class=cp>#include</span> <span class=cpf>&lt;time.h&gt;</span><span class=cp>
+</span></span></span><span class=line><span class=cl><span class=cp>#include</span> <span class=cpf>&lt;unistd.h&gt;</span><span class=cp>
+</span></span></span><span class=line><span class=cl><span class=cp>#include</span> <span class=cpf>&lt;sys/syscall.h&gt;</span><span class=cp>
+</span></span></span><span class=line><span class=cl><span class=cp>#include</span> <span class=cpf>&lt;stdio.h&gt;</span><span class=cp>
+</span></span></span><span class=line><span class=cl><span class=cp></span>
+</span></span><span class=line><span class=cl><span class=kt>int</span> <span class=nf>main</span><span class=p>()</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>struct</span> <span class=n>timespec</span> <span class=n>ts</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// ① 走 vDSO
+</span></span></span><span class=line><span class=cl><span class=c1></span>    <span class=k>for</span> <span class=p>(</span><span class=kt>int</span> <span class=n>i</span> <span class=o>=</span> <span class=mi>0</span><span class=p>;</span> <span class=n>i</span> <span class=o>&lt;</span> <span class=mi>10000000</span><span class=p>;</span> <span class=n>i</span><span class=o>++</span><span class=p>)</span> <span class=n>clock_gettime</span><span class=p>(</span><span class=n>CLOCK_MONOTONIC</span><span class=p>,</span> <span class=o>&amp;</span><span class=n>ts</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=c1>// ② 强制走真正的系统调用
+</span></span></span><span class=line><span class=cl><span class=c1></span>    <span class=k>for</span> <span class=p>(</span><span class=kt>int</span> <span class=n>i</span> <span class=o>=</span> <span class=mi>0</span><span class=p>;</span> <span class=n>i</span> <span class=o>&lt;</span> <span class=mi>10000000</span><span class=p>;</span> <span class=n>i</span><span class=o>++</span><span class=p>)</span> <span class=n>syscall</span><span class=p>(</span><span class=n>SYS_clock_gettime</span><span class=p>,</span> <span class=n>CLOCK_MONOTONIC</span><span class=p>,</span> <span class=o>&amp;</span><span class=n>ts</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=k>return</span> <span class=mi>0</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></div><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>① clock_gettime（vDSO）        约 20 ~ 25 ns/次
+</span></span><span class=line><span class=cl>② syscall(SYS_clock_gettime)   约 150 ~ 250 ns/次
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>差距约 8 ~ 10 倍
+</span></span></code></pre></div><p><strong>规律：<code>time.Now()</code> 之所以可以随便调，是因为它走 vDSO；而 <code>os.Getpid()</code> 这类没有 vDSO 实现的调用要真正陷入内核。</strong></p><blockquote><p>坑：<strong><code>clocksource</code> 配置错误会让 vDSO 失效</strong>。如果虚拟机的时钟源是 <code>xen</code> 或 <code>acpi_pm</code> 而不是 <code>tsc</code>，内核无法保证用户态读取的一致性，vDSO 会退化为真正的系统调用，性能骤降。这在云主机上是个真实的性能陷阱：</p></blockquote><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>cat /sys/devices/system/clocksource/clocksource0/current_clocksource
+</span></span><span class=line><span class=cl><span class=c1># tsc              &lt;- ✅ 最快，vDSO 生效</span>
+</span></span><span class=line><span class=cl><span class=c1># kvm-clock        &lt;- ✅ 虚拟机上正常</span>
+</span></span><span class=line><span class=cl><span class=c1># xen / acpi_pm / hpet  &lt;- ❌ vDSO 失效，每次取时间都进内核</span>
+</span></span></code></pre></div><p>高并发服务在这种机器上，仅「取时间」一项就可能吃掉 10% 以上的 CPU。</p><h1 id=4-strace看进程在做什么系统调用>4. strace：看进程在做什么系统调用</h1><p><code>strace</code> 是排查「进程卡住了」「进程为什么这么慢」的第一工具。它基于 <code>ptrace</code> 系统调用，拦截目标进程的每次系统调用。</p><h2 id=41-基本用法>4.1 基本用法</h2><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># 跟踪一个新启动的命令</span>
+</span></span><span class=line><span class=cl>strace ls /tmp
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 附加到已运行的进程（最常用）</span>
+</span></span><span class=line><span class=cl>strace -p <span class=m>1234</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 跟踪所有线程和子进程 &lt;- 多线程服务必须加 -f</span>
+</span></span><span class=line><span class=cl>strace -f -p <span class=m>1234</span>
+</span></span></code></pre></div><h2 id=42-统计模式最有用>4.2 统计模式最有用</h2><p><strong>排查性能问题时，先用 <code>-c</code> 拿到全局分布，而不是看逐条输出</strong>：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>strace -c -f -p <span class=m>1234</span>
+</span></span><span class=line><span class=cl><span class=c1># 按 Ctrl+C 停止后输出统计</span>
+</span></span><span class=line><span class=cl><span class=c1># % time     seconds  usecs/call     calls    errors syscall</span>
+</span></span><span class=line><span class=cl><span class=c1># ------ ----------- ----------- --------- --------- ----------------</span>
+</span></span><span class=line><span class=cl><span class=c1>#  68.21   12.340219         138     89234           futex</span>
+</span></span><span class=line><span class=cl><span class=c1>#  15.10    2.734012          11    234012           epoll_wait</span>
+</span></span><span class=line><span class=cl><span class=c1>#   8.32    1.505234           6    234011           read</span>
+</span></span><span class=line><span class=cl><span class=c1>#   4.11    0.743012           3    234010           write</span>
+</span></span><span class=line><span class=cl><span class=c1>#   2.01    0.363901        3639       100        12 connect</span>
+</span></span><span class=line><span class=cl><span class=c1># ------ ----------- ----------- --------- --------- ----------------</span>
+</span></span><span class=line><span class=cl><span class=c1># 100.00   18.096378                  791367        12 total</span>
+</span></span></code></pre></div><p>从这张表能直接读出结论：</p><ul><li><code>futex</code> 占 68% → <strong>锁竞争严重</strong>（第 7 篇的案例就是这么定位的）</li><li><code>connect</code> 单次 3.6ms 且有 12 个错误 → 连接下游有问题</li><li><code>read</code>/<code>write</code> 调用次数相同且都是 23 万 → 一读一写配对，说明是请求-响应模式</li></ul><h2 id=43-常用选项>4.3 常用选项</h2><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>-c              只输出统计，不输出每条调用      &lt;- 性能排查首选
+</span></span><span class=line><span class=cl>-f              跟踪子进程和线程               &lt;- 几乎总要加
+</span></span><span class=line><span class=cl>-e <span class=nv>trace</span><span class=o>=</span>...    只跟踪指定的调用
+</span></span><span class=line><span class=cl>-T              显示每个调用的耗时             &lt;- 找慢调用
+</span></span><span class=line><span class=cl>-tt             显示微秒级时间戳
+</span></span><span class=line><span class=cl>-s <span class=m>1024</span>         字符串参数显示长度（默认只有 32，太短）
+</span></span><span class=line><span class=cl>-o file         输出到文件
+</span></span><span class=line><span class=cl>-y              把 fd 显示成实际的文件名/socket &lt;- 很实用
+</span></span><span class=line><span class=cl>-p PID          附加到进程
+</span></span></code></pre></div><p><strong>按类别过滤</strong>：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>strace -e <span class=nv>trace</span><span class=o>=</span>file    -p <span class=m>1234</span>    <span class=c1># 只看文件操作（open/stat/unlink...）</span>
+</span></span><span class=line><span class=cl>strace -e <span class=nv>trace</span><span class=o>=</span>network -p <span class=m>1234</span>    <span class=c1># 只看网络（socket/connect/send...）</span>
+</span></span><span class=line><span class=cl>strace -e <span class=nv>trace</span><span class=o>=</span>process -p <span class=m>1234</span>    <span class=c1># 只看进程操作（fork/exec/wait...）</span>
+</span></span><span class=line><span class=cl>strace -e <span class=nv>trace</span><span class=o>=</span>openat,read,write -p <span class=m>1234</span>   <span class=c1># 指定几个</span>
+</span></span></code></pre></div><h2 id=44-三个实战场景>4.4 三个实战场景</h2><p><strong>场景一：找出程序在读哪个配置文件</strong></p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>strace -f -e <span class=nv>trace</span><span class=o>=</span>openat -y ./myapp 2&gt;<span class=p>&amp;</span><span class=m>1</span> <span class=p>|</span> grep -v ENOENT
+</span></span><span class=line><span class=cl><span class=c1># openat(AT_FDCWD, &#34;/etc/myapp/config.yaml&#34;, O_RDONLY) = 3&lt;/etc/myapp/config.yaml&gt;</span>
+</span></span><span class=line><span class=cl><span class=c1>#                  ^^^^^^^^^^^^^^^^^^^^^^^ 找到了，原来读的是这个路径</span>
+</span></span></code></pre></div><p>「程序说找不到配置文件」但你确定文件存在时，这一招能立刻看出它在找哪个路径。过滤掉 <code>ENOENT</code> 是因为动态库查找会产生大量正常的失败尝试。</p><p><strong>场景二：进程卡住了，在等什么</strong></p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>strace -p <span class=m>1234</span>
+</span></span><span class=line><span class=cl><span class=c1># futex(0x7f8c4c0e9128, FUTEX_WAIT_PRIVATE, 2, NULL</span>
+</span></span><span class=line><span class=cl><span class=c1># ^ 挂在这里不动了 -&gt; 在等一把锁，死锁或长时间持锁</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 另一种</span>
+</span></span><span class=line><span class=cl><span class=c1># read(8, ^ 卡住</span>
+</span></span><span class=line><span class=cl><span class=c1># 用 -y 看 fd 8 是什么</span>
+</span></span><span class=line><span class=cl>strace -y -p <span class=m>1234</span>
+</span></span><span class=line><span class=cl><span class=c1># read(8&lt;/dev/pts/2&gt;, ...          &lt;- 在等终端输入</span>
+</span></span><span class=line><span class=cl><span class=c1># read(8&lt;socket:[12345]&gt;, ...      &lt;- 在等网络对端</span>
+</span></span></code></pre></div><p><strong>配合 <code>/proc</code> 交叉验证</strong>：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>ls -l /proc/1234/fd/8
+</span></span><span class=line><span class=cl><span class=c1># lrwx------ 1 app app 64 Aug 6 22:00 8 -&gt; socket:[89234]</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>ss -tanp <span class=p>|</span> grep <span class=m>89234</span>
+</span></span><span class=line><span class=cl><span class=c1># ESTAB 0 0 10.0.0.5:45678 10.0.3.9:3306   users:((&#34;myapp&#34;,pid=1234,fd=8))</span>
+</span></span><span class=line><span class=cl><span class=c1>#                                    ^^^^ 在等 MySQL 响应 -&gt; 查慢 SQL</span>
+</span></span></code></pre></div><p><strong>这个链路（strace 找到卡住的 fd → /proc 查 fd 是什么 → ss 查对端是谁）是排查「服务无响应」的标准套路。</strong></p><p><strong>场景三：找出慢的系统调用</strong></p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>strace -T -f -p <span class=m>1234</span> 2&gt;<span class=p>&amp;</span><span class=m>1</span> <span class=p>|</span> awk -F<span class=s1>&#39;&lt;&#39;</span> <span class=s1>&#39;$2+0 &gt; 0.1 {print}&#39;</span>
+</span></span><span class=line><span class=cl><span class=c1># read(8, &#34;...&#34;, 4096) = 234 &lt;2.845123&gt;</span>
+</span></span><span class=line><span class=cl><span class=c1>#                             ^^^^^^^^ 这次 read 花了 2.8 秒</span>
+</span></span></code></pre></div><h2 id=45-strace-的代价>4.5 strace 的代价</h2><p><strong><code>strace</code> 会让目标进程慢 10~100 倍</strong>，因为每次系统调用都要陷入 <code>ptrace</code> 让 tracer 处理，等于给每个系统调用增加了两次上下文切换。</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>正常：      syscall -&gt; 内核处理 -&gt; 返回
+</span></span><span class=line><span class=cl>被 strace： syscall -&gt; 内核停下进程 -&gt; 唤醒 strace -&gt; strace 处理 -&gt; 恢复进程 -&gt; ...
+</span></span></code></pre></div><p><strong>生产环境使用的纪律</strong>：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># ✅ 短时间采样，用 timeout 强制结束</span>
+</span></span><span class=line><span class=cl>timeout <span class=m>10</span> strace -c -f -p <span class=m>1234</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># ✅ 只跟踪关心的调用，减少拦截次数</span>
+</span></span><span class=line><span class=cl>strace -c -e <span class=nv>trace</span><span class=o>=</span>read,write -p <span class=m>1234</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># ❌ 不要长时间挂着 strace 跑一个高 QPS 的服务</span>
+</span></span><span class=line><span class=cl><span class=c1># ❌ 不要对 QPS 上万的进程无过滤地 strace</span>
+</span></span></code></pre></div><blockquote><p>坑：<code>strace -p</code> 需要 <code>ptrace</code> 权限。容器里或开了 <code>kernel.yama.ptrace_scope=1</code> 的系统上会报 <code>Operation not permitted</code>。容器里需要 <code>--cap-add=SYS_PTRACE</code>，K8s 里需要 <code>securityContext.capabilities.add: ["SYS_PTRACE"]</code>。</p></blockquote><p><strong>替代方案</strong>：现代内核上 <code>perf trace</code> 和 <code>bpftrace</code> 基于 eBPF，开销小得多（通常 &lt; 5%），适合生产环境常态观测。第 18 篇会讲。</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># perf trace：开销远小于 strace</span>
+</span></span><span class=line><span class=cl>perf trace -p <span class=m>1234</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># bpftrace：统计系统调用分布，几乎无侵入</span>
+</span></span><span class=line><span class=cl>bpftrace -e <span class=s1>&#39;tracepoint:raw_syscalls:sys_enter /pid == 1234/ { @[probe] = count(); }&#39;</span>
+</span></span></code></pre></div><h1 id=5-减少系统调用性能优化的重要方向>5. 减少系统调用：性能优化的重要方向</h1><p>既然一次系统调用要 100~200ns（而普通函数调用只要 1~2ns），减少次数就是实打实的优化。</p><h2 id=51-批量化>5.1 批量化</h2><div class=highlight><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// ❌ 每写一行调用一次 write —— 1 万次系统调用
+</span></span></span><span class=line><span class=cl><span class=c1></span><span class=k>for</span> <span class=p>(</span><span class=kt>int</span> <span class=n>i</span> <span class=o>=</span> <span class=mi>0</span><span class=p>;</span> <span class=n>i</span> <span class=o>&lt;</span> <span class=mi>10000</span><span class=p>;</span> <span class=n>i</span><span class=o>++</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>write</span><span class=p>(</span><span class=n>fd</span><span class=p>,</span> <span class=n>line</span><span class=p>[</span><span class=n>i</span><span class=p>],</span> <span class=n>len</span><span class=p>[</span><span class=n>i</span><span class=p>]);</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1>// ✅ 用 writev 一次提交多个缓冲区 —— 1 次系统调用
+</span></span></span><span class=line><span class=cl><span class=c1></span><span class=k>struct</span> <span class=n>iovec</span> <span class=n>iov</span><span class=p>[</span><span class=mi>10000</span><span class=p>];</span>
+</span></span><span class=line><span class=cl><span class=cm>/* 填充 iov */</span>
+</span></span><span class=line><span class=cl><span class=n>writev</span><span class=p>(</span><span class=n>fd</span><span class=p>,</span> <span class=n>iov</span><span class=p>,</span> <span class=mi>10000</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1>// ✅ 或者用户态缓冲，攒够再写 —— 这就是 stdio 和 bufio 的原理
+</span></span></span></code></pre></div><p><strong>这正是 <code>printf</code> 比 <code>write</code> 快的原因</strong>——它在用户态攒缓冲，攒到 4KB 或遇到换行才真正调一次 <code>write</code>。</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-go data-lang=go><span class=line><span class=cl><span class=c1>// Go 里的对应实践
+</span></span></span><span class=line><span class=cl><span class=c1>// ❌ 每次 Write 都是一次系统调用
+</span></span></span><span class=line><span class=cl><span class=c1></span><span class=k>for</span> <span class=nx>_</span><span class=p>,</span> <span class=nx>line</span> <span class=o>:=</span> <span class=k>range</span> <span class=nx>lines</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=nx>file</span><span class=p>.</span><span class=nf>Write</span><span class=p>(</span><span class=nx>line</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1>// ✅ 用 bufio 包一层，默认 4KB 缓冲
+</span></span></span><span class=line><span class=cl><span class=c1></span><span class=nx>w</span> <span class=o>:=</span> <span class=nx>bufio</span><span class=p>.</span><span class=nf>NewWriterSize</span><span class=p>(</span><span class=nx>file</span><span class=p>,</span> <span class=mi>64</span><span class=o>*</span><span class=mi>1024</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=k>for</span> <span class=nx>_</span><span class=p>,</span> <span class=nx>line</span> <span class=o>:=</span> <span class=k>range</span> <span class=nx>lines</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=nx>w</span><span class=p>.</span><span class=nf>Write</span><span class=p>(</span><span class=nx>line</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=nx>w</span><span class=p>.</span><span class=nf>Flush</span><span class=p>()</span>      <span class=c1>// 别忘了
+</span></span></span></code></pre></div><h2 id=52-零拷贝>5.2 零拷贝</h2><p>「把文件内容发到网络」的传统方式要 4 次拷贝、2 次系统调用：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>传统 read + write：
+</span></span><span class=line><span class=cl>  磁盘 -&gt; 内核 page cache --copy--&gt; 用户态 buffer --copy--&gt; 内核 socket buffer -&gt; 网卡
+</span></span><span class=line><span class=cl>                          （系统调用①）              （系统调用②）
+</span></span><span class=line><span class=cl>  4 次上下文切换，2 次多余的内存拷贝
+</span></span></code></pre></div><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>sendfile：
+</span></span><span class=line><span class=cl>  磁盘 -&gt; 内核 page cache ------直接----&gt; 内核 socket buffer -&gt; 网卡
+</span></span><span class=line><span class=cl>                        （1 次系统调用，数据不进用户态）
+</span></span><span class=line><span class=cl>  2 次上下文切换，0 次多余拷贝
+</span></span></code></pre></div><div class=highlight><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// 一个系统调用完成「读文件 + 发网络」
+</span></span></span><span class=line><span class=cl><span class=c1></span><span class=n>sendfile</span><span class=p>(</span><span class=n>out_socket_fd</span><span class=p>,</span> <span class=n>in_file_fd</span><span class=p>,</span> <span class=o>&amp;</span><span class=n>offset</span><span class=p>,</span> <span class=n>count</span><span class=p>);</span>
+</span></span></code></pre></div><p><strong>nginx 的 <code>sendfile on;</code>、Kafka 的高吞吐、Go 的 <code>io.Copy</code>（对 <code>*os.File</code> → <code>*net.TCPConn</code> 会自动用 sendfile）都是这个机制。</strong></p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># 验证 Go 的 io.Copy 用了 sendfile</span>
+</span></span><span class=line><span class=cl>strace -f -e <span class=nv>trace</span><span class=o>=</span>sendfile,read,write ./fileserver
+</span></span><span class=line><span class=cl><span class=c1># sendfile(6, 5, NULL, 1048576) = 1048576      &lt;- 走了零拷贝</span>
+</span></span></code></pre></div><p><strong>其他零拷贝手段</strong>：</p><table><thead><tr><th>机制</th><th>适用场景</th></tr></thead><tbody><tr><td><code>sendfile</code></td><td>文件 → socket（最常用）</td></tr><tr><td><code>splice</code></td><td>两个 fd 之间，至少一端是管道</td></tr><tr><td><code>mmap</code> + <code>write</code></td><td>需要在用户态处理内容时</td></tr><tr><td><code>MSG_ZEROCOPY</code></td><td>大块网络发送（4.14+）</td></tr><tr><td><code>io_uring</code></td><td>通用异步 IO，批量提交（5.1+）</td></tr></tbody></table><h2 id=53-io_uring批量提交的终极形态>5.3 io_uring：批量提交的终极形态</h2><p><code>io_uring</code>（5.1+，5.10 后成熟）用<strong>共享内存环形队列</strong>替代了「每个操作一次系统调用」的模型：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>传统：           每个 IO 一次系统调用
+</span></span><span class=line><span class=cl>                 read() read() read() read()  -&gt; 4 次陷入内核
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>io_uring：       批量提交 + 批量收割
+</span></span><span class=line><span class=cl>                 把 4 个请求写进 SQ（提交队列，共享内存）
+</span></span><span class=line><span class=cl>                        v
+</span></span><span class=line><span class=cl>                 io_uring_enter() 一次系统调用提交全部
+</span></span><span class=line><span class=cl>                        v
+</span></span><span class=line><span class=cl>                 从 CQ（完成队列）读结果，甚至可以完全不用系统调用（轮询模式）
+</span></span></code></pre></div><p>在高 IOPS 场景下，<code>io_uring</code> 相比 <code>epoll + read/write</code> 能有 2 倍以上的提升。但它要求内核 5.10+，且 API 复杂，目前主要在数据库、存储系统里使用。</p><h1 id=6-实战一个莫名很慢的服务>6. 实战：一个「莫名很慢」的服务</h1><p><strong>现象</strong>：一个 Go 写的日志聚合服务，QPS 只有 3000，但 CPU 已经占满 4 核。用 pprof 看不出明显热点，最大的函数只占 8%。</p><p><strong>① 先看 CPU 时间的用户态/内核态分布</strong></p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>pidstat -u <span class=m>1</span> <span class=m>3</span> -p <span class=m>1234</span>
+</span></span><span class=line><span class=cl><span class=c1># 时间      UID  PID   %usr %system  %CPU  CPU  Command</span>
+</span></span><span class=line><span class=cl><span class=c1># 22:15:01    0 1234  92.00  308.00 400.00   3  logagg</span>
+</span></span><span class=line><span class=cl><span class=c1>#                     ^^^^^   ^^^^^^ 内核态占了 308%，用户态只有 92%</span>
+</span></span></code></pre></div><p>**关键发现：77% 的 CPU 时间在内核态。**pprof 主要采样用户态代码，所以看不出问题——<strong>这就是 pprof 找不到热点的原因</strong>。</p><p><strong>② 用 strace 统计看是什么系统调用</strong></p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>timeout <span class=m>10</span> strace -c -f -p <span class=m>1234</span>
+</span></span><span class=line><span class=cl><span class=c1># % time     seconds  usecs/call     calls    errors syscall</span>
+</span></span><span class=line><span class=cl><span class=c1># ------ ----------- ----------- --------- --------- ----------------</span>
+</span></span><span class=line><span class=cl><span class=c1>#  71.23    8.234012           2   4012340           write</span>
+</span></span><span class=line><span class=cl><span class=c1>#  12.01    1.388234           5    277612           epoll_pwait</span>
+</span></span><span class=line><span class=cl><span class=c1>#   8.44    0.975623           3    325204           read</span>
+</span></span><span class=line><span class=cl><span class=c1>#                              ^ 每次只 2μs，但调了 400 万次！</span>
+</span></span></code></pre></div><p><strong>400 万次 <code>write</code>，QPS 只有 3000</strong> —— 每个请求平均产生 1300 次 write。</p><p><strong>③ 确认写的是什么</strong></p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>strace -f -y -e <span class=nv>trace</span><span class=o>=</span>write -p <span class=m>1234</span> 2&gt;<span class=p>&amp;</span><span class=m>1</span> <span class=p>|</span> head -5
+</span></span><span class=line><span class=cl><span class=c1># write(2&lt;/var/log/logagg.log&gt;, &#34;level=debug msg=\&#34;parsing field\&#34;...&#34;, 48) = 48</span>
+</span></span><span class=line><span class=cl><span class=c1># write(2&lt;/var/log/logagg.log&gt;, &#34;level=debug msg=\&#34;field parsed\&#34;...&#34;, 45) = 45</span>
+</span></span><span class=line><span class=cl><span class=c1># write(2&lt;/var/log/logagg.log&gt;, &#34;level=debug msg=\&#34;validating\&#34;...&#34;, 42) = 42</span>
+</span></span><span class=line><span class=cl><span class=c1>#       ^^^^^^^^^^^^^^^^^^^^^^ debug 日志，而且【每条都单独 write】</span>
+</span></span></code></pre></div><p><strong>原因</strong>：两个问题叠加。</p><ol><li>生产环境误开了 debug 日志级别，每处理一个字段都打一条</li><li>日志库配置成了<strong>无缓冲直写</strong>（<code>os.Stderr</code> 没有包 <code>bufio</code>），每条日志一次 <code>write</code> 系统调用</li></ol><p>每次 <code>write</code> 只 2μs 看起来很快，但 400 万次 × 2μs = 8 秒的纯内核时间。</p><p><strong>修复</strong>：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-go data-lang=go><span class=line><span class=cl><span class=c1>// ❌ 原来的配置：直接写 os.Stderr，无缓冲
+</span></span></span><span class=line><span class=cl><span class=c1></span><span class=nx>logger</span> <span class=o>:=</span> <span class=nx>zerolog</span><span class=p>.</span><span class=nf>New</span><span class=p>(</span><span class=nx>os</span><span class=p>.</span><span class=nx>Stderr</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1>// ✅ 加缓冲 + 调日志级别
+</span></span></span><span class=line><span class=cl><span class=c1></span><span class=nx>zerolog</span><span class=p>.</span><span class=nf>SetGlobalLevel</span><span class=p>(</span><span class=nx>zerolog</span><span class=p>.</span><span class=nx>InfoLevel</span><span class=p>)</span>          <span class=c1>// 关掉 debug
+</span></span></span><span class=line><span class=cl><span class=c1></span><span class=nx>bw</span> <span class=o>:=</span> <span class=nx>bufio</span><span class=p>.</span><span class=nf>NewWriterSize</span><span class=p>(</span><span class=nx>os</span><span class=p>.</span><span class=nx>Stderr</span><span class=p>,</span> <span class=mi>256</span><span class=o>*</span><span class=mi>1024</span><span class=p>)</span>     <span class=c1>// 256KB 缓冲
+</span></span></span><span class=line><span class=cl><span class=c1></span><span class=nx>logger</span> <span class=o>:=</span> <span class=nx>zerolog</span><span class=p>.</span><span class=nf>New</span><span class=p>(</span><span class=nx>bw</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1>// 定时 flush，保证低流量时日志也能及时落盘
+</span></span></span><span class=line><span class=cl><span class=c1></span><span class=k>go</span> <span class=kd>func</span><span class=p>()</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=nx>t</span> <span class=o>:=</span> <span class=nx>time</span><span class=p>.</span><span class=nf>NewTicker</span><span class=p>(</span><span class=nx>time</span><span class=p>.</span><span class=nx>Second</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=k>for</span> <span class=k>range</span> <span class=nx>t</span><span class=p>.</span><span class=nx>C</span> <span class=p>{</span> <span class=nx>bw</span><span class=p>.</span><span class=nf>Flush</span><span class=p>()</span> <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}()</span>
+</span></span><span class=line><span class=cl><span class=c1>// 别忘了在优雅关闭时 bw.Flush()（第 8 篇）
+</span></span></span></code></pre></div><p><strong>验证</strong>：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>timeout <span class=m>10</span> strace -c -f -p <span class=m>1234</span>
+</span></span><span class=line><span class=cl><span class=c1># % time     seconds  usecs/call     calls    errors syscall</span>
+</span></span><span class=line><span class=cl><span class=c1>#  42.11    0.234012           8     29234           epoll_pwait</span>
+</span></span><span class=line><span class=cl><span class=c1>#  21.03    0.116823           4     29230           read</span>
+</span></span><span class=line><span class=cl><span class=c1>#  18.22    0.101234          32      3140           write</span>
+</span></span><span class=line><span class=cl><span class=c1>#                                     ^^^^ 从 400 万降到 3140 次</span>
+</span></span></code></pre></div><p><strong>结果</strong>：<code>%system</code> 从 308% 降到 34%，QPS 从 3000 升到 41000，CPU 使用率反而从 400% 降到 120%。</p><p><strong>规律：<code>%system</code> 远高于 <code>%usr</code> 时，pprof 帮不上忙——要用 <code>strace -c</code> 看系统调用分布。日志和 IO 的缓冲配置是最常见的元凶。</strong></p><h1 id=7-一些量级感>7. 一些量级感</h1><table><thead><tr><th>操作</th><th>开销</th></tr></thead><tbody><tr><td>普通函数调用</td><td>1 ~ 2 ns</td></tr><tr><td>原子操作 / 无竞争的 mutex</td><td>10 ~ 25 ns</td></tr><tr><td><code>clock_gettime</code>（走 vDSO）</td><td>20 ~ 25 ns</td></tr><tr><td><code>malloc</code>（池内命中）</td><td>20 ~ 50 ns</td></tr><tr><td><strong>一次系统调用</strong>（如 <code>getpid</code>）</td><td><strong>100 ~ 200 ns</strong></td></tr><tr><td><code>clock_gettime</code>（vDSO 失效时）</td><td>150 ~ 250 ns</td></tr><tr><td>有竞争的 mutex（走 futex）</td><td>1 ~ 5 μs</td></tr><tr><td>线程上下文切换</td><td>1 ~ 2 μs</td></tr><tr><td><code>read</code> 命中 page cache（4KB）</td><td>1 ~ 3 μs</td></tr><tr><td><code>read</code> 未命中，SSD</td><td>50 ~ 150 μs</td></tr><tr><td><code>read</code> 未命中，机械盘</td><td>5 ~ 10 ms</td></tr></tbody></table><p><strong>用法举例</strong>：一个接口如果调用了 500 次系统调用，光这部分就是 <code>500 × 150ns = 75μs</code>。对于目标 P99 = 10ms 的接口无所谓，但如果目标是 P99 = 200μs，这就占了 37%——高频交易、缓存代理这类场景必须逐个抠系统调用次数。</p><h1 id=命令附录系统调用观测命令>命令附录：系统调用观测命令</h1><h2 id=名称与参数速查>名称与参数速查</h2><table><thead><tr><th>命令</th><th>名字怎么记</th><th>主要用途</th><th>高频选项的英文原词</th></tr></thead><tbody><tr><td><code>strace</code></td><td><strong>system-call trace</strong></td><td>跟踪进程发起的系统调用和信号</td><td><code>-p</code> PID、<code>-f</code> follow forks、<code>-e</code> expression、<code>-c</code> summary、<code>-T</code> time spent、<code>-tt</code> timestamps</td></tr><tr><td><code>ltrace</code></td><td><strong>library-call trace</strong></td><td>跟踪动态库函数调用</td><td><code>-p</code> PID、<code>-f</code> follow children、<code>-e</code> expression、<code>-c</code> summary</td></tr><tr><td><code>time</code></td><td>time a command</td><td>测量 real/user/sys 时间和资源消耗</td><td>Bash 关键字与 <code>/usr/bin/time</code> 不是同一个实现；后者常用 <code>-v/--verbose</code></td></tr><tr><td><code>getconf</code></td><td><strong>get configuration values</strong></td><td>查询 POSIX 配置和限制</td><td><code>getconf PAGE_SIZE</code>、<code>getconf ARG_MAX</code></td></tr></tbody></table><h2 id=组合参数怎么读>组合参数怎么读</h2><p><code>strace -e trace=file</code> 的 <code>-e</code> 是 <strong>expression（筛选表达式）</strong>，<code>-f</code> 是 follow 子进程。因此 <code>strace -f -e trace=network -p PID</code> 可读成：跟随子进程，只跟踪网络系统调用，并附加到指定 PID。</p><h1 id=8-面试题>8. 面试题</h1><p><strong>Q：为什么要区分用户态和内核态？</strong></p><p>为了<strong>保护</strong>。如果应用程序能直接执行特权指令、访问任意内存和硬件，一个有 bug 的程序就能搞崩整台机器，恶意程序能读取所有进程的数据。所以 CPU 硬件提供特权级机制，x86 有 Ring 0~3，Linux 只用 Ring 0（内核）和 Ring 3（用户）。Ring 3 不能执行特权指令（<code>hlt</code>、<code>cli</code>、<code>in</code>/<code>out</code>）、不能访问内核内存页、不能修改页表，一旦尝试就触发保护异常——「段错误」就是这个机制在起作用。<strong>注意</strong>：用户态和内核态不是两类进程，而是<strong>同一个进程的两种运行状态</strong>，<code>top</code> 里的 <code>us</code> 和 <code>sy</code> 就是这两种状态的时间统计。</p><p><strong>Q：一次系统调用的开销大概是多少？为什么比函数调用贵这么多？</strong></p><p>约 <strong>100~200ns</strong>，而普通函数调用只有 1~2ns，差两个数量级。开销来自：执行 <code>syscall</code> 指令触发特权级切换、CPU 保存用户态的 <code>rip</code>/<code>rflags</code>、切换到内核栈、保存全部寄存器、查系统调用表分发、返回时恢复现场。此外还有隐性开销——进出内核会污染 CPU cache 和分支预测器。<strong>开了 Spectre/Meltdown 缓解（KPTI）的机器上开销会翻倍</strong>，因为进出内核要切换页表。这就是「减少系统调用次数」成为性能优化重要方向的原因：批量写（<code>writev</code>/<code>bufio</code>）、零拷贝（<code>sendfile</code>）、批量提交（<code>io_uring</code>）都在做这件事。</p><p><strong>Q：<code>malloc</code> 是系统调用吗？</strong></p><p><strong>不是</strong>。<code>malloc</code> 是 glibc 在用户态维护的内存池，大部分调用只是在已有的池子里划一块内存返回，全程不进内核，开销只有几十纳秒。只有当池子空间不足时，才会调用真正的系统调用 <code>brk</code>（扩展堆顶）或 <code>mmap</code>（映射新的内存区域）向内核申请。同理 <code>printf</code> 也不是系统调用——它在用户态格式化并缓冲，攒够 4KB 或遇到换行才调一次 <code>write</code>。<code>pthread_mutex_lock</code> 是两阶段的：无竞争时只做一次原子 CAS（约 20ns），有竞争才调 <code>futex</code> 陷入内核睡眠（微秒级）——所以 <code>strace</code> 里 <code>futex</code> 调用暴增就是锁竞争激烈的信号。</p><p><strong>Q：vDSO 是什么？为什么 <code>gettimeofday</code> 不需要陷入内核？</strong></p><p>vDSO（virtual Dynamic Shared Object）是内核映射到<strong>每个进程地址空间</strong>里的一小段代码和数据（<code>/proc/self/maps</code> 里的 <code>[vdso]</code> 和 <code>[vvar]</code>）。内核在每次时钟中断时把当前时间写入 <code>vvar</code> 页，进程调用 <code>clock_gettime</code> 时，glibc 跳转到 vdso 里的实现，<strong>直接从用户态读取那个内存页</strong>，全程没有 <code>syscall</code> 指令、没有特权级切换。性能差距约 8~10 倍（20ns vs 200ns）。这类调用只有 <code>clock_gettime</code>、<code>gettimeofday</code>、<code>time</code>、<code>getcpu</code> 几个——它们的共同特征是「调用极频繁 + 逻辑极简单 + 只读内核数据」。<strong>坑</strong>：如果虚拟机的 <code>clocksource</code> 不是 <code>tsc</code>/<code>kvm-clock</code>（比如是 <code>xen</code> 或 <code>acpi_pm</code>），内核无法保证用户态读取的一致性，vDSO 会退化成真正的系统调用，高并发服务仅取时间就可能吃掉 10% CPU。</p><p><strong>Q：<code>strace</code> 的原理是什么？为什么会让程序变慢？生产环境能用吗？</strong></p><p>基于 <code>ptrace</code> 系统调用。内核在目标进程每次进入和退出系统调用时<strong>停下它</strong>，唤醒 tracer（strace）去读取寄存器和参数，处理完再恢复目标进程。所以每次系统调用额外增加了两次上下文切换和两次进程停止/恢复，导致目标进程慢 <strong>10~100 倍</strong>。生产环境要用的话必须有纪律：用 <code>timeout 10</code> 限时、用 <code>-c</code> 只取统计而不逐条输出、用 <code>-e trace=</code> 限定范围，绝不长时间挂在高 QPS 服务上。更好的选择是基于 eBPF 的 <code>perf trace</code> 或 <code>bpftrace</code>，开销通常小于 5%，适合常态观测。<strong>注意</strong>：容器里用 strace 需要 <code>SYS_PTRACE</code> capability。</p><p><strong>Q：怎么用 <code>strace</code> 排查一个「无响应」的服务？</strong></p><p>三步链路。① <code>strace -p PID</code> 看它卡在哪个系统调用——卡在 <code>futex</code> 是等锁（死锁或长持锁），卡在 <code>read</code>/<code>epoll_wait</code> 是等外部数据。② 如果卡在 <code>read</code>，加 <code>-y</code> 让 strace 显示 fd 对应的实体，或者查 <code>ls -l /proc/PID/fd/N</code>。③ 如果是 socket，用 <code>ss -tanp | grep &lt;inode></code> 找出对端是谁——通常会发现在等数据库或下游服务响应，问题就转移到那边去了。多线程服务记得加 <code>-f</code>，否则只跟踪主线程会看不到真正卡住的那个。</p><p><strong>Q：<code>sendfile</code> 为什么叫零拷贝？省掉了什么？</strong></p><p>传统的「读文件发网络」要 <code>read</code> + <code>write</code> 两次系统调用、四次数据拷贝：磁盘 → 内核 page cache → <strong>用户态 buffer</strong> → 内核 socket buffer → 网卡。中间那两次「内核↔用户态」的拷贝是纯粹的浪费，因为应用根本不需要看这些数据。<code>sendfile</code> 让数据<strong>直接在内核内部</strong>从 page cache 送到 socket buffer，一次系统调用完成，省掉了两次内存拷贝和两次上下文切换。nginx 的 <code>sendfile on</code>、Kafka 的高吞吐都依赖它，Go 的 <code>io.Copy</code> 在 <code>*os.File</code> → <code>*net.TCPConn</code> 时会自动使用。<strong>代价</strong>是应用无法在传输过程中修改数据——需要处理内容（如加密、压缩）时就用不了，得退回 <code>mmap + write</code>。</p><p><strong>Q：一个服务 CPU 占满但 pprof 看不出热点，怎么查？</strong></p><p>先用 <code>pidstat -u -p PID</code> 看 <code>%usr</code> 和 <code>%system</code> 的比例。<strong>如果 <code>%system</code> 远高于 <code>%usr</code>，pprof 就帮不上忙</strong>——它主要采样用户态代码的调用栈，内核态的时间它看不见。这时候用 <code>strace -c -f -p PID</code> 看系统调用分布，通常能立刻发现问题：某个系统调用被调用了几百万次。最常见的元凶是<strong>日志无缓冲</strong>（每条日志一次 <code>write</code>）、误开 debug 级别、小块 IO 没有批量化。修复方式是加 <code>bufio</code> 缓冲、用 <code>writev</code> 批量提交。这类问题的特征很鲜明：单次系统调用很快（几微秒），但次数是业务 QPS 的成百上千倍。</p><hr><p>上一篇：<a href=../linux_08_%e4%bf%a1%e5%8f%b7%e4%b8%8e%e8%bf%9b%e7%a8%8b%e9%97%b4%e9%80%9a%e4%bf%a1/ rel>Linux-08 信号与进程间通信</a> ｜ 下一篇：<a href=../linux_10_%e5%86%85%e5%ad%98%e7%ae%a1%e7%90%86/ rel>Linux-10 内存管理</a></p></div><div class=post-footer id=post-footer><div class=post-info><div class=post-info-line><div class=post-info-mod><span>更新于 2026-08-11</span></div><div class=post-info-license></div></div><div class=post-info-line><div class=post-info-md></div><div class=post-info-share><span></span></div></div></div><div class=post-info-more><section class=post-tags><i class="fas fa-tags fa-fw"></i>&nbsp;<a href=/tags/linux/>linux</a></section><section><span><a href=javascript:void(0); onclick=window.history.back()>返回</a></span>&nbsp;|&nbsp;<span><a href=/>主页</a></span></section></div><div class=post-nav><a href=/posts/linux/linux_10_%E5%86%85%E5%AD%98%E7%AE%A1%E7%90%86/ class=prev rel=prev title="Linux-10 内存管理"><i class="fas fa-angle-left fa-fw"></i>Linux-10 内存管理</a>
+<a href=/posts/linux/linux_08_%E4%BF%A1%E5%8F%B7%E4%B8%8E%E8%BF%9B%E7%A8%8B%E9%97%B4%E9%80%9A%E4%BF%A1/ class=next rel=next title="Linux-08 信号与进程间通信">Linux-08 信号与进程间通信<i class="fas fa-angle-right fa-fw"></i></a></div></div><div id=comments><div id=gitalk class=comment></div><noscript>Please enable JavaScript to view the comments powered by <a href=https://github.com/gitalk/gitalk></a>Gitalk</a>.</noscript></div></article></div></main><footer class=footer><div class=footer-container><div class=footer-line>由 <a href=https://gohugo.io/ target=_blank rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href=https://github.com/dillonzq/LoveIt target=_blank rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a></div><div class=footer-line><i class="far fa-copyright fa-fw"></i><span itemprop=copyrightYear>2026</span><span class=author itemprop=copyrightHolder>&nbsp;<a href=https://xingliuhua/github.com.io target=_blank>xingliuhua</a></span></div></div></footer></div><div id=fixed-buttons><a href=# id=back-to-top class=fixed-button title=回到顶部><i class="fas fa-arrow-up fa-fw"></i>
+</a><a href=# id=view-comments class=fixed-button title=查看评论><i class="fas fa-comment fa-fw"></i></a></div><link rel=stylesheet href=/lib/gitalk/gitalk.min.css><link rel=stylesheet href=/lib/lightgallery/lightgallery.min.css><script type=text/javascript src=/lib/gitalk/gitalk.min.js></script><script type=text/javascript src=/lib/smooth-scroll/smooth-scroll.min.js></script><script type=text/javascript src=/lib/autocomplete/autocomplete.min.js></script><script type=text/javascript src=/lib/lunr/lunr.min.js></script><script type=text/javascript src=/lib/lunr/lunr.stemmer.support.min.js></script><script type=text/javascript src=/lib/lunr/lunr.zh.min.js></script><script type=text/javascript src=/lib/lazysizes/lazysizes.min.js></script><script type=text/javascript src=/lib/lightgallery/lightgallery.min.js></script><script type=text/javascript src=/lib/lightgallery/lg-thumbnail.min.js></script><script type=text/javascript src=/lib/lightgallery/lg-zoom.min.js></script><script type=text/javascript src=/lib/clipboard/clipboard.min.js></script><script type=text/javascript>window.config={code:{copyTitle:"复制到剪贴板",maxShownLines:15},comment:{gitalk:{admin:["xingliuhua"],clientID:"c0161bf1d93ccdd5f765",clientSecret:"3782f9a39ee0849148faa2ec75bb19d9964dda16",id:"2026-08-06T19:00:00+08:00",owner:"xingliuhua",repo:"xingliuhua.github.io",title:"Linux-09 用户态、内核态与系统调用"}},lightGallery:{actualSize:!1,exThumbImage:"data-thumbnail",hideBarsDelay:2e3,selector:".lightgallery",speed:400,thumbContHeight:80,thumbWidth:80,thumbnail:!0},search:{highlightTag:"em",lunrIndexURL:"/index.json",lunrLanguageCode:"zh",lunrSegmentitURL:"/lib/lunr/lunr.segmentit.js",maxResultLength:10,noResultsFound:"没有找到结果",snippetLength:50,type:"lunr"}}</script><script type=text/javascript src=/js/theme.min.js></script><script type=text/javascript src=/js/toc-collapse.min.js></script></body></html>

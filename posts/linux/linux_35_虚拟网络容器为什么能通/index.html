@@ -1,0 +1,848 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>Linux-35 虚拟网络：容器为什么能通 - xingliuhua博客</title><meta name="Description" content="network namespace 如何隔离协议栈、veth pair 为什么像跨 namespace 网线、Linux bridge 怎样完成二层转发、路由与 NAT 如何让容器出网和端口映射，以及 conntrack、MTU、DNS、hairpin 与 Go 服务监听地址为何成为容器网络常见故障边界。"><meta property="og:title" content="Linux-35 虚拟网络：容器为什么能通" />
+<meta property="og:description" content="network namespace 如何隔离协议栈、veth pair 为什么像跨 namespace 网线、Linux bridge 怎样完成二层转发、路由与 NAT 如何让容器出网和端口映射，以及 conntrack、MTU、DNS、hairpin 与 Go 服务监听地址为何成为容器网络常见故障边界。" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/linux/linux_35_%E8%99%9A%E6%8B%9F%E7%BD%91%E7%BB%9C%E5%AE%B9%E5%99%A8%E4%B8%BA%E4%BB%80%E4%B9%88%E8%83%BD%E9%80%9A/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2026-08-12T06:30:00+08:00" />
+<meta property="article:modified_time" content="2026-08-12T06:30:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="Linux-35 虚拟网络：容器为什么能通"/>
+<meta name="twitter:description" content="network namespace 如何隔离协议栈、veth pair 为什么像跨 namespace 网线、Linux bridge 怎样完成二层转发、路由与 NAT 如何让容器出网和端口映射，以及 conntrack、MTU、DNS、hairpin 与 Go 服务监听地址为何成为容器网络常见故障边界。"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/linux/linux_35_%E8%99%9A%E6%8B%9F%E7%BD%91%E7%BB%9C%E5%AE%B9%E5%99%A8%E4%B8%BA%E4%BB%80%E4%B9%88%E8%83%BD%E9%80%9A/" /><link rel="prev" href="https://xingliuhua.github.io/posts/linux/linux_36_namespace%E4%B8%8Ecgroup%E5%AE%B9%E5%99%A8%E5%88%B0%E5%BA%95%E9%9A%94%E7%A6%BB%E4%BA%86%E4%BB%80%E4%B9%88/" /><link rel="next" href="https://xingliuhua.github.io/posts/linux/linux_34_socket_API%E4%B8%8EGo%E7%BD%91%E7%BB%9C%E7%BC%96%E7%A8%8B/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Linux-35 虚拟网络：容器为什么能通",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_35_%E8%99%9A%E6%8B%9F%E7%BD%91%E7%BB%9C%E5%AE%B9%E5%99%A8%E4%B8%BA%E4%BB%80%E4%B9%88%E8%83%BD%E9%80%9A\/"
+        },"genre": "posts","keywords": "linux","wordcount":  11169 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_35_%E8%99%9A%E6%8B%9F%E7%BD%91%E7%BB%9C%E5%AE%B9%E5%99%A8%E4%B8%BA%E4%BB%80%E4%B9%88%E8%83%BD%E9%80%9A\/","datePublished": "2026-08-12T06:30:00+08:00","dateModified": "2026-08-12T06:30:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "network namespace 如何隔离协议栈、veth pair 为什么像跨 namespace 网线、Linux bridge 怎样完成二层转发、路由与 NAT 如何让容器出网和端口映射，以及 conntrack、MTU、DNS、hairpin 与 Go 服务监听地址为何成为容器网络常见故障边界。"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">Linux-35 虚拟网络：容器为什么能通</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2026-08-12">2026-08-12</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 11169 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 23 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-容器网络不是模拟出来的另一套-tcpip">1. 容器网络不是模拟出来的另一套 TCP/IP</a>
+      <ol>
+        <li><a href="#11-容器仍使用宿主机内核">1.1 容器仍使用宿主机内核</a></li>
+        <li><a href="#12-控制面先创建对象数据面再逐包转发">1.2 控制面先创建对象，数据面再逐包转发</a></li>
+        <li><a href="#13-容器网络模型不只一种">1.3 容器网络模型不只一种</a></li>
+      </ol>
+    </li>
+    <li><a href="#2-network-namespace复制一份网络世界的视图">2. Network namespace：复制一份网络世界的视图</a>
+      <ol>
+        <li><a href="#21-netns-隔离哪些对象">2.1 netns 隔离哪些对象</a></li>
+        <li><a href="#22-localhost-只在当前-namespace-回环">2.2 localhost 只在当前 namespace 回环</a></li>
+        <li><a href="#23-如何手工观察-namespace">2.3 如何手工观察 namespace</a></li>
+        <li><a href="#24-netns-生命周期依赖引用">2.4 netns 生命周期依赖引用</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-veth-pair一根只有两端的虚拟网线">3. veth pair：一根只有两端的虚拟网线</a>
+      <ol>
+        <li><a href="#31-创建与移动">3.1 创建与移动</a></li>
+        <li><a href="#32-为什么宿主机看见的是-rx">3.2 为什么宿主机看见的是 RX</a></li>
+        <li><a href="#33-veth-有队列和-mtu不是零成本">3.3 veth 有队列和 MTU，不是零成本</a></li>
+        <li><a href="#34-查找-peer-关系">3.4 查找 peer 关系</a></li>
+      </ol>
+    </li>
+    <li><a href="#4-linux-bridge软件二层交换机">4. Linux bridge：软件二层交换机</a>
+      <ol>
+        <li><a href="#41-bridge-学习-mac-到端口的映射">4.1 bridge 学习 MAC 到端口的映射</a></li>
+        <li><a href="#42-bridge-自己是否需要-ip">4.2 bridge 自己是否需要 IP</a></li>
+        <li><a href="#43-同宿主机容器通信">4.3 同宿主机容器通信</a></li>
+        <li><a href="#44-bridge-与交换回路">4.4 bridge 与交换回路</a></li>
+      </ol>
+    </li>
+    <li><a href="#5-路由每个-namespace-都要回答下一跳是谁">5. 路由：每个 namespace 都要回答“下一跳是谁”</a>
+      <ol>
+        <li><a href="#51-路由在发送-socket-之后决定出口">5.1 路由在发送 socket 之后决定出口</a></li>
+        <li><a href="#52-ip-forwarding-是路由器开关">5.2 IP forwarding 是路由器开关</a></li>
+        <li><a href="#53-最长前缀匹配与策略路由">5.3 最长前缀匹配与策略路由</a></li>
+        <li><a href="#54-回程路由同样重要">5.4 回程路由同样重要</a></li>
+      </ol>
+    </li>
+    <li><a href="#6-nat让私有地址借用可路由身份">6. NAT：让私有地址借用可路由身份</a>
+      <ol>
+        <li><a href="#61-容器出网的-snatmasquerade">6.1 容器出网的 SNAT/MASQUERADE</a></li>
+        <li><a href="#62-宿主机端口映射的-dnat">6.2 宿主机端口映射的 DNAT</a></li>
+        <li><a href="#63-prerouting-与-output-的视角差异">6.3 PREROUTING 与 OUTPUT 的视角差异</a></li>
+        <li><a href="#64-nat-不是代理">6.4 NAT 不是代理</a></li>
+      </ol>
+    </li>
+    <li><a href="#7-conntracknat-为什么记得响应该怎么改">7. Conntrack：NAT 为什么记得响应该怎么改</a>
+      <ol>
+        <li><a href="#71-状态表保存双向-tuple">7.1 状态表保存双向 tuple</a></li>
+        <li><a href="#72-conntrack-表是共享有限资源">7.2 conntrack 表是共享有限资源</a></li>
+        <li><a href="#73-tcp-状态与-conntrack-状态不是同一对象">7.3 TCP 状态与 conntrack 状态不是同一对象</a></li>
+        <li><a href="#74-查看连接跟踪">7.4 查看连接跟踪</a></li>
+      </ol>
+    </li>
+    <li><a href="#8-一次容器出网的完整旅程">8. 一次容器出网的完整旅程</a>
+      <ol>
+        <li><a href="#81-正向">8.1 正向</a></li>
+        <li><a href="#82-回程">8.2 回程</a></li>
+        <li><a href="#83-不要一上来全接口抓全部流量">8.3 不要一上来全接口抓全部流量</a></li>
+      </ol>
+    </li>
+    <li><a href="#9-容器入站与端口发布">9. 容器入站与端口发布</a>
+      <ol>
+        <li><a href="#91-外部访问-published-port">9.1 外部访问 published port</a></li>
+        <li><a href="#92-端口发布不改变容器监听端口">9.2 端口发布不改变容器监听端口</a></li>
+        <li><a href="#93-来源地址可能保留也可能变化">9.3 来源地址可能保留也可能变化</a></li>
+        <li><a href="#94-host-network-的取舍">9.4 host network 的取舍</a></li>
+      </ol>
+    </li>
+    <li><a href="#10-mtu分片与只有大请求失败">10. MTU、分片与“只有大请求失败”</a>
+      <ol>
+        <li><a href="#101-封装会吃掉-mtu">10.1 封装会吃掉 MTU</a></li>
+        <li><a href="#102-pmtud-为什么会黑洞">10.2 PMTUD 为什么会黑洞</a></li>
+        <li><a href="#103-如何验证-mtu-线索">10.3 如何验证 MTU 线索</a></li>
+        <li><a href="#104-mss-clamping-只是特定补救">10.4 MSS clamping 只是特定补救</a></li>
+      </ol>
+    </li>
+    <li><a href="#11-dns能访问-ip不代表网络已经正常">11. DNS：能访问 IP，不代表网络已经正常</a>
+      <ol>
+        <li><a href="#111-容器有自己的-resolvconf-视图">11.1 容器有自己的 resolv.conf 视图</a></li>
+        <li><a href="#112-dns-同时使用-udptcp-和搜索规则">11.2 DNS 同时使用 UDP、TCP 和搜索规则</a></li>
+        <li><a href="#113-go-resolver-路径可能不同">11.3 Go resolver 路径可能不同</a></li>
+      </ol>
+    </li>
+    <li><a href="#12-网络策略与安全边界">12. 网络策略与安全边界</a>
+      <ol>
+        <li><a href="#121-可路由不等于被允许">12.1 可路由不等于被允许</a></li>
+        <li><a href="#122-namespace-隔离不是完整安全边界">12.2 namespace 隔离不是完整安全边界</a></li>
+        <li><a href="#123-最小权限排障">12.3 最小权限排障</a></li>
+      </ol>
+    </li>
+    <li><a href="#13-go-服务在容器里的常见边界">13. Go 服务在容器里的常见边界</a>
+      <ol>
+        <li><a href="#131-监听地址是第一检查项">13.1 监听地址是第一检查项</a></li>
+        <li><a href="#132-优雅退出与-endpoint-更新有竞态">13.2 优雅退出与 endpoint 更新有竞态</a></li>
+        <li><a href="#133-连接池必须响应地址变化">13.3 连接池必须响应地址变化</a></li>
+        <li><a href="#134-容器-cpu-限额也会成为网络问题">13.4 容器 CPU 限额也会成为网络问题</a></li>
+      </ol>
+    </li>
+    <li><a href="#14-分层排查方法">14. 分层排查方法</a>
+      <ol>
+        <li><a href="#141-先在正确-namespace-提问">14.1 先在正确 namespace 提问</a></li>
+        <li><a href="#142-由近到远验证">14.2 由近到远验证</a></li>
+        <li><a href="#143-常用观测命令">14.3 常用观测命令</a></li>
+        <li><a href="#144-用-tcpdump-找消失边界">14.4 用 tcpdump 找消失边界</a></li>
+      </ol>
+    </li>
+    <li><a href="#15-常用命令知识点扩展">15. 常用命令知识点扩展</a></li>
+    <li><a href="#16-面试题">16. 面试题</a></li>
+    <li><a href="#小结">小结</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><p>上一篇从应用视角拆解 socket：一个 fd 如何经历 <code>bind</code>、<code>listen</code>、<code>accept</code>、<code>connect</code> 和收发。这一篇把进程放进容器后再追问：<strong>容器没有独占一块真实网卡，为什么却有自己的 <code>eth0</code>、IP、路由表和 <code>localhost</code>，还能访问互联网并被宿主机端口转发？</strong></p>
+<p>答案不是“Docker 创建了一张虚拟网卡”这么简单。典型容器网络由多个原本独立的 Linux 机制拼成：network namespace 隔离网络视图，veth pair 跨 namespace 搬运 frame，bridge 完成二层交换，路由决定三层下一跳，netfilter/NAT 改写地址，conntrack 记住双向流状态。容器运行时与 CNI 只是配置这些内核对象的控制面。</p>
+<p>先看五个问题：</p>
+<ol>
+<li>network namespace 隔离了哪些网络对象？为什么容器内的 <code>127.0.0.1</code> 不是宿主机？</li>
+<li>veth pair 如何把两个 namespace 接起来？为什么一端收到的包像从另一端“发出”？</li>
+<li>Linux bridge 与物理交换机有什么相似和不同？同宿主机两个容器通信经过哪些对象？</li>
+<li>容器私有地址如何访问公网？DNAT、SNAT/MASQUERADE 和 conntrack 各自承担什么？</li>
+<li>容器能 ping 通却访问不了服务时，应怎样区分监听地址、路由、策略、MTU、DNS、端口映射和应用问题？</li>
+</ol>
+<hr>
+<h1 id="1-容器网络不是模拟出来的另一套-tcpip">1. 容器网络不是模拟出来的另一套 TCP/IP</h1>
+<h2 id="11-容器仍使用宿主机内核">1.1 容器仍使用宿主机内核</h2>
+<p>虚拟机通常有独立 guest kernel；普通 Linux 容器只是被 namespace、cgroup、capability、mount 等机制约束的进程。容器里的 <code>socket()</code>、TCP 拥塞控制、路由和 netfilter 仍由宿主机同一个内核执行。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">host process ----+
+</span></span><span class="line"><span class="cl">container A -----+--&gt; same Linux kernel --&gt; physical NIC
+</span></span><span class="line"><span class="cl">container B -----+
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">不同的是：每个进程查网络对象时，被导向所属 network namespace
+</span></span></code></pre></div><p>因此容器网络性能通常不需要完整硬件虚拟化，但内核协议栈、softirq、conntrack 表和物理网卡仍是共享资源。一个容器制造大量小包或连接，可能影响同机其他容器。</p>
+<h2 id="12-控制面先创建对象数据面再逐包转发">1.2 控制面先创建对象，数据面再逐包转发</h2>
+<p>容器运行时启动容器时执行的是控制面工作：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">创建 network namespace
+</span></span><span class="line"><span class="cl">创建 veth pair
+</span></span><span class="line"><span class="cl">把一端移入容器 namespace
+</span></span><span class="line"><span class="cl">给接口配置 IP / MTU / up
+</span></span><span class="line"><span class="cl">把宿主机端接入 bridge
+</span></span><span class="line"><span class="cl">配置容器默认路由
+</span></span><span class="line"><span class="cl">配置转发、防火墙、NAT 或 CNI 规则
+</span></span></code></pre></div><p>之后每个包走内核数据面，不需要 Docker daemon 或 kubelet 逐包参与。daemon 重启不必然让已有连接立刻中断，因为真正的接口、路由、socket 和 conntrack 状态在内核中；但后续配置协调可能受影响。</p>
+<h2 id="13-容器网络模型不只一种">1.3 容器网络模型不只一种</h2>
+<p>常见模式包括：</p>
+<ul>
+<li>bridge + veth：单机容器最经典模型</li>
+<li>host network：进程直接加入宿主机 netns，少一层虚拟转发</li>
+<li>routed CNI：为 Pod 网段发布路由，不一定做 SNAT</li>
+<li>overlay：VXLAN/Geneve 等把容器包封装跨主机传输</li>
+<li>ipvlan/macvlan：以不同方式复用物理下层接口</li>
+<li>eBPF datapath：用 BPF 程序替代或加速部分 bridge/netfilter 路径</li>
+</ul>
+<p>本文先讲 bridge + veth + route + NAT 的基线。理解这些对象后，overlay 和 eBPF 只是改变中间转发实现，不改变“namespace、接口、地址、路由、策略、socket”这些排查维度。</p>
+<hr>
+<h1 id="2-network-namespace复制一份网络世界的视图">2. Network namespace：复制一份网络世界的视图</h1>
+<h2 id="21-netns-隔离哪些对象">2.1 netns 隔离哪些对象</h2>
+<p>一个 network namespace 拥有相对独立的：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">network interfaces
+</span></span><span class="line"><span class="cl">IP addresses
+</span></span><span class="line"><span class="cl">routing tables and policy rules
+</span></span><span class="line"><span class="cl">ARP/neighbor tables
+</span></span><span class="line"><span class="cl">TCP/UDP sockets and local ports
+</span></span><span class="line"><span class="cl">netfilter rules and many network sysctls
+</span></span><span class="line"><span class="cl">loopback device
+</span></span><span class="line"><span class="cl">/proc/net view（随查看进程 namespace）
+</span></span></code></pre></div><p>所以两个不同 netns 中的进程都可以绑定 <code>0.0.0.0:8080</code>，因为它们不在同一个本地 socket 命名空间。容器端口冲突通常发生在映射到同一宿主机端口时，而不是容器内部端口相同。</p>
+<h2 id="22-localhost-只在当前-namespace-回环">2.2 localhost 只在当前 namespace 回环</h2>
+<p>每个 netns 有自己的 <code>lo</code>。容器访问 <code>127.0.0.1:8080</code>，目标是同一容器 netns 内监听 8080 的 socket，不会穿过 veth 去宿主机。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">host netns:      127.0.0.1 -&gt; host lo -&gt; host sockets
+</span></span><span class="line"><span class="cl">container netns: 127.0.0.1 -&gt; container lo -&gt; container sockets
+</span></span></code></pre></div><p>这解释了两个常见现象：</p>
+<ul>
+<li>宿主机上的数据库只监听 <code>127.0.0.1</code>，容器不能通过“localhost”访问它</li>
+<li>容器应用只监听 <code>127.0.0.1</code>，宿主机端口映射把包送进容器后也找不到对应非回环入口</li>
+</ul>
+<p>容器服务通常监听 <code>0.0.0.0</code>、<code>::</code> 或容器 <code>eth0</code> 地址；是否应向所有接口开放，还要由 namespace、网络策略和认证共同控制。</p>
+<h2 id="23-如何手工观察-namespace">2.3 如何手工观察 namespace</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 当前可见的命名 netns</span>
+</span></span><span class="line"><span class="cl">ip netns list
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 查看某个 netns 的接口、地址和路由</span>
+</span></span><span class="line"><span class="cl">ip -n demo link
+</span></span><span class="line"><span class="cl">ip -n demo addr
+</span></span><span class="line"><span class="cl">ip -n demo route
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 在 namespace 内运行命令</span>
+</span></span><span class="line"><span class="cl">ip netns <span class="nb">exec</span> demo ss -ltnp
+</span></span><span class="line"><span class="cl">ip netns <span class="nb">exec</span> demo ping -c <span class="m">1</span> 10.0.0.1
+</span></span></code></pre></div><p>容器运行时创建的 netns 不一定注册在 <code>/var/run/netns</code>，所以 <code>ip netns list</code> 可能为空。只要知道容器进程 PID，仍可进入：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">sudo nsenter -t <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span> -n ip addr
+</span></span><span class="line"><span class="cl">sudo nsenter -t <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span> -n ip route
+</span></span><span class="line"><span class="cl">sudo nsenter -t <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span> -n ss -ltnp
+</span></span></code></pre></div><p>namespace 是内核对象；命名文件通常只是指向它的引用，不是 namespace 本身。</p>
+<h2 id="24-netns-生命周期依赖引用">2.4 netns 生命周期依赖引用</h2>
+<p>创建 netns 后，只要仍有进程、打开 fd 或 bind mount 引用，它就不会被销毁。容器退出却残留 namespace、veth 或规则，往往意味着 runtime 清理失败或仍有引用。反之，最后引用消失时，内核会清理其接口和 socket；veth peer 也会感知对端消失。</p>
+<hr>
+<h1 id="3-veth-pair一根只有两端的虚拟网线">3. veth pair：一根只有两端的虚拟网线</h1>
+<h2 id="31-创建与移动">3.1 创建与移动</h2>
+<p>veth 总是成对出现：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">ip link add veth-host <span class="nb">type</span> veth peer name veth-container
+</span></span><span class="line"><span class="cl">ip link <span class="nb">set</span> veth-container netns demo
+</span></span><span class="line"><span class="cl">ip link <span class="nb">set</span> veth-host up
+</span></span><span class="line"><span class="cl">ip -n demo link <span class="nb">set</span> veth-container name eth0
+</span></span><span class="line"><span class="cl">ip -n demo link <span class="nb">set</span> eth0 up
+</span></span></code></pre></div><p>从一端发送的 Ethernet frame 会作为另一端的接收流量进入其网络栈：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">container eth0 TX
+</span></span><span class="line"><span class="cl">  -&gt; veth peer crossing
+</span></span><span class="line"><span class="cl">  -&gt; host veth-host RX
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">host veth-host TX
+</span></span><span class="line"><span class="cl">  -&gt; veth peer crossing
+</span></span><span class="line"><span class="cl">  -&gt; container eth0 RX
+</span></span></code></pre></div><p>它不是共享内存中的一个 IP tunnel，也不自动提供路由、地址或 NAT。若只创建 veth 不配置 IP/bridge/route，两端只是有一条二层连接。</p>
+<h2 id="32-为什么宿主机看见的是-rx">3.2 为什么宿主机看见的是 RX</h2>
+<p>容器从 <code>eth0</code> 发包时，在容器接口统计里算 TX；包穿到 peer 后，在宿主机 veth 端表现为 RX。抓包时方向常让人困惑：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 宿主机看 veth peer</span>
+</span></span><span class="line"><span class="cl">sudo tcpdump -ni veth-host
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 容器 namespace 看 eth0</span>
+</span></span><span class="line"><span class="cl">sudo nsenter -t <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span> -n tcpdump -ni eth0
+</span></span></code></pre></div><p>两处可能看到同一 frame 的不同接口视角。GRO、checksum offload 和抓包 hook 位置还可能让 checksum 看似错误或包大小不同；不要仅凭单点 tcpdump 判定线上 wire 数据损坏。</p>
+<h2 id="33-veth-有队列和-mtu不是零成本">3.3 veth 有队列和 MTU，不是零成本</h2>
+<p>包穿过 veth 仍要经历 skb、qdisc/队列、namespace 切换、bridge 或路由、netfilter hooks。它比完整虚拟机设备轻量，却不是免费函数调用。</p>
+<p>两端 MTU 应一致并与后续路径兼容。容器 veth 配 1500，而 overlay 再添加 VXLAN/UDP/IP 头时，底层物理网络若仍只支持 1500，就需要降低容器 MTU或依赖分片/PMTU。配置错误常表现为小包正常、大包或 TLS 握手卡住。</p>
+<h2 id="34-查找-peer-关系">3.4 查找 peer 关系</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">ip -d link show veth-host
+</span></span><span class="line"><span class="cl">ip -n demo -d link show eth0
+</span></span><span class="line"><span class="cl">ethtool -S veth-host 2&gt;/dev/null
+</span></span></code></pre></div><p><code>ip -d link</code> 可显示 <code>link-netnsid</code>、peer index 等线索，但接口名可能被 runtime 重命名。排查应记录 ifindex、namespace inode 和 peer ifindex，而不只依赖 <code>vethabc123</code> 这类临时名字。</p>
+<hr>
+<h1 id="4-linux-bridge软件二层交换机">4. Linux bridge：软件二层交换机</h1>
+<h2 id="41-bridge-学习-mac-到端口的映射">4.1 bridge 学习 MAC 到端口的映射</h2>
+<p>把多个宿主机 veth peer 接入 bridge：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">ip link add br0 <span class="nb">type</span> bridge
+</span></span><span class="line"><span class="cl">ip link <span class="nb">set</span> br0 up
+</span></span><span class="line"><span class="cl">ip link <span class="nb">set</span> veth-a master br0
+</span></span><span class="line"><span class="cl">ip link <span class="nb">set</span> veth-b master br0
+</span></span></code></pre></div><p>bridge 根据源 MAC 学习转发表 FDB（Forwarding Database），再按目的 MAC 决定从哪个端口转发：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">container A eth0 -- veth-a --+
+</span></span><span class="line"><span class="cl">                             +-- br0 -- host / uplink
+</span></span><span class="line"><span class="cl">container B eth0 -- veth-b --+
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">FDB:
+</span></span><span class="line"><span class="cl">MAC_A -&gt; veth-a
+</span></span><span class="line"><span class="cl">MAC_B -&gt; veth-b
+</span></span></code></pre></div><p>目的 MAC 已知时只转发到相应端口；未知单播、广播和某些组播会 flood 到适用端口。它与物理交换机的学习逻辑相似，只是运行在 Linux 内核中。</p>
+<h2 id="42-bridge-自己是否需要-ip">4.2 bridge 自己是否需要 IP</h2>
+<p>二层转发本身不要求 bridge 有 IP。若宿主机要作为容器默认网关、参与该子网三层通信，通常把网关地址配置在 bridge 设备而不是各个 enslaved veth：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">ip addr add 172.18.0.1/16 dev br0
+</span></span></code></pre></div><p>容器配置：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">eth0: 172.18.0.2/16
+</span></span><span class="line"><span class="cl">default via 172.18.0.1 dev eth0
+</span></span></code></pre></div><p>容器先用 ARP/neighbor discovery 得到网关 MAC，再把非本子网包交给网关。bridge 负责把 frame 送到拥有该 MAC 的本机三层接口，之后宿主机路由继续处理。</p>
+<h2 id="43-同宿主机容器通信">4.3 同宿主机容器通信</h2>
+<p>A 访问同子网 B：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">A 判断 172.18.0.3 在本地 /16
+</span></span><span class="line"><span class="cl">  -&gt; ARP: who has 172.18.0.3?
+</span></span><span class="line"><span class="cl">  -&gt; B 回 MAC_B
+</span></span><span class="line"><span class="cl">  -&gt; A 发 frame dst=MAC_B
+</span></span><span class="line"><span class="cl">  -&gt; A eth0 -&gt; veth-a -&gt; br0 FDB -&gt; veth-b -&gt; B eth0
+</span></span><span class="line"><span class="cl">  -&gt; B IP/TCP/socket
+</span></span></code></pre></div><p>正常情况下不需要经过宿主机三层路由或 SNAT。是否经过 netfilter bridge hooks、网络策略或 eBPF 程序取决于系统配置，不能仅凭拓扑断言“同机容器绝不经过防火墙”。</p>
+<h2 id="44-bridge-与交换回路">4.4 bridge 与交换回路</h2>
+<p>多个 bridge/uplink 错误连接可能形成二层环路，广播被反复复制。Linux bridge 支持 STP 等机制，但容器运行时通常构造可控的星形拓扑。手工接桥时不要随意把多个物理/虚拟端口互连；二层 loop 可以迅速制造广播风暴，属于破坏性操作。</p>
+<hr>
+<h1 id="5-路由每个-namespace-都要回答下一跳是谁">5. 路由：每个 namespace 都要回答“下一跳是谁”</h1>
+<h2 id="51-路由在发送-socket-之后决定出口">5.1 路由在发送 socket 之后决定出口</h2>
+<p>容器应用连接 <code>8.8.8.8:443</code>，内核在容器 netns 查路由：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">ip -n demo route get 8.8.8.8
+</span></span></code></pre></div><p>典型结果：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">8.8.8.8 via 172.18.0.1 dev eth0 src 172.18.0.2
+</span></span></code></pre></div><p>这决定源地址、出口接口和下一跳。包经 veth/bridge 到宿主机后，宿主机又在自己的 netns 做一次路由查找，决定从物理网卡发出。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">container route: destination -&gt; eth0 -&gt; gateway 172.18.0.1
+</span></span><span class="line"><span class="cl">host route:      destination -&gt; physical NIC -&gt; upstream gateway
+</span></span></code></pre></div><h2 id="52-ip-forwarding-是路由器开关">5.2 IP forwarding 是路由器开关</h2>
+<p>宿主机收到一个目的不是自己的 IP 包，是否允许在接口间转发由 forwarding 与策略共同决定：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">sysctl net.ipv4.ip_forward
+</span></span></code></pre></div><p>值为 1 只是允许进入转发路径，不代表防火墙一定放行，也不代表有正确回程路由。容器出网需要：</p>
+<ol>
+<li>容器默认路由正确</li>
+<li>bridge/veth 正常</li>
+<li>宿主机 forwarding 允许</li>
+<li>FORWARD 策略允许</li>
+<li>上游知道容器网段回程，或宿主机做 SNAT</li>
+<li>DNS/目标服务本身可用</li>
+</ol>
+<h2 id="53-最长前缀匹配与策略路由">5.3 最长前缀匹配与策略路由</h2>
+<p>路由表选择最具体前缀；默认路由只是没有更具体项时的兜底。源地址、fwmark、入接口等还可通过 <code>ip rule</code> 选择不同路由表：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">ip rule show
+</span></span><span class="line"><span class="cl">ip route show table all
+</span></span><span class="line"><span class="cl">ip route get 8.8.8.8 from 172.18.0.2 iif br0
+</span></span></code></pre></div><p>VPN、多网卡、Kubernetes CNI、云厂商路由经常使用 policy routing。只看 <code>ip route</code> 主表可能漏掉真正决策。</p>
+<h2 id="54-回程路由同样重要">5.4 回程路由同样重要</h2>
+<p>正向包能到目的地，不代表响应知道如何回来。若上游路由器不知道 <code>172.18.0.0/16</code> 在本宿主机后面，响应会丢失；SNAT 把源改成宿主机可路由地址，正是常见容器出网方案。</p>
+<p>非对称路由还可能触发 reverse path filtering、状态防火墙或云网络策略。抓包应同时观察请求和响应，不要看到 SYN 从物理网卡发出就认定链路完整。</p>
+<hr>
+<h1 id="6-nat让私有地址借用可路由身份">6. NAT：让私有地址借用可路由身份</h1>
+<h2 id="61-容器出网的-snatmasquerade">6.1 容器出网的 SNAT/MASQUERADE</h2>
+<p>容器包原始四元组：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">172.18.0.2:41000 -&gt; 203.0.113.20:443
+</span></span></code></pre></div><p>公网通常不知道如何路由回私有容器网段。宿主机在出接口做 SNAT：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">192.0.2.10:53001 -&gt; 203.0.113.20:443
+</span></span></code></pre></div><p>响应回到 <code>192.0.2.10:53001</code> 后，conntrack/NAT 反向还原为 <code>172.18.0.2:41000</code>，再路由回 veth。</p>
+<p><code>MASQUERADE</code> 是适合出口地址可能变化的源 NAT 形式，会动态使用出口接口地址；固定地址场景可用明确 SNAT。它们都不是加密或访问控制，只是地址/端口改写。</p>
+<h2 id="62-宿主机端口映射的-dnat">6.2 宿主机端口映射的 DNAT</h2>
+<p>用户访问宿主机 <code>192.0.2.10:8080</code>，规则可改写目的：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">before DNAT:
+</span></span><span class="line"><span class="cl">client 198.51.100.8:52000 -&gt; host 192.0.2.10:8080
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">after DNAT:
+</span></span><span class="line"><span class="cl">client 198.51.100.8:52000 -&gt; container 172.18.0.2:80
+</span></span></code></pre></div><p>路由随后把包送到 bridge/veth。响应方向由 conntrack 自动执行反向转换，让客户端仍认为它在与宿主机 <code>:8080</code> 通信。</p>
+<p>不同运行时/版本可能使用 iptables、nftables、IPVS、eBPF 或用户态 proxy 完成映射。排查时应先确认当前实现，不能只 grep 一张假定存在的 <code>iptables -t nat</code> 表。</p>
+<h2 id="63-prerouting-与-output-的视角差异">6.3 PREROUTING 与 OUTPUT 的视角差异</h2>
+<p>外部进入宿主机的包通常经过 PREROUTING；宿主机本地进程访问宿主机映射地址，包可能从 OUTPUT 路径开始。若规则只覆盖外部入口，本机 <code>curl host-ip:published-port</code> 可能与外部行为不同。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">external client -&gt; NIC -&gt; PREROUTING -&gt; DNAT -&gt; FORWARD
+</span></span><span class="line"><span class="cl">host process     -&gt; local OUTPUT -----&gt; DNAT -&gt; route/forward
+</span></span></code></pre></div><p>容器访问同一宿主机映射端口还涉及 hairpin NAT。成熟 runtime 会配置相应规则或 proxy，但自建规则常漏掉这些路径。</p>
+<h2 id="64-nat-不是代理">6.4 NAT 不是代理</h2>
+<p>内核 NAT 通常只改包头和状态映射，不终止 TCP 再创建另一条应用连接；因此它看不到 HTTP path，也不能像 L7 reverse proxy 那样做证书、header、重试或内容路由。代理会有两条 socket 连接，NAT 仍是一条端到端 TCP 状态经地址翻译呈现。</p>
+<hr>
+<h1 id="7-conntracknat-为什么记得响应该怎么改">7. Conntrack：NAT 为什么记得响应该怎么改</h1>
+<h2 id="71-状态表保存双向-tuple">7.1 状态表保存双向 tuple</h2>
+<p>连接跟踪为流记录 original/reply 方向、协议状态、超时和 NAT 信息。概念上：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">original:
+</span></span><span class="line"><span class="cl">  172.18.0.2:41000 -&gt; 203.0.113.20:443
+</span></span><span class="line"><span class="cl">translated:
+</span></span><span class="line"><span class="cl">  192.0.2.10:53001 -&gt; 203.0.113.20:443
+</span></span><span class="line"><span class="cl">reply:
+</span></span><span class="line"><span class="cl">  203.0.113.20:443 -&gt; 192.0.2.10:53001
+</span></span><span class="line"><span class="cl">restore:
+</span></span><span class="line"><span class="cl">  203.0.113.20:443 -&gt; 172.18.0.2:41000
+</span></span></code></pre></div><p>后续包不必重新任意选择 NAT 映射，从而保持一条连接双向一致。状态防火墙也可依据 <code>NEW/ESTABLISHED/RELATED/INVALID</code> 分类包。</p>
+<h2 id="72-conntrack-表是共享有限资源">7.2 conntrack 表是共享有限资源</h2>
+<p>每条被跟踪的连接占内存和哈希表项。大量短连接、UDP flow、扫描或攻击会让表接近上限：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">sysctl net.netfilter.nf_conntrack_count
+</span></span><span class="line"><span class="cl">sysctl net.netfilter.nf_conntrack_max
+</span></span></code></pre></div><p>表满时新连接可能被丢弃，并出现内核日志。简单调大 max 会增加内存与查找压力；应先找连接来源、超时、重试风暴和是否所有流都必须跟踪。绕过 conntrack 会影响 NAT/状态策略，必须由网络架构验证，不能作为临时万能修复。</p>
+<h2 id="73-tcp-状态与-conntrack-状态不是同一对象">7.3 TCP 状态与 conntrack 状态不是同一对象</h2>
+<p>TCP socket 状态属于端点协议栈；conntrack 是中间网络路径对流的观察。转发宿主机可能没有该连接的 TCP socket，却有 ESTABLISHED conntrack entry。两套 timeout 和状态机也不完全相同。</p>
+<p>所以：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">ss 看不到连接 != conntrack 没有记录
+</span></span><span class="line"><span class="cl">conntrack ESTABLISHED != 两端应用都健康
+</span></span></code></pre></div><p>排查 NAT 路径应联合 socket 与 conntrack，而不是用其中一个替代另一个。</p>
+<h2 id="74-查看连接跟踪">7.4 查看连接跟踪</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 需要 conntrack 工具及相应权限</span>
+</span></span><span class="line"><span class="cl">sudo conntrack -S
+</span></span><span class="line"><span class="cl">sudo conntrack -L -p tcp 2&gt;/dev/null <span class="p">|</span> head
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 内核参数与当前数量</span>
+</span></span><span class="line"><span class="cl">sysctl net.netfilter.nf_conntrack_count
+</span></span><span class="line"><span class="cl">sysctl net.netfilter.nf_conntrack_max
+</span></span></code></pre></div><p>生产表可能很大，完整 <code>conntrack -L</code> 会产生开销和大量输出。应按协议、地址、端口过滤，并优先看计数/事件采样。</p>
+<hr>
+<h1 id="8-一次容器出网的完整旅程">8. 一次容器出网的完整旅程</h1>
+<p>假设：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">container: 172.18.0.2/16, gateway 172.18.0.1
+</span></span><span class="line"><span class="cl">host br0: 172.18.0.1/16
+</span></span><span class="line"><span class="cl">host eth0: 192.0.2.10
+</span></span><span class="line"><span class="cl">remote: 203.0.113.20:443
+</span></span></code></pre></div><h2 id="81-正向">8.1 正向</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">1. Go Dial 203.0.113.20:443
+</span></span><span class="line"><span class="cl">2. 容器路由选择 default via 172.18.0.1 dev eth0
+</span></span><span class="line"><span class="cl">3. ARP 得到网关 br0 的 MAC
+</span></span><span class="line"><span class="cl">4. frame 从容器 eth0 进入 veth peer
+</span></span><span class="line"><span class="cl">5. bridge 将 frame 交给宿主机网关/三层
+</span></span><span class="line"><span class="cl">6. host FORWARD 路径做策略检查
+</span></span><span class="line"><span class="cl">7. host 路由选择 eth0
+</span></span><span class="line"><span class="cl">8. POSTROUTING 做 MASQUERADE/SNAT
+</span></span><span class="line"><span class="cl">9. physical NIC 发出
+</span></span></code></pre></div><h2 id="82-回程">8.2 回程</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">1. remote 响应到 192.0.2.10:映射端口
+</span></span><span class="line"><span class="cl">2. host conntrack 找到已有 flow
+</span></span><span class="line"><span class="cl">3. 反向 NAT 恢复目的 172.18.0.2:原端口
+</span></span><span class="line"><span class="cl">4. host 路由选择 br0/veth
+</span></span><span class="line"><span class="cl">5. bridge 按 MAC/FDB 送到容器 peer
+</span></span><span class="line"><span class="cl">6. 容器 IP/TCP 找到 socket receive queue
+</span></span><span class="line"><span class="cl">7. Go netpoller 唤醒 goroutine
+</span></span></code></pre></div><p>链路任一处都可能丢包。最有效的定位方法是在关键接口同时抓同一四元组，找到“最后看见请求”和“最先缺少响应”的边界。</p>
+<h2 id="83-不要一上来全接口抓全部流量">8.3 不要一上来全接口抓全部流量</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 示例：按目标和端口过滤，先在容器与宿主机出口分别观察</span>
+</span></span><span class="line"><span class="cl">sudo nsenter -t <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span> -n tcpdump -ni any <span class="s1">&#39;host 203.0.113.20 and tcp port 443&#39;</span>
+</span></span><span class="line"><span class="cl">sudo tcpdump -ni eth0 <span class="s1">&#39;host 203.0.113.20 and tcp port 443&#39;</span>
+</span></span></code></pre></div><p><code>-i any</code> 的链路层呈现、重复包和方向与具体接口抓包不同；高流量生产环境全量抓包会消耗 CPU、磁盘并包含敏感数据。使用窄过滤、短持续时间、snaplen 和授权的数据处理流程。</p>
+<hr>
+<h1 id="9-容器入站与端口发布">9. 容器入站与端口发布</h1>
+<h2 id="91-外部访问-published-port">9.1 外部访问 published port</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">client -&gt; host eth0:8080
+</span></span><span class="line"><span class="cl">  -&gt; DNAT destination to 172.18.0.2:80
+</span></span><span class="line"><span class="cl">  -&gt; route/FORWARD
+</span></span><span class="line"><span class="cl">  -&gt; bridge -&gt; veth -&gt; container eth0
+</span></span><span class="line"><span class="cl">  -&gt; TCP lookup container socket :80
+</span></span></code></pre></div><p>要成功必须同时满足：</p>
+<ul>
+<li>宿主机 <code>:8080</code> 映射规则存在且命中正确地址族/接口</li>
+<li>forwarding 与策略允许</li>
+<li>容器地址和路由有效</li>
+<li>容器应用监听 <code>0.0.0.0:80</code>、<code>[::]:80</code> 或 <code>eth0</code> 地址</li>
+<li>应用没有只绑定 <code>127.0.0.1:80</code></li>
+<li>容器/节点网络策略和安全组放行</li>
+</ul>
+<h2 id="92-端口发布不改变容器监听端口">9.2 端口发布不改变容器监听端口</h2>
+<p><code>-p 8080:80</code> 的含义是宿主机 8080 转到容器 80。容器内 <code>ss -ltn</code> 仍应看见 <code>:80</code>，不需要应用改监听 8080：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">host port 8080 -- translation --&gt; container port 80
+</span></span></code></pre></div><p>把两者混淆会出现映射规则正常、容器里却没有目标 socket 的 <code>connection refused</code>。</p>
+<h2 id="93-来源地址可能保留也可能变化">9.3 来源地址可能保留也可能变化</h2>
+<p>纯 DNAT 转发通常能让容器看到真实客户端源地址；hairpin、用户态 proxy、service mesh、云负载均衡或额外 SNAT 可能让来源变成节点/代理地址。应用要获得真实客户端身份时，应明确可信代理链和 PROXY protocol / <code>Forwarded</code> header，不能无条件信任客户端自己提交的 <code>X-Forwarded-For</code>。</p>
+<h2 id="94-host-network-的取舍">9.4 host network 的取舍</h2>
+<p>host network 让容器进程直接使用宿主机 netns：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">优点：少 veth/bridge/NAT 层，端口与观测更直接
+</span></span><span class="line"><span class="cl">代价：端口冲突；网络隔离减弱；容器可见宿主机接口和 localhost；策略边界改变
+</span></span></code></pre></div><p>它不是简单“网络更快”开关。是否值得取决于 pps、延迟、隔离、安全模型和编排能力。</p>
+<hr>
+<h1 id="10-mtu分片与只有大请求失败">10. MTU、分片与“只有大请求失败”</h1>
+<h2 id="101-封装会吃掉-mtu">10.1 封装会吃掉 MTU</h2>
+<p>物理网络 MTU 1500，VXLAN 还要添加外层 Ethernet/IP/UDP/VXLAN header，可留给内层包的空间变小。若容器仍发送 1500-byte IP packet，外层可能超过链路 MTU。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">inner packet 1500
+</span></span><span class="line"><span class="cl">+ overlay headers ~50
+</span></span><span class="line"><span class="cl">= outer packet ~1550 &gt; physical MTU 1500
+</span></span></code></pre></div><p>解决通常是把 Pod/veth MTU 设为 1450 左右（精确值依封装/地址族），或确保底层支持更大 MTU并全路径一致。</p>
+<h2 id="102-pmtud-为什么会黑洞">10.2 PMTUD 为什么会黑洞</h2>
+<p>Path MTU Discovery 依赖路由器在包过大且不能分片时返回 ICMP Packet Too Big/Fragmentation Needed。若防火墙错误丢弃这些 ICMP，发送端不知道应降低 packet size：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">小 SYN/ACK 正常
+</span></span><span class="line"><span class="cl">小 HTTP request 正常
+</span></span><span class="line"><span class="cl">TLS certificate / 大 response 卡住
+</span></span><span class="line"><span class="cl">重传但始终失败
+</span></span></code></pre></div><p>这类 MTU black hole 很像应用超时。不要把“禁所有 ICMP”当安全最佳实践；必要的 ICMP 是 IP 正常工作的控制面。</p>
+<h2 id="103-如何验证-mtu-线索">10.3 如何验证 MTU 线索</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">ip link show
+</span></span><span class="line"><span class="cl">ip route get 203.0.113.20
+</span></span><span class="line"><span class="cl">tracepath 203.0.113.20
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># IPv4 探测：禁止分片并逐步调整 payload；选项依 ping 实现</span>
+</span></span><span class="line"><span class="cl">ping -M <span class="k">do</span> -s <span class="m">1400</span> -c <span class="m">2</span> 203.0.113.20
+</span></span></code></pre></div><p>ICMP 可能被目标限制，因此 ping 失败本身不是定论。结合 tcpdump 看重传、ICMP too-big 与 TCP MSS；也要检查 veth、bridge、tunnel、物理接口每一层 MTU。</p>
+<h2 id="104-mss-clamping-只是特定补救">10.4 MSS clamping 只是特定补救</h2>
+<p>在转发入口调整 TCP MSS 可避免 TCP 建连后发送超过路径能力的 segment，但它不修复 UDP，也不能替代一致 MTU 和正确 ICMP。将 MSS 设得过小会增加包数和 CPU。应先确认 black hole，再针对边界设置并记录原因。</p>
+<hr>
+<h1 id="11-dns能访问-ip不代表网络已经正常">11. DNS：能访问 IP，不代表网络已经正常</h1>
+<h2 id="111-容器有自己的-resolvconf-视图">11.1 容器有自己的 resolv.conf 视图</h2>
+<p>容器内 <code>/etc/resolv.conf</code> 可能指向：</p>
+<ul>
+<li>宿主机/局域网 DNS</li>
+<li>runtime 内置 DNS stub</li>
+<li>Kubernetes CoreDNS service IP</li>
+<li>systemd-resolved stub 的特殊转发方案</li>
+</ul>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">cat /etc/resolv.conf
+</span></span><span class="line"><span class="cl">getent ahosts example.com
+</span></span></code></pre></div><p>容器内指向 <code>127.0.0.53</code> 只有在同一 netns 确实有 resolver 监听才有效；宿主机 loopback 上的 systemd-resolved 不会自动出现在容器 localhost。</p>
+<h2 id="112-dns-同时使用-udptcp-和搜索规则">11.2 DNS 同时使用 UDP、TCP 和搜索规则</h2>
+<p>常见查询先走 UDP，响应截断或特定场景需 TCP；只放行 UDP/53 会产生偶发失败。<code>search</code> 和 <code>ndots</code> 还可能让短名字触发多个候选查询，造成延迟和 CoreDNS 压力。</p>
+<p>应用报告 <code>dial tcp: lookup ...</code> 时，连接甚至还没进入目标 TCP connect。应单独记录 DNS duration、结果、resolver 与错误类别。</p>
+<h2 id="113-go-resolver-路径可能不同">11.3 Go resolver 路径可能不同</h2>
+<p>Go 可使用纯 Go resolver 或 cgo/system resolver，选择受构建、平台、<code>nsswitch.conf</code>、环境和 Go 版本影响。容器镜像缺少 CA 是 TLS 问题，缺少 <code>nsswitch.conf</code> 或 DNS 配置则是解析路径问题；两者经常都被误称为“容器没网”。</p>
+<p>可用应用相同镜像、相同 netns 和相同用户做测试，避免宿主机 <code>curl</code> 成功就推断容器进程也能解析。</p>
+<hr>
+<h1 id="12-网络策略与安全边界">12. 网络策略与安全边界</h1>
+<h2 id="121-可路由不等于被允许">12.1 可路由不等于被允许</h2>
+<p>路由回答“下一跳在哪里”，防火墙/网络策略回答“这个包是否允许”。常见 hook 包括本机 INPUT/OUTPUT、转发 FORWARD、bridge netfilter、CNI eBPF hooks 和云安全组。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">route exists + neighbor resolves
+</span></span><span class="line"><span class="cl">  仍可能在 policy hook 被 DROP/REJECT
+</span></span></code></pre></div><p>DROP 通常表现为超时，REJECT 可能立刻返回 ICMP 或 RST。安全策略选择要考虑信息暴露、客户端体验和故障诊断，不能只以“超时更安全”概括。</p>
+<h2 id="122-namespace-隔离不是完整安全边界">12.2 namespace 隔离不是完整安全边界</h2>
+<p>容器共享内核。network namespace 隔离接口和 socket 视图，却不能替代 capability、seccomp、LSM、用户 namespace、只读文件系统和及时内核更新。拥有 <code>CAP_NET_ADMIN</code> 的进程可在其作用范围内改变路由、接口与规则；不应为了方便排障长期授予特权容器。</p>
+<h2 id="123-最小权限排障">12.3 最小权限排障</h2>
+<p>读取接口、route、socket 统计通常可在目标 netns 内完成；抓包、修改网络或读取 conntrack 可能需要额外 capability。生产中应使用受审计的临时 debug 容器或节点工具，限定 namespace、时间与数据范围。不要通过 <code>--privileged</code> 作为默认排障方法。</p>
+<hr>
+<h1 id="13-go-服务在容器里的常见边界">13. Go 服务在容器里的常见边界</h1>
+<h2 id="131-监听地址是第一检查项">13.1 监听地址是第一检查项</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// 只允许同一 netns 回环访问
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">net</span><span class="p">.</span><span class="nf">Listen</span><span class="p">(</span><span class="s">&#34;tcp&#34;</span><span class="p">,</span> <span class="s">&#34;127.0.0.1:8080&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// 所有适用 IPv4 本地地址
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">net</span><span class="p">.</span><span class="nf">Listen</span><span class="p">(</span><span class="s">&#34;tcp&#34;</span><span class="p">,</span> <span class="s">&#34;0.0.0.0:8080&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// 简写，地址族行为还受 Go/OS 影响
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">net</span><span class="p">.</span><span class="nf">Listen</span><span class="p">(</span><span class="s">&#34;tcp&#34;</span><span class="p">,</span> <span class="s">&#34;:8080&#34;</span><span class="p">)</span>
+</span></span></code></pre></div><p>服务对外暴露不应只靠监听地址控制。监听所有接口后，用网络策略、防火墙、mTLS/认证和端口发布限定可访问范围。</p>
+<h2 id="132-优雅退出与-endpoint-更新有竞态">13.2 优雅退出与 endpoint 更新有竞态</h2>
+<p>编排系统终止 Pod 时，负载均衡端点撤销、preStop、SIGTERM、readiness 变化和现有连接排空不是瞬间原子事务：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Pod 标记不 ready
+</span></span><span class="line"><span class="cl">  -&gt; endpoint 更新传播需要时间
+</span></span><span class="line"><span class="cl">  -&gt; 部分客户端仍可能发新连接
+</span></span><span class="line"><span class="cl">  -&gt; 服务开始 graceful shutdown
+</span></span><span class="line"><span class="cl">  -&gt; 超时后强制关闭
+</span></span></code></pre></div><p>Go 服务应先停止接受新业务、保持足够 drain 窗口，并让客户端具备安全重试。只收到 SIGTERM 就立即 <code>os.Exit</code> 会制造 reset；无限等待又阻塞发布。</p>
+<h2 id="133-连接池必须响应地址变化">13.3 连接池必须响应地址变化</h2>
+<p>服务发现可能把一个名字解析到变化的 Pod IP。长连接池不会因为 DNS TTL 到期自动迁移已有连接；旧 Pod 下线时才报错。客户端需要连接寿命、健康检查、失败剔除和受控重连，而不是每请求重新 DNS + Dial。</p>
+<h2 id="134-容器-cpu-限额也会成为网络问题">13.4 容器 CPU 限额也会成为网络问题</h2>
+<p>包已经过 veth 进入 socket queue，Go 进程若因 cgroup quota 被 throttle，不能及时 accept/read：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">CPU throttling
+</span></span><span class="line"><span class="cl">  -&gt; accept queue / receive queue 增长
+</span></span><span class="line"><span class="cl">  -&gt; client latency / retransmission 增长
+</span></span><span class="line"><span class="cl">  -&gt; readiness probe 也超时
+</span></span><span class="line"><span class="cl">  -&gt; orchestrator 进一步重启
+</span></span></code></pre></div><p>网络排查必须把 cgroup CPU、GC、goroutine 与内核队列放在同一时间轴。重启可能暂时清空队列，却不会修复容量不足。</p>
+<hr>
+<h1 id="14-分层排查方法">14. 分层排查方法</h1>
+<h2 id="141-先在正确-namespace-提问">14.1 先在正确 namespace 提问</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="nv">PID</span><span class="o">=</span><span class="k">$(</span>docker inspect -f <span class="s1">&#39;{{.State.Pid}}&#39;</span> my-container<span class="k">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">sudo nsenter -t <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span> -n ip -br addr
+</span></span><span class="line"><span class="cl">sudo nsenter -t <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span> -n ip route
+</span></span><span class="line"><span class="cl">sudo nsenter -t <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span> -n ss -ltnp
+</span></span><span class="line"><span class="cl">sudo nsenter -t <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span> -n cat /etc/resolv.conf
+</span></span></code></pre></div><p><code>/etc/resolv.conf</code> 属于 mount namespace 文件视图；仅 <code>nsenter -n</code> 后由 shell读取的路径可能仍是宿主机 mount 视图。严谨检查可同时进入 mount namespace，或直接通过容器 exec。这个细节说明：容器故障常跨多个 namespace，不能把“进入网络 namespace”理解为进入完整容器环境。</p>
+<h2 id="142-由近到远验证">14.2 由近到远验证</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">1. 进程是否监听正确地址/端口
+</span></span><span class="line"><span class="cl">2. 容器 lo/eth0 是否 UP，IP/MTU 是否正确
+</span></span><span class="line"><span class="cl">3. route get 是否选对源地址、网关和接口
+</span></span><span class="line"><span class="cl">4. neighbor/ARP 是否解析
+</span></span><span class="line"><span class="cl">5. veth peer/bridge/FDB 是否正常
+</span></span><span class="line"><span class="cl">6. host forwarding 与 policy 是否放行
+</span></span><span class="line"><span class="cl">7. NAT/conntrack 是否存在且未耗尽
+</span></span><span class="line"><span class="cl">8. physical NIC 是否看到正向与回程
+</span></span><span class="line"><span class="cl">9. DNS、TLS、应用协议是否才是真正失败阶段
+</span></span></code></pre></div><p>每一步都应验证具体事实，不要只运行 ping。ICMP 通不代表 TCP 端口开放；TCP connect 通不代表 TLS/SNI/证书正确；HTTP 200 也不代表所有客户端路径相同。</p>
+<h2 id="143-常用观测命令">14.3 常用观测命令</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 容器内</span>
+</span></span><span class="line"><span class="cl">ip -br link
+</span></span><span class="line"><span class="cl">ip -br addr
+</span></span><span class="line"><span class="cl">ip route
+</span></span><span class="line"><span class="cl">ip rule
+</span></span><span class="line"><span class="cl">ip neigh
+</span></span><span class="line"><span class="cl">ss -ltnp
+</span></span><span class="line"><span class="cl">ss -tin
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 宿主机虚拟拓扑</span>
+</span></span><span class="line"><span class="cl">ip -d link
+</span></span><span class="line"><span class="cl">bridge link
+</span></span><span class="line"><span class="cl">bridge fdb show
+</span></span><span class="line"><span class="cl">bridge vlan show
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 转发/NAT（先确认系统使用哪套后端）</span>
+</span></span><span class="line"><span class="cl">sudo nft list ruleset
+</span></span><span class="line"><span class="cl">sudo iptables-save
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 连接跟踪与接口计数</span>
+</span></span><span class="line"><span class="cl">sudo conntrack -S
+</span></span><span class="line"><span class="cl">ip -s link
+</span></span></code></pre></div><p><code>iptables</code> 前端在一些系统实际操作 nftables backend；同时打印两者可能看到兼容表示而不是两套独立规则。修改前先识别 owner（Docker、CNI、firewalld、kube-proxy），手工插入规则可能被控制器覆盖或破坏集群网络。</p>
+<h2 id="144-用-tcpdump-找消失边界">14.4 用 tcpdump 找消失边界</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 容器接口</span>
+</span></span><span class="line"><span class="cl">sudo nsenter -t <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span> -n tcpdump -ni eth0 <span class="s1">&#39;tcp port 443&#39;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 宿主机 veth、bridge、物理出口</span>
+</span></span><span class="line"><span class="cl">sudo tcpdump -ni vethXYZ <span class="s1">&#39;tcp port 443&#39;</span>
+</span></span><span class="line"><span class="cl">sudo tcpdump -ni br0 <span class="s1">&#39;tcp port 443&#39;</span>
+</span></span><span class="line"><span class="cl">sudo tcpdump -ni eno1 <span class="s1">&#39;tcp port 443&#39;</span>
+</span></span></code></pre></div><p>请求在 A 出现、B 不出现，问题位于 A-B 之间；请求到达目标但无响应，检查 socket/应用；响应在出口出现却没回容器，检查 conntrack、route、policy。比较时用四元组、sequence/flags 和时间戳，注意 NAT 前后地址会改变。</p>
+<hr>
+<h1 id="15-常用命令知识点扩展">15. 常用命令知识点扩展</h1>
+<table>
+<thead>
+<tr>
+<th>命令/短参</th>
+<th>长参或全称</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ip -n NAME</code></td>
+<td><code>ip --netns NAME</code></td>
+<td>在指定命名 network namespace 执行 ip 子命令</td>
+</tr>
+<tr>
+<td><code>ip -d</code></td>
+<td><code>ip --details</code></td>
+<td>显示接口类型、peer 等详细信息</td>
+</tr>
+<tr>
+<td><code>ip -br</code></td>
+<td><code>ip --brief</code></td>
+<td>紧凑显示 link/address 状态</td>
+</tr>
+<tr>
+<td><code>ip route get</code></td>
+<td>route lookup</td>
+<td>让内核模拟一次路由选择</td>
+</tr>
+<tr>
+<td><code>ip neigh</code></td>
+<td>neighbor table</td>
+<td>查看 ARP/NDP 邻居状态</td>
+</tr>
+<tr>
+<td><code>bridge fdb</code></td>
+<td>forwarding database</td>
+<td>查看 bridge MAC 转发表</td>
+</tr>
+<tr>
+<td><code>nsenter -t</code></td>
+<td><code>nsenter --target</code></td>
+<td>以目标 PID 选择 namespace</td>
+</tr>
+<tr>
+<td><code>nsenter -n</code></td>
+<td><code>nsenter --net</code></td>
+<td>进入 network namespace</td>
+</tr>
+<tr>
+<td><code>tcpdump -n</code></td>
+<td>numeric</td>
+<td>不做 DNS/服务名解析</td>
+</tr>
+<tr>
+<td><code>tcpdump -i</code></td>
+<td>interface</td>
+<td>选择抓包接口</td>
+</tr>
+</tbody>
+</table>
+<p>场景配方：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 某 PID 的 namespace inode</span>
+</span></span><span class="line"><span class="cl">readlink /proc/<span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span>/ns/net
+</span></span><span class="line"><span class="cl">readlink /proc/1/ns/net
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 查询到目标实际走哪条路</span>
+</span></span><span class="line"><span class="cl">ip route get 203.0.113.20
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 查 bridge 的端口与 MAC 学习</span>
+</span></span><span class="line"><span class="cl">bridge link
+</span></span><span class="line"><span class="cl">bridge fdb show br br0
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 查看 conntrack 容量使用率</span>
+</span></span><span class="line"><span class="cl">sysctl net.netfilter.nf_conntrack_count net.netfilter.nf_conntrack_max
+</span></span></code></pre></div><hr>
+<h1 id="16-面试题">16. 面试题</h1>
+<p><strong>Q：network namespace 隔离了什么？</strong></p>
+<p>它为进程提供独立的接口、地址、路由与 policy rule、neighbor 表、socket/端口空间、loopback、netfilter 规则及许多网络 sysctl 视图。容器仍共享同一 Linux 内核和物理 CPU/NIC；netns 是网络对象隔离，不是另一套 guest kernel，也不是完整安全边界。</p>
+<p><strong>Q：为什么容器里的 localhost 不是宿主机？</strong></p>
+<p><code>127.0.0.1</code> 和 <code>::1</code> 路由到当前 network namespace 自己的 loopback 设备。容器 netns 与 host netns 有不同 <code>lo</code> 和 socket 表，所以容器访问 localhost 只查容器内监听者。宿主服务只绑 host <code>127.0.0.1</code>，容器不能把自己的 localhost 当作它。</p>
+<p><strong>Q：veth pair 的工作方式是什么？</strong></p>
+<p>veth 成对创建；一端发送的 Ethernet frame 作为另一端的接收流量进入其协议栈。把两端放进不同 namespace，就像用一根虚拟网线连接两个网络世界。veth 不自动分配 IP、路由或 NAT，并仍有 skb、队列、MTU 与 CPU 成本。</p>
+<p><strong>Q：Linux bridge 如何让同机容器通信？</strong></p>
+<p>宿主机 veth peer 作为 bridge port。bridge 从 frame 源 MAC 学习 FDB，按目的 MAC 将已知单播转到对应端口，广播/未知单播按规则 flood。相同二层子网的容器先 ARP 获取对方 MAC，然后经 veth—bridge—veth 通信，通常无需 SNAT。</p>
+<p><strong>Q：bridge 为什么有时需要配置 IP，有时不需要？</strong></p>
+<p>纯二层交换不需要 IP；如果宿主机要作为容器子网默认网关或自己参与该子网通信，就在 bridge 上配置网关 IP，使 frame 可进入宿主机三层路由。IP 应属于三层逻辑接口，不应重复散落在 bridge slave 上。</p>
+<p><strong>Q：容器访问公网为什么常需要 SNAT？</strong></p>
+<p>容器私有地址通常不被上游网络路由。宿主机把源地址/端口改成自己的可路由地址，conntrack 记录映射；响应到宿主机后再反向还原并路由给容器。若网络已显式发布容器网段路由，则可以不用 SNAT并保留原源地址。</p>
+<p><strong>Q：端口映射是如何工作的？</strong></p>
+<p>外部访问宿主机 published port 时，DNAT 将目的宿主地址/端口改为容器 IP/port，路由和 FORWARD 把包送入 veth；conntrack 在响应方向执行反向变换。实现可能是 nftables/iptables、IPVS、eBPF 或 proxy，排查前必须确认本机实际数据面。</p>
+<p><strong>Q：NAT 与反向代理有什么区别？</strong></p>
+<p>NAT 通常在内核改写 L3/L4 地址并保持一条 TCP 流，不终止应用协议；反向代理接受客户端 socket，再创建上游 socket，形成两条连接，可处理 TLS、HTTP header、重试和 L7 路由。NAT 不是 L7 代理，也不提供认证或加密。</p>
+<p><strong>Q：conntrack 为什么可能成为瓶颈？</strong></p>
+<p>每条被跟踪 flow 占表项、内存、timeout 和哈希处理。大量短 TCP、UDP、扫描或重试风暴可耗尽 <code>nf_conntrack_max</code>，新流被丢弃。调大上限会增加内存；应同时治理连接来源、复用、超时和是否确实需要跟踪，不能随意绕过影响 NAT 的状态表。</p>
+<p><strong>Q：为什么小请求成功、大请求或 TLS 卡住常指向 MTU？</strong></p>
+<p>overlay 封装增加外层头，内层 1500-byte packet 可能超过物理 MTU。若 ICMP Packet Too Big 被过滤，PMTUD 无法降低大小，SYN 和小数据正常，大 segment 持续重传。应检查各层 MTU、MSS、ICMP 和抓包，而不是只调应用超时。</p>
+<p><strong>Q：容器能访问 IP 却解析不了域名，应查什么？</strong></p>
+<p>检查容器 mount 视图的 <code>/etc/resolv.conf</code>、nameserver 是否能从该 netns 访问、UDP/TCP 53 策略、search/ndots、CoreDNS/runtime stub 状态，以及 Go 使用纯 Go 还是系统 resolver。宿主机 <code>127.0.0.53</code> 不会自动成为容器 localhost 的 DNS 服务。</p>
+<p><strong>Q：容器端口映射存在，为什么仍 connection refused？</strong></p>
+<p>DNAT 只改变目的地址。若容器内没有进程监听目标 port，或应用只绑定 <code>127.0.0.1</code> 而包从 <code>eth0</code> 到达，TCP 会拒绝。还应确认宿主端口与容器端口未混淆、地址族一致，并在容器 netns 用 <code>ss -ltnp</code> 验证。</p>
+<p><strong>Q：host network 的优缺点是什么？</strong></p>
+<p>它让容器共享宿主机 netns，减少 veth/bridge/NAT 路径并简化某些高性能场景；代价是端口空间冲突、网络可见性扩大、隔离和策略边界减弱、部署更依赖节点。必须根据 pps/延迟收益和安全模型选择，而不是默认更快就使用。</p>
+<p><strong>Q：如何定位一个包在容器链路哪一层消失？</strong></p>
+<p>先确认容器 socket、接口、route/neighbor；再在容器 eth0、宿主 veth、bridge、物理接口用窄 BPF filter 同时观察同一流；对照 NAT 前后四元组和请求/响应方向，并检查 forwarding、policy、conntrack 和应用队列。最后出现与首次缺失的两个观察点界定问题边界。</p>
+<p><strong>Q：为什么容器网络故障可能其实是 CPU 问题？</strong></p>
+<p>容器进程受 cgroup quota 限制时可能不能及时 accept/read，导致 accept queue、socket receive queue 和 TCP 延迟增长；节点 softirq 也与应用争 CPU。包已经到达并不表示 goroutine能及时运行。应把 CPU throttling、softirq、Go profile 与网络队列放在同一时间轴。</p>
+<hr>
+<h1 id="小结">小结</h1>
+<ul>
+<li>容器共享宿主机内核；runtime/CNI 在控制面创建 namespace、veth、bridge、route、policy 和 NAT，之后内核数据面逐包处理</li>
+<li>network namespace 隔离接口、地址、路由、socket、loopback 和网络规则，因此每个容器的 localhost 和端口空间相对独立</li>
+<li>veth pair 把一端 TX 变成 peer RX，像跨 namespace 的虚拟网线；它不自动提供 IP/路由，并有队列、skb、CPU 与 MTU 成本</li>
+<li>Linux bridge 按 MAC 学习 FDB并完成二层交换；bridge 只有在作为宿主机三层端点/网关时才需要 IP</li>
+<li>容器与宿主机各自做路由决策；forwarding、回程路由和 policy 都正确，包才真正可达</li>
+<li>SNAT 让私有容器地址借用宿主机可路由地址出网，DNAT 实现 published port；conntrack 保存双向映射，也是有限共享资源</li>
+<li>外部、宿主本地和容器 hairpin 走不同 netfilter 入口，端口映射实现还可能是 nftables、IPVS、eBPF 或 proxy，排查不能只查固定工具</li>
+<li>overlay 头会缩小可用 MTU；ICMP 被错误过滤会形成 PMTU black hole，典型现象是小包正常、大包或 TLS 卡住</li>
+<li>DNS、监听地址、优雅退出、连接池与 CPU quota 都能表现为“容器网络问题”，应按 socket—namespace—veth—bridge—route—policy—NAT—NIC—应用逐层验证</li>
+</ul>
+<p>下一篇讲 <strong>namespace 与 cgroup：容器到底隔离了什么</strong> —— PID、mount、user、UTS、IPC、network namespace 如何改变进程视图，cgroup v2 如何限制 CPU、内存、IO 与进程数，以及为什么“看不见”和“用不了”是两套完全不同的机制。</p>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2026-08-12</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/linux/">linux</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/linux/linux_36_namespace%E4%B8%8Ecgroup%E5%AE%B9%E5%99%A8%E5%88%B0%E5%BA%95%E9%9A%94%E7%A6%BB%E4%BA%86%E4%BB%80%E4%B9%88/" class="prev" rel="prev" title="Linux-36 namespace 与 cgroup：容器到底隔离了什么"><i class="fas fa-angle-left fa-fw"></i>Linux-36 namespace 与 cgroup：容器到底隔离了什么</a>
+            <a href="/posts/linux/linux_34_socket_API%E4%B8%8EGo%E7%BD%91%E7%BB%9C%E7%BC%96%E7%A8%8B/" class="next" rel="next" title="Linux-34 socket API 与 Go 网络编程：一个 fd 如何代表一条连接">Linux-34 socket API 与 Go 网络编程：一个 fd 如何代表一条连接<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2026-08-12T06:30:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Linux-35 虚拟网络：容器为什么能通"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

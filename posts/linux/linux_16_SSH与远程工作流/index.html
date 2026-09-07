@@ -1,0 +1,1489 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>Linux-16 SSH 与远程工作流：密钥认证原理、config 的威力、三种端口转发 - xingliuhua博客</title><meta name="Description" content="私钥为什么不会离开本机、known_hosts 防的是什么攻击、~/.ssh/config 能省掉多少事、-L/-R/-D 三种转发分别解决什么问题、ssh 连接慢 10 秒的真正原因、ControlMaster 复用带来的加速、以及 sshd 加固清单。"><meta property="og:title" content="Linux-16 SSH 与远程工作流：密钥认证原理、config 的威力、三种端口转发" />
+<meta property="og:description" content="私钥为什么不会离开本机、known_hosts 防的是什么攻击、~/.ssh/config 能省掉多少事、-L/-R/-D 三种转发分别解决什么问题、ssh 连接慢 10 秒的真正原因、ControlMaster 复用带来的加速、以及 sshd 加固清单。" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/linux/linux_16_SSH%E4%B8%8E%E8%BF%9C%E7%A8%8B%E5%B7%A5%E4%BD%9C%E6%B5%81/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2026-08-12T16:00:00+08:00" />
+<meta property="article:modified_time" content="2026-08-12T16:00:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="Linux-16 SSH 与远程工作流：密钥认证原理、config 的威力、三种端口转发"/>
+<meta name="twitter:description" content="私钥为什么不会离开本机、known_hosts 防的是什么攻击、~/.ssh/config 能省掉多少事、-L/-R/-D 三种转发分别解决什么问题、ssh 连接慢 10 秒的真正原因、ControlMaster 复用带来的加速、以及 sshd 加固清单。"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/linux/linux_16_SSH%E4%B8%8E%E8%BF%9C%E7%A8%8B%E5%B7%A5%E4%BD%9C%E6%B5%81/" /><link rel="prev" href="https://xingliuhua.github.io/posts/linux/linux_17_Shell%E8%84%9A%E6%9C%AC%E5%B7%A5%E7%A8%8B%E5%8C%96/" /><link rel="next" href="https://xingliuhua.github.io/posts/linux/linux_15_%E7%BD%91%E7%BB%9C%E6%93%8D%E4%BD%9C%E4%B8%8E%E6%8E%92%E6%9F%A5/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Linux-16 SSH 与远程工作流：密钥认证原理、config 的威力、三种端口转发",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_16_SSH%E4%B8%8E%E8%BF%9C%E7%A8%8B%E5%B7%A5%E4%BD%9C%E6%B5%81\/"
+        },"genre": "posts","keywords": "linux","wordcount":  13052 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_16_SSH%E4%B8%8E%E8%BF%9C%E7%A8%8B%E5%B7%A5%E4%BD%9C%E6%B5%81\/","datePublished": "2026-08-12T16:00:00+08:00","dateModified": "2026-08-12T16:00:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "私钥为什么不会离开本机、known_hosts 防的是什么攻击、~/.ssh/config 能省掉多少事、-L/-R/-D 三种转发分别解决什么问题、ssh 连接慢 10 秒的真正原因、ControlMaster 复用带来的加速、以及 sshd 加固清单。"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">Linux-16 SSH 与远程工作流：密钥认证原理、config 的威力、三种端口转发</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2026-08-12">2026-08-12</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 13052 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 27 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-ssh-的两层认证">1. SSH 的两层认证</a>
+      <ol>
+        <li><a href="#11-开篇第一问公钥认证的过程">1.1 开篇第一问：公钥认证的过程</a></li>
+      </ol>
+    </li>
+    <li><a href="#2-密钥管理">2. 密钥管理</a>
+      <ol>
+        <li><a href="#21-生成密钥选哪种算法">2.1 生成密钥：选哪种算法</a></li>
+        <li><a href="#22-ssh-keygen-参数">2.2 ssh-keygen 参数</a></li>
+        <li><a href="#23-部署公钥">2.3 部署公钥</a></li>
+        <li><a href="#24-authorized_keys-的高级选项">2.4 authorized_keys 的高级选项</a></li>
+        <li><a href="#25-权限要求为什么这么严">2.5 权限要求：为什么这么严</a></li>
+        <li><a href="#26-ssh-agent只输一次密码短语">2.6 ssh-agent：只输一次密码短语</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-known_hosts-与主机认证">3. known_hosts 与主机认证</a>
+      <ol>
+        <li><a href="#31-开篇第二问第一次连接的指纹确认">3.1 开篇第二问：第一次连接的指纹确认</a></li>
+        <li><a href="#32-known_hosts-的管理">3.2 known_hosts 的管理</a></li>
+        <li><a href="#33-主机密钥变更不要无脑删掉">3.3 主机密钥变更：不要无脑删掉</a></li>
+        <li><a href="#34-ssh-证书大规模场景的正解">3.4 SSH 证书：大规模场景的正解</a></li>
+      </ol>
+    </li>
+    <li><a href="#4-sshconfig省掉一半的敲键">4. ~/.ssh/config：省掉一半的敲键</a>
+      <ol>
+        <li><a href="#41-开篇第三问它能省掉什么">4.1 开篇第三问：它能省掉什么</a></li>
+        <li><a href="#42-常用字段">4.2 常用字段</a></li>
+      </ol>
+    </li>
+    <li><a href="#5-端口转发">5. 端口转发</a>
+      <ol>
+        <li><a href="#51--l-本地转发访问内网服务">5.1 <code>-L</code> 本地转发：访问内网服务</a></li>
+        <li><a href="#52--r-远程转发把本地服务暴露出去">5.2 <code>-R</code> 远程转发：把本地服务暴露出去</a></li>
+        <li><a href="#53--d-动态转发socks-代理">5.3 <code>-D</code> 动态转发：SOCKS 代理</a></li>
+        <li><a href="#54--j-proxyjump跳板机">5.4 <code>-J</code> ProxyJump：跳板机</a></li>
+        <li><a href="#55-相关参数">5.5 相关参数</a></li>
+      </ol>
+    </li>
+    <li><a href="#6-连接复用与为什么连接慢">6. 连接复用与「为什么连接慢」</a>
+      <ol>
+        <li><a href="#61-controlmaster第二次连接快到几乎瞬间">6.1 ControlMaster：第二次连接快到几乎瞬间</a></li>
+        <li><a href="#62-开篇第五问为什么连接慢">6.2 开篇第五问：为什么连接慢</a></li>
+        <li><a href="#63-保活防止连接被中断">6.3 保活：防止连接被中断</a></li>
+      </ol>
+    </li>
+    <li><a href="#7-文件传输">7. 文件传输</a></li>
+    <li><a href="#8-sshd-加固">8. sshd 加固</a>
+      <ol>
+        <li><a href="#81-改配置前的保命步骤">8.1 改配置前的保命步骤</a></li>
+        <li><a href="#82-加固清单">8.2 加固清单</a></li>
+        <li><a href="#83-match-块针对特定对象放宽或收紧">8.3 Match 块：针对特定对象放宽或收紧</a></li>
+        <li><a href="#84-fail2ban自动封禁暴力破解">8.4 fail2ban：自动封禁暴力破解</a></li>
+        <li><a href="#85-审计">8.5 审计</a></li>
+      </ol>
+    </li>
+    <li><a href="#9-tmux远程工作流的必备">9. tmux：远程工作流的必备</a></li>
+    <li><a href="#10-知识点扩展">10. 知识点扩展</a>
+      <ol>
+        <li><a href="#101-命令速查">10.1 命令速查</a></li>
+        <li><a href="#102-权限要求速查">10.2 权限要求速查</a></li>
+        <li><a href="#103-排查密钥认证失败的流程">10.3 排查「密钥认证失败」的流程</a></li>
+      </ol>
+    </li>
+    <li><a href="#11-面试题">11. 面试题</a></li>
+    <li><a href="#小结">小结</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><p>SSH 是服务端工程师每天都在用、但大多数人只用到 10% 的工具。这一篇把剩下的 90% 补上。</p>
+<p>先看五个问题：</p>
+<ol>
+<li>密钥认证的完整过程是什么？为什么说<strong>私钥永远不会离开本机</strong>？</li>
+<li>第一次连接时那句 <code>The authenticity of host ... can't be established</code> 是在防什么？</li>
+<li><code>~/.ssh/config</code> 能帮你省掉哪些事？</li>
+<li><code>-L</code>、<code>-R</code>、<code>-D</code> 三种端口转发分别解决什么问题？</li>
+<li>为什么 <code>ssh</code> 有时候要卡十几秒才出现密码提示？</li>
+</ol>
+<h1 id="1-ssh-的两层认证">1. SSH 的两层认证</h1>
+<p>一次 SSH 连接实际上做了<strong>两次方向相反的认证</strong>，很多人只关注后者：</p>
+<pre tabindex="0"><code>   ① 服务端认证（客户端验证服务器）        ← 防【中间人攻击】
+      服务器出示 host key，客户端在 ~/.ssh/known_hosts 里核对
+              |
+              v
+   ② 密钥交换与加密通道建立               ← ECDH/DH，协商出会话密钥
+              |
+              v
+   ③ 客户端认证（服务器验证你）            ← 密码 / 公钥 / 键盘交互 / GSSAPI
+</code></pre><p><strong>第 ① 步是最容易被忽略但最关键的</strong>：如果不验证服务器身份，攻击者可以伪装成目标服务器，你把密码或命令都发给了他。这就是 <code>known_hosts</code> 存在的全部意义。</p>
+<h2 id="11-开篇第一问公钥认证的过程">1.1 开篇第一问：公钥认证的过程</h2>
+<p><strong>核心结论：私钥永远不会被发送出去，服务器也永远不需要知道你的私钥。</strong></p>
+<pre tabindex="0"><code>   客户端                                          服务端
+      |                                              |
+      |  ① &#34;我想用这个公钥登录&#34;（发公钥指纹）           |
+      |---------------------------------------------&gt;|
+      |                                              |  ② 在 ~/.ssh/authorized_keys
+      |                                              |     里查找这个公钥
+      |                                              |     找到了 -&gt; 继续
+      |  ③ 发来一个随机数（challenge）                 |
+      |&lt;---------------------------------------------|
+      |                                              |
+      |  ④ 用【私钥】对这个随机数签名                   |
+      |     （私钥只用于计算，不发送）                  |
+      |                                              |
+      |  ⑤ 把签名发回去                               |
+      |---------------------------------------------&gt;|
+      |                                              |  ⑥ 用【公钥】验证签名
+      |                                              |     验证通过 = 对方确实持有私钥
+      |  ⑦ 认证成功                                   |
+      |&lt;---------------------------------------------|
+</code></pre><p><strong>这个设计的三个直接推论</strong>：</p>
+<ol>
+<li><strong>服务器被入侵，攻击者也拿不到你的私钥</strong>（它那里只有公钥）—— 这是密钥认证比密码认证安全得多的根本原因</li>
+<li><strong>同一个公钥可以放到一百台服务器上</strong>，泄漏其中任何一台的 <code>authorized_keys</code> 都无所谓</li>
+<li><strong>私钥文件必须严格保护</strong>（<code>600</code>），因为它就是你的全部身份凭证</li>
+</ol>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 实际观察这个过程</span>
+</span></span><span class="line"><span class="cl">ssh -v host 2&gt;<span class="p">&amp;</span><span class="m">1</span> <span class="p">|</span> grep -E <span class="s1">&#39;Offering|Server accepts|Authentication succeeded&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># debug1: Offering public key: /home/lhx/.ssh/id_ed25519 ED25519 SHA256:xxx</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># debug1: Server accepts key: /home/lhx/.ssh/id_ed25519 ED25519 SHA256:xxx</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># debug1: Authentication succeeded (publickey).</span>
+</span></span></code></pre></div><h1 id="2-密钥管理">2. 密钥管理</h1>
+<h2 id="21-生成密钥选哪种算法">2.1 生成密钥：选哪种算法</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ✅ 推荐：ed25519（现代默认）</span>
+</span></span><span class="line"><span class="cl">ssh-keygen -t ed25519 -C <span class="s2">&#34;lhx@laptop-2026&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 需要兼容老系统（OpenSSH &lt; 6.5）时用 RSA，且至少 3072 位</span>
+</span></span><span class="line"><span class="cl">ssh-keygen -t rsa -b <span class="m">4096</span> -C <span class="s2">&#34;lhx@laptop-2026&#34;</span>
+</span></span></code></pre></div><table>
+<thead>
+<tr>
+<th>算法</th>
+<th>密钥长度</th>
+<th>安全性</th>
+<th>速度</th>
+<th>兼容性</th>
+<th>建议</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong><code>ed25519</code></strong></td>
+<td>固定 256 位</td>
+<td><strong>高</strong></td>
+<td><strong>最快</strong></td>
+<td>OpenSSH 6.5+（2014）</td>
+<td>✅ <strong>首选</strong></td>
+</tr>
+<tr>
+<td><code>ed25519-sk</code></td>
+<td>—</td>
+<td>高 + 硬件</td>
+<td>快</td>
+<td>OpenSSH 8.2+</td>
+<td>需要 FIDO2 硬件密钥时</td>
+</tr>
+<tr>
+<td><code>ecdsa</code></td>
+<td>256/384/521</td>
+<td>高</td>
+<td>快</td>
+<td>广泛</td>
+<td>⚠️ 依赖 NIST 曲线，社区信任度不如 ed25519</td>
+</tr>
+<tr>
+<td><strong><code>rsa</code></strong></td>
+<td><strong>≥3072</strong>（4096 更好）</td>
+<td>中高</td>
+<td>慢</td>
+<td><strong>最好</strong></td>
+<td>兼容老系统时用</td>
+</tr>
+<tr>
+<td><code>dsa</code></td>
+<td>1024</td>
+<td><strong>低</strong></td>
+<td>—</td>
+<td>—</td>
+<td>❌ <strong>已被 OpenSSH 7.0 默认禁用</strong></td>
+</tr>
+</tbody>
+</table>
+<p><strong>为什么 ed25519 更好</strong>：密钥和签名都很短（公钥只有一行 68 字符）、签名验签快一个数量级、抗侧信道攻击、且不依赖有争议的 NIST 曲线参数。</p>
+<h2 id="22-ssh-keygen-参数">2.2 ssh-keygen 参数</h2>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>-t TYPE</code></td>
+<td>算法（<code>ed25519</code>/<code>rsa</code>/<code>ecdsa</code>）</td>
+</tr>
+<tr>
+<td><code>-b BITS</code></td>
+<td>密钥长度（仅 RSA/ECDSA 需要）</td>
+</tr>
+<tr>
+<td><code>-C COMMENT</code></td>
+<td><strong>注释</strong>（建议写 <code>用户@设备-年份</code>，便于日后清理）</td>
+</tr>
+<tr>
+<td><code>-f FILE</code></td>
+<td>输出文件名</td>
+</tr>
+<tr>
+<td><code>-N PASS</code></td>
+<td>密码短语（<code>-N ''</code> 表示无密码，自动化场景用）</td>
+</tr>
+<tr>
+<td><code>-p</code></td>
+<td><strong>修改已有私钥的密码短语</strong></td>
+</tr>
+<tr>
+<td><code>-y</code></td>
+<td><strong>从私钥重新导出公钥</strong>（公钥丢了不用重新生成！）</td>
+</tr>
+<tr>
+<td><code>-l -f KEY</code></td>
+<td>显示指纹</td>
+</tr>
+<tr>
+<td><code>-lv -f KEY</code></td>
+<td>显示指纹 + ASCII 艺术图</td>
+</tr>
+<tr>
+<td><code>-a N</code></td>
+<td>KDF 轮数（默认 16，越大越抗暴力破解，如 <code>-a 100</code>）</td>
+</tr>
+<tr>
+<td><code>-o</code></td>
+<td>用新的 OpenSSH 私钥格式（现在是默认）</td>
+</tr>
+<tr>
+<td><code>-R HOST</code></td>
+<td><strong>从 known_hosts 里移除某主机</strong></td>
+</tr>
+<tr>
+<td><code>-F HOST</code></td>
+<td>在 known_hosts 里查找某主机</td>
+</tr>
+<tr>
+<td><code>-H</code></td>
+<td>把 known_hosts 里的主机名哈希化</td>
+</tr>
+<tr>
+<td><code>-s</code>/<code>-I</code>/<code>-n</code></td>
+<td>用 CA 签发证书（见 3.4）</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ── 常用操作 ──</span>
+</span></span><span class="line"><span class="cl">ssh-keygen -t ed25519 -a <span class="m">100</span> -C <span class="s2">&#34;lhx@laptop-2026&#34;</span> -f ~/.ssh/id_ed25519
+</span></span><span class="line"><span class="cl">ssh-keygen -l -f ~/.ssh/id_ed25519.pub          <span class="c1"># 看指纹</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 256 SHA256:abc123... lhx@laptop-2026 (ED25519)</span>
+</span></span><span class="line"><span class="cl">ssh-keygen -y -f ~/.ssh/id_ed25519 &gt; id.pub     <span class="c1"># ✅ 从私钥恢复公钥</span>
+</span></span><span class="line"><span class="cl">ssh-keygen -p -f ~/.ssh/id_ed25519              <span class="c1"># 改私钥的密码短语</span>
+</span></span><span class="line"><span class="cl">ssh-keygen -t ed25519 -N <span class="s1">&#39;&#39;</span> -f ./deploy_key     <span class="c1"># 无密码密钥（CI/自动化用）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 为不同用途生成不同密钥（推荐做法）</span>
+</span></span><span class="line"><span class="cl">ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519_github -C <span class="s2">&#34;github&#34;</span>
+</span></span><span class="line"><span class="cl">ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519_prod  -C <span class="s2">&#34;prod-servers&#34;</span>
+</span></span><span class="line"><span class="cl">ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519_ci    -C <span class="s2">&#34;ci-deploy&#34;</span> -N <span class="s1">&#39;&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 好处：某个用途的密钥泄漏时，只需更换那一个</span>
+</span></span></code></pre></div><h2 id="23-部署公钥">2.3 部署公钥</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ✅ 最简单：ssh-copy-id</span>
+</span></span><span class="line"><span class="cl">ssh-copy-id -i ~/.ssh/id_ed25519.pub user@host
+</span></span><span class="line"><span class="cl">ssh-copy-id -i ~/.ssh/id_ed25519.pub -p <span class="m">2222</span> user@host
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 手动方式（没有 ssh-copy-id 时）</span>
+</span></span><span class="line"><span class="cl">cat ~/.ssh/id_ed25519.pub <span class="p">|</span> ssh user@host <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  <span class="s1">&#39;mkdir -p ~/.ssh &amp;&amp; chmod 700 ~/.ssh &amp;&amp; cat &gt;&gt; ~/.ssh/authorized_keys &amp;&amp; chmod 600 ~/.ssh/authorized_keys&#39;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 从 GitHub 拉某人的公钥（团队协作时方便）</span>
+</span></span><span class="line"><span class="cl">curl -fsS https://github.com/username.keys &gt;&gt; ~/.ssh/authorized_keys
+</span></span><span class="line"><span class="cl">ssh-import-id gh:username                       <span class="c1"># Ubuntu 上的工具</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 验证</span>
+</span></span><span class="line"><span class="cl">ssh -o <span class="nv">PreferredAuthentications</span><span class="o">=</span>publickey -o <span class="nv">PasswordAuthentication</span><span class="o">=</span>no user@host <span class="s1">&#39;echo OK&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ 强制只用公钥，确认密钥真的生效了</span>
+</span></span></code></pre></div><h2 id="24-authorized_keys-的高级选项">2.4 authorized_keys 的高级选项</h2>
+<p>这个文件不只是「一行一个公钥」，每行前面可以加<strong>限制选项</strong>，这是做受限访问的关键：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">cat ~/.ssh/authorized_keys
+</span></span><span class="line"><span class="cl"><span class="c1"># 基本格式：[选项] 算法 公钥 注释</span>
+</span></span><span class="line"><span class="cl">ssh-ed25519 AAAAC3Nza... lhx@laptop
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 限制这个密钥只能执行特定命令（部署、备份场景的核心手段）</span>
+</span></span><span class="line"><span class="cl"><span class="nv">command</span><span class="o">=</span><span class="s2">&#34;/usr/local/bin/deploy.sh&#34;</span>,no-port-forwarding,no-agent-forwarding,no-pty,no-X11-forwarding ssh-ed25519 AAAA... ci-deploy
+</span></span><span class="line"><span class="cl"><span class="c1"># 用这个密钥登录时，无论客户端敲什么命令，服务端都只执行 deploy.sh</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 原始命令存在 $SSH_ORIGINAL_COMMAND 环境变量里（脚本可以据此分派）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 限制来源 IP</span>
+</span></span><span class="line"><span class="cl"><span class="nv">from</span><span class="o">=</span><span class="s2">&#34;10.0.0.0/8,192.168.1.5&#34;</span> ssh-ed25519 AAAA... office-only
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 限制端口转发（只允许转发到特定目标）</span>
+</span></span><span class="line"><span class="cl"><span class="nv">permitopen</span><span class="o">=</span><span class="s2">&#34;127.0.0.1:5432&#34;</span> ssh-ed25519 AAAA... db-tunnel-only
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 其他选项</span>
+</span></span><span class="line"><span class="cl">restrict                     <span class="c1"># ✅ 一次性禁用所有转发、pty、agent（然后按需 permit）</span>
+</span></span><span class="line"><span class="cl">no-pty                       <span class="c1"># 不分配伪终端（防止交互式 shell）</span>
+</span></span><span class="line"><span class="cl">no-port-forwarding
+</span></span><span class="line"><span class="cl">no-agent-forwarding
+</span></span><span class="line"><span class="cl">no-X11-forwarding
+</span></span><span class="line"><span class="cl">expiry-time<span class="o">=</span><span class="s2">&#34;20261231&#34;</span>       <span class="c1"># 密钥过期时间（OpenSSH 8.2+）</span>
+</span></span><span class="line"><span class="cl"><span class="nv">environment</span><span class="o">=</span><span class="s2">&#34;FOO=bar&#34;</span>        <span class="c1"># 设置环境变量（需 sshd 开 PermitUserEnvironment）</span>
+</span></span><span class="line"><span class="cl"><span class="nv">tunnel</span><span class="o">=</span><span class="s2">&#34;0&#34;</span>                   <span class="c1"># 允许 tun 设备转发</span>
+</span></span></code></pre></div><p><strong>一个实用的受限部署账号配置</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 服务端 ~deploy/.ssh/authorized_keys</span>
+</span></span><span class="line"><span class="cl">restrict,command<span class="o">=</span><span class="s2">&#34;/usr/local/bin/ci-deploy.sh&#34;</span>,from<span class="o">=</span><span class="s2">&#34;10.20.0.0/16&#34;</span> ssh-ed25519 AAAA... ci
+</span></span><span class="line"><span class="cl"><span class="c1">#^^^^^^^^ 先全禁，command 限定动作，from 限定来源</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># /usr/local/bin/ci-deploy.sh 里根据原始命令分派</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#!/bin/bash</span>
+</span></span><span class="line"><span class="cl"><span class="nb">set</span> -euo pipefail
+</span></span><span class="line"><span class="cl"><span class="k">case</span> <span class="s2">&#34;</span><span class="nv">$SSH_ORIGINAL_COMMAND</span><span class="s2">&#34;</span> in
+</span></span><span class="line"><span class="cl">  <span class="s2">&#34;deploy &#34;</span>*<span class="o">)</span>  <span class="nb">exec</span> /opt/scripts/deploy.sh <span class="s2">&#34;</span><span class="si">${</span><span class="nv">SSH_ORIGINAL_COMMAND</span><span class="p">#deploy </span><span class="si">}</span><span class="s2">&#34;</span> <span class="p">;;</span>
+</span></span><span class="line"><span class="cl">  <span class="s2">&#34;rollback&#34;</span><span class="o">)</span>  <span class="nb">exec</span> /opt/scripts/rollback.sh <span class="p">;;</span>
+</span></span><span class="line"><span class="cl">  <span class="s2">&#34;status&#34;</span><span class="o">)</span>    <span class="nb">exec</span> systemctl status myapp <span class="p">;;</span>
+</span></span><span class="line"><span class="cl">  *<span class="o">)</span>           <span class="nb">echo</span> <span class="s2">&#34;不允许的命令: </span><span class="nv">$SSH_ORIGINAL_COMMAND</span><span class="s2">&#34;</span> &gt;<span class="p">&amp;</span>2<span class="p">;</span> <span class="nb">exit</span> <span class="m">1</span> <span class="p">;;</span>
+</span></span><span class="line"><span class="cl"><span class="k">esac</span>
+</span></span></code></pre></div><h2 id="25-权限要求为什么这么严">2.5 权限要求：为什么这么严</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">chmod <span class="m">700</span> ~/.ssh
+</span></span><span class="line"><span class="cl">chmod <span class="m">600</span> ~/.ssh/id_ed25519           <span class="c1"># 私钥</span>
+</span></span><span class="line"><span class="cl">chmod <span class="m">644</span> ~/.ssh/id_ed25519.pub       <span class="c1"># 公钥</span>
+</span></span><span class="line"><span class="cl">chmod <span class="m">600</span> ~/.ssh/authorized_keys
+</span></span><span class="line"><span class="cl">chmod <span class="m">600</span> ~/.ssh/config
+</span></span><span class="line"><span class="cl">chmod <span class="m">644</span> ~/.ssh/known_hosts
+</span></span><span class="line"><span class="cl">chmod go-w ~                          <span class="c1"># ✅ 家目录不能被组/其他人写</span>
+</span></span></code></pre></div><p><strong>为什么家目录不能组可写？</strong> 因为如果别人能写你的家目录，他就能<strong>删掉你的 <code>.ssh</code> 目录再换成自己的</strong>，从而伪造 <code>authorized_keys</code> 登录你的账号。sshd 会主动检查这一点并拒绝服务：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 客户端看到的现象（很有迷惑性：明明配了密钥却要输密码）</span>
+</span></span><span class="line"><span class="cl">ssh -v host
+</span></span><span class="line"><span class="cl"><span class="c1"># debug1: Authentications that can continue: publickey,password</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ... 然后要求输密码</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 服务端日志里才有真正的原因</span>
+</span></span><span class="line"><span class="cl">sudo journalctl -u sshd <span class="p">|</span> tail
+</span></span><span class="line"><span class="cl"><span class="c1"># Authentication refused: bad ownership or modes for directory /home/lhx</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Authentication refused: bad ownership or modes for file /home/lhx/.ssh/authorized_keys</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 私钥权限太松时客户端会直接拒绝</span>
+</span></span><span class="line"><span class="cl">ssh host
+</span></span><span class="line"><span class="cl"><span class="c1"># @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># @    WARNING: UNPROTECTED PRIVATE KEY FILE!          @</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Permissions 0644 for &#39;/home/lhx/.ssh/id_ed25519&#39; are too open.</span>
+</span></span><span class="line"><span class="cl">chmod <span class="m">600</span> ~/.ssh/id_ed25519           <span class="c1"># 修复</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 一键修复所有权限</span>
+</span></span><span class="line"><span class="cl">chmod <span class="m">700</span> ~/.ssh <span class="o">&amp;&amp;</span> chmod <span class="m">600</span> ~/.ssh/id_* ~/.ssh/authorized_keys 2&gt;/dev/null
+</span></span><span class="line"><span class="cl">chmod <span class="m">644</span> ~/.ssh/*.pub ~/.ssh/known_hosts 2&gt;/dev/null
+</span></span><span class="line"><span class="cl">chmod go-w ~
+</span></span></code></pre></div><h2 id="26-ssh-agent只输一次密码短语">2.6 ssh-agent：只输一次密码短语</h2>
+<p>私钥应该设密码短语（防止笔记本丢了直接被人用），但每次连接都输很烦。<code>ssh-agent</code> 把解密后的私钥<strong>放在内存里</strong>代为签名：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="nb">eval</span> <span class="s2">&#34;</span><span class="k">$(</span>ssh-agent -s<span class="k">)</span><span class="s2">&#34;</span>                    <span class="c1"># 启动 agent（会设置两个环境变量）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Agent pid 12345</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="nv">$SSH_AUTH_SOCK</span>                      <span class="c1"># /tmp/ssh-XXXX/agent.12345  &lt;- 通信用的 socket</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">ssh-add ~/.ssh/id_ed25519                <span class="c1"># 加载私钥（此时输一次密码短语）</span>
+</span></span><span class="line"><span class="cl">ssh-add -l                               <span class="c1"># ✅ 列出已加载的密钥</span>
+</span></span><span class="line"><span class="cl">ssh-add -L                               <span class="c1"># 列出公钥内容</span>
+</span></span><span class="line"><span class="cl">ssh-add -d ~/.ssh/id_ed25519             <span class="c1"># 移除一个</span>
+</span></span><span class="line"><span class="cl">ssh-add -D                               <span class="c1"># 移除全部</span>
+</span></span><span class="line"><span class="cl">ssh-add -t <span class="m">3600</span> ~/.ssh/id_ed25519        <span class="c1"># ✅ 1 小时后自动移除（更安全）</span>
+</span></span><span class="line"><span class="cl">ssh-add -x / -X                          <span class="c1"># 锁定 / 解锁 agent（需密码）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># macOS：存进 Keychain，重启后自动加载</span>
+</span></span><span class="line"><span class="cl">ssh-add --apple-use-keychain ~/.ssh/id_ed25519
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># Linux 上通常由桌面环境或 systemd 用户服务自动启动</span>
+</span></span><span class="line"><span class="cl">systemctl --user status ssh-agent
+</span></span><span class="line"><span class="cl"><span class="c1"># 或在 ~/.bashrc 里做惰性启动</span>
+</span></span><span class="line"><span class="cl"><span class="o">[[</span> -z <span class="s2">&#34;</span><span class="nv">$SSH_AUTH_SOCK</span><span class="s2">&#34;</span> <span class="o">]]</span> <span class="o">&amp;&amp;</span> <span class="nb">eval</span> <span class="s2">&#34;</span><span class="k">$(</span>ssh-agent -s<span class="k">)</span><span class="s2">&#34;</span> &gt;/dev/null
+</span></span></code></pre></div><p><strong>agent 转发（<code>-A</code>）的风险，必须知道</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">ssh -A user@jumphost                     <span class="c1"># 把本地 agent「转发」给远程主机</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 好处：在跳板机上可以直接 ssh 到内网机器，不用把私钥拷到跳板机</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ⚠️ 风险：跳板机上的 root（或攻破跳板机的攻击者）能通过那个 socket</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#         【用你的身份签名】，即冒充你登录任何你有权限的机器</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#         虽然拿不到私钥本身，但等于临时借用了你的身份</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 更安全的替代：ProxyJump（-J），见 5.4</span>
+</span></span><span class="line"><span class="cl">ssh -J user@jumphost user@target         <span class="c1"># 认证在【本地】完成，跳板机只做 TCP 转发</span>
+</span></span></code></pre></div><p><strong>结论：不要习惯性使用 <code>-A</code>。</strong> 需要经过跳板机时用 <code>-J</code>（ProxyJump），它不会把你的身份暴露给中间节点。</p>
+<h1 id="3-known_hosts-与主机认证">3. known_hosts 与主机认证</h1>
+<h2 id="31-开篇第二问第一次连接的指纹确认">3.1 开篇第二问：第一次连接的指纹确认</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">ssh newhost
+</span></span><span class="line"><span class="cl"><span class="c1"># The authenticity of host &#39;newhost (10.0.0.5)&#39; can&#39;t be established.</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ED25519 key fingerprint is SHA256:abc123def456...</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># This key is not known by any other names.</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Are you sure you want to continue connecting (yes/no/[fingerprint])?</span>
+</span></span></code></pre></div><p><strong>这在防什么？</strong> 防<strong>中间人攻击（MITM）</strong>。攻击者如果能劫持网络流量，可以伪装成目标服务器：你以为在和生产服务器通信，实际上在和攻击者通信，他转发流量的同时窃取你的密码和所有命令。</p>
+<p>SSH 的对策是 <strong>TOFU（Trust On First Use，首次使用即信任）</strong>：第一次连接时把服务器的 host key 指纹记下来，之后每次连接都核对。指纹不匹配就报警。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 严谨的做法是【通过可信渠道核对指纹】而不是直接敲 yes</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 在服务器上（通过云控制台/其他可信途径）执行：</span>
+</span></span><span class="line"><span class="cl">sudo ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
+</span></span><span class="line"><span class="cl"><span class="c1"># 256 SHA256:abc123def456... root@server (ED25519)</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#            ^^^^^^^^^^^^^^^ 与客户端提示的比对，一致才敲 yes</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 也可以直接输入指纹来确认（OpenSSH 8.x+ 支持）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Are you sure you want to continue connecting (yes/no/[fingerprint])? SHA256:abc123...</span>
+</span></span></code></pre></div><h2 id="32-known_hosts-的管理">3.2 known_hosts 的管理</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">cat ~/.ssh/known_hosts
+</span></span><span class="line"><span class="cl"><span class="c1"># |1|hash1=|hash2= ssh-ed25519 AAAAC3Nza...</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ^^^^^^^^^^^^^^^^ 主机名被哈希了（HashKnownHosts yes，Debian 系默认）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 10.0.0.5 ssh-ed25519 AAAAC3Nza...       &lt;- 未哈希的样子</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">ssh-keygen -F 10.0.0.5                    <span class="c1"># ✅ 查找某主机的记录（哈希了也能查）</span>
+</span></span><span class="line"><span class="cl">ssh-keygen -R 10.0.0.5                    <span class="c1"># ✅ 移除某主机（重装服务器后用）</span>
+</span></span><span class="line"><span class="cl">ssh-keygen -H                             <span class="c1"># 把现有记录哈希化</span>
+</span></span><span class="line"><span class="cl">ssh-keyscan -t ed25519 10.0.0.5           <span class="c1"># 获取服务器的 host key</span>
+</span></span><span class="line"><span class="cl">ssh-keyscan -H 10.0.0.5 &gt;&gt; ~/.ssh/known_hosts     <span class="c1"># ⚠️ 批量添加（跳过了指纹核对！）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 系统级的 known_hosts（对所有用户生效）</span>
+</span></span><span class="line"><span class="cl">sudo ssh-keyscan -H host &gt;&gt; /etc/ssh/ssh_known_hosts
+</span></span></code></pre></div><h2 id="33-主机密钥变更不要无脑删掉">3.3 主机密钥变更：不要无脑删掉</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">ssh host
+</span></span><span class="line"><span class="cl"><span class="c1"># @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># @    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># IT IS POSSIBLE THAT SOMEONE IS DOING SOMETHING NASTY!</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Offending ECDSA key in /home/lhx/.ssh/known_hosts:42</span>
+</span></span></code></pre></div><p><strong>这个警告有两种可能，必须区分清楚</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>可能</th>
+<th>概率</th>
+<th>判断方式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>服务器重装/重建</strong>（host key 重新生成）</td>
+<td>高</td>
+<td>你知道自己刚重装了、或云上重建了实例</td>
+</tr>
+<tr>
+<td><strong>IP 被复用</strong>（云上 IP 回收给了别人的机器）</td>
+<td>中</td>
+<td>检查是不是很久没连、IP 是动态分配的</td>
+</tr>
+<tr>
+<td><strong>中间人攻击</strong></td>
+<td>低但<strong>后果严重</strong></td>
+<td>通过其他渠道核对真实指纹</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ✅ 正确处理流程</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ① 先通过【可信渠道】拿到服务器的真实指纹（云控制台、带外管理、同事确认）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ② 与警告里显示的指纹比对</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ③ 一致 -&gt; 删掉旧记录</span>
+</span></span><span class="line"><span class="cl">ssh-keygen -R host
+</span></span><span class="line"><span class="cl">ssh host                                 <span class="c1"># 重新确认新指纹</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ❌ 不要养成这个习惯（等于放弃了 MITM 防护）</span>
+</span></span><span class="line"><span class="cl">ssh -o <span class="nv">StrictHostKeyChecking</span><span class="o">=</span>no host
+</span></span></code></pre></div><h2 id="34-ssh-证书大规模场景的正解">3.4 SSH 证书：大规模场景的正解</h2>
+<p>主机多了以后，<code>known_hosts</code> 的管理会失控（每台机器都要确认、重装就要更新所有人的文件）。<strong>SSH 证书</strong>用 CA 签名替代逐台信任：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ── 一次性：创建 CA ──</span>
+</span></span><span class="line"><span class="cl">ssh-keygen -t ed25519 -f host_ca -C <span class="s1">&#39;Host CA&#39;</span>      <span class="c1"># 主机 CA</span>
+</span></span><span class="line"><span class="cl">ssh-keygen -t ed25519 -f user_ca -C <span class="s1">&#39;User CA&#39;</span>      <span class="c1"># 用户 CA</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 给主机签发证书 ──</span>
+</span></span><span class="line"><span class="cl">ssh-keygen -s host_ca -I server01 -h -n server01.example.com,10.0.0.5 <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>           -V +52w /etc/ssh/ssh_host_ed25519_key.pub
+</span></span><span class="line"><span class="cl"><span class="c1">#          ^^ -h 表示这是主机证书  -n 是有效的主机名  -V 有效期</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 服务端 /etc/ssh/sshd_config：</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   HostCertificate /etc/ssh/ssh_host_ed25519_key-cert.pub</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 客户端 ~/.ssh/known_hosts 里只需一行：</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   @cert-authority *.example.com ssh-ed25519 AAAA...（host_ca 的公钥）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 之后所有 *.example.com 的机器都自动被信任，重装只需重新签发</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 给用户签发证书 ──</span>
+</span></span><span class="line"><span class="cl">ssh-keygen -s user_ca -I <span class="s1">&#39;lhx@company&#39;</span> -n lhx,deploy -V +8h ~/.ssh/id_ed25519.pub
+</span></span><span class="line"><span class="cl"><span class="c1">#                                         ^^^^^^^^^^ 允许登录的用户名  ^^^^ 8 小时后过期</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 服务端 sshd_config：</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   TrustedUserCAKeys /etc/ssh/user_ca.pub</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 之后不用维护 authorized_keys，且证书自动过期（离职/泄漏的风险窗口很小）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">ssh-keygen -L -f ~/.ssh/id_ed25519-cert.pub        <span class="c1"># 查看证书内容与有效期</span>
+</span></span></code></pre></div><p>这套机制是 Netflix BLESS、HashiCorp Vault SSH、Teleport 等方案的基础。<strong>核心价值是「凭证短期有效 + 集中签发」</strong>，比长期有效的 <code>authorized_keys</code> 安全得多。</p>
+<h1 id="4-sshconfig省掉一半的敲键">4. ~/.ssh/config：省掉一半的敲键</h1>
+<h2 id="41-开篇第三问它能省掉什么">4.1 开篇第三问：它能省掉什么</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ❌ 没有 config 时，每次都要写全</span>
+</span></span><span class="line"><span class="cl">ssh -p <span class="m">2222</span> -i ~/.ssh/id_ed25519_prod -o <span class="nv">ServerAliveInterval</span><span class="o">=</span><span class="m">30</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>    -J bastion.example.com deploy@10.20.30.40
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 有了 config</span>
+</span></span><span class="line"><span class="cl">ssh prod-web1
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">vim ~/.ssh/config          <span class="c1"># 权限要 600</span>
+</span></span></code></pre></div><pre tabindex="0"><code># ── 全局默认（放在文件【最后】，因为 SSH 采用「首次匹配优先」）──
+
+Host bastion
+    HostName bastion.example.com
+    User lhx
+    Port 22
+    IdentityFile ~/.ssh/id_ed25519_prod
+
+Host prod-*
+    User deploy
+    Port 2222
+    IdentityFile ~/.ssh/id_ed25519_prod
+    ProxyJump bastion                    # ✅ 自动经过跳板机
+    IdentitiesOnly yes
+
+Host prod-web1
+    HostName 10.20.30.40
+Host prod-web2
+    HostName 10.20.30.41
+Host prod-db1
+    HostName 10.20.31.10
+    LocalForward 15432 127.0.0.1:5432    # ✅ 连上就自动建立数据库隧道
+
+Host github.com
+    User git
+    IdentityFile ~/.ssh/id_ed25519_github
+    IdentitiesOnly yes
+
+# 通配的全局设置
+Host *
+    ServerAliveInterval 30               # 每 30 秒发一次保活
+    ServerAliveCountMax 3                # 3 次无响应就断开
+    ControlMaster auto                   # ✅ 连接复用（见第 6 章）
+    ControlPath ~/.ssh/cm-%r@%h:%p
+    ControlPersist 10m
+    AddKeysToAgent yes                   # 首次用到时自动加进 agent
+    HashKnownHosts yes
+    Compression no                       # 内网不压缩（CPU 更贵）
+    TCPKeepAlive yes
+</code></pre><h2 id="42-常用字段">4.2 常用字段</h2>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Host</code></td>
+<td><strong>别名</strong>（支持通配 <code>*</code>、<code>?</code>、<code>!</code> 排除）</td>
+</tr>
+<tr>
+<td><code>HostName</code></td>
+<td>真实主机名/IP（支持 <code>%h</code> 占位）</td>
+</tr>
+<tr>
+<td><code>User</code></td>
+<td>登录用户</td>
+</tr>
+<tr>
+<td><code>Port</code></td>
+<td>端口</td>
+</tr>
+<tr>
+<td><code>IdentityFile</code></td>
+<td>私钥路径（可多个）</td>
+</tr>
+<tr>
+<td><strong><code>IdentitiesOnly yes</code></strong></td>
+<td><strong>只用指定的密钥</strong>（重要！见下）</td>
+</tr>
+<tr>
+<td><strong><code>ProxyJump</code></strong></td>
+<td><strong>跳板机</strong>（等价 <code>-J</code>，可多级用逗号分隔）</td>
+</tr>
+<tr>
+<td><code>ProxyCommand</code></td>
+<td>自定义代理命令（更灵活，见 5.4）</td>
+</tr>
+<tr>
+<td><code>LocalForward</code></td>
+<td>本地端口转发（等价 <code>-L</code>）</td>
+</tr>
+<tr>
+<td><code>RemoteForward</code></td>
+<td>远程转发（<code>-R</code>）</td>
+</tr>
+<tr>
+<td><code>DynamicForward</code></td>
+<td>动态转发（<code>-D</code>）</td>
+</tr>
+<tr>
+<td><strong><code>ServerAliveInterval</code></strong></td>
+<td><strong>客户端保活间隔（秒）</strong></td>
+</tr>
+<tr>
+<td><code>ServerAliveCountMax</code></td>
+<td>无响应几次后断开</td>
+</tr>
+<tr>
+<td><code>TCPKeepAlive</code></td>
+<td>TCP 层保活</td>
+</tr>
+<tr>
+<td><strong><code>ControlMaster</code>/<code>ControlPath</code>/<code>ControlPersist</code></strong></td>
+<td><strong>连接复用</strong>（第 6 章）</td>
+</tr>
+<tr>
+<td><code>ForwardAgent</code></td>
+<td>agent 转发（<strong>默认 no，建议保持</strong>）</td>
+</tr>
+<tr>
+<td><code>StrictHostKeyChecking</code></td>
+<td><code>yes</code>/<code>no</code>/<code>ask</code>/<code>accept-new</code></td>
+</tr>
+<tr>
+<td><code>UserKnownHostsFile</code></td>
+<td>自定义 known_hosts 位置</td>
+</tr>
+<tr>
+<td><code>LogLevel</code></td>
+<td><code>QUIET</code>/<code>INFO</code>/<code>DEBUG</code></td>
+</tr>
+<tr>
+<td><code>Compression</code></td>
+<td>压缩（<strong>慢速链路开，内网关</strong>）</td>
+</tr>
+<tr>
+<td><code>PreferredAuthentications</code></td>
+<td>认证方式的顺序</td>
+</tr>
+<tr>
+<td><code>AddKeysToAgent</code></td>
+<td>自动加载密钥到 agent</td>
+</tr>
+<tr>
+<td><code>RequestTTY</code></td>
+<td><code>yes</code>/<code>no</code>/<code>force</code>/<code>auto</code></td>
+</tr>
+<tr>
+<td><code>RemoteCommand</code></td>
+<td>连上后自动执行的命令</td>
+</tr>
+<tr>
+<td><code>SetEnv</code> / <code>SendEnv</code></td>
+<td>传递环境变量</td>
+</tr>
+<tr>
+<td><code>Include</code></td>
+<td><strong>包含其他配置文件</strong></td>
+</tr>
+<tr>
+<td><code>Match</code></td>
+<td>条件匹配（比 Host 更灵活）</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>IdentitiesOnly yes</code> 为什么重要</strong>：不加它时，ssh 会把 agent 里<strong>所有</strong>密钥依次试一遍。如果你有 5 个密钥，而服务器的 <code>MaxAuthTries</code> 是 3，那么在试到正确的那个之前就已经被断开了 —— 表现为「明明配了正确的 IdentityFile 却认证失败」。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 两个实用技巧</span>
+</span></span><span class="line"><span class="cl">Host *
+</span></span><span class="line"><span class="cl">    Include ~/.ssh/config.d/*            <span class="c1"># ✅ 按项目/客户拆分配置文件</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">Match host *.internal <span class="nb">exec</span> <span class="s2">&#34;nc -z bastion 22&#34;</span>
+</span></span><span class="line"><span class="cl">    ProxyJump bastion
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ Match + exec：只在跳板机可达时才用它（在公司内网直连，在外网走跳板）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 验证配置的实际生效值（排查配置没生效时用）</span>
+</span></span><span class="line"><span class="cl">ssh -G prod-web1                         <span class="c1"># ✅ 打印所有最终生效的选项</span>
+</span></span><span class="line"><span class="cl">ssh -G prod-web1 <span class="p">|</span> grep -E <span class="s1">&#39;hostname|user|port|identityfile|proxyjump&#39;</span>
+</span></span></code></pre></div><h1 id="5-端口转发">5. 端口转发</h1>
+<p>开篇第四问。三种转发解决三类完全不同的问题，用一个统一的记法理解：<strong><code>-L</code> 是「把远端的服务搬到本地」，<code>-R</code> 是「把本地的服务送到远端」，<code>-D</code> 是「把整个网络出口搬到远端」</strong>。</p>
+<h2 id="51--l-本地转发访问内网服务">5.1 <code>-L</code> 本地转发：访问内网服务</h2>
+<pre tabindex="0"><code>   你的笔记本                    跳板机/服务器              内网数据库
+   +--------------+              +----------+             +-----------+
+   | localhost    |   SSH 隧道   |          |             |           |
+   | :15432 ──────┼──────────────┼─────────►┼────────────►│ :5432     |
+   +--------------+              +----------+             +-----------+
+        ^                                                 10.0.1.20
+        └── 本地程序连 127.0.0.1:15432，实际到了 10.0.1.20:5432
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">ssh -L 15432:10.0.1.20:5432 user@bastion
+</span></span><span class="line"><span class="cl"><span class="c1">#      ^^^^^ ^^^^^^^^^^^^^^^^</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#      本地端口  从【服务端】视角能访问到的目标地址:端口</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 之后本地连数据库</span>
+</span></span><span class="line"><span class="cl">psql -h 127.0.0.1 -p <span class="m">15432</span> -U dbuser mydb
+</span></span><span class="line"><span class="cl">mysql -h 127.0.0.1 -P <span class="m">13306</span> -u root -p
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 常见用法</span>
+</span></span><span class="line"><span class="cl">ssh -L 15432:127.0.0.1:5432 user@dbserver      <span class="c1"># 目标就是 ssh 服务器自己</span>
+</span></span><span class="line"><span class="cl">ssh -L 8080:internal-web:80 user@bastion       <span class="c1"># 访问内网 Web</span>
+</span></span><span class="line"><span class="cl">ssh -L 16379:redis.internal:6379 user@bastion  <span class="c1"># Redis</span>
+</span></span><span class="line"><span class="cl">ssh -NL 15432:127.0.0.1:5432 user@host         <span class="c1"># ✅ -N 不执行远程命令（只做隧道）</span>
+</span></span><span class="line"><span class="cl">ssh -fNL 15432:127.0.0.1:5432 user@host        <span class="c1"># ✅ -f 转到后台</span>
+</span></span><span class="line"><span class="cl">ssh -L 0.0.0.0:15432:db:5432 user@host         <span class="c1"># ⚠️ 监听所有网卡（局域网其他人也能用）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 在 config 里固化</span>
+</span></span><span class="line"><span class="cl">Host prod-db
+</span></span><span class="line"><span class="cl">    HostName 10.0.1.20
+</span></span><span class="line"><span class="cl">    ProxyJump bastion
+</span></span><span class="line"><span class="cl">    LocalForward <span class="m">15432</span> 127.0.0.1:5432
+</span></span></code></pre></div><h2 id="52--r-远程转发把本地服务暴露出去">5.2 <code>-R</code> 远程转发：把本地服务暴露出去</h2>
+<pre tabindex="0"><code>   你的笔记本                    远程服务器
+   +--------------+              +---------------------+
+   | 本地开发服务  |   SSH 隧道   |  localhost:9000     |
+   | :3000  ◄─────┼──────────────┼──────────           |
+   +--------------+              +---------------------+
+                                  ^ 服务器上访问 127.0.0.1:9000
+                                    实际到了你笔记本的 :3000
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">ssh -R 9000:127.0.0.1:3000 user@remote
+</span></span><span class="line"><span class="cl"><span class="c1">#      ^^^^ 【远程】监听的端口  ^^^^^^^^^^^^^^ 从【客户端】视角的目标</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 典型场景</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ① 让远程服务器回调你本地的开发服务（调试 webhook）</span>
+</span></span><span class="line"><span class="cl">ssh -R 9000:localhost:3000 user@remote
+</span></span><span class="line"><span class="cl"><span class="c1"># 远程执行 curl localhost:9000 会打到你本地的 3000</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ② 内网机器没有公网 IP，做反向隧道让外部能访问</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 在内网机器上执行（连到有公网 IP 的服务器）</span>
+</span></span><span class="line"><span class="cl">ssh -fNR 2222:localhost:22 user@public-server
+</span></span><span class="line"><span class="cl"><span class="c1"># 之后在 public-server 上：ssh -p 2222 localhost  就连回了内网机器</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ⚠️ 默认远程只监听 127.0.0.1，要让其他机器也能访问需要服务端配合</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 服务端 sshd_config: GatewayPorts yes（或 clientspecified）</span>
+</span></span><span class="line"><span class="cl">ssh -R 0.0.0.0:9000:localhost:3000 user@remote
+</span></span></code></pre></div><h2 id="53--d-动态转发socks-代理">5.3 <code>-D</code> 动态转发：SOCKS 代理</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">ssh -D <span class="m">1080</span> user@bastion                 <span class="c1"># 在本地开一个 SOCKS5 代理</span>
+</span></span><span class="line"><span class="cl">ssh -fND <span class="m">1080</span> user@bastion               <span class="c1"># 后台运行</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 之后把流量指向它</span>
+</span></span><span class="line"><span class="cl">curl --socks5-hostname 127.0.0.1:1080 https://internal.example.com
+</span></span><span class="line"><span class="cl"><span class="nb">export</span> <span class="nv">ALL_PROXY</span><span class="o">=</span>socks5h://127.0.0.1:1080     <span class="c1"># h 表示【DNS 也走代理】（重要）</span>
+</span></span><span class="line"><span class="cl">git config --global http.proxy socks5h://127.0.0.1:1080
+</span></span><span class="line"><span class="cl"><span class="c1"># 浏览器设置 SOCKS5 代理 127.0.0.1:1080</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 用途：临时访问整个内网（不用为每个服务单独 -L）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ⚠️ 注意 socks5 vs socks5h 的区别：</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    socks5  -&gt; DNS 在本地解析（内网域名解析不了）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    socks5h -&gt; DNS 也通过代理解析  ✅</span>
+</span></span></code></pre></div><h2 id="54--j-proxyjump跳板机">5.4 <code>-J</code> ProxyJump：跳板机</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ✅ 现代写法（OpenSSH 7.3+）</span>
+</span></span><span class="line"><span class="cl">ssh -J user@bastion user@target
+</span></span><span class="line"><span class="cl">ssh -J user@bastion1,user@bastion2 user@target       <span class="c1"># 多级跳板</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 等价的老写法</span>
+</span></span><span class="line"><span class="cl">ssh -o <span class="nv">ProxyCommand</span><span class="o">=</span><span class="s1">&#39;ssh -W %h:%p user@bastion&#39;</span> user@target
+</span></span><span class="line"><span class="cl">ssh -o <span class="nv">ProxyCommand</span><span class="o">=</span><span class="s1">&#39;ssh user@bastion nc %h %p&#39;</span> user@target   <span class="c1"># 更老（需要对端有 nc）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># config 里</span>
+</span></span><span class="line"><span class="cl">Host target
+</span></span><span class="line"><span class="cl">    HostName 10.0.1.50
+</span></span><span class="line"><span class="cl">    ProxyJump bastion
+</span></span></code></pre></div><p><strong><code>-J</code> 相比 <code>ssh 到跳板机再 ssh</code> 的三个优势</strong>：</p>
+<ol>
+<li><strong>认证在本地完成</strong> —— 私钥不用拷到跳板机，也不用开 agent 转发（跳板机上的 root 无法冒充你）</li>
+<li><strong><code>scp</code>/<code>rsync</code>/<code>sftp</code> 可以直接用</strong> —— 因为它是一条端到端的连接</li>
+<li><strong>跳板机只做 TCP 转发</strong>，看不到你和目标之间的任何内容（端到端加密）</li>
+</ol>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 有了 ProxyJump，这些都能直接用</span>
+</span></span><span class="line"><span class="cl">scp -J user@bastion file user@target:/path/
+</span></span><span class="line"><span class="cl">rsync -av -e <span class="s1">&#39;ssh -J user@bastion&#39;</span> /local/ user@target:/remote/
+</span></span><span class="line"><span class="cl">sftp -J user@bastion user@target
+</span></span></code></pre></div><h2 id="55-相关参数">5.5 相关参数</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">-N          <span class="c1"># 不执行远程命令（纯隧道，不会给你 shell）</span>
+</span></span><span class="line"><span class="cl">-f          <span class="c1"># 后台运行（通常配 -N）</span>
+</span></span><span class="line"><span class="cl">-T          <span class="c1"># 不分配伪终端</span>
+</span></span><span class="line"><span class="cl">-t          <span class="c1"># 强制分配伪终端（远程命令需要交互时）</span>
+</span></span><span class="line"><span class="cl">-q          <span class="c1"># 静默</span>
+</span></span><span class="line"><span class="cl">-v/-vv/-vvv <span class="c1"># 调试输出</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 组合记忆</span>
+</span></span><span class="line"><span class="cl">ssh -fNL 端口转发 host        <span class="c1"># 后台跑一条本地转发隧道</span>
+</span></span><span class="line"><span class="cl">ssh -fND <span class="m">1080</span> host           <span class="c1"># 后台跑一个 SOCKS 代理</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 管理后台隧道</span>
+</span></span><span class="line"><span class="cl">ps aux <span class="p">|</span> grep <span class="s1">&#39;ssh -fN&#39;</span>
+</span></span><span class="line"><span class="cl">pkill -f <span class="s1">&#39;ssh -fNL 15432&#39;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 更好的方式：用 autossh 自动重连</span>
+</span></span><span class="line"><span class="cl">autossh -M <span class="m">0</span> -fNL 15432:127.0.0.1:5432 user@host
+</span></span><span class="line"><span class="cl"><span class="c1">#        ^^^^^ 不用监控端口，靠 ServerAliveInterval 检测断线</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 或者交给 systemd 管（生产上的隧道应该这样做）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># /etc/systemd/system/db-tunnel.service</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># [Service]</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ExecStart=/usr/bin/ssh -NL 15432:127.0.0.1:5432 -o ServerAliveInterval=30 \</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#           -o ExitOnForwardFailure=yes -i /etc/ssh/tunnel_key user@host</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Restart=always</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># RestartSec=10</span>
+</span></span></code></pre></div><h1 id="6-连接复用与为什么连接慢">6. 连接复用与「为什么连接慢」</h1>
+<h2 id="61-controlmaster第二次连接快到几乎瞬间">6.1 ControlMaster：第二次连接快到几乎瞬间</h2>
+<pre tabindex="0"><code>   没有复用：每次 ssh 都要完整走一遍
+      TCP 握手 -&gt; 密钥交换 -&gt; 认证 -&gt; 建立通道      （典型 300ms ~ 1s）
+
+   有了复用：第一条连接建立后，后续连接【共享同一条 TCP+加密通道】
+      直接开一个新 channel                        （典型 10ms）
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ~/.ssh/config</span>
+</span></span><span class="line"><span class="cl">Host *
+</span></span><span class="line"><span class="cl">    ControlMaster auto                   <span class="c1"># 自动创建/复用主连接</span>
+</span></span><span class="line"><span class="cl">    ControlPath ~/.ssh/cm-%r@%h:%p       <span class="c1"># socket 文件路径（%r 用户 %h 主机 %p 端口）</span>
+</span></span><span class="line"><span class="cl">    ControlPersist 10m                   <span class="c1"># ✅ 主连接在最后一个会话退出后再保持 10 分钟</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 效果验证</span>
+</span></span><span class="line"><span class="cl"><span class="nb">time</span> ssh host <span class="nb">true</span>          <span class="c1"># real 0m0.6s     第一次（建主连接）</span>
+</span></span><span class="line"><span class="cl"><span class="nb">time</span> ssh host <span class="nb">true</span>          <span class="c1"># real 0m0.02s    第二次（复用）  ← 快 30 倍</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 管理主连接</span>
+</span></span><span class="line"><span class="cl">ssh -O check host                        <span class="c1"># 检查主连接是否存在</span>
+</span></span><span class="line"><span class="cl">ssh -O <span class="nb">exit</span> host                         <span class="c1"># ✅ 关闭主连接</span>
+</span></span><span class="line"><span class="cl">ssh -O stop host                         <span class="c1"># 停止接受新的复用请求</span>
+</span></span><span class="line"><span class="cl">ls ~/.ssh/cm-*                           <span class="c1"># 看有哪些主连接</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 手动建一条主连接</span>
+</span></span><span class="line"><span class="cl">ssh -MNf -S ~/.ssh/cm-manual host        <span class="c1"># -M 做 master，-S 指定 socket</span>
+</span></span><span class="line"><span class="cl">ssh -S ~/.ssh/cm-manual host <span class="s1">&#39;uptime&#39;</span>    <span class="c1"># 复用它</span>
+</span></span></code></pre></div><p><strong>收益最明显的三个场景</strong>：<code>git push/pull</code>（每次操作都要连一次）、Ansible/批量脚本（对同一台机器执行几十条命令）、<code>rsync</code> + 多次调用。</p>
+<p><strong>两个注意点</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ⚠️ ① ControlPath 太长会失败（Unix socket 路径有 108 字符限制）</span>
+</span></span><span class="line"><span class="cl">ControlPath ~/.ssh/cm-%C                 <span class="c1"># ✅ %C 是 (本地主机,远端主机,端口,用户) 的哈希，很短</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ⚠️ ② 主连接断了，所有复用的会话会一起断</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#      不稳定网络上配合 ServerAliveInterval 使用</span>
+</span></span></code></pre></div><h2 id="62-开篇第五问为什么连接慢">6.2 开篇第五问：为什么连接慢</h2>
+<p>按概率排列：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 先定位慢在哪一步</span>
+</span></span><span class="line"><span class="cl">ssh -v host 2&gt;<span class="p">&amp;</span><span class="m">1</span> <span class="p">|</span> ts -i <span class="s1">&#39;%.s&#39;</span>           <span class="c1"># 每行前面加上距上一行的耗时（moreutils）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 或者</span>
+</span></span><span class="line"><span class="cl"><span class="nb">time</span> ssh -v host <span class="nb">true</span> 2&gt;<span class="p">&amp;</span><span class="m">1</span> <span class="p">|</span> tail -30
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 原因① 服务端 DNS 反查（最常见）──</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># sshd 默认可能对客户端 IP 做反向 DNS 解析，DNS 不通就要等超时</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 服务端 /etc/ssh/sshd_config:</span>
+</span></span><span class="line"><span class="cl">UseDNS no                                <span class="c1"># ✅ 关掉（现代版本默认已是 no）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 原因② GSSAPI 认证尝试 ──</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 客户端会先尝试 Kerberos，环境里没有 KDC 就要等超时</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 客户端 ~/.ssh/config:</span>
+</span></span><span class="line"><span class="cl">GSSAPIAuthentication no                  <span class="c1"># ✅</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 原因③ 试了太多密钥 ──</span>
+</span></span><span class="line"><span class="cl">ssh -v host 2&gt;<span class="p">&amp;</span><span class="m">1</span> <span class="p">|</span> grep -c <span class="s1">&#39;Offering public key&#39;</span>    <span class="c1"># 试了几个</span>
+</span></span><span class="line"><span class="cl">IdentitiesOnly yes                       <span class="c1"># ✅ 只用指定的密钥</span>
+</span></span><span class="line"><span class="cl">IdentityFile ~/.ssh/id_ed25519_prod
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 原因④ 服务端登录脚本慢 ──</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ~/.bashrc 或 /etc/profile.d/ 里有慢操作（网络请求、大量 shell 补全、conda 初始化）</span>
+</span></span><span class="line"><span class="cl"><span class="nb">time</span> ssh host <span class="s1">&#39;true&#39;</span>                     <span class="c1"># 不启动 shell</span>
+</span></span><span class="line"><span class="cl"><span class="nb">time</span> ssh host                            <span class="c1"># 启动完整登录 shell（差值就是 profile 的耗时）</span>
+</span></span><span class="line"><span class="cl">ssh host <span class="s1">&#39;bash -x -l -c true&#39;</span> 2&gt;<span class="p">&amp;</span><span class="m">1</span> <span class="p">|</span> ts -i <span class="s1">&#39;%.s&#39;</span> <span class="p">|</span> sort -rn <span class="p">|</span> head   <span class="c1"># 找出慢在哪一行</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 原因⑤ MOTD / pam_motd 慢 ──</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Ubuntu 的 update-motd 会检查系统更新、云元数据，可能卡住</span>
+</span></span><span class="line"><span class="cl">sudo chmod -x /etc/update-motd.d/*       <span class="c1"># 禁掉</span>
+</span></span><span class="line"><span class="cl">ssh -o <span class="nv">LogLevel</span><span class="o">=</span>QUIET host               <span class="c1"># 或者客户端不显示</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 原因⑥ IPv6 优先但不通 ──</span>
+</span></span><span class="line"><span class="cl">ssh -4 host                              <span class="c1"># 强制 IPv4</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># config: AddressFamily inet</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 原因⑦ 服务端 entropy 不足（老系统/虚拟机）──</span>
+</span></span><span class="line"><span class="cl">cat /proc/sys/kernel/random/entropy_avail    <span class="c1"># &lt; 200 就可能有问题</span>
+</span></span><span class="line"><span class="cl">sudo apt install haveged                     <span class="c1"># 补熵（现代内核已很少遇到）</span>
+</span></span></code></pre></div><p><strong>一份「快速连接」的客户端配置</strong>：</p>
+<pre tabindex="0"><code>Host *
+    GSSAPIAuthentication no
+    IdentitiesOnly yes
+    ControlMaster auto
+    ControlPath ~/.ssh/cm-%C
+    ControlPersist 10m
+    ServerAliveInterval 30
+    ServerAliveCountMax 3
+    Compression no
+    AddressFamily inet
+</code></pre><h2 id="63-保活防止连接被中断">6.3 保活：防止连接被中断</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 客户端侧（推荐）</span>
+</span></span><span class="line"><span class="cl">ServerAliveInterval <span class="m">30</span>                   <span class="c1"># 每 30 秒发一个「你还在吗」</span>
+</span></span><span class="line"><span class="cl">ServerAliveCountMax <span class="m">3</span>                    <span class="c1"># 3 次没回应就断开（即 90 秒判死）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 服务端侧</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># /etc/ssh/sshd_config</span>
+</span></span><span class="line"><span class="cl">ClientAliveInterval <span class="m">30</span>
+</span></span><span class="line"><span class="cl">ClientAliveCountMax <span class="m">3</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># TCPKeepAlive 与上面的区别</span>
+</span></span><span class="line"><span class="cl">TCPKeepAlive yes            <span class="c1"># TCP 层的 keepalive，能被 NAT/防火墙识别，但间隔由内核决定（默认 2 小时）</span>
+</span></span><span class="line"><span class="cl">ServerAliveInterval <span class="m">30</span>      <span class="c1"># ✅ SSH 应用层的，走加密通道，间隔可控，更可靠</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 为什么需要：NAT 网关/云负载均衡通常会在【空闲 5~30 分钟】后清掉连接跟踪表项，</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#            此时连接会「静默死亡」—— 你敲键盘没反应，也没有报错</span>
+</span></span></code></pre></div><h1 id="7-文件传输">7. 文件传输</h1>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ── scp（简单但已不推荐）──</span>
+</span></span><span class="line"><span class="cl">scp file user@host:/path/
+</span></span><span class="line"><span class="cl">scp -r dir user@host:/path/
+</span></span><span class="line"><span class="cl">scp -P <span class="m">2222</span> -i ~/.ssh/key file user@host:/path/
+</span></span><span class="line"><span class="cl">scp user@host:/path/file ./                     <span class="c1"># 拉取</span>
+</span></span><span class="line"><span class="cl">scp -3 host1:/f host2:/f                        <span class="c1"># 两台远程机之间（经过本地）</span>
+</span></span><span class="line"><span class="cl">scp -C file host:/path                          <span class="c1"># 压缩</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ⚠️ OpenSSH 9.0+ 默认改用 SFTP 协议实现 scp，有行为变化：</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    - 远程通配符展开的行为不同（老版本在远程 shell 展开，新版本不展开）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    - 某些边界情况下的路径处理不同</span>
+</span></span><span class="line"><span class="cl">scp -O file host:/path                          <span class="c1"># -O 强制用老的 scp 协议</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 结论：新代码一律用 rsync 或 sftp</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── rsync over ssh（推荐，见 12 篇）──</span>
+</span></span><span class="line"><span class="cl">rsync -avP -e <span class="s1">&#39;ssh -p 2222&#39;</span> /local/ user@host:/remote/
+</span></span><span class="line"><span class="cl">rsync -avP -e <span class="s1">&#39;ssh -J bastion&#39;</span> /local/ user@target:/remote/
+</span></span><span class="line"><span class="cl">rsync -avP --rsync-path<span class="o">=</span><span class="s1">&#39;sudo rsync&#39;</span> /local/ user@host:/root-only/
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── sftp（交互式/批处理）──</span>
+</span></span><span class="line"><span class="cl">sftp user@host
+</span></span><span class="line"><span class="cl"><span class="c1"># get / put / ls / lls / cd / lcd / mkdir / rm / bye</span>
+</span></span><span class="line"><span class="cl">sftp -b - user@host <span class="s">&lt;&lt;&#39;EOF&#39;
+</span></span></span><span class="line"><span class="cl"><span class="s">cd /upload
+</span></span></span><span class="line"><span class="cl"><span class="s">put local.tar.gz
+</span></span></span><span class="line"><span class="cl"><span class="s">chmod 644 local.tar.gz
+</span></span></span><span class="line"><span class="cl"><span class="s">EOF</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 通过 ssh 直接传流（不落中间文件，12 篇讲过）──</span>
+</span></span><span class="line"><span class="cl">tar -czf - /data <span class="p">|</span> ssh host <span class="s1">&#39;tar -xzf - -C /restore&#39;</span>
+</span></span><span class="line"><span class="cl">ssh host <span class="s1">&#39;cat /var/log/big.log&#39;</span> <span class="p">|</span> gzip &gt; local.log.gz
+</span></span><span class="line"><span class="cl">mysqldump db <span class="p">|</span> ssh host <span class="s1">&#39;mysql db&#39;</span>
+</span></span><span class="line"><span class="cl">dd <span class="k">if</span><span class="o">=</span>/dev/sda <span class="nv">bs</span><span class="o">=</span>4M <span class="p">|</span> ssh host <span class="s1">&#39;dd of=/backup/disk.img bs=4M&#39;</span>
+</span></span></code></pre></div><h1 id="8-sshd-加固">8. sshd 加固</h1>
+<h2 id="81-改配置前的保命步骤">8.1 改配置前的保命步骤</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ⚠️ sshd 配置改错会把自己锁在外面。铁律：</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ① 先测语法</span>
+</span></span><span class="line"><span class="cl">sudo sshd -t                                    <span class="c1"># ✅ 测试配置文件语法</span>
+</span></span><span class="line"><span class="cl">sudo sshd -T                                    <span class="c1"># 打印所有最终生效的配置值</span>
+</span></span><span class="line"><span class="cl">sudo sshd -T <span class="p">|</span> grep -iE <span class="s1">&#39;permitrootlogin|passwordauth|port&#39;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ② 保留当前会话不要退出，用【新窗口】测试新连接</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ③ 或者加一个定时回滚的保险</span>
+</span></span><span class="line"><span class="cl">sudo cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak
+</span></span><span class="line"><span class="cl">sudo sh -c <span class="s1">&#39;sleep 600 &amp;&amp; cp /etc/ssh/sshd_config.bak /etc/ssh/sshd_config &amp;&amp; systemctl reload sshd&#39;</span> <span class="p">&amp;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 改完并确认新连接可用后，kill 掉这个保险任务</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ④ 用 reload 而不是 restart（reload 不会断开已有连接）</span>
+</span></span><span class="line"><span class="cl">sudo systemctl reload sshd
+</span></span><span class="line"><span class="cl"><span class="c1"># ⑤ 在【新终端】验证</span>
+</span></span><span class="line"><span class="cl">ssh -v user@host <span class="s1">&#39;echo OK&#39;</span>
+</span></span></code></pre></div><h2 id="82-加固清单">8.2 加固清单</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">sudo vim /etc/ssh/sshd_config
+</span></span></code></pre></div><pre tabindex="0"><code># ── 认证 ──
+PermitRootLogin no                  # ✅ 禁止 root 直接登录（用普通用户 + sudo）
+# PermitRootLogin prohibit-password  # 或者只允许 root 用密钥（自动化场景）
+PasswordAuthentication no           # ✅ 禁用密码认证（改用密钥）—— 单条最有效的加固
+KbdInteractiveAuthentication no     # 一并禁掉键盘交互（否则 PasswordAuthentication no 可能被绕过）
+ChallengeResponseAuthentication no  # 老版本的写法
+PubkeyAuthentication yes
+PermitEmptyPasswords no
+MaxAuthTries 3                      # ✅ 认证失败 3 次就断开
+MaxSessions 5
+MaxStartups 10:30:60                # 未认证连接的并发限制（防资源耗尽）
+LoginGraceTime 30                   # ✅ 30 秒内没完成认证就断开
+
+# ── 访问控制 ──
+AllowUsers lhx deploy               # ✅ 白名单（只列出的用户能登录）
+AllowGroups ssh-users               # 或按组（更好维护）
+DenyUsers root guest
+# ⚠️ AllowUsers/AllowGroups 只要设了，未列出的用户【一律拒绝】
+
+# ── 网络 ──
+Port 22                             # 改成非标准端口能减少扫描噪音，但不是真正的安全措施
+AddressFamily inet                  # 只监听 IPv4（不需要 v6 时）
+ListenAddress 10.0.0.5              # ✅ 只监听内网网卡（生产上很有效）
+UseDNS no                           # ✅ 不做反向 DNS（加速连接）
+
+# ── 转发与隧道 ──
+AllowTcpForwarding no               # 不需要端口转发时关掉
+AllowAgentForwarding no             # ✅ 建议关（agent 转发有风险）
+X11Forwarding no                    # ✅ 服务器不需要图形转发
+PermitTunnel no
+GatewayPorts no                     # 远程转发只绑 127.0.0.1
+
+# ── 保活与超时 ──
+ClientAliveInterval 300
+ClientAliveCountMax 2               # 300×2=600 秒无响应就断开（也起到空闲超时的作用）
+
+# ── 加密算法（禁用弱算法，满足合规要求）──
+KexAlgorithms curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-group16-sha512
+Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com
+MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com
+HostKeyAlgorithms ssh-ed25519,rsa-sha2-512,rsa-sha2-256
+# 检查当前支持的算法
+ssh -Q kex; ssh -Q cipher; ssh -Q mac
+
+# ── 日志 ──
+LogLevel VERBOSE                    # ✅ 记录密钥指纹（审计时能知道用了哪个密钥登录）
+SyslogFacility AUTH
+
+# ── 其他 ──
+Subsystem sftp internal-sftp        # 用内置 sftp（便于 chroot）
+PrintMotd no
+Banner /etc/ssh/banner              # 登录前的警告横幅（某些合规要求）
+StrictModes yes                     # ✅ 检查家目录/密钥权限（保持开启）
+IgnoreRhosts yes
+HostbasedAuthentication no
+</code></pre><h2 id="83-match-块针对特定对象放宽或收紧">8.3 Match 块：针对特定对象放宽或收紧</h2>
+<pre tabindex="0"><code># 主配置之后（Match 块必须放在文件末尾，它会一直生效到下一个 Match）
+
+# 给备份账号开一个只能 sftp 的受限环境
+Match User backup
+    ForceCommand internal-sftp -d /data
+    ChrootDirectory /srv/sftp/%u        # ✅ 关进 chroot（看不到系统其他部分）
+    AllowTcpForwarding no
+    X11Forwarding no
+    PasswordAuthentication no
+
+# 允许内网用密码登录（外网仍强制密钥）
+Match Address 10.0.0.0/8
+    PasswordAuthentication yes
+
+# 给 CI 账号放开转发
+Match User ci-deploy
+    AllowTcpForwarding yes
+    PermitOpen 127.0.0.1:5432
+
+# ⚠️ ChrootDirectory 的要求：该目录及其所有父目录必须【属主是 root 且不可被其他人写】
+sudo chown root:root /srv/sftp/backup &amp;&amp; sudo chmod 755 /srv/sftp/backup
+sudo mkdir -p /srv/sftp/backup/data &amp;&amp; sudo chown backup:backup /srv/sftp/backup/data
+</code></pre><h2 id="84-fail2ban自动封禁暴力破解">8.4 fail2ban：自动封禁暴力破解</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">sudo apt install fail2ban
+</span></span><span class="line"><span class="cl">sudo tee /etc/fail2ban/jail.d/sshd.local &gt; /dev/null <span class="s">&lt;&lt;&#39;EOF&#39;
+</span></span></span><span class="line"><span class="cl"><span class="s">[sshd]
+</span></span></span><span class="line"><span class="cl"><span class="s">enabled = true
+</span></span></span><span class="line"><span class="cl"><span class="s">port = 22
+</span></span></span><span class="line"><span class="cl"><span class="s">maxretry = 5
+</span></span></span><span class="line"><span class="cl"><span class="s">findtime = 600
+</span></span></span><span class="line"><span class="cl"><span class="s">bantime = 3600
+</span></span></span><span class="line"><span class="cl"><span class="s">bantime.increment = true          # 重犯者封更久
+</span></span></span><span class="line"><span class="cl"><span class="s">ignoreip = 127.0.0.1/8 10.0.0.0/8
+</span></span></span><span class="line"><span class="cl"><span class="s">EOF</span>
+</span></span><span class="line"><span class="cl">sudo systemctl <span class="nb">enable</span> --now fail2ban
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">sudo fail2ban-client status sshd              <span class="c1"># 查看状态与已封 IP</span>
+</span></span><span class="line"><span class="cl">sudo fail2ban-client <span class="nb">set</span> sshd unbanip 1.2.3.4 <span class="c1"># 解封</span>
+</span></span><span class="line"><span class="cl">sudo fail2ban-client <span class="nb">set</span> sshd banip 1.2.3.4   <span class="c1"># 手动封</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 查看攻击情况</span>
+</span></span><span class="line"><span class="cl">sudo journalctl -u sshd <span class="p">|</span> grep -c <span class="s1">&#39;Failed password&#39;</span>
+</span></span><span class="line"><span class="cl">sudo lastb <span class="p">|</span> head -20                          <span class="c1"># 失败的登录尝试</span>
+</span></span><span class="line"><span class="cl">sudo journalctl -u sshd <span class="p">|</span> grep <span class="s1">&#39;Failed password&#39;</span> <span class="p">|</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>     grep -oP <span class="s1">&#39;from \K[0-9.]+&#39;</span> <span class="p">|</span> sort <span class="p">|</span> uniq -c <span class="p">|</span> sort -rn <span class="p">|</span> head
+</span></span><span class="line"><span class="cl"><span class="c1">#    ^^ 统计哪些 IP 在爆破</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 更彻底的方案：从根本上减少暴露面</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ① PasswordAuthentication no（爆破无从下手）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ② ListenAddress 只绑内网 + 通过 VPN/跳板机访问</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ③ 云安全组只放行办公网 IP</span>
+</span></span></code></pre></div><h2 id="85-审计">8.5 审计</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 登录成功/失败</span>
+</span></span><span class="line"><span class="cl">sudo journalctl -u sshd --since today <span class="p">|</span> grep -E <span class="s1">&#39;Accepted|Failed&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Accepted publickey for lhx from 10.0.0.9 port 51234 ssh2: ED25519 SHA256:abc...</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                                                            ^^^^^^^^^^^^^^^^^^^^</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#          ✅ LogLevel VERBOSE 才会记录指纹 —— 能追溯到具体是哪个密钥</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 谁在线、历史登录</span>
+</span></span><span class="line"><span class="cl">who -a
+</span></span><span class="line"><span class="cl">w
+</span></span><span class="line"><span class="cl">last -20
+</span></span><span class="line"><span class="cl">lastlog                                       <span class="c1"># 每个用户最后登录时间</span>
+</span></span><span class="line"><span class="cl">sudo lastb -20                                <span class="c1"># 失败尝试</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 当前的 ssh 会话</span>
+</span></span><span class="line"><span class="cl">sudo ss -tnp <span class="s1">&#39;sport = :22&#39;</span>
+</span></span><span class="line"><span class="cl">ps -eo pid,user,tty,cmd <span class="p">|</span> grep sshd
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 强制踢掉某个会话</span>
+</span></span><span class="line"><span class="cl">sudo pkill -t pts/2                           <span class="c1"># 按终端</span>
+</span></span><span class="line"><span class="cl">sudo <span class="nb">kill</span> &lt;sshd 子进程 PID&gt;
+</span></span></code></pre></div><h1 id="9-tmux远程工作流的必备">9. tmux：远程工作流的必备</h1>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ── 为什么必须用 ──</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 网络断开 = ssh 会话中断 = 正在跑的任务被 SIGHUP 杀掉（13 篇 6.2）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># tmux 让会话【活在服务器上】，断线重连后一切照旧</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">tmux new -s work                  <span class="c1"># 创建名为 work 的会话</span>
+</span></span><span class="line"><span class="cl">tmux ls                           <span class="c1"># 列出所有会话</span>
+</span></span><span class="line"><span class="cl">tmux a -t work                    <span class="c1"># attach 到会话（tmux a 连最近的）</span>
+</span></span><span class="line"><span class="cl">tmux kill-session -t work
+</span></span><span class="line"><span class="cl">tmux new -s work -d <span class="s1">&#39;long-task.sh&#39;</span>    <span class="c1"># 后台创建并直接跑命令</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 核心快捷键（前缀键默认 Ctrl-B）──</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Ctrl-B d      detach（离开但会话继续跑）  ← 最重要</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Ctrl-B c      新建窗口</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Ctrl-B n / p  下一个 / 上一个窗口</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Ctrl-B 数字   切到指定窗口</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Ctrl-B ,      重命名窗口</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Ctrl-B w      窗口列表</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Ctrl-B %      左右分屏</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Ctrl-B &#34;      上下分屏</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Ctrl-B 方向键 在窗格间移动</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Ctrl-B z      放大/还原当前窗格</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Ctrl-B x      关闭当前窗格</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Ctrl-B [      进入复制模式（可翻页、搜索，q 退出）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Ctrl-B ?      查看所有快捷键</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 一份够用的 ~/.tmux.conf ──</span>
+</span></span><span class="line"><span class="cl">cat &gt; ~/.tmux.conf <span class="s">&lt;&lt;&#39;EOF&#39;
+</span></span></span><span class="line"><span class="cl"><span class="s">set -g mouse on                   # 鼠标可选择窗格、滚动
+</span></span></span><span class="line"><span class="cl"><span class="s">set -g history-limit 50000        # 回滚缓冲
+</span></span></span><span class="line"><span class="cl"><span class="s">set -g base-index 1               # 窗口从 1 开始编号
+</span></span></span><span class="line"><span class="cl"><span class="s">setw -g pane-base-index 1
+</span></span></span><span class="line"><span class="cl"><span class="s">set -sg escape-time 10            # 减少 Esc 延迟（vim 用户必调）
+</span></span></span><span class="line"><span class="cl"><span class="s">set -g default-terminal &#34;screen-256color&#34;
+</span></span></span><span class="line"><span class="cl"><span class="s">bind r source-file ~/.tmux.conf \; display &#34;reloaded&#34;
+</span></span></span><span class="line"><span class="cl"><span class="s">bind | split-window -h            # 更直观的分屏键
+</span></span></span><span class="line"><span class="cl"><span class="s">bind - split-window -v
+</span></span></span><span class="line"><span class="cl"><span class="s">EOF</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 断线自动重连的工作流 ──</span>
+</span></span><span class="line"><span class="cl">ssh -t host <span class="s1">&#39;tmux new -A -s main&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#        ^^ -t 强制分配 tty</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                     ^^ -A = attach 如果存在，否则创建（幂等，非常实用）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 放进 config</span>
+</span></span><span class="line"><span class="cl">Host prod
+</span></span><span class="line"><span class="cl">    RequestTTY yes
+</span></span><span class="line"><span class="cl">    RemoteCommand tmux new -A -s main
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── mosh：比 tmux 更进一步（移动网络/高延迟场景）──</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 基于 UDP，能扛住 IP 变化和长时间断网，本地回显让输入不卡</span>
+</span></span><span class="line"><span class="cl">mosh user@host
+</span></span><span class="line"><span class="cl">mosh --ssh<span class="o">=</span><span class="s1">&#39;ssh -p 2222&#39;</span> user@host
+</span></span><span class="line"><span class="cl"><span class="c1"># ⚠️ 需要服务端也装 mosh-server，且开放 UDP 60000-61000</span>
+</span></span></code></pre></div><h1 id="10-知识点扩展">10. 知识点扩展</h1>
+<h2 id="101-命令速查">10.1 命令速查</h2>
+<table>
+<thead>
+<tr>
+<th>需求</th>
+<th>命令</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>生成密钥</strong></td>
+<td><code>ssh-keygen -t ed25519 -a 100 -C &quot;用户@设备&quot;</code></td>
+</tr>
+<tr>
+<td>部署公钥</td>
+<td><code>ssh-copy-id -i ~/.ssh/id_ed25519.pub user@host</code></td>
+</tr>
+<tr>
+<td>看指纹</td>
+<td><code>ssh-keygen -lf ~/.ssh/id_ed25519.pub</code></td>
+</tr>
+<tr>
+<td><strong>从私钥恢复公钥</strong></td>
+<td><code>ssh-keygen -y -f ~/.ssh/id_ed25519</code></td>
+</tr>
+<tr>
+<td>改私钥密码</td>
+<td><code>ssh-keygen -p -f ~/.ssh/id_ed25519</code></td>
+</tr>
+<tr>
+<td><strong>移除 known_hosts 记录</strong></td>
+<td><code>ssh-keygen -R host</code></td>
+</tr>
+<tr>
+<td>加载到 agent</td>
+<td><code>ssh-add -t 3600 ~/.ssh/id_ed25519</code></td>
+</tr>
+<tr>
+<td><strong>看配置实际生效值</strong></td>
+<td><strong><code>ssh -G host</code></strong></td>
+</tr>
+<tr>
+<td>调试连接</td>
+<td><code>ssh -vvv host</code></td>
+</tr>
+<tr>
+<td><strong>跳板机</strong></td>
+<td><code>ssh -J user@bastion user@target</code></td>
+</tr>
+<tr>
+<td><strong>本地转发</strong></td>
+<td><code>ssh -fNL 15432:127.0.0.1:5432 host</code></td>
+</tr>
+<tr>
+<td>远程转发</td>
+<td><code>ssh -fNR 9000:localhost:3000 host</code></td>
+</tr>
+<tr>
+<td>SOCKS 代理</td>
+<td><code>ssh -fND 1080 host</code></td>
+</tr>
+<tr>
+<td>关闭复用主连接</td>
+<td><code>ssh -O exit host</code></td>
+</tr>
+<tr>
+<td><strong>测 sshd 配置</strong></td>
+<td><strong><code>sudo sshd -t</code></strong> / <code>sudo sshd -T</code></td>
+</tr>
+<tr>
+<td>重载 sshd</td>
+<td><code>sudo systemctl reload sshd</code>（不断开现有连接）</td>
+</tr>
+<tr>
+<td>只用公钥测试</td>
+<td><code>ssh -o PreferredAuthentications=publickey -o PasswordAuthentication=no host</code></td>
+</tr>
+<tr>
+<td>支持的算法</td>
+<td><code>ssh -Q kex</code> / <code>ssh -Q cipher</code> / <code>ssh -Q key</code></td>
+</tr>
+<tr>
+<td>断线可恢复的会话</td>
+<td><code>ssh -t host 'tmux new -A -s main'</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="102-权限要求速查">10.2 权限要求速查</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">~/                       <span class="m">755</span> 或 750（关键：go-w，不能被组/其他人写）
+</span></span><span class="line"><span class="cl">~/.ssh/                  <span class="m">700</span>
+</span></span><span class="line"><span class="cl">~/.ssh/id_*              <span class="m">600</span>      （私钥）
+</span></span><span class="line"><span class="cl">~/.ssh/*.pub             <span class="m">644</span>
+</span></span><span class="line"><span class="cl">~/.ssh/authorized_keys   <span class="m">600</span>
+</span></span><span class="line"><span class="cl">~/.ssh/config            <span class="m">600</span>
+</span></span><span class="line"><span class="cl">~/.ssh/known_hosts       <span class="m">644</span>
+</span></span><span class="line"><span class="cl">/etc/ssh/sshd_config     <span class="m">600</span> root:root
+</span></span><span class="line"><span class="cl">/etc/ssh/ssh_host_*_key  <span class="m">600</span> root:root
+</span></span></code></pre></div><h2 id="103-排查密钥认证失败的流程">10.3 排查「密钥认证失败」的流程</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ① 客户端：确认用了哪个密钥、服务器接受了吗</span>
+</span></span><span class="line"><span class="cl">ssh -vvv host 2&gt;<span class="p">&amp;</span><span class="m">1</span> <span class="p">|</span> grep -E <span class="s1">&#39;Offering|Server accepts|Authentications that can continue&#39;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ② 客户端：确认配置生效</span>
+</span></span><span class="line"><span class="cl">ssh -G host <span class="p">|</span> grep -E <span class="s1">&#39;identityfile|user|port|hostname&#39;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ③ 服务端：看真正的拒绝原因（客户端看不到！）</span>
+</span></span><span class="line"><span class="cl">sudo journalctl -u sshd -f
+</span></span><span class="line"><span class="cl"><span class="c1"># Authentication refused: bad ownership or modes for directory /home/lhx   -&gt; 权限问题</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Failed publickey for lhx from ... -&gt; 公钥不匹配</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># User lhx not allowed because not listed in AllowUsers -&gt; 访问控制</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ④ 检查权限（最高频原因）</span>
+</span></span><span class="line"><span class="cl">ls -ld ~ ~/.ssh ~/.ssh/authorized_keys
+</span></span><span class="line"><span class="cl">namei -l ~/.ssh/authorized_keys          <span class="c1"># 03 篇的逐层权限检查</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ⑤ 确认公钥真的在服务端</span>
+</span></span><span class="line"><span class="cl">ssh-keygen -lf ~/.ssh/id_ed25519.pub                    <span class="c1"># 本地指纹</span>
+</span></span><span class="line"><span class="cl">ssh host <span class="s1">&#39;ssh-keygen -lf ~/.ssh/authorized_keys&#39;</span>        <span class="c1"># 服务端的（对比）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ⑥ 确认服务端配置</span>
+</span></span><span class="line"><span class="cl">sudo sshd -T <span class="p">|</span> grep -iE <span class="s1">&#39;pubkeyauth|authorizedkeysfile|strictmodes|allowusers&#39;</span>
+</span></span></code></pre></div><h1 id="11-面试题">11. 面试题</h1>
+<p><strong>Q：SSH 公钥认证的完整过程是什么？为什么说私钥不会离开本机？</strong></p>
+<p>五步：① 客户端声明「我要用这个公钥登录」；② 服务端在 <code>~/.ssh/authorized_keys</code> 里查找这个公钥，找到则继续；③ 服务端发来一个<strong>随机数（challenge）</strong>；④ 客户端<strong>用私钥对这个随机数签名</strong>；⑤ 服务端<strong>用公钥验证签名</strong>，通过即认证成功。</p>
+<p><strong>私钥只参与本地的签名计算，从不发送</strong>。三个直接推论：<strong>服务器被入侵也拿不到你的私钥</strong>（那里只有公钥），这是密钥认证远优于密码认证的根本原因；同一个公钥可以放到一百台机器上而不增加风险；私钥文件必须 <code>600</code> 保护，它就是你的全部身份。</p>
+<p>补充：一次 SSH 连接实际有<strong>两个方向的认证</strong> —— 除了服务器验证你，还有<strong>客户端验证服务器</strong>（host key + <code>known_hosts</code>），后者防的是中间人攻击。</p>
+<p><strong>Q：<code>The authenticity of host can't be established</code> 是什么机制？主机密钥变更警告该怎么处理？</strong></p>
+<p>这是 <strong>TOFU（Trust On First Use）</strong>：首次连接时记下服务器 host key 的指纹存入 <code>known_hosts</code>，之后每次连接都核对。它防的是<strong>中间人攻击</strong> —— 攻击者伪装成目标服务器，你把密码和所有命令都发给了他。</p>
+<p>严谨做法不是直接敲 <code>yes</code>，而是<strong>通过可信渠道核对指纹</strong>（在服务器上执行 <code>ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub</code>，或从云控制台获取）后再确认。</p>
+<p>主机密钥变更警告有三种可能：<strong>服务器重装</strong>（概率最高）、<strong>云上 IP 被回收给了别人</strong>、<strong>真的遭遇中间人</strong>。正确流程是先通过其他渠道核对真实指纹，一致后再 <code>ssh-keygen -R host</code> 删掉旧记录。<strong>不要养成 <code>StrictHostKeyChecking=no</code> 的习惯</strong>，那等于彻底放弃 MITM 防护。</p>
+<p>规模大了以后正解是 <strong>SSH 证书</strong>：用 CA 签发主机证书，客户端 <code>known_hosts</code> 里只放一行 <code>@cert-authority *.example.com &lt;CA公钥&gt;</code>，之后所有机器自动被信任，重装只需重新签发。</p>
+<p><strong>Q：<code>ssh -A</code>（agent 转发）有什么风险？应该用什么替代？</strong></p>
+<p><code>-A</code> 把本地 ssh-agent 的 socket 转发到远程主机，好处是在跳板机上可以直接 ssh 到内网而不用把私钥拷过去。</p>
+<p><strong>风险是：跳板机上的 root（或攻破跳板机的攻击者）能通过那个 socket 用你的身份签名</strong> —— 虽然拿不到私钥文件本身，但等于在 agent 存活期间<strong>可以冒充你登录任何你有权限的机器</strong>。</p>
+<p>替代方案是 <strong><code>ssh -J</code>（ProxyJump）</strong>：认证在<strong>本地</strong>完成，跳板机只做 TCP 转发，看不到任何内容（端到端加密）。它还有两个额外好处：<strong><code>scp</code>/<code>rsync</code>/<code>sftp</code> 可以直接用</strong>（因为是一条端到端连接），以及支持多级跳板 <code>-J b1,b2</code>。</p>
+<p><strong>Q：<code>-L</code>、<code>-R</code>、<code>-D</code> 三种端口转发分别解决什么问题？</strong></p>
+<p>统一记法：<strong><code>-L</code> 把远端的服务搬到本地，<code>-R</code> 把本地的服务送到远端，<code>-D</code> 把整个网络出口搬到远端。</strong></p>
+<ul>
+<li><strong><code>-L 15432:10.0.1.20:5432</code></strong>（本地转发）：本地 15432 → 通过 SSH 隧道 → <strong>从服务端视角</strong>访问 <code>10.0.1.20:5432</code>。典型用途是<strong>访问内网数据库</strong>（本地 <code>psql -h 127.0.0.1 -p 15432</code>）</li>
+<li><strong><code>-R 9000:localhost:3000</code></strong>（远程转发）：远端 9000 → 隧道 → <strong>从客户端视角</strong>的 <code>localhost:3000</code>。典型用途是<strong>让远程服务器回调本地开发服务</strong>（调试 webhook），或<strong>给没有公网 IP 的内网机器做反向隧道</strong></li>
+<li><strong><code>-D 1080</code></strong>（动态转发）：本地开一个 <strong>SOCKS5 代理</strong>，所有走它的流量都从远端出去。用途是临时访问整个内网，不用为每个服务单独 <code>-L</code></li>
+</ul>
+<p>注意 <code>-D</code> 配代理时要用 <strong><code>socks5h://</code></strong> 而不是 <code>socks5://</code> —— 前者让 <strong>DNS 也走代理</strong>，否则内网域名解析不了。生产上的常驻隧道应该用 <code>-fN</code> + <code>ExitOnForwardFailure=yes</code> 交给 systemd 管，或用 <code>autossh</code> 自动重连。</p>
+<p><strong>Q：明明配好了密钥，为什么还是要求输密码？</strong></p>
+<p>按概率排查五个原因：</p>
+<ol>
+<li><strong>权限问题</strong>（最常见）：<code>~</code> 被组/其他人可写、<code>~/.ssh</code> 不是 700、<code>authorized_keys</code> 不是 600。sshd 的 <code>StrictModes</code> 会因此拒绝密钥认证。<strong>关键是客户端看不到真正原因</strong>，必须看服务端日志：<code>journalctl -u sshd</code> 会有 <code>Authentication refused: bad ownership or modes for directory /home/xxx</code></li>
+<li><strong>公钥没真正部署成功</strong>（复制时换行被破坏、贴到了错误的用户家目录）</li>
+<li><strong>试了太多密钥被 <code>MaxAuthTries</code> 掐断</strong> —— agent 里有 5 个密钥而服务端只允许 3 次尝试，正确的那个还没试到就断了。解法是 <code>IdentitiesOnly yes</code> + 指定 <code>IdentityFile</code></li>
+<li><strong>服务端 <code>AuthorizedKeysFile</code> 被改到了别的路径</strong>（<code>sshd -T | grep authorizedkeysfile</code> 确认）</li>
+<li><strong>家目录在 NFS 上且开了 root_squash</strong>，sshd 读不到 <code>authorized_keys</code></li>
+</ol>
+<p>排查主力是 <code>ssh -vvv host</code> 看客户端视角（<code>Offering public key</code> / <code>Server accepts key</code>），以及<strong>服务端的 <code>journalctl -u sshd</code></strong> 看真实拒绝原因。</p>
+<p><strong>Q：<code>ssh</code> 连接要卡十几秒才出现提示，可能是什么原因？</strong></p>
+<p>按概率：</p>
+<ol>
+<li><strong>服务端反向 DNS 解析</strong>（<code>UseDNS yes</code> 且 DNS 不通，要等超时）→ 服务端设 <code>UseDNS no</code></li>
+<li><strong>客户端尝试 GSSAPI/Kerberos</strong>（环境里没有 KDC）→ 客户端设 <code>GSSAPIAuthentication no</code></li>
+<li><strong>试了太多密钥</strong> → <code>IdentitiesOnly yes</code></li>
+<li><strong>服务端的登录脚本慢</strong>（<code>.bashrc</code> 里有网络请求、conda 初始化、大量补全脚本）→ 对比 <code>time ssh host true</code>（不启动 shell）和 <code>time ssh host</code>（完整登录）的差值定位</li>
+<li><strong>MOTD 生成慢</strong>（Ubuntu 的 <code>update-motd</code> 会查系统更新和云元数据）</li>
+<li><strong>IPv6 优先但不通</strong> → <code>ssh -4</code> 或配 <code>AddressFamily inet</code></li>
+</ol>
+<p>顺带提一个大幅提速的手段：<strong><code>ControlMaster auto</code> + <code>ControlPersist 10m</code></strong> 让后续连接复用同一条 TCP+加密通道，第二次连接从 600ms 降到 20ms —— 对 <code>git push</code>、Ansible 批量执行、多次 <code>rsync</code> 的收益非常明显。</p>
+<p><strong>Q：怎么让一个密钥只能执行特定命令？</strong></p>
+<p>在 <code>authorized_keys</code> 里给那一行加<strong>限制选项</strong>：</p>
+<pre tabindex="0"><code>restrict,command=&#34;/usr/local/bin/ci-deploy.sh&#34;,from=&#34;10.20.0.0/16&#34; ssh-ed25519 AAAA... ci
+</code></pre><ul>
+<li><strong><code>command=&quot;...&quot;</code></strong>：无论客户端敲什么命令，服务端都只执行这个。原始命令保存在 <strong><code>$SSH_ORIGINAL_COMMAND</code></strong> 环境变量里，脚本可以据此做安全的分派（<code>case &quot;$SSH_ORIGINAL_COMMAND&quot; in &quot;deploy &quot;*) ...</code>）</li>
+<li><strong><code>restrict</code></strong>：一次性禁用所有转发、pty、agent 转发、X11（然后按需用 <code>permitopen</code> 等放开单项）</li>
+<li><strong><code>from=&quot;CIDR&quot;</code></strong>：限制来源 IP</li>
+<li><strong><code>permitopen=&quot;127.0.0.1:5432&quot;</code></strong>：只允许转发到指定目标</li>
+<li><strong><code>expiry-time=&quot;20261231&quot;</code></strong>：密钥过期时间（OpenSSH 8.2+）</li>
+</ul>
+<p>这是 CI 部署账号、备份账号的标准做法 —— 比给一个完整 shell 权限安全得多。更彻底的隔离可以用 sshd 的 <code>Match User backup</code> + <code>ForceCommand internal-sftp</code> + <code>ChrootDirectory</code>。</p>
+<p><strong>Q：sshd 加固的关键几条是什么？改配置要注意什么？</strong></p>
+<p>按有效性排序：</p>
+<ol>
+<li><strong><code>PasswordAuthentication no</code></strong>（单条最有效 —— 暴力破解直接无从下手），配合 <code>KbdInteractiveAuthentication no</code></li>
+<li><strong><code>PermitRootLogin no</code></strong>（用普通用户 + sudo，日志能追溯到人）</li>
+<li><strong><code>AllowUsers</code>/<code>AllowGroups</code> 白名单</strong>（未列出的一律拒绝）</li>
+<li><strong><code>ListenAddress</code> 只绑内网</strong> + 通过 VPN/跳板机访问（比改端口有效得多）</li>
+<li><code>MaxAuthTries 3</code>、<code>LoginGraceTime 30</code>、<code>MaxStartups</code></li>
+<li><code>AllowAgentForwarding no</code>、<code>X11Forwarding no</code>、按需 <code>AllowTcpForwarding no</code></li>
+<li>禁用弱加密算法（<code>KexAlgorithms</code>/<code>Ciphers</code>/<code>MACs</code>）</li>
+<li><strong><code>LogLevel VERBOSE</code></strong>（会记录登录用的密钥指纹，审计时能追溯到具体密钥）</li>
+</ol>
+<p>改配置的铁律：<strong><code>sudo sshd -t</code> 测语法</strong> → <strong>保留当前会话不退出</strong> → <code>systemctl reload sshd</code>（reload 不断开现有连接）→ <strong>在新终端验证</strong> → 才关掉旧会话。高风险环境再加一个定时回滚的保险（<code>sleep 600 &amp;&amp; cp 备份 &amp;&amp; reload</code>）。</p>
+<hr>
+<h1 id="小结">小结</h1>
+<ul>
+<li><strong>公钥认证的私钥永不外传</strong>（服务端发随机数，客户端签名，公钥验签）—— 所以服务器被入侵也拿不到你的身份</li>
+<li><strong><code>known_hosts</code> 防的是中间人攻击</strong>（TOFU 模型）；主机密钥变更要先核对真实指纹再删记录；大规模场景用 <strong>SSH 证书</strong></li>
+<li><strong>权限是密钥认证失败的头号原因</strong>，而<strong>真正的错误只在服务端日志里</strong>（<code>journalctl -u sshd</code>）</li>
+<li><strong><code>~/.ssh/config</code> 是最大的效率杠杆</strong>：<code>ProxyJump</code>、<code>LocalForward</code>、<code>ControlMaster</code>、<code>IdentitiesOnly</code> 都在这里固化</li>
+<li><strong>用 <code>-J</code> 而不是 <code>-A</code></strong> —— 前者认证在本地完成，跳板机偷不到你的身份</li>
+<li><strong>三种转发</strong>：<code>-L</code> 搬远端服务到本地、<code>-R</code> 送本地服务到远端、<code>-D</code> 整个出口搬到远端（配代理记得用 <code>socks5h</code>）</li>
+<li><strong><code>ControlMaster</code> + <code>ControlPersist</code></strong> 让重复连接快 30 倍</li>
+<li><strong>连接慢查四处</strong>：<code>UseDNS</code>、<code>GSSAPIAuthentication</code>、密钥数量、服务端登录脚本</li>
+<li><strong><code>authorized_keys</code> 的 <code>command=</code> + <code>restrict</code> + <code>from=</code></strong> 是受限访问的核心手段</li>
+<li><strong>改 sshd 配置：<code>sshd -t</code> 测语法 + 保留旧会话 + <code>reload</code> + 新终端验证</strong></li>
+</ul>
+<p>下一篇是上手部分的最后一篇：<strong>Shell 脚本工程化</strong> —— <code>set -euo pipefail</code> 每一项在防什么、为什么 <code>[[ ]]</code> 比 <code>[ ]</code> 好、引号规则的完整决策树、<code>trap</code> 做清理、<code>getopts</code> 解析参数、以及用 ShellCheck 把一堆隐患自动查出来。</p>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2026-08-12</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/linux/">linux</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/linux/linux_17_Shell%E8%84%9A%E6%9C%AC%E5%B7%A5%E7%A8%8B%E5%8C%96/" class="prev" rel="prev" title="Linux-17 Shell 脚本工程化：set -euo pipefail 的陷阱、引号规则与 trap 清理"><i class="fas fa-angle-left fa-fw"></i>Linux-17 Shell 脚本工程化：set -euo pipefail 的陷阱、引号规则与 trap 清理</a>
+            <a href="/posts/linux/linux_15_%E7%BD%91%E7%BB%9C%E6%93%8D%E4%BD%9C%E4%B8%8E%E6%8E%92%E6%9F%A5/" class="next" rel="next" title="Linux-15 网络操作与排查：ip/ss 的正确用法、curl -w 定位耗时、DNS 链路与 ndots 陷阱">Linux-15 网络操作与排查：ip/ss 的正确用法、curl -w 定位耗时、DNS 链路与 ndots 陷阱<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2026-08-12T16:00:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Linux-16 SSH 与远程工作流：密钥认证原理、config 的威力、三种端口转发"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

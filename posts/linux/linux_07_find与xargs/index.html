@@ -1,0 +1,1658 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>Linux-07 find 与 xargs：表达式求值模型、-exec 的两种形式与 -print0 的必要性 - xingliuhua博客</title><meta name="Description" content="find 的参数不是选项而是表达式，理解求值模型才明白为什么 -o 和 -delete 混用会误删；-exec {} \; 与 {} &#43; 差几个数量级；-print0 | xargs -0 为什么是唯一安全的管道写法；-mtime &#43;7 为什么其实是「超过 8 天」。附 locate/fd/rg 对比与 xargs -P 并行。"><meta property="og:title" content="Linux-07 find 与 xargs：表达式求值模型、-exec 的两种形式与 -print0 的必要性" />
+<meta property="og:description" content="find 的参数不是选项而是表达式，理解求值模型才明白为什么 -o 和 -delete 混用会误删；-exec {} \; 与 {} &#43; 差几个数量级；-print0 | xargs -0 为什么是唯一安全的管道写法；-mtime &#43;7 为什么其实是「超过 8 天」。附 locate/fd/rg 对比与 xargs -P 并行。" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/linux/linux_07_find%E4%B8%8Exargs/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2026-08-12T20:30:00+08:00" />
+<meta property="article:modified_time" content="2026-08-12T20:30:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="Linux-07 find 与 xargs：表达式求值模型、-exec 的两种形式与 -print0 的必要性"/>
+<meta name="twitter:description" content="find 的参数不是选项而是表达式，理解求值模型才明白为什么 -o 和 -delete 混用会误删；-exec {} \; 与 {} &#43; 差几个数量级；-print0 | xargs -0 为什么是唯一安全的管道写法；-mtime &#43;7 为什么其实是「超过 8 天」。附 locate/fd/rg 对比与 xargs -P 并行。"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/linux/linux_07_find%E4%B8%8Exargs/" /><link rel="prev" href="https://xingliuhua.github.io/posts/linux/linux_08_%E6%96%87%E6%9C%AC%E5%A4%84%E7%90%86%E4%B8%89%E5%89%91%E5%AE%A2/" /><link rel="next" href="https://xingliuhua.github.io/posts/linux/linux_06_vim%E7%94%9F%E5%AD%98%E6%8C%87%E5%8D%97/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Linux-07 find 与 xargs：表达式求值模型、-exec 的两种形式与 -print0 的必要性",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_07_find%E4%B8%8Exargs\/"
+        },"genre": "posts","keywords": "linux","wordcount":  12415 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_07_find%E4%B8%8Exargs\/","datePublished": "2026-08-12T20:30:00+08:00","dateModified": "2026-08-12T20:30:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "find 的参数不是选项而是表达式，理解求值模型才明白为什么 -o 和 -delete 混用会误删；-exec {} \\; 与 {} + 差几个数量级；-print0 | xargs -0 为什么是唯一安全的管道写法；-mtime +7 为什么其实是「超过 8 天」。附 locate/fd/rg 对比与 xargs -P 并行。"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">Linux-07 find 与 xargs：表达式求值模型、-exec 的两种形式与 -print0 的必要性</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2026-08-12">2026-08-12</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 12415 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 25 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-find-的参数是表达式不是选项">1. find 的参数是表达式，不是选项</a>
+      <ol>
+        <li><a href="#11-三类参数">1.1 三类参数</a></li>
+        <li><a href="#12-隐式的--a-和默认的--print">1.2 隐式的 <code>-a</code> 和默认的 <code>-print</code></a></li>
+        <li><a href="#13-短路求值为什么顺序影响性能">1.3 短路求值：为什么顺序影响性能</a></li>
+      </ol>
+    </li>
+    <li><a href="#2-运算符与最危险的陷阱">2. 运算符与最危险的陷阱</a>
+      <ol>
+        <li><a href="#21-优先级">2.1 优先级</a></li>
+        <li><a href="#22-开篇第一问-o-与--delete-混用">2.2 开篇第一问：<code>-o</code> 与 <code>-delete</code> 混用</a></li>
+        <li><a href="#23-其他运算符用法">2.3 其他运算符用法</a></li>
+        <li><a href="#24--prune真正的跳过目录">2.4 -prune：真正的「跳过目录」</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-常用测试条件">3. 常用测试条件</a>
+      <ol>
+        <li><a href="#31-按名字">3.1 按名字</a></li>
+        <li><a href="#32-按类型">3.2 按类型</a></li>
+        <li><a href="#33-按大小">3.3 按大小</a></li>
+        <li><a href="#34-按时间重点">3.4 按时间（重点）</a></li>
+        <li><a href="#35-按权限与属主">3.5 按权限与属主</a></li>
+        <li><a href="#36-其他常用">3.6 其他常用</a></li>
+      </ol>
+    </li>
+    <li><a href="#4-动作-exec-delete-printf">4. 动作：-exec、-delete、-printf</a>
+      <ol>
+        <li><a href="#41--exec-的两种形式开篇第二问">4.1 -exec 的两种形式（开篇第二问）</a></li>
+        <li><a href="#42--execdir更安全的变体">4.2 -execdir：更安全的变体</a></li>
+        <li><a href="#43--delete">4.3 -delete</a></li>
+        <li><a href="#44--printf自定义输出">4.4 -printf：自定义输出</a></li>
+        <li><a href="#45-其他动作">4.5 其他动作</a></li>
+      </ol>
+    </li>
+    <li><a href="#5-xargs把标准输入变成参数">5. xargs：把标准输入变成参数</a>
+      <ol>
+        <li><a href="#51-为什么需要-xargs">5.1 为什么需要 xargs</a></li>
+        <li><a href="#52--print0-与--0唯一安全的管道写法">5.2 -print0 与 -0：唯一安全的管道写法</a></li>
+        <li><a href="#53-xargs-的常用参数">5.3 xargs 的常用参数</a></li>
+        <li><a href="#54-三个重要用法">5.4 三个重要用法</a></li>
+        <li><a href="#55-三种批处理方式对比">5.5 三种批处理方式对比</a></li>
+      </ol>
+    </li>
+    <li><a href="#6-现代替代工具">6. 现代替代工具</a>
+      <ol>
+        <li><a href="#61-fd用户友好的-find">6.1 fd：用户友好的 find</a></li>
+        <li><a href="#62-ripgrep-rg按内容搜索">6.2 ripgrep (rg)：按内容搜索</a></li>
+        <li><a href="#63-locate--updatedb预建索引">6.3 locate / updatedb：预建索引</a></li>
+        <li><a href="#64-选择建议">6.4 选择建议</a></li>
+      </ol>
+    </li>
+    <li><a href="#7-实战案例">7. 实战案例</a>
+      <ol>
+        <li><a href="#71-清理日志与临时文件">7.1 清理日志与临时文件</a></li>
+        <li><a href="#72-批量重命名">7.2 批量重命名</a></li>
+        <li><a href="#73-统计与分析">7.3 统计与分析</a></li>
+        <li><a href="#74-权限与安全审计">7.4 权限与安全审计</a></li>
+        <li><a href="#75-与-git-结合">7.5 与 git 结合</a></li>
+        <li><a href="#76-备份与同步">7.6 备份与同步</a></li>
+      </ol>
+    </li>
+    <li><a href="#8-知识点扩展">8. 知识点扩展</a>
+      <ol>
+        <li><a href="#81-find-命令结构">8.1 find 命令结构</a></li>
+        <li><a href="#82-xargs-完整参数">8.2 xargs 完整参数</a></li>
+        <li><a href="#83-时间计算细节">8.3 时间计算细节</a></li>
+        <li><a href="#84--printf-格式符完整列表">8.4 -printf 格式符完整列表</a></li>
+        <li><a href="#85-性能调优">8.5 性能调优</a></li>
+      </ol>
+    </li>
+    <li><a href="#9-面试题">9. 面试题</a></li>
+    <li><a href="#小结">小结</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><p><code>find</code> 是最容易「会用但不理解」的命令：大家都会 <code>find . -name '*.log'</code>，但一旦条件复杂起来就开始碰运气。</p>
+<p>根本原因是<strong>大多数人把 <code>find</code> 的参数当成了「选项」，而它们其实是「表达式」</strong>。这个认知差会直接导致误删文件。</p>
+<p>先看五个问题：</p>
+<ol>
+<li><code>find . -name '*.tmp' -o -name '*.log' -delete</code> 会删掉什么？（答案可能吓你一跳）</li>
+<li><code>-exec cmd {} \;</code> 和 <code>-exec cmd {} +</code> 差在哪？为什么后者能快几十倍？</li>
+<li><code>find . -name '*.log' | xargs rm</code> 有什么风险？</li>
+<li><code>find /data -mtime +7</code> 找的到底是「7 天前」还是「8 天前」的文件？</li>
+<li>为什么 <code>find . -type f -name '*.go'</code> 比 <code>find . -name '*.go' -type f</code> 快？</li>
+</ol>
+<h1 id="1-find-的参数是表达式不是选项">1. find 的参数是表达式，不是选项</h1>
+<h2 id="11-三类参数">1.1 三类参数</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">find <span class="o">[</span>起始路径...<span class="o">]</span> <span class="o">[</span>全局选项<span class="o">]</span> <span class="o">[</span>表达式<span class="o">]</span>
+</span></span><span class="line"><span class="cl">     ^^^^^^^^^^^^  ^^^^^^^^^^  ^^^^^^^^
+</span></span></code></pre></div><table>
+<thead>
+<tr>
+<th>类别</th>
+<th>例子</th>
+<th>特点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>全局选项</strong></td>
+<td><code>-maxdepth</code>、<code>-mindepth</code>、<code>-follow</code>、<code>-xdev</code></td>
+<td>影响整体行为，<strong>必须写在表达式前面</strong></td>
+</tr>
+<tr>
+<td><strong>测试（test）</strong></td>
+<td><code>-name</code>、<code>-type</code>、<code>-size</code>、<code>-mtime</code>、<code>-user</code></td>
+<td>返回真/假</td>
+</tr>
+<tr>
+<td><strong>动作（action）</strong></td>
+<td><code>-print</code>、<code>-delete</code>、<code>-exec</code>、<code>-ls</code>、<code>-printf</code></td>
+<td><strong>执行操作，并且自身也返回真/假</strong></td>
+</tr>
+<tr>
+<td><strong>运算符</strong></td>
+<td><code>-a</code>（与）、<code>-o</code>（或）、<code>!</code>（非）、<code>( )</code>（分组）</td>
+<td>组合前两者</td>
+</tr>
+</tbody>
+</table>
+<p>关键在于：<strong>find 对每个文件，从左到右求值整个表达式</strong>。这不是「传参数」，是「跑一个布尔表达式」。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">find . -name <span class="s1">&#39;*.log&#39;</span> -print
+</span></span><span class="line"><span class="cl"><span class="c1">#      └─测试─────┘ └动作┘</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 含义：对每个文件，先判断名字是否匹配 *.log，为真则执行 -print</span>
+</span></span></code></pre></div><h2 id="12-隐式的--a-和默认的--print">1.2 隐式的 <code>-a</code> 和默认的 <code>-print</code></h2>
+<p>两条省略规则解释了 <code>find</code> 的大部分「魔法」：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 规则一：相邻的两个表达式之间默认是 -a（AND）</span>
+</span></span><span class="line"><span class="cl">find . -type f -name <span class="s1">&#39;*.log&#39;</span>
+</span></span><span class="line"><span class="cl">find . -type f -a -name <span class="s1">&#39;*.log&#39;</span>        <span class="c1"># 完全等价</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 规则二：整个表达式里【没有任何动作】时，自动在最外层加 -print</span>
+</span></span><span class="line"><span class="cl">find . -name <span class="s1">&#39;*.log&#39;</span>
+</span></span><span class="line"><span class="cl">find . -name <span class="s1">&#39;*.log&#39;</span> -print            <span class="c1"># 完全等价</span>
+</span></span></code></pre></div><p>第二条规则是所有误删事故的根源，下一节展开。</p>
+<h2 id="13-短路求值为什么顺序影响性能">1.3 短路求值：为什么顺序影响性能</h2>
+<p>开篇第五问。<code>-a</code> 和 <code>-o</code> 都是<strong>短路</strong>的，和 C 语言的 <code>&amp;&amp;</code>、<code>||</code> 一样：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># -a 短路：左边为假，右边根本不执行</span>
+</span></span><span class="line"><span class="cl">find . -type f -name <span class="s1">&#39;*.go&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#      ^^^^^^^ 先判断类型（读 inode 里已有的字段，几乎免费）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#              ^^^^^^^^^^^^ 类型不是文件就跳过，不用做字符串匹配</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">find . -name <span class="s1">&#39;*.go&#39;</span> -type f
+</span></span><span class="line"><span class="cl"><span class="c1">#      ^^^^^^^^^^^^ 对【每一个】条目都做字符串匹配（包括所有目录）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                   然后才判断类型</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 差异在大目录树上是可测量的：先用便宜的测试过滤掉大部分候选</span>
+</span></span></code></pre></div><p><strong>性能排序原则</strong>（从便宜到昂贵）：</p>
+<pre tabindex="0"><code>-maxdepth / -xdev          限制搜索范围，最便宜
+   ↓
+-type / -user / -perm      读 inode 里的字段（find 遍历时本来就要 stat）
+   ↓
+-name / -path              字符串匹配
+   ↓
+-size / -mtime             也是 inode 字段，但常需要比较运算
+   ↓
+-regex                     正则匹配
+   ↓
+-exec grep ...             【最贵】要起进程、读文件内容
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ❌ 慢：对每个文件都起一个 grep 进程</span>
+</span></span><span class="line"><span class="cl">find / -exec grep -l <span class="s2">&#34;pattern&#34;</span> <span class="o">{}</span> <span class="se">\;</span> 2&gt;/dev/null
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 快：先用便宜的条件把候选集缩小几个数量级</span>
+</span></span><span class="line"><span class="cl">find /var/log -maxdepth <span class="m">2</span> -type f -name <span class="s1">&#39;*.log&#39;</span> -size -100M <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>     -exec grep -l <span class="s2">&#34;pattern&#34;</span> <span class="o">{}</span> +
+</span></span></code></pre></div><h1 id="2-运算符与最危险的陷阱">2. 运算符与最危险的陷阱</h1>
+<h2 id="21-优先级">2.1 优先级</h2>
+<pre tabindex="0"><code>!  或  -not          最高（非）
+-a 或  -and          中（与，可省略）
+-o 或  -or           最低（或）
+( )                  改变优先级（在 shell 里必须转义成 \( \)）
+</code></pre><p><code>-a</code> 优先级高于 <code>-o</code>，和数学里「乘法先于加法」一样。<strong>这就是陷阱的来源。</strong></p>
+<h2 id="22-开篇第一问-o-与--delete-混用">2.2 开篇第一问：<code>-o</code> 与 <code>-delete</code> 混用</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">find . -name <span class="s1">&#39;*.tmp&#39;</span> -o -name <span class="s1">&#39;*.log&#39;</span> -delete
+</span></span></code></pre></div><p>很多人以为它删的是「所有 .tmp 和 .log」。<strong>实际上它只删 .log，而且把所有 .tmp 打印出来。</strong></p>
+<p>按优先级加上括号看：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 实际的求值结构（-a 优先级高于 -o）：</span>
+</span></span><span class="line"><span class="cl">find . <span class="o">(</span> -name <span class="s1">&#39;*.tmp&#39;</span> <span class="o">)</span>  -o  <span class="o">(</span> -name <span class="s1">&#39;*.log&#39;</span> -a -delete <span class="o">)</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#        ^^^^^^^^^^^^^^^        ^^^^^^^^^^^^^^^^^^^^^^^^^^</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#        左分支：只是个测试         右分支：测试 AND 删除</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 又因为整个表达式里【有动作】（-delete），所以不会自动加 -print？</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># —— 不对！-delete 只在右分支里，左分支为真时短路，</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    此时 find 认为该文件&#34;匹配了表达式&#34;，而 GNU find 的规则是：</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    只要表达式里存在动作，就不加隐式 -print。</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    所以 .tmp 文件既不被删也不被打印，看起来&#34;什么都没发生&#34;。</span>
+</span></span></code></pre></div><p>实际验证一下：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">mkdir -p /tmp/ftest <span class="o">&amp;&amp;</span> <span class="nb">cd</span> /tmp/ftest
+</span></span><span class="line"><span class="cl">touch a.tmp b.tmp c.log d.log
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">find . -name <span class="s1">&#39;*.tmp&#39;</span> -o -name <span class="s1">&#39;*.log&#39;</span> -delete
+</span></span><span class="line"><span class="cl">ls
+</span></span><span class="line"><span class="cl"><span class="c1"># a.tmp  b.tmp                    &lt;- .log 被删了，.tmp 还在！</span>
+</span></span></code></pre></div><p><strong>正确写法：用括号明确分组。</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">touch c.log d.log      <span class="c1"># 重新造两个</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">find . <span class="se">\(</span> -name <span class="s1">&#39;*.tmp&#39;</span> -o -name <span class="s1">&#39;*.log&#39;</span> <span class="se">\)</span> -delete
+</span></span><span class="line"><span class="cl"><span class="c1">#      ^^                                 ^^</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#      括号在 shell 里是特殊字符，必须转义（或用引号 &#39;(&#39; &#39;)&#39;）</span>
+</span></span><span class="line"><span class="cl">ls
+</span></span><span class="line"><span class="cl"><span class="c1"># （空）                          &lt;- 全部删掉了</span>
+</span></span></code></pre></div><p><strong>这个陷阱同样适用于 <code>-exec</code>、<code>-print</code>、<code>-ls</code></strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ❌ 只对 .log 执行 ls</span>
+</span></span><span class="line"><span class="cl">find . -name <span class="s1">&#39;*.tmp&#39;</span> -o -name <span class="s1">&#39;*.log&#39;</span> -exec ls -l <span class="o">{}</span> <span class="se">\;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅</span>
+</span></span><span class="line"><span class="cl">find . <span class="se">\(</span> -name <span class="s1">&#39;*.tmp&#39;</span> -o -name <span class="s1">&#39;*.log&#39;</span> <span class="se">\)</span> -exec ls -l <span class="o">{}</span> <span class="se">\;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 排查技巧：写危险命令前，先把动作换成 -print 看看命中了什么</span>
+</span></span><span class="line"><span class="cl">find . <span class="se">\(</span> -name <span class="s1">&#39;*.tmp&#39;</span> -o -name <span class="s1">&#39;*.log&#39;</span> <span class="se">\)</span> -print
+</span></span><span class="line"><span class="cl"><span class="c1"># 确认无误后再换成 -delete</span>
+</span></span></code></pre></div><p><strong>养成习惯：只要用了 <code>-o</code>，就一定加括号。</strong></p>
+<h2 id="23-其他运算符用法">2.3 其他运算符用法</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 非</span>
+</span></span><span class="line"><span class="cl">find . ! -name <span class="s1">&#39;*.go&#39;</span>                    <span class="c1"># 不是 .go 的</span>
+</span></span><span class="line"><span class="cl">find . -not -name <span class="s1">&#39;*.go&#39;</span>                 <span class="c1"># 等价</span>
+</span></span><span class="line"><span class="cl">find . -type f ! -path <span class="s1">&#39;*/node_modules/*&#39;</span>   <span class="c1"># 排除某个目录下的文件</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 复杂组合：找出（.go 或 .py）且大于 1M 且不在 vendor 里的文件</span>
+</span></span><span class="line"><span class="cl">find . <span class="se">\(</span> -name <span class="s1">&#39;*.go&#39;</span> -o -name <span class="s1">&#39;*.py&#39;</span> <span class="se">\)</span> -a -size +1M -a ! -path <span class="s1">&#39;*/vendor/*&#39;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 排除多个目录（-prune 更高效，见 2.4）</span>
+</span></span><span class="line"><span class="cl">find . -type d <span class="se">\(</span> -name node_modules -o -name .git <span class="se">\)</span> -prune -o -type f -print
+</span></span></code></pre></div><h2 id="24--prune真正的跳过目录">2.4 -prune：真正的「跳过目录」</h2>
+<p>用 <code>! -path</code> 排除只是<strong>过滤掉结果</strong>，<code>find</code> 仍然会<strong>进入那个目录遍历</strong>。<code>-prune</code> 才是「根本不进去」：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ❌ 慢：仍然会递归进 node_modules 里的几万个文件，只是不输出</span>
+</span></span><span class="line"><span class="cl">find . -type f ! -path <span class="s1">&#39;*/node_modules/*&#39;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 快：遇到 node_modules 目录直接剪枝，不进入</span>
+</span></span><span class="line"><span class="cl">find . -name node_modules -prune -o -type f -print
+</span></span><span class="line"><span class="cl"><span class="c1">#      ^^^^^^^^^^^^^^^^^^^^^^^^^ ^^ ^^^^^^^^^^^^^^^</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#      匹配到就剪枝（-prune 返回真）  或者：是文件就打印</span>
+</span></span></code></pre></div><p><strong><code>-prune</code> 的固定句式必须记住</strong>（三个部分缺一不可）：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">find 路径 &lt;排除条件&gt; -prune -o &lt;真正的条件&gt; -print
+</span></span><span class="line"><span class="cl"><span class="c1">#                          ^^                  ^^^^^^</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                          必须有 -o          必须显式写 -print</span>
+</span></span></code></pre></div><p>为什么必须显式写 <code>-print</code>？因为 <code>-prune</code> 是<strong>动作</strong>，表达式里有动作后 <code>find</code> 就不会自动加 <code>-print</code> 了，右边分支不写的话什么都不输出。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 排除多个目录</span>
+</span></span><span class="line"><span class="cl">find . <span class="se">\(</span> -name node_modules -o -name .git -o -name vendor <span class="se">\)</span> -prune -o -type f -print
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 只排除目录但保留同名文件（-type d 更精确）</span>
+</span></span><span class="line"><span class="cl">find . -type d -name .git -prune -o -type f -name <span class="s1">&#39;*.go&#39;</span> -print
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 常用封装</span>
+</span></span><span class="line"><span class="cl"><span class="nb">alias</span> <span class="nv">ff</span><span class="o">=</span><span class="s1">&#39;find . \( -name node_modules -o -name .git -o -name .venv \) -prune -o -type f&#39;</span>
+</span></span><span class="line"><span class="cl">ff -name <span class="s1">&#39;*.go&#39;</span> -print
+</span></span></code></pre></div><h1 id="3-常用测试条件">3. 常用测试条件</h1>
+<h2 id="31-按名字">3.1 按名字</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">find . -name <span class="s1">&#39;*.log&#39;</span>          <span class="c1"># 名字匹配（glob 通配，【必须加引号】）</span>
+</span></span><span class="line"><span class="cl">find . -iname <span class="s1">&#39;*.LOG&#39;</span>         <span class="c1"># i = 忽略大小写</span>
+</span></span><span class="line"><span class="cl">find . -path <span class="s1">&#39;*/test/*.go&#39;</span>    <span class="c1"># 匹配【完整路径】而不只是文件名</span>
+</span></span><span class="line"><span class="cl">find . -ipath <span class="s1">&#39;*/TEST/*&#39;</span>      <span class="c1"># 忽略大小写的路径匹配</span>
+</span></span><span class="line"><span class="cl">find . -regex <span class="s1">&#39;.*/[0-9]+\.log&#39;</span>      <span class="c1"># 整个路径匹配正则（默认是 emacs 正则）</span>
+</span></span><span class="line"><span class="cl">find . -regextype posix-extended -regex <span class="s1">&#39;.*/[0-9]+\.log&#39;</span>   <span class="c1"># 换成扩展正则</span>
+</span></span><span class="line"><span class="cl">find . -lname <span class="s1">&#39;*/target&#39;</span>      <span class="c1"># 软链接的【目标】匹配</span>
+</span></span></code></pre></div><p><strong>引号为什么必须加？</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ❌ 没引号时，通配符先被 shell 展开了</span>
+</span></span><span class="line"><span class="cl">find . -name *.log
+</span></span><span class="line"><span class="cl"><span class="c1"># 如果当前目录恰好有 a.log b.log，shell 会展开成：</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># find . -name a.log b.log      -&gt; find: paths must precede expression: &#39;b.log&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 如果当前目录【没有】.log 文件，shell 展开失败保持原样，反而&#34;碰巧能用&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># —— 这就是为什么它&#34;有时候能跑&#34;，这种不确定性最危险</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 加引号，让 find 自己处理通配符</span>
+</span></span><span class="line"><span class="cl">find . -name <span class="s1">&#39;*.log&#39;</span>
+</span></span><span class="line"><span class="cl">find . -name <span class="s2">&#34;*.log&#34;</span>
+</span></span></code></pre></div><p>注意 <code>-name</code> 的 glob 和 shell 的 glob 有个区别：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">find . -name <span class="s1">&#39;*.log&#39;</span>          <span class="c1"># 能匹配隐藏文件 .hidden.log（find 不特殊对待点开头）</span>
+</span></span><span class="line"><span class="cl">ls *.log                      <span class="c1"># shell 的 glob 不匹配 . 开头的</span>
+</span></span></code></pre></div><h2 id="32-按类型">3.2 按类型</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">find . -type f          <span class="c1"># f = file，普通文件</span>
+</span></span><span class="line"><span class="cl">find . -type d          <span class="c1"># d = directory</span>
+</span></span><span class="line"><span class="cl">find . -type l          <span class="c1"># l = symbolic link</span>
+</span></span><span class="line"><span class="cl">find . -type s          <span class="c1"># s = socket</span>
+</span></span><span class="line"><span class="cl">find . -type p          <span class="c1"># p = named pipe (FIFO)</span>
+</span></span><span class="line"><span class="cl">find . -type b          <span class="c1"># b = block device</span>
+</span></span><span class="line"><span class="cl">find . -type c          <span class="c1"># c = character device</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 组合</span>
+</span></span><span class="line"><span class="cl">find /dev -type c -name <span class="s1">&#39;tty*&#39;</span>
+</span></span><span class="line"><span class="cl">find . -xtype l         <span class="c1"># 【悬空软链接】：链接指向的目标不存在   ← 部署检查常用</span>
+</span></span></code></pre></div><h2 id="33-按大小">3.3 按大小</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">find . -size +100M      <span class="c1"># 大于 100MB</span>
+</span></span><span class="line"><span class="cl">find . -size -1k        <span class="c1"># 小于 1KB</span>
+</span></span><span class="line"><span class="cl">find . -size <span class="m">0</span>          <span class="c1"># 恰好为 0（也可以用 -empty）</span>
+</span></span><span class="line"><span class="cl">find . -empty           <span class="c1"># 空文件【或】空目录</span>
+</span></span><span class="line"><span class="cl">find . -type f -empty   <span class="c1"># 只要空文件</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 单位（大小写敏感！）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   c = 字节（byte）      ← 最直观</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   k = KiB (1024)</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   M = MiB</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   G = GiB</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   b = 512 字节块（【默认单位，容易踩坑】）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   w = 2 字节字</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">find . -size +1000      <span class="c1"># ⚠️ 这是 1000 个【512 字节块】= 500KB，不是 1000 字节！</span>
+</span></span><span class="line"><span class="cl">find . -size +1000c     <span class="c1"># ✅ 这才是 1000 字节</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ⚠️ 另一个坑：-size 是【向上取整】的</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 一个 1 字节的文件，-size 1k 会匹配（因为它占用了 1 个 k 单位）</span>
+</span></span><span class="line"><span class="cl">find . -size -1M        <span class="c1"># 实际是&#34;占用不足 1M 个单位&#34;，即小于 1MB 的</span>
+</span></span></code></pre></div><h2 id="34-按时间重点">3.4 按时间（重点）</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 三种时间（对应 04 篇讲的三个时间戳）</span>
+</span></span><span class="line"><span class="cl">-mtime / -mmin      <span class="c1"># 内容修改时间   ← 最常用</span>
+</span></span><span class="line"><span class="cl">-atime / -amin      <span class="c1"># 访问时间</span>
+</span></span><span class="line"><span class="cl">-ctime / -cmin      <span class="c1"># inode 变更时间（权限、属主、链接数改变也会更新）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 数字的三种形式</span>
+</span></span><span class="line"><span class="cl">find . -mtime +7        <span class="c1"># 【超过】7 天</span>
+</span></span><span class="line"><span class="cl">find . -mtime -7        <span class="c1"># 【不到】7 天（7 天内）</span>
+</span></span><span class="line"><span class="cl">find . -mtime <span class="m">7</span>         <span class="c1"># 【恰好】第 7 天那一天（很少用）</span>
+</span></span></code></pre></div><p><strong>开篇第四问：<code>-mtime +7</code> 到底是几天？</strong></p>
+<p><code>find</code> 内部的算法是：</p>
+<pre tabindex="0"><code>age = (当前时间 - 文件 mtime) / 86400      然后【向下取整】成整数
++7 的判断是：  age &gt; 7
+</code></pre><p>所以一个「7.9 天前」修改的文件，<code>age = 7</code>（取整后），不满足 <code>&gt; 7</code>，<strong>不会被匹配</strong>。</p>
+<p><strong><code>-mtime +7</code> 实际含义是「超过 8 天」（准确说是 age ≥ 8）。</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 验证</span>
+</span></span><span class="line"><span class="cl">touch -d <span class="s1">&#39;7 days ago 12:00&#39;</span> /tmp/f7
+</span></span><span class="line"><span class="cl">find /tmp -name f7 -mtime +7      <span class="c1"># （无输出）</span>
+</span></span><span class="line"><span class="cl">find /tmp -name f7 -mtime +6      <span class="c1"># /tmp/f7</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 想精确表达「7 天前及更早」，用 -newermt 取反</span>
+</span></span><span class="line"><span class="cl">find /var/log -type f ! -newermt <span class="s1">&#39;7 days ago&#39;</span> -delete
+</span></span><span class="line"><span class="cl"><span class="c1">#                     ^^^^^^^^^^^^^^^^^^^^^^^ 不比&#34;7天前那个时刻&#34;新 = 7 天前或更早</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                     精确到秒，不做取整</span>
+</span></span></code></pre></div><p><code>-newer</code> 系列更直观，推荐优先使用：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">find . -newer ref.txt              <span class="c1"># 比 ref.txt 的 mtime 新</span>
+</span></span><span class="line"><span class="cl">find . -newermt <span class="s1">&#39;2026-08-01&#39;</span>       <span class="c1"># 比这个时刻新（mt = mtime）</span>
+</span></span><span class="line"><span class="cl">find . -newermt <span class="s1">&#39;2 hours ago&#39;</span>      <span class="c1"># 支持自然语言</span>
+</span></span><span class="line"><span class="cl">find . ! -newermt <span class="s1">&#39;2026-08-01&#39;</span>     <span class="c1"># 早于这个时刻</span>
+</span></span><span class="line"><span class="cl">find . -newerct <span class="s1">&#39;1 day ago&#39;</span>        <span class="c1"># ct = ctime</span>
+</span></span><span class="line"><span class="cl">find . -newerat <span class="s1">&#39;1 hour ago&#39;</span>       <span class="c1"># at = atime</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 时间区间：找 8 月 1 日到 8 月 5 日之间修改的</span>
+</span></span><span class="line"><span class="cl">find . -newermt <span class="s1">&#39;2026-08-01&#39;</span> ! -newermt <span class="s1">&#39;2026-08-06&#39;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 分钟粒度（排查刚发生的事故时用）</span>
+</span></span><span class="line"><span class="cl">find /var/log -mmin -30            <span class="c1"># 30 分钟内修改过的</span>
+</span></span><span class="line"><span class="cl">find /etc -mmin -60 -type f        <span class="c1"># 一小时内被改过的配置  ← 事故排查常用</span>
+</span></span></code></pre></div><h2 id="35-按权限与属主">3.5 按权限与属主</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">find . -user lhx                   <span class="c1"># 属主是 lhx</span>
+</span></span><span class="line"><span class="cl">find . -uid <span class="m">1000</span>                   <span class="c1"># 按 uid（用户被删后只剩数字时用）</span>
+</span></span><span class="line"><span class="cl">find . -group docker
+</span></span><span class="line"><span class="cl">find . -nouser                     <span class="c1"># 属主的 uid 在 /etc/passwd 里不存在（用户被删了）</span>
+</span></span><span class="line"><span class="cl">find . -nogroup
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 权限匹配的三种模式（最容易混）</span>
+</span></span><span class="line"><span class="cl">find . -perm <span class="m">644</span>                   <span class="c1"># 权限【恰好】是 644</span>
+</span></span><span class="line"><span class="cl">find . -perm -644                  <span class="c1"># 【至少】包含这些位（可以有更多权限）</span>
+</span></span><span class="line"><span class="cl">find . -perm /644                  <span class="c1"># 【任意一位】匹配即可（u+r 或 g+r 或 o+r）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 安全审计常用</span>
+</span></span><span class="line"><span class="cl">find / -perm -4000 -type f 2&gt;/dev/null       <span class="c1"># 所有 SUID 程序  ← 必查</span>
+</span></span><span class="line"><span class="cl">find / -perm -2000 -type f 2&gt;/dev/null       <span class="c1"># 所有 SGID 程序</span>
+</span></span><span class="line"><span class="cl">find / -perm -002 -type f 2&gt;/dev/null        <span class="c1"># 所有【其他人可写】的文件  ← 高危</span>
+</span></span><span class="line"><span class="cl">find /home -perm -o+w -type d                <span class="c1"># 其他人可写的目录</span>
+</span></span><span class="line"><span class="cl">find ~/.ssh -type f ! -perm <span class="m">600</span>              <span class="c1"># ssh 密钥权限不对的（ssh 会拒绝使用）</span>
+</span></span></code></pre></div><h2 id="36-其他常用">3.6 其他常用</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">find . -inum <span class="m">2621441</span>               <span class="c1"># 按 inode 号找（找一个文件的所有硬链接）</span>
+</span></span><span class="line"><span class="cl">find . -samefile /path/to/f        <span class="c1"># 同上，更直观：找出与该文件同 inode 的所有名字</span>
+</span></span><span class="line"><span class="cl">find . -links +1 -type f           <span class="c1"># 硬链接数大于 1 的文件</span>
+</span></span><span class="line"><span class="cl">find . -maxdepth <span class="m">2</span>                 <span class="c1"># 最多向下 2 层   ← 全局选项，写在最前面</span>
+</span></span><span class="line"><span class="cl">find . -mindepth <span class="m">1</span>                 <span class="c1"># 至少 1 层（排除起始目录本身）</span>
+</span></span><span class="line"><span class="cl">find . -xdev                       <span class="c1"># 不跨文件系统（等价 -mount）  ← 扫 / 时必加</span>
+</span></span><span class="line"><span class="cl">find . -follow                     <span class="c1"># 跟随软链接（默认不跟）</span>
+</span></span><span class="line"><span class="cl">find . -readable -writable         <span class="c1"># 当前用户可读/可写的</span>
+</span></span><span class="line"><span class="cl">find . -executable -type f
+</span></span></code></pre></div><h1 id="4-动作-exec-delete-printf">4. 动作：-exec、-delete、-printf</h1>
+<h2 id="41--exec-的两种形式开篇第二问">4.1 -exec 的两种形式（开篇第二问）</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">find . -name <span class="s1">&#39;*.log&#39;</span> -exec gzip <span class="o">{}</span> <span class="se">\;</span>      <span class="c1"># 形式一：分号结尾</span>
+</span></span><span class="line"><span class="cl">find . -name <span class="s1">&#39;*.log&#39;</span> -exec gzip <span class="o">{}</span> +       <span class="c1"># 形式二：加号结尾</span>
+</span></span></code></pre></div><table>
+<thead>
+<tr>
+<th></th>
+<th><code>\;</code></th>
+<th><code>+</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>执行方式</td>
+<td><strong>每个文件起一个进程</strong></td>
+<td><strong>攒够一批，一次传多个参数</strong></td>
+</tr>
+<tr>
+<td>等价于</td>
+<td><code>gzip a.log; gzip b.log; gzip c.log</code></td>
+<td><code>gzip a.log b.log c.log</code></td>
+</tr>
+<tr>
+<td><code>{}</code> 位置</td>
+<td>可以在任意位置、可出现多次</td>
+<td><strong>必须在命令末尾</strong>，只能出现一次</td>
+</tr>
+<tr>
+<td>性能</td>
+<td>1000 个文件 = 1000 次 fork+exec</td>
+<td>1000 个文件 ≈ 1~2 次</td>
+</tr>
+<tr>
+<td>退出码</td>
+<td>每次都检查，非 0 会影响 find 的返回值</td>
+<td>只看最后一批</td>
+</tr>
+</tbody>
+</table>
+<p>性能差距实测：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">mkdir -p /tmp/bench <span class="o">&amp;&amp;</span> <span class="nb">cd</span> /tmp/bench <span class="o">&amp;&amp;</span> touch f<span class="o">{</span>1..5000<span class="o">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="nb">time</span> find . -type f -exec touch <span class="o">{}</span> <span class="se">\;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># real  0m8.234s          &lt;- 5000 次 fork + exec</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="nb">time</span> find . -type f -exec touch <span class="o">{}</span> +
+</span></span><span class="line"><span class="cl"><span class="c1"># real  0m0.061s          &lt;- 几次调用搞定，快 130 倍</span>
+</span></span></code></pre></div><p><strong>默认用 <code>+</code>，只有下面几种情况才用 <code>\;</code></strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ① {} 需要出现在命令中间或多次</span>
+</span></span><span class="line"><span class="cl">find . -name <span class="s1">&#39;*.txt&#39;</span> -exec mv <span class="o">{}</span> <span class="o">{}</span>.bak <span class="se">\;</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                             ^^ ^^^^^^ 两个 {}，只能用 \;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ② 命令一次只能处理一个文件</span>
+</span></span><span class="line"><span class="cl">find . -name <span class="s1">&#39;*.tar.gz&#39;</span> -exec tar -xzf <span class="o">{}</span> -C /tmp/out <span class="se">\;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ③ 需要用 shell 特性（管道、重定向、变量）</span>
+</span></span><span class="line"><span class="cl">find . -name <span class="s1">&#39;*.log&#39;</span> -exec sh -c <span class="s1">&#39;gzip -c &#34;$1&#34; &gt; &#34;$1.gz&#34;&#39;</span> _ <span class="o">{}</span> <span class="se">\;</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                                                          ^^ _ 是占位的 $0</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 用 + 的版本（更快，但脚本要自己遍历参数）</span>
+</span></span><span class="line"><span class="cl">find . -name <span class="s1">&#39;*.log&#39;</span> -exec sh -c <span class="s1">&#39;for f; do gzip -c &#34;$f&#34; &gt; &#34;$f.gz&#34;; done&#39;</span> _ <span class="o">{}</span> +
+</span></span><span class="line"><span class="cl"><span class="c1">#                                     ^^^^ for f 默认遍历 &#34;$@&#34;</span>
+</span></span></code></pre></div><p><strong><code>\;</code> 为什么要转义？</strong> 因为 <code>;</code> 在 shell 里是命令分隔符，不转义的话 shell 会把 <code>find ... -exec gzip {}</code> 和后面的内容拆成两条命令。写成 <code>\;</code>、<code>';'</code>、<code>&quot;;&quot;</code> 都可以。</p>
+<h2 id="42--execdir更安全的变体">4.2 -execdir：更安全的变体</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">find . -name <span class="s1">&#39;*.log&#39;</span> -execdir gzip <span class="o">{}</span> <span class="se">\;</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                     ^^^^^^^^ 在【文件所在的目录】里执行命令，{} 是 ./文件名</span>
+</span></span></code></pre></div><p>两个优势：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ① 避免路径中的空格、特殊字符引发的问题（{} 只是 ./basename）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ② 防御【竞态攻击】：</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    用 -exec 时，find 传的是完整路径，从 find 找到文件到命令执行之间，</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    攻击者可能把路径中的某个目录换成软链接，导致命令作用到别的文件上。</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    -execdir 先 chdir 到目标目录再执行，规避了这个窗口。</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ⚠️ 注意 -execdir 也支持 + 形式，但会按目录分批</span>
+</span></span><span class="line"><span class="cl">find . -name <span class="s1">&#39;*.log&#39;</span> -execdir gzip <span class="o">{}</span> +
+</span></span></code></pre></div><h2 id="43--delete">4.3 -delete</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">find /tmp/cache -type f -mtime +7 -delete
+</span></span></code></pre></div><p>比 <code>-exec rm {} +</code> 更好的地方：<strong>不用起进程</strong>（find 直接调 <code>unlink()</code>），且<strong>不受参数长度限制</strong>。</p>
+<p><strong>四个注意点</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ① -delete 隐含了 -depth（先处理子目录再处理父目录），</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    所以它能删非空目录树，但也意味着遍历顺序变了，</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    与 -prune 一起用时行为可能不符合预期</span>
+</span></span><span class="line"><span class="cl">find . -name node_modules -prune -o -name <span class="s1">&#39;*.tmp&#39;</span> -delete    <span class="c1"># ⚠️ -prune 会失效</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ② 用了 -o 必须加括号（第 2.2 节的陷阱）</span>
+</span></span><span class="line"><span class="cl">find . <span class="se">\(</span> -name <span class="s1">&#39;*.a&#39;</span> -o -name <span class="s1">&#39;*.b&#39;</span> <span class="se">\)</span> -delete
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ③ 删目录时目录必须为空（除非它自己也被匹配到并按 -depth 顺序处理）</span>
+</span></span><span class="line"><span class="cl">find . -type d -empty -delete         <span class="c1"># 删空目录</span>
+</span></span><span class="line"><span class="cl">find . -depth -type d -empty -delete  <span class="c1"># 递归删多层空目录</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ④ 【永远先用 -print 演练一遍】</span>
+</span></span><span class="line"><span class="cl">find /data -type f -mtime +30 -print <span class="p">|</span> head -20    <span class="c1"># 先看命中什么</span>
+</span></span><span class="line"><span class="cl">find /data -type f -mtime +30 -delete              <span class="c1"># 确认后再删</span>
+</span></span></code></pre></div><h2 id="44--printf自定义输出">4.4 -printf：自定义输出</h2>
+<p>比 <code>-ls</code> 灵活得多，做统计和脚本时非常有用：</p>
+<table>
+<thead>
+<tr>
+<th>格式符</th>
+<th>含义</th>
+<th>格式符</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>%p</code></td>
+<td>完整路径</td>
+<td><code>%f</code></td>
+<td>文件名（basename）</td>
+</tr>
+<tr>
+<td><code>%h</code></td>
+<td>目录部分（dirname）</td>
+<td><code>%P</code></td>
+<td>去掉起始路径的相对路径</td>
+</tr>
+<tr>
+<td><code>%s</code></td>
+<td>大小（字节）</td>
+<td><code>%k</code> / <code>%b</code></td>
+<td>占用的 KB / 512B 块</td>
+</tr>
+<tr>
+<td><code>%m</code></td>
+<td>权限（八进制）</td>
+<td><code>%M</code></td>
+<td>权限（符号，如 <code>-rw-r--r--</code>）</td>
+</tr>
+<tr>
+<td><code>%u</code> / <code>%U</code></td>
+<td>属主名 / uid</td>
+<td><code>%g</code> / <code>%G</code></td>
+<td>属组名 / gid</td>
+</tr>
+<tr>
+<td><code>%i</code></td>
+<td>inode 号</td>
+<td><code>%n</code></td>
+<td>硬链接数</td>
+</tr>
+<tr>
+<td><code>%y</code></td>
+<td>文件类型（f/d/l…）</td>
+<td><code>%Y</code></td>
+<td>同上但解引用软链接</td>
+</tr>
+<tr>
+<td><code>%t</code> / <code>%Tx</code></td>
+<td>mtime</td>
+<td><code>%TY-%Tm-%Td</code></td>
+<td>年-月-日</td>
+</tr>
+<tr>
+<td><code>%a</code> / <code>%c</code></td>
+<td>atime / ctime</td>
+<td><code>%T@</code></td>
+<td>mtime 的 Unix 时间戳（<strong>排序用</strong>）</td>
+</tr>
+<tr>
+<td><code>%l</code></td>
+<td>软链接的目标</td>
+<td><code>%d</code></td>
+<td>相对起始点的深度</td>
+</tr>
+<tr>
+<td><code>\n</code> <code>\t</code> <code>\0</code></td>
+<td>换行 / 制表符 / <strong>NUL</strong></td>
+<td></td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 找出最大的 10 个文件（比 ls -lS 强：能递归）</span>
+</span></span><span class="line"><span class="cl">find . -type f -printf <span class="s1">&#39;%s\t%p\n&#39;</span> <span class="p">|</span> sort -rn <span class="p">|</span> head -10
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 找出最新修改的 10 个文件</span>
+</span></span><span class="line"><span class="cl">find . -type f -printf <span class="s1">&#39;%T@ %p\n&#39;</span> <span class="p">|</span> sort -rn <span class="p">|</span> head -10 <span class="p">|</span> cut -d<span class="s1">&#39; &#39;</span> -f2-
+</span></span><span class="line"><span class="cl"><span class="c1">#                      ^^^ Unix 时间戳，才能正确按数值排序</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 统计各扩展名的文件数</span>
+</span></span><span class="line"><span class="cl">find . -type f -printf <span class="s1">&#39;%f\n&#39;</span> <span class="p">|</span> grep -oP <span class="s1">&#39;\.[^.]+$&#39;</span> <span class="p">|</span> sort <span class="p">|</span> uniq -c <span class="p">|</span> sort -rn
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 统计总大小（不起 du）</span>
+</span></span><span class="line"><span class="cl">find . -name <span class="s1">&#39;*.log&#39;</span> -printf <span class="s1">&#39;%s\n&#39;</span> <span class="p">|</span> awk <span class="s1">&#39;{s+=$1} END{print s/1024/1024 &#34; MB&#34;}&#39;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 生成一份带权限的清单</span>
+</span></span><span class="line"><span class="cl">find /etc -maxdepth <span class="m">1</span> -printf <span class="s1">&#39;%M %u:%g %10s %TY-%Tm-%Td %p\n&#39;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 快速数文件个数（比 | wc -l 快，不用构造完整输出）</span>
+</span></span><span class="line"><span class="cl">find . -type f -printf <span class="s1">&#39;.&#39;</span> <span class="p">|</span> wc -c
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 找出软链接及其目标</span>
+</span></span><span class="line"><span class="cl">find /etc -type l -printf <span class="s1">&#39;%p -&gt; %l\n&#39;</span>
+</span></span></code></pre></div><h2 id="45-其他动作">4.5 其他动作</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">find . -name <span class="s1">&#39;*.log&#39;</span> -ls              <span class="c1"># 类似 ls -dils 的详细输出</span>
+</span></span><span class="line"><span class="cl">find . -name <span class="s1">&#39;*.log&#39;</span> -print           <span class="c1"># 输出路径 + 换行</span>
+</span></span><span class="line"><span class="cl">find . -name <span class="s1">&#39;*.log&#39;</span> -print0          <span class="c1"># 输出路径 + \0  ← 配合 xargs -0</span>
+</span></span><span class="line"><span class="cl">find . -name <span class="s1">&#39;*.log&#39;</span> -fprint out.txt  <span class="c1"># 输出到文件</span>
+</span></span><span class="line"><span class="cl">find . -name <span class="s1">&#39;*.log&#39;</span> -quit            <span class="c1"># 找到第一个就退出（判断&#34;是否存在&#34;时高效）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 判断某类文件是否存在（不需要遍历完）</span>
+</span></span><span class="line"><span class="cl"><span class="k">if</span> find /data -name <span class="s1">&#39;*.lock&#39;</span> -print -quit <span class="p">|</span> grep -q .<span class="p">;</span> <span class="k">then</span> <span class="nb">echo</span> <span class="s2">&#34;有锁文件&#34;</span><span class="p">;</span> <span class="k">fi</span>
+</span></span></code></pre></div><h1 id="5-xargs把标准输入变成参数">5. xargs：把标准输入变成参数</h1>
+<h2 id="51-为什么需要-xargs">5.1 为什么需要 xargs</h2>
+<p>很多命令<strong>不接受标准输入作为参数</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;/tmp/a.txt&#34;</span> <span class="p">|</span> rm
+</span></span><span class="line"><span class="cl"><span class="c1"># rm: missing operand         &lt;- rm 不读 stdin，它只看命令行参数</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;/tmp/a.txt&#34;</span> <span class="p">|</span> xargs rm
+</span></span><span class="line"><span class="cl"><span class="c1">#                   ^^^^^ 把 stdin 的内容转成命令行参数：rm /tmp/a.txt</span>
+</span></span></code></pre></div><p><code>xargs</code> 的另一个价值是<strong>自动分批</strong>，绕开 <code>ARG_MAX</code> 限制：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">rm /data/logs/*.log
+</span></span><span class="line"><span class="cl"><span class="c1"># bash: /usr/bin/rm: Argument list too long</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#       ^^ shell 展开出几十万个参数，超过内核的 ARG_MAX</span>
+</span></span><span class="line"><span class="cl">getconf ARG_MAX          <span class="c1"># 2097152 字节</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">find /data/logs -name <span class="s1">&#39;*.log&#39;</span> -print0 <span class="p">|</span> xargs -0 rm
+</span></span><span class="line"><span class="cl"><span class="c1">#                                       ^^^^^ 自动按 ARG_MAX 分批调用 rm</span>
+</span></span></code></pre></div><h2 id="52--print0-与--0唯一安全的管道写法">5.2 -print0 与 -0：唯一安全的管道写法</h2>
+<p>开篇第三问。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">find . -name <span class="s1">&#39;*.log&#39;</span> <span class="p">|</span> xargs rm
+</span></span></code></pre></div><p>这个写法有两个致命问题：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 造一个&#34;合法但恶劣&#34;的文件名</span>
+</span></span><span class="line"><span class="cl">mkdir -p /tmp/xtest <span class="o">&amp;&amp;</span> <span class="nb">cd</span> /tmp/xtest
+</span></span><span class="line"><span class="cl">touch <span class="s1">&#39;important file.log&#39;</span>        <span class="c1"># 名字里有空格</span>
+</span></span><span class="line"><span class="cl">touch <span class="s1">$&#39;weird\nname.log&#39;</span>          <span class="c1"># 名字里有换行！</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">find . -name <span class="s1">&#39;*.log&#39;</span> <span class="p">|</span> xargs rm
+</span></span><span class="line"><span class="cl"><span class="c1"># rm: cannot remove &#39;./important&#39;: No such file or directory</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># rm: cannot remove &#39;file.log&#39;: No such file or directory</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#     ^^ xargs 默认按【空白】分隔，一个文件名被拆成了两个参数</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 换行的情况更糟：可能删掉完全不相干的文件</span>
+</span></span></code></pre></div><p><strong>根因</strong>：<code>find</code> 默认用<strong>换行</strong>分隔输出，而 <code>xargs</code> 默认按<strong>空白（空格、tab、换行）<strong>分隔输入。但文件名里</strong>除了 <code>/</code> 和 <code>\0</code> 什么字符都合法</strong>（04 篇第 8 节）。</p>
+<p><strong>唯一安全的方案：用 <code>\0</code>（NUL）分隔</strong> —— 因为它是文件名里唯一不可能出现的字符。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">find . -name <span class="s1">&#39;*.log&#39;</span> -print0 <span class="p">|</span> xargs -0 rm
+</span></span><span class="line"><span class="cl"><span class="c1">#                    ^^^^^^^          ^^</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                    用 \0 分隔        按 \0 切分</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 记忆：find 的 -print0 与 xargs 的 -0 永远成对出现</span>
+</span></span></code></pre></div><p>其他产生 <code>\0</code> 输出的命令：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">grep -rlZ <span class="s1">&#39;pattern&#39;</span> . <span class="p">|</span> xargs -0 sed -i <span class="s1">&#39;s/a/b/g&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#         ^ Z = --null，输出文件名用 \0 分隔</span>
+</span></span><span class="line"><span class="cl">sort -z / uniq -z / cut -z / tr -d <span class="s1">&#39;\0&#39;</span>
+</span></span><span class="line"><span class="cl">readlink -z / realpath -z / du -0 / stat --printf<span class="o">=</span><span class="s1">&#39;%n\0&#39;</span>
+</span></span></code></pre></div><p>如果不想用 <code>xargs</code>，<code>-exec</code> 本身就是安全的（它不经过 shell 解析）：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">find . -name <span class="s1">&#39;*.log&#39;</span> -exec rm <span class="o">{}</span> +          <span class="c1"># ✅ 同样安全，且更简单</span>
+</span></span></code></pre></div><h2 id="53-xargs-的常用参数">5.3 xargs 的常用参数</h2>
+<table>
+<thead>
+<tr>
+<th>短</th>
+<th>长</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>-0</code></td>
+<td><code>--null</code></td>
+<td>输入按 <code>\0</code> 分隔（<strong>配合 <code>-print0</code></strong>）</td>
+</tr>
+<tr>
+<td><code>-d C</code></td>
+<td><code>--delimiter</code></td>
+<td>自定义分隔符（如 <code>-d '\n'</code> 只按换行分隔）</td>
+</tr>
+<tr>
+<td><code>-n N</code></td>
+<td><code>--max-args</code></td>
+<td>每次最多传 N 个参数</td>
+</tr>
+<tr>
+<td><code>-L N</code></td>
+<td><code>--max-lines</code></td>
+<td>每次最多用 N 行输入</td>
+</tr>
+<tr>
+<td><code>-s N</code></td>
+<td><code>--max-chars</code></td>
+<td>每次命令行最多 N 字符</td>
+</tr>
+<tr>
+<td><strong><code>-P N</code></strong></td>
+<td><code>--max-procs</code></td>
+<td><strong>并行跑 N 个进程</strong>（<code>-P 0</code> = 尽可能多）</td>
+</tr>
+<tr>
+<td><strong><code>-I {}</code></strong></td>
+<td><code>--replace</code></td>
+<td>用 <code>{}</code> 占位，<strong>每行作为一个整体参数</strong>（隐含 <code>-L 1</code>）</td>
+</tr>
+<tr>
+<td><strong><code>-r</code></strong></td>
+<td><code>--no-run-if-empty</code></td>
+<td><strong>输入为空时不执行命令</strong>（GNU 特有，很重要）</td>
+</tr>
+<tr>
+<td><code>-t</code></td>
+<td><code>--verbose</code></td>
+<td>执行前打印命令（调试用）</td>
+</tr>
+<tr>
+<td><code>-p</code></td>
+<td><code>--interactive</code></td>
+<td>每条命令执行前询问</td>
+</tr>
+<tr>
+<td><code>-a FILE</code></td>
+<td><code>--arg-file</code></td>
+<td>从文件读参数而不是 stdin</td>
+</tr>
+<tr>
+<td><code>-E EOF</code></td>
+<td><code>--eof</code></td>
+<td>遇到指定字符串就停止读取</td>
+</tr>
+</tbody>
+</table>
+<h2 id="54-三个重要用法">5.4 三个重要用法</h2>
+<p><strong>① <code>-r</code>：防止空输入导致误执行</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ❌ 危险：如果 find 没找到任何文件，xargs 仍会执行一次 rm（无参数）</span>
+</span></span><span class="line"><span class="cl">find /tmp -name <span class="s1">&#39;*.nonexistent&#39;</span> <span class="p">|</span> xargs rm
+</span></span><span class="line"><span class="cl"><span class="c1"># rm: missing operand           &lt;- 这次只是报错，但换成别的命令可能出事</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;&#34;</span> <span class="p">|</span> xargs ls
+</span></span><span class="line"><span class="cl"><span class="c1"># （列出了当前目录！因为 ls 无参数时列出 .）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 加 -r</span>
+</span></span><span class="line"><span class="cl">find /tmp -name <span class="s1">&#39;*.nonexistent&#39;</span> -print0 <span class="p">|</span> xargs -0 -r rm
+</span></span><span class="line"><span class="cl"><span class="c1"># ⚠️ -r 是 GNU 扩展，BSD/macOS 没有（macOS 的 xargs 默认就不执行空输入）</span>
+</span></span></code></pre></div><p><strong>② <code>-I {}</code>：需要把参数放在中间时</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 默认 xargs 把参数追加到命令末尾</span>
+</span></span><span class="line"><span class="cl">find . -name <span class="s1">&#39;*.log&#39;</span> -print0 <span class="p">|</span> xargs -0 cp -t /backup/      <span class="c1"># ✅ 用 -t 指定目标</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 参数要放在中间时用 -I</span>
+</span></span><span class="line"><span class="cl">find . -name <span class="s1">&#39;*.log&#39;</span> -print0 <span class="p">|</span> xargs -0 -I <span class="o">{}</span> cp <span class="o">{}</span> /backup/
+</span></span><span class="line"><span class="cl"><span class="c1">#                                       ^^^^^ 用 {} 占位</span>
+</span></span><span class="line"><span class="cl">find . -name <span class="s1">&#39;*.txt&#39;</span> -print0 <span class="p">|</span> xargs -0 -I <span class="o">{}</span> mv <span class="o">{}</span> <span class="o">{}</span>.bak
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ⚠️ -I 隐含 -L 1，即【每次只处理一个】，会退化成一个文件一个进程（慢）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 所以能用 -t 或 -exec ... + 的话优先用它们</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ⚠️ -I 与 -0 一起用时，某些版本行为有差异，建议改用 -exec 或 while read</span>
+</span></span></code></pre></div><p><strong>③ <code>-P N</code>：并行加速</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 串行压缩 1000 个日志（单核跑满）</span>
+</span></span><span class="line"><span class="cl">find . -name <span class="s1">&#39;*.log&#39;</span> -print0 <span class="p">|</span> xargs -0 -n1 gzip
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 并行 8 个进程（CPU 密集型任务能快接近 8 倍）</span>
+</span></span><span class="line"><span class="cl">find . -name <span class="s1">&#39;*.log&#39;</span> -print0 <span class="p">|</span> xargs -0 -P <span class="m">8</span> -n <span class="m">1</span> gzip
+</span></span><span class="line"><span class="cl"><span class="c1">#                                       ^^^^ 并发数</span>
+</span></span><span class="line"><span class="cl">find . -name <span class="s1">&#39;*.log&#39;</span> -print0 <span class="p">|</span> xargs -0 -P <span class="s2">&#34;</span><span class="k">$(</span>nproc<span class="k">)</span><span class="s2">&#34;</span> -n <span class="m">1</span> gzip
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 并行删除百万小文件（IO 密集，并发数不宜太高）</span>
+</span></span><span class="line"><span class="cl">find /cache -type f -print0 <span class="p">|</span> xargs -0 -P <span class="m">4</span> -n <span class="m">1000</span> rm -f
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 并行 ping 一批主机</span>
+</span></span><span class="line"><span class="cl">cat hosts.txt <span class="p">|</span> xargs -P <span class="m">20</span> -I <span class="o">{}</span> sh -c <span class="s1">&#39;ping -c1 -W1 {} &gt;/dev/null &amp;&amp; echo &#34;{} up&#34;&#39;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ⚠️ 并行时多个进程的输出会交错混在一起</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    要保证输出完整性，用 GNU parallel（它会缓冲每个任务的输出）</span>
+</span></span><span class="line"><span class="cl">find . -name <span class="s1">&#39;*.log&#39;</span> <span class="p">|</span> parallel -j8 gzip <span class="o">{}</span>
+</span></span></code></pre></div><h2 id="55-三种批处理方式对比">5.5 三种批处理方式对比</h2>
+<table>
+<thead>
+<tr>
+<th>方式</th>
+<th>安全性</th>
+<th>性能</th>
+<th>何时用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>-exec cmd {} +</code></td>
+<td>✅ 安全</td>
+<td>✅ 快（批量）</td>
+<td><strong>默认选它</strong></td>
+</tr>
+<tr>
+<td><code>-exec cmd {} \;</code></td>
+<td>✅ 安全</td>
+<td>❌ 慢（一个一进程）</td>
+<td><code>{}</code> 需在中间/多次出现时</td>
+</tr>
+<tr>
+<td><code>-print0 | xargs -0</code></td>
+<td>✅ 安全</td>
+<td>✅ 快，<strong>且能 <code>-P</code> 并行</strong></td>
+<td>需要并行、或需要管道中间处理时</td>
+</tr>
+<tr>
+<td><code>| xargs</code>（无 <code>-0</code>）</td>
+<td>❌ <strong>不安全</strong></td>
+<td>—</td>
+<td><strong>永远不要用</strong></td>
+</tr>
+<tr>
+<td><code>for f in $(find ...)</code></td>
+<td>❌ <strong>不安全</strong></td>
+<td>❌ 慢</td>
+<td><strong>永远不要用</strong></td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ✅ 处理任意文件名的 while 循环（需要复杂逻辑时）</span>
+</span></span><span class="line"><span class="cl"><span class="k">while</span> <span class="nv">IFS</span><span class="o">=</span> <span class="nb">read</span> -r -d <span class="s1">&#39;&#39;</span> f<span class="p">;</span> <span class="k">do</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">echo</span> <span class="s2">&#34;处理: </span><span class="nv">$f</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="c1"># 复杂的多步逻辑</span>
+</span></span><span class="line"><span class="cl"><span class="k">done</span> &lt; &lt;<span class="o">(</span>find . -name <span class="s1">&#39;*.log&#39;</span> -print0<span class="o">)</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#  ^^^^ IFS= 防止首尾空白被吃</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#       -r 防止反斜杠被转义</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#       -d &#39;&#39; 以 \0 为分隔符</span>
+</span></span></code></pre></div><h1 id="6-现代替代工具">6. 现代替代工具</h1>
+<h2 id="61-fd用户友好的-find">6.1 fd：用户友好的 find</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 安装：多数发行版已收录</span>
+</span></span><span class="line"><span class="cl">sudo apt install fd-find          <span class="c1"># Debian/Ubuntu（命令是 fdfind 或 fd）</span>
+</span></span><span class="line"><span class="cl">sudo dnf install fd-find          <span class="c1"># Fedora</span>
+</span></span><span class="line"><span class="cl">brew install fd                   <span class="c1"># macOS</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 语法比 find 直观得多</span>
+</span></span><span class="line"><span class="cl">fd <span class="s1">&#39;\.log$&#39;</span>                       <span class="c1"># 正则默认启用（不需要 -regex）</span>
+</span></span><span class="line"><span class="cl">fd -e log                         <span class="c1"># 按扩展名（-e = --extension）</span>
+</span></span><span class="line"><span class="cl">fd -t f -t l                      <span class="c1"># 按类型（可多个，f=file l=link d=directory）</span>
+</span></span><span class="line"><span class="cl">fd -s pattern                     <span class="c1"># 大小写敏感（默认智能：全小写则不敏感）</span>
+</span></span><span class="line"><span class="cl">fd -H hidden                      <span class="c1"># 搜索隐藏文件（-H = --hidden）</span>
+</span></span><span class="line"><span class="cl">fd -I node_modules                <span class="c1"># 搜索忽略的目录（-I = --no-ignore）</span>
+</span></span><span class="line"><span class="cl">fd -E node_modules pattern        <span class="c1"># -E 排除（可多个）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 默认彩色输出、自动 .gitignore、速度快（用 Rust 写的）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 但不如 find 强大：没有 -mtime、-perm、-user 这些</span>
+</span></span></code></pre></div><h2 id="62-ripgrep-rg按内容搜索">6.2 ripgrep (rg)：按内容搜索</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">rg <span class="s1">&#39;pattern&#39;</span> /path                <span class="c1"># 递归搜索内容（比 grep -r 快很多）</span>
+</span></span><span class="line"><span class="cl">rg -t go <span class="s1">&#39;func main&#39;</span>              <span class="c1"># 只搜 .go 文件</span>
+</span></span><span class="line"><span class="cl">rg -g <span class="s1">&#39;*.{yml,yaml}&#39;</span> key          <span class="c1"># 按 glob 筛选</span>
+</span></span><span class="line"><span class="cl">rg --files-with-matches ERROR     <span class="c1"># 只输出文件名（等价 grep -rl）</span>
+</span></span><span class="line"><span class="cl">rg -C <span class="m">3</span> pattern                   <span class="c1"># 上下文各 3 行</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 自动跳过 .git、node_modules、二进制文件，速度极快</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 服务器上排查日志时比 find + grep 的组合快得多</span>
+</span></span></code></pre></div><h2 id="63-locate--updatedb预建索引">6.3 locate / updatedb：预建索引</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 原理：updatedb 预先扫描整个文件系统建索引（通常由 cron 每天跑一次）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#      locate 查询这个索引（毫秒级）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">sudo updatedb                     <span class="c1"># 手动更新索引</span>
+</span></span><span class="line"><span class="cl">locate nginx.conf                 <span class="c1"># 瞬间找到</span>
+</span></span><span class="line"><span class="cl">locate -i nginx                   <span class="c1"># 忽略大小写</span>
+</span></span><span class="line"><span class="cl">locate -c <span class="s1">&#39;*.log&#39;</span>                 <span class="c1"># 只统计数量</span>
+</span></span><span class="line"><span class="cl">locate -r <span class="s1">&#39;/var/log/.*\.log$&#39;</span>     <span class="c1"># 用正则</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 优势：极快，适合「这个文件在系统的哪个角落」这种问题</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 劣势：① 索引可能过期（刚创建的文件找不到）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#      ② 看得到所有文件的路径（包括你无权访问的）—— 信息泄漏</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#      ③ 可能被 /etc/updatedb.conf 排除掉某些目录</span>
+</span></span><span class="line"><span class="cl">cat /etc/updatedb.conf            <span class="c1"># 看哪些目录被排除了</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># macOS 用的是 mdfind（Spotlight 的 CLI）</span>
+</span></span><span class="line"><span class="cl">mdfind -name nginx.conf
+</span></span></code></pre></div><h2 id="64-选择建议">6.4 选择建议</h2>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th>推荐工具</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>按名字找文件</strong></td>
+<td>日常：<code>fd</code> &gt; <code>locate</code> &gt; <code>find</code></td>
+</tr>
+<tr>
+<td><strong>按内容找文件</strong></td>
+<td><code>rg</code> &gt; <code>grep -r</code></td>
+</tr>
+<tr>
+<td><strong>复杂条件（时间、权限、大小）</strong></td>
+<td><strong>只能用 <code>find</code></strong></td>
+</tr>
+<tr>
+<td><strong>需要 <code>-exec</code> / <code>-delete</code></strong></td>
+<td><strong>只能用 <code>find</code></strong></td>
+</tr>
+<tr>
+<td><strong>脚本里可移植性</strong></td>
+<td><strong>只能用 <code>find</code></strong>（POSIX 保证存在）</td>
+</tr>
+<tr>
+<td><strong>审计、安全扫描</strong></td>
+<td><strong><code>find</code></strong>（精确控制）</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 现代组合：fd 找文件 + rg 搜内容</span>
+</span></span><span class="line"><span class="cl">fd -e go -x rg <span class="s1">&#39;TODO&#39;</span>             <span class="c1"># -x = --exec，类似 find 的 -exec {} +</span>
+</span></span><span class="line"><span class="cl">fd -e log -x gzip                 <span class="c1"># 并行压缩</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 仍然需要 find 的场景</span>
+</span></span><span class="line"><span class="cl">find / -perm -4000 -type f        <span class="c1"># SUID 审计</span>
+</span></span><span class="line"><span class="cl">find /var/log -mtime +30 -delete  <span class="c1"># 按时间清理</span>
+</span></span><span class="line"><span class="cl">find . -newer ref -exec ...       <span class="c1"># 比某个时刻新的文件</span>
+</span></span></code></pre></div><h1 id="7-实战案例">7. 实战案例</h1>
+<h2 id="71-清理日志与临时文件">7.1 清理日志与临时文件</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 删除 30 天前的压缩日志</span>
+</span></span><span class="line"><span class="cl">find /var/log -name <span class="s1">&#39;*.gz&#39;</span> -mtime +30 -delete
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 删除 7 天内没被访问的缓存（atime 不可靠，见注意）</span>
+</span></span><span class="line"><span class="cl">find /var/cache/myapp -type f -atime +7 -delete
+</span></span><span class="line"><span class="cl"><span class="c1"># ⚠️ atime 在很多文件系统上默认不更新（relatime），不可靠</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    改用 mtime（修改时间）或 ctime（状态变更时间）更准确</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 递归删除所有空目录</span>
+</span></span><span class="line"><span class="cl">find /data -type d -empty -delete
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 删除多层嵌套的空目录</span>
+</span></span><span class="line"><span class="cl">find /data -depth -type d -empty -delete
+</span></span><span class="line"><span class="cl"><span class="c1">#          ^^^^^^ -depth 先处理子目录</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 清理临时构建产物（并行删除加速）</span>
+</span></span><span class="line"><span class="cl">find . -name node_modules -o -name .venv -o -name target <span class="p">|</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>    xargs -P <span class="m">4</span> -I <span class="o">{}</span> rm -rf <span class="o">{}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 只删文件、保留目录结构</span>
+</span></span><span class="line"><span class="cl">find /data/cache -type f -delete
+</span></span></code></pre></div><h2 id="72-批量重命名">7.2 批量重命名</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 给所有 .txt 加上日期前缀</span>
+</span></span><span class="line"><span class="cl">find . -name <span class="s1">&#39;*.txt&#39;</span> -type f -print0 <span class="p">|</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>    xargs -0 -I <span class="o">{}</span> sh -c <span class="s1">&#39;mv &#34;$1&#34; &#34;$(dirname &#34;$1&#34;)/$(date +%Y%m%d)_$(basename &#34;$1&#34;)&#34;&#39;</span> _ <span class="o">{}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 转小写（需要 rename 命令，Perl 版）</span>
+</span></span><span class="line"><span class="cl">find . -name <span class="s1">&#39;*.JPG&#39;</span> -print0 <span class="p">|</span> xargs -0 rename <span class="s1">&#39;s/\.JPG$/.jpg/&#39;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 批量去掉空格</span>
+</span></span><span class="line"><span class="cl">find . -name <span class="s1">&#39;* *&#39;</span> -print0 <span class="p">|</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>    <span class="k">while</span> <span class="nv">IFS</span><span class="o">=</span> <span class="nb">read</span> -r -d <span class="s1">&#39;&#39;</span> f<span class="p">;</span> <span class="k">do</span> mv <span class="s2">&#34;</span><span class="nv">$f</span><span class="s2">&#34;</span> <span class="s2">&#34;</span><span class="si">${</span><span class="nv">f</span><span class="p">// /_</span><span class="si">}</span><span class="s2">&#34;</span><span class="p">;</span> <span class="k">done</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 扁平化：把子目录里的文件全部移到当前目录</span>
+</span></span><span class="line"><span class="cl">find . -mindepth <span class="m">2</span> -type f -exec mv <span class="o">{}</span> . <span class="se">\;</span>
+</span></span></code></pre></div><h2 id="73-统计与分析">7.3 统计与分析</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 统计各类型文件的总大小</span>
+</span></span><span class="line"><span class="cl">find . -type f -printf <span class="s1">&#39;%f\n&#39;</span> <span class="p">|</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>    awk -F. <span class="s1">&#39;{ext=$NF} {size[ext]+=$1} END {for(e in size) print e, size[e]}&#39;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 更准确的版本（用 -printf &#39;%s&#39;）</span>
+</span></span><span class="line"><span class="cl">find . -type f -printf <span class="s1">&#39;%s %f\n&#39;</span> <span class="p">|</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>    awk -F. <span class="s1">&#39;{ext=$(NF-1)&#34;.&#34;$NF; size[ext]+=$1} END {for(e in size) printf &#34;%-20s %10.2f MB\n&#34;, e, size[e]/1024/1024}&#39;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 找出重复文件（按内容 md5）</span>
+</span></span><span class="line"><span class="cl">find . -type f -exec md5sum <span class="o">{}</span> + <span class="p">|</span> sort <span class="p">|</span> uniq -w32 -d --all-repeated<span class="o">=</span>separate
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 找出最近一小时改过的配置</span>
+</span></span><span class="line"><span class="cl">find /etc -type f -mmin -60 -ls
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 找出大于 1GB 的文件并按大小排序</span>
+</span></span><span class="line"><span class="cl">find / -type f -size +1G -printf <span class="s1">&#39;%s %p\n&#39;</span> 2&gt;/dev/null <span class="p">|</span> sort -rn <span class="p">|</span> head -20
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 统计文件数（比 ls | wc 准确且快）</span>
+</span></span><span class="line"><span class="cl">find . -type f -printf . <span class="p">|</span> wc -c
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 统计各目录深度的文件数</span>
+</span></span><span class="line"><span class="cl">find . -printf <span class="s1">&#39;%d\n&#39;</span> <span class="p">|</span> sort -n <span class="p">|</span> uniq -c
+</span></span></code></pre></div><h2 id="74-权限与安全审计">7.4 权限与安全审计</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 找出所有 SUID/SGID 程序（定期审计）</span>
+</span></span><span class="line"><span class="cl">find / -type f <span class="se">\(</span> -perm -4000 -o -perm -2000 <span class="se">\)</span> -ls 2&gt;/dev/null
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 找出所有人可写的文件（高危）</span>
+</span></span><span class="line"><span class="cl">find / -type f -perm -002 ! -type l -ls 2&gt;/dev/null
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 找出不属于任何已知用户的文件（用户被删后残留）</span>
+</span></span><span class="line"><span class="cl">find /home -nouser -ls
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 修复 ~/.ssh 的权限</span>
+</span></span><span class="line"><span class="cl">find ~/.ssh -type f -exec chmod <span class="m">600</span> <span class="o">{}</span> +
+</span></span><span class="line"><span class="cl">find ~/.ssh -type d -exec chmod <span class="m">700</span> <span class="o">{}</span> +
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 递归改属主</span>
+</span></span><span class="line"><span class="cl">find /var/www -exec chown www-data:www-data <span class="o">{}</span> +
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 找出最近被改过权限的文件（ctime）</span>
+</span></span><span class="line"><span class="cl">find /etc -cmin -60 -ls
+</span></span></code></pre></div><h2 id="75-与-git-结合">7.5 与 git 结合</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 只处理已跟踪的文件</span>
+</span></span><span class="line"><span class="cl">git ls-files -z <span class="p">|</span> xargs -0 grep <span class="s1">&#39;TODO&#39;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 处理已跟踪 + 未跟踪但不在 .gitignore 里的</span>
+</span></span><span class="line"><span class="cl">git ls-files --others --exclude-standard -z <span class="p">|</span> xargs -0 ...
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 找出所有不在 git 里的文件（排查遗漏）</span>
+</span></span><span class="line"><span class="cl">comm -23 &lt;<span class="o">(</span>find . -type f <span class="p">|</span> sort<span class="o">)</span> &lt;<span class="o">(</span>git ls-files <span class="p">|</span> sort<span class="o">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 删除所有不在 git 里的文件（危险！先 -n 演练）</span>
+</span></span><span class="line"><span class="cl">git clean -fdxn                   <span class="c1"># -n 演练</span>
+</span></span><span class="line"><span class="cl">git clean -fdx                    <span class="c1"># 真删</span>
+</span></span></code></pre></div><h2 id="76-备份与同步">7.6 备份与同步</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 增量备份：只复制修改过的文件</span>
+</span></span><span class="line"><span class="cl">find /data -newer /backup/last_backup_timestamp -print0 <span class="p">|</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>    rsync -av --files-from<span class="o">=</span>- --from0 / /backup/
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 硬链接快照（Time Machine 风格）</span>
+</span></span><span class="line"><span class="cl">cp -al /backup/last /backup/<span class="k">$(</span>date +%Y%m%d<span class="k">)</span>
+</span></span><span class="line"><span class="cl">find /data -newer /backup/last -print0 <span class="p">|</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>    xargs -0 -I <span class="o">{}</span> cp --parents <span class="o">{}</span> /backup/<span class="k">$(</span>date +%Y%m%d<span class="k">)</span>/
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 查找差异</span>
+</span></span><span class="line"><span class="cl">find dir1 dir2 -printf <span class="s1">&#39;%P\n&#39;</span> <span class="p">|</span> sort <span class="p">|</span> uniq -u   <span class="c1"># 只在一边存在的文件</span>
+</span></span></code></pre></div><h1 id="8-知识点扩展">8. 知识点扩展</h1>
+<h2 id="81-find-命令结构">8.1 find 命令结构</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">find <span class="o">[</span>路径...<span class="o">]</span> <span class="o">[</span>全局选项<span class="o">]</span> <span class="o">[</span>表达式<span class="o">]</span>
+</span></span></code></pre></div><p><strong>全局选项</strong>（必须写在表达式之前）：</p>
+<table>
+<thead>
+<tr>
+<th>选项</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>-maxdepth N</code></td>
+<td>最多向下 N 层</td>
+</tr>
+<tr>
+<td><code>-mindepth N</code></td>
+<td>至少 N 层（排除起始目录本身用 <code>-mindepth 1</code>）</td>
+</tr>
+<tr>
+<td><code>-depth</code></td>
+<td>深度优先（先子后父）</td>
+</tr>
+<tr>
+<td><code>-xdev</code> / <code>-mount</code></td>
+<td>不跨文件系统</td>
+</tr>
+<tr>
+<td><code>-follow</code></td>
+<td>跟随符号链接（默认不跟）</td>
+</tr>
+<tr>
+<td><code>-daystart</code></td>
+<td>时间从今天 0 点算（影响 <code>-mtime</code> 等）</td>
+</tr>
+<tr>
+<td><code>-regextype TYPE</code></td>
+<td>正则类型（emacs/posix-basic/posix-extended）</td>
+</tr>
+<tr>
+<td><code>-warn</code> / <code>-nowarn</code></td>
+<td>是否显示警告（默认显示）</td>
+</tr>
+<tr>
+<td><code>-O N</code></td>
+<td>优化级别（0~3，默认 1）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>测试</strong>（返回真/假）：</p>
+<table>
+<thead>
+<tr>
+<th>测试</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>名字</strong></td>
+<td></td>
+</tr>
+<tr>
+<td><code>-name PAT</code></td>
+<td>文件名匹配（glob）</td>
+</tr>
+<tr>
+<td><code>-iname PAT</code></td>
+<td>忽略大小写</td>
+</tr>
+<tr>
+<td><code>-path PAT</code></td>
+<td>完整路径匹配</td>
+</tr>
+<tr>
+<td><code>-regex PAT</code></td>
+<td>正则匹配（默认 emacs 风格）</td>
+</tr>
+<tr>
+<td><code>-lname PAT</code></td>
+<td>软链接目标匹配</td>
+</tr>
+<tr>
+<td><strong>类型</strong></td>
+<td></td>
+</tr>
+<tr>
+<td><code>-type f/d/l/s/p/b/c</code></td>
+<td>文件类型</td>
+</tr>
+<tr>
+<td><code>-xtype</code></td>
+<td>解引用后的类型（找悬空链接用 <code>-xtype l</code>）</td>
+</tr>
+<tr>
+<td><strong>时间</strong></td>
+<td></td>
+</tr>
+<tr>
+<td><code>-mtime N</code> / <code>-mmin N</code></td>
+<td>修改时间（天/分钟）</td>
+</tr>
+<tr>
+<td><code>-atime</code> / <code>-amin</code></td>
+<td>访问时间</td>
+</tr>
+<tr>
+<td><code>-ctime</code> / <code>-cmin</code></td>
+<td>状态变更时间</td>
+</tr>
+<tr>
+<td><code>-newer FILE</code></td>
+<td>比 FILE 的 mtime 新</td>
+</tr>
+<tr>
+<td><code>-newermt TIME</code></td>
+<td>比时刻 TIME 新（支持 <code>2 days ago</code>）</td>
+</tr>
+<tr>
+<td><strong>大小</strong></td>
+<td></td>
+</tr>
+<tr>
+<td><code>-size +N / -N / N</code></td>
+<td>大于/小于/等于 N 单位（c/k/M/G；无后缀=512B块）</td>
+</tr>
+<tr>
+<td><code>-empty</code></td>
+<td>空文件或空目录</td>
+</tr>
+<tr>
+<td><strong>权限属主</strong></td>
+<td></td>
+</tr>
+<tr>
+<td><code>-perm MODE</code></td>
+<td>权限恰好是</td>
+</tr>
+<tr>
+<td><code>-perm -MODE</code></td>
+<td>至少包含这些位</td>
+</tr>
+<tr>
+<td><code>-perm /MODE</code></td>
+<td>任意一位匹配</td>
+</tr>
+<tr>
+<td><code>-user NAME</code> / <code>-uid N</code></td>
+<td>属主</td>
+</tr>
+<tr>
+<td><code>-group</code> / <code>-gid</code></td>
+<td>属组</td>
+</tr>
+<tr>
+<td><code>-nouser</code> / <code>-nogroup</code></td>
+<td>属主/属组不存在</td>
+</tr>
+<tr>
+<td><strong>其他</strong></td>
+<td></td>
+</tr>
+<tr>
+<td><code>-inum N</code></td>
+<td>inode 号</td>
+</tr>
+<tr>
+<td><code>-links N</code></td>
+<td>硬链接数</td>
+</tr>
+<tr>
+<td><code>-samefile F</code></td>
+<td>与 F 同 inode</td>
+</tr>
+<tr>
+<td><code>-readable / -writable / -executable</code></td>
+<td>当前用户可读/写/执行</td>
+</tr>
+</tbody>
+</table>
+<p><strong>动作</strong>（执行操作，并返回真/假）：</p>
+<table>
+<thead>
+<tr>
+<th>动作</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>-print</code></td>
+<td>打印路径 + 换行（<strong>默认动作</strong>）</td>
+</tr>
+<tr>
+<td><code>-print0</code></td>
+<td>打印路径 + <code>\0</code></td>
+</tr>
+<tr>
+<td><code>-printf FMT</code></td>
+<td>格式化输出</td>
+</tr>
+<tr>
+<td><code>-ls</code></td>
+<td>类似 <code>ls -dils</code></td>
+</tr>
+<tr>
+<td><code>-fls FILE</code></td>
+<td>同上但输出到文件</td>
+</tr>
+<tr>
+<td><code>-exec CMD \;</code></td>
+<td>每个文件执行一次</td>
+</tr>
+<tr>
+<td><code>-exec CMD +</code></td>
+<td>批量执行</td>
+</tr>
+<tr>
+<td><code>-execdir CMD</code></td>
+<td>在文件所在目录执行</td>
+</tr>
+<tr>
+<td><code>-delete</code></td>
+<td>删除</td>
+</tr>
+<tr>
+<td><code>-quit</code></td>
+<td>找到就退出</td>
+</tr>
+<tr>
+<td><code>-prune</code></td>
+<td>跳过当前目录（剪枝）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>运算符</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>运算符</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>expr1 expr2</code> 或 <code>expr1 -a expr2</code></td>
+<td>AND（默认）</td>
+</tr>
+<tr>
+<td><code>expr1 -o expr2</code></td>
+<td>OR</td>
+</tr>
+<tr>
+<td><code>! expr</code> 或 <code>-not expr</code></td>
+<td>NOT</td>
+</tr>
+<tr>
+<td><code>\( expr \)</code></td>
+<td>分组</td>
+</tr>
+<tr>
+<td><code>expr1 , expr2</code></td>
+<td>逗号：expr1 和 expr2 都执行，返回 expr2 的值</td>
+</tr>
+</tbody>
+</table>
+<h2 id="82-xargs-完整参数">8.2 xargs 完整参数</h2>
+<table>
+<thead>
+<tr>
+<th>短</th>
+<th>长</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>-0</code></td>
+<td><code>--null</code></td>
+<td>输入以 <code>\0</code> 分隔</td>
+</tr>
+<tr>
+<td><code>-d C</code></td>
+<td><code>--delimiter=C</code></td>
+<td>自定义分隔符</td>
+</tr>
+<tr>
+<td><code>-n N</code></td>
+<td><code>--max-args=N</code></td>
+<td>每次最多 N 个参数</td>
+</tr>
+<tr>
+<td><code>-L N</code></td>
+<td><code>--max-lines=N</code></td>
+<td>每次最多 N 行</td>
+</tr>
+<tr>
+<td><code>-s N</code></td>
+<td><code>--max-chars=N</code></td>
+<td>每次命令行最多 N 字符</td>
+</tr>
+<tr>
+<td><code>-P N</code></td>
+<td><code>--max-procs=N</code></td>
+<td>并行 N 个进程</td>
+</tr>
+<tr>
+<td><code>-I STR</code></td>
+<td><code>--replace=STR</code></td>
+<td>用 STR 占位（默认 <code>{}</code>）</td>
+</tr>
+<tr>
+<td><code>-i</code></td>
+<td>—</td>
+<td>等价 <code>-I {}</code></td>
+</tr>
+<tr>
+<td><code>-r</code></td>
+<td><code>--no-run-if-empty</code></td>
+<td>输入为空不执行（<strong>GNU 扩展</strong>）</td>
+</tr>
+<tr>
+<td><code>-t</code></td>
+<td><code>--verbose</code></td>
+<td>执行前打印命令</td>
+</tr>
+<tr>
+<td><code>-p</code></td>
+<td><code>--interactive</code></td>
+<td>每条命令执行前询问</td>
+</tr>
+<tr>
+<td><code>-a FILE</code></td>
+<td><code>--arg-file=FILE</code></td>
+<td>从文件读参数</td>
+</tr>
+<tr>
+<td><code>-E EOF</code></td>
+<td><code>--eof=EOF</code></td>
+<td>遇到字符串 EOF 停止</td>
+</tr>
+<tr>
+<td><code>-x</code></td>
+<td><code>--exit</code></td>
+<td>参数过长时退出而不是截断</td>
+</tr>
+<tr>
+<td><code>-o</code></td>
+<td><code>--open-tty</code></td>
+<td>重新打开 <code>/dev/tty</code>（给交互式命令用，如 vim）</td>
+</tr>
+</tbody>
+</table>
+<h2 id="83-时间计算细节">8.3 时间计算细节</h2>
+<p><code>find</code> 对 <code>-mtime N</code> 的算法：</p>
+<pre tabindex="0"><code>文件年龄（秒）= 当前时间 - 文件 mtime
+天数 = floor(年龄 / 86400)        向下取整
+
+-mtime +N  -&gt;  天数 &gt; N
+-mtime -N  -&gt;  天数 &lt; N
+-mtime  N  -&gt;  天数 == N
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 恰好第 7 天那一天（7*86400 ~ 8*86400-1 秒之间）</span>
+</span></span><span class="line"><span class="cl">find . -mtime <span class="m">7</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 【超过】8 天（age &gt;= 8，即 &gt; 7 取整后）</span>
+</span></span><span class="line"><span class="cl">find . -mtime +7
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 7 天内（age &lt; 7）</span>
+</span></span><span class="line"><span class="cl">find . -mtime -7
+</span></span></code></pre></div><p><code>-daystart</code> 会改变计算基准：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 默认：从当前时刻往回算</span>
+</span></span><span class="line"><span class="cl">find . -mtime +7              <span class="c1"># 此刻前 7*86400 秒之前</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># -daystart：从今天 0 点往回算</span>
+</span></span><span class="line"><span class="cl">find . -daystart -mtime +7    <span class="c1"># 今天 0 点前的第 7 个完整日</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 实用性：-daystart 语义更符合&#34;日志按天归档&#34;的直觉</span>
+</span></span></code></pre></div><p><code>-newer</code> 系列更精确（到秒）：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">-newer FILE          比 FILE 的 mtime 新
+</span></span><span class="line"><span class="cl">-anewer FILE         比 FILE 的 atime 新
+</span></span><span class="line"><span class="cl">-cnewer FILE         比 FILE 的 ctime 新
+</span></span><span class="line"><span class="cl">-newerXY REF         <span class="nv">X</span><span class="o">=</span>a/c/m/t，Y<span class="o">=</span>a/c/m/t（X是被比较的时间，Y是参考的时间）
+</span></span><span class="line"><span class="cl">                     <span class="nv">t</span> <span class="o">=</span> 直接用时间字符串
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">find . -newermt <span class="s1">&#39;2026-08-01 15:30:00&#39;</span>
+</span></span><span class="line"><span class="cl">find . -newermt <span class="s1">&#39;1 week ago&#39;</span>
+</span></span><span class="line"><span class="cl">find . -newermt @1722499200          <span class="c1"># Unix 时间戳</span>
+</span></span><span class="line"><span class="cl">find . ! -newermt <span class="s1">&#39;7 days ago&#39;</span>       <span class="c1"># 7 天前及更早</span>
+</span></span></code></pre></div><h2 id="84--printf-格式符完整列表">8.4 -printf 格式符完整列表</h2>
+<p>见 4.4 节的表格。补充两个技巧：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 条件格式化：只有非空时才输出</span>
+</span></span><span class="line"><span class="cl">find . -type l -printf <span class="s1">&#39;%p -&gt; %l\n&#39;</span>        <span class="c1"># 软链接加箭头</span>
+</span></span><span class="line"><span class="cl">find . -printf <span class="s1">&#39;%M %u %10s %p\n&#39;</span>           <span class="c1"># 类似 ls -l</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 配合 NUL 做安全的管道（比 -print0 更灵活）</span>
+</span></span><span class="line"><span class="cl">find . -name <span class="s1">&#39;*.log&#39;</span> -printf <span class="s1">&#39;%p\0&#39;</span> <span class="p">|</span> <span class="k">while</span> <span class="nv">IFS</span><span class="o">=</span> <span class="nb">read</span> -r -d <span class="s1">&#39;&#39;</span> f<span class="p">;</span> <span class="k">do</span> ...<span class="p">;</span> <span class="k">done</span>
+</span></span></code></pre></div><h2 id="85-性能调优">8.5 性能调优</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ① 限制深度（最便宜的优化）</span>
+</span></span><span class="line"><span class="cl">find /var/log -maxdepth <span class="m">2</span> -name <span class="s1">&#39;*.log&#39;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ② 先用便宜的条件过滤</span>
+</span></span><span class="line"><span class="cl">find . -type f -name <span class="s1">&#39;*.go&#39;</span> ...           <span class="c1"># 比倒过来快</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ③ 不跨文件系统（跳过挂载点）</span>
+</span></span><span class="line"><span class="cl">find / -xdev ...
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ④ 剪枝而不是过滤</span>
+</span></span><span class="line"><span class="cl">find . -name node_modules -prune -o ...
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ⑤ 用 -quit 找到就退出（判断存在时）</span>
+</span></span><span class="line"><span class="cl"><span class="k">if</span> find /data -name <span class="s1">&#39;*.lock&#39;</span> -print -quit <span class="p">|</span> grep -q .<span class="p">;</span> <span class="k">then</span> ...
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ⑥ 用 + 而不是 \;</span>
+</span></span><span class="line"><span class="cl">find . -exec cmd <span class="o">{}</span> +
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ⑦ 并行（xargs -P）</span>
+</span></span><span class="line"><span class="cl">find . -print0 <span class="p">|</span> xargs -0 -P <span class="k">$(</span>nproc<span class="k">)</span> cmd
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ⑧ 避免 -exec 里跑 shell（每次都 fork bash）</span>
+</span></span><span class="line"><span class="cl">find . -name <span class="s1">&#39;*.txt&#39;</span> -exec sh -c <span class="s1">&#39;...&#39;</span> _ <span class="o">{}</span> <span class="se">\;</span>        <span class="c1"># 慢</span>
+</span></span><span class="line"><span class="cl">find . -name <span class="s1">&#39;*.txt&#39;</span> -exec mycommand <span class="o">{}</span> +             <span class="c1"># 快</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ⑨ 大量文件时，ls + grep 可能比 find 快（目录已在 dentry cache 里）</span>
+</span></span><span class="line"><span class="cl">ls -1 <span class="p">|</span> grep <span class="s1">&#39;.log$&#39;</span>                  <span class="c1"># 单层目录</span>
+</span></span></code></pre></div><h1 id="9-面试题">9. 面试题</h1>
+<p><strong>Q：<code>find . -name '*.tmp' -o -name '*.log' -delete</code> 会删掉什么？为什么？</strong></p>
+<p>只删 <code>.log</code>，<code>.tmp</code> 不会被删。原因是 <strong><code>-a</code> 优先级高于 <code>-o</code></strong>，实际求值结构是：</p>
+<pre tabindex="0"><code>( -name &#39;*.tmp&#39; )  -o  ( -name &#39;*.log&#39; -a -delete )
+</code></pre><p>左分支为真时短路，不执行右分支，所以 <code>.tmp</code> 文件既不被删也不被打印。只有 <code>.log</code> 同时匹配了测试和 <code>-delete</code>。</p>
+<p>正确写法：<strong>用括号明确分组</strong>。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">find . <span class="se">\(</span> -name <span class="s1">&#39;*.tmp&#39;</span> -o -name <span class="s1">&#39;*.log&#39;</span> <span class="se">\)</span> -delete
+</span></span></code></pre></div><p>这个陷阱同样适用于 <code>-exec</code>、<code>-print</code>、<code>-ls</code> 等所有动作。养成习惯：<strong>只要用了 <code>-o</code>，就一定加括号。</strong> 危险命令执行前先把动作换成 <code>-print</code> 演练一遍。</p>
+<p><strong>Q：<code>-exec cmd {} \;</code> 和 <code>-exec cmd {} +</code> 有什么区别？为什么后者快几十倍？</strong></p>
+<ul>
+<li><strong><code>\;</code>（分号）</strong>：每个文件起一个进程，等价于 <code>cmd a.log; cmd b.log; cmd c.log</code></li>
+<li><strong><code>+</code>（加号）</strong>：攒够一批，一次传多个参数，等价于 <code>cmd a.log b.log c.log</code></li>
+</ul>
+<p>1000 个文件时，前者要 1000 次 <code>fork</code> + <code>exec</code>，后者只要 1~2 次。实测快 100 倍以上。</p>
+<p><strong>默认用 <code>+</code></strong>，只有以下情况才用 <code>\;</code>：</p>
+<ul>
+<li><code>{}</code> 需要出现在命令中间或多次（如 <code>mv {} {}.bak</code>）</li>
+<li>命令一次只能处理一个文件</li>
+<li>需要 shell 特性（管道、重定向），此时写成 <code>-exec sh -c '...' _ {} \;</code>（用 <code>+</code> 时脚本要自己遍历参数）</li>
+</ul>
+<p><strong>Q：<code>find . -name '*.log' | xargs rm</code> 有什么风险？怎么修正？</strong></p>
+<p>两个致命问题：</p>
+<ol>
+<li><strong>文件名里有空格会被拆成多个参数</strong>（<code>xargs</code> 默认按空白分隔）</li>
+<li><strong>文件名里有换行会被当成多个文件</strong></li>
+</ol>
+<p>根因是文件名里除了 <code>/</code> 和 <code>\0</code> <strong>什么字符都合法</strong>（包括空格、换行、tab），而 <code>find</code> 默认用换行分隔、<code>xargs</code> 默认按空白分隔。</p>
+<p><strong>唯一安全的方案</strong>：用 <code>\0</code> 分隔（它是文件名里唯一不可能出现的字符）。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">find . -name <span class="s1">&#39;*.log&#39;</span> -print0 <span class="p">|</span> xargs -0 rm
+</span></span></code></pre></div><p>或者直接用 <code>-exec</code> 更简单：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">find . -name <span class="s1">&#39;*.log&#39;</span> -exec rm <span class="o">{}</span> +
+</span></span></code></pre></div><p><strong><code>| xargs</code>（不加 <code>-0</code>）永远不要用。</strong></p>
+<p><strong>Q：<code>find /data -mtime +7</code> 找的到底是「7 天前」还是「8 天前」的文件？</strong></p>
+<p><strong>超过 8 天（准确说是 age ≥ 8）。</strong></p>
+<p><code>find</code> 内部的算法：<code>age = floor((now - mtime) / 86400)</code>，<code>+7</code> 的判断是 <code>age &gt; 7</code>。所以一个「7.9 天前」的文件 <code>age = 7</code>（取整），不满足 <code>&gt; 7</code>。</p>
+<p>想精确表达「7 天前及更早」，用 <strong><code>-newermt</code> 取反</strong>（它精确到秒，不做取整）：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">find /var/log -type f ! -newermt <span class="s1">&#39;7 days ago&#39;</span> -delete
+</span></span></code></pre></div><p><code>-mtime 7</code>（不带符号）是「恰好第 7 天那一天」，很少用。</p>
+<p><strong>Q：<code>find . -type f -name '*.go'</code> 和 <code>find . -name '*.go' -type f</code> 哪个快？</strong></p>
+<p>前者快。因为 <code>find</code> 的表达式是<strong>短路求值</strong>，<code>-a</code>（AND）左边为假就不执行右边。</p>
+<ul>
+<li>第一种：先判断 <code>-type f</code>（读 inode 字段，几乎免费），类型不是文件就跳过，不用做字符串匹配</li>
+<li>第二种：对<strong>每一个条目</strong>（包括所有目录）都做字符串匹配，然后才判断类型</li>
+</ul>
+<p>性能排序原则（从便宜到贵）：<code>-maxdepth</code> / <code>-type</code> / <code>-name</code> / <code>-size</code> / <code>-mtime</code> / <code>-regex</code> / <code>-exec grep</code>。<strong>把便宜的测试放前面</strong>。</p>
+<p><strong>Q：怎么排除 <code>node_modules</code>、<code>.git</code> 这些目录？<code>! -path</code> 和 <code>-prune</code> 有什么区别？</strong></p>
+<p><code>! -path</code> 只是<strong>过滤结果</strong>，<code>find</code> 仍会进入那个目录遍历（慢）；<code>-prune</code> 是<strong>剪枝</strong>，根本不进去（快）。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ❌ 慢：仍递归进 node_modules</span>
+</span></span><span class="line"><span class="cl">find . -type f ! -path <span class="s1">&#39;*/node_modules/*&#39;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 快：遇到就剪枝</span>
+</span></span><span class="line"><span class="cl">find . -name node_modules -prune -o -type f -print
+</span></span></code></pre></div><p><strong><code>-prune</code> 的固定句式</strong>（三部分缺一不可）：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">find 路径 &lt;排除条件&gt; -prune -o &lt;真正的条件&gt; -print
+</span></span></code></pre></div><p>为什么必须显式写 <code>-print</code>？因为 <code>-prune</code> 是动作，表达式里有动作后 <code>find</code> 不会自动加 <code>-print</code>，右边不写就什么都不输出。</p>
+<p><strong>Q：为什么服务器审计要定期查 SUID 程序和所有人可写的文件？</strong></p>
+<p><strong>SUID 程序</strong>（<code>-perm -4000</code>）以文件属主的权限执行，如果属主是 root，任何用户执行它都能拿到 root 权限。合法的有 <code>passwd</code>、<code>sudo</code>，但攻击者常通过提权漏洞植入恶意 SUID 程序作为后门。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">find / -perm -4000 -type f -ls 2&gt;/dev/null
+</span></span><span class="line"><span class="cl"><span class="c1"># 定期审计，发现可疑的立即排查</span>
+</span></span></code></pre></div><p><strong>所有人可写的文件</strong>（<code>-perm -002</code>）意味着任何用户都能改，攻击者可以篡改内容、注入代码、或替换成恶意程序。系统关键文件（<code>/etc/passwd</code>、<code>/etc/shadow</code>、<code>/bin/*</code>）如果是 <code>o+w</code>，系统已失守。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">find / -type f -perm -002 ! -type l -ls 2&gt;/dev/null
+</span></span><span class="line"><span class="cl"><span class="c1"># ! -type l 排除软链接（软链接自身权限永远是 777 但无意义）</span>
+</span></span></code></pre></div><p>这两类是入侵检测的基本检查项，应该定期（如每周）跑一次并对比基线。</p>
+<p><strong>Q：为什么 <code>xargs</code> 需要 <code>-r</code> 参数？它解决了什么问题？</strong></p>
+<p><strong><code>-r</code> = <code>--no-run-if-empty</code></strong>（GNU 扩展），防止输入为空时仍执行一次命令。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ❌ 危险：find 没找到任何文件，xargs 仍会执行一次 rm（无参数）</span>
+</span></span><span class="line"><span class="cl">find /tmp -name <span class="s1">&#39;*.nonexistent&#39;</span> <span class="p">|</span> xargs rm
+</span></span><span class="line"><span class="cl"><span class="c1"># rm: missing operand               &lt;- 只是报错，但换成别的命令可能出事</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;&#34;</span> <span class="p">|</span> xargs ls
+</span></span><span class="line"><span class="cl"><span class="c1"># （列出了当前目录！）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 加 -r</span>
+</span></span><span class="line"><span class="cl">find /tmp -name <span class="s1">&#39;*.nonexistent&#39;</span> -print0 <span class="p">|</span> xargs -0 -r rm
+</span></span></code></pre></div><p>注意 <code>-r</code> 是 <strong>GNU 扩展</strong>，BSD/macOS 的 <code>xargs</code> 没有这个选项（但它们默认行为就是不执行空输入）。可移植脚本里避免依赖它，改用 <code>find ... -exec ... +</code> 或先判断输出是否为空。</p>
+<hr>
+<h1 id="小结">小结</h1>
+<ul>
+<li><strong><code>find</code> 的参数是表达式，不是选项</strong> —— 它对每个文件从左到右求值。<code>-a</code> 和 <code>-o</code> 有优先级（<code>-a</code> 高于 <code>-o</code>），混用时<strong>必须加括号</strong></li>
+<li><strong><code>-o</code> 与 <code>-delete</code> 混用会误删</strong>：<code>find . -name a -o -name b -delete</code> 只删 b。养成习惯：用了 <code>-o</code> 就加括号，危险命令前先用 <code>-print</code> 演练</li>
+<li><strong><code>-exec {} +</code> 比 <code>\;</code> 快几十倍</strong> —— 前者批量传参，后者每个文件一个进程。默认用 <code>+</code>，只有 <code>{}</code> 需在中间/多次出现时才用 <code>\;</code></li>
+<li><strong>管道必须用 <code>-print0 | xargs -0</code></strong> —— 文件名里除了 <code>/</code> 和 <code>\0</code> 什么字符都合法，只有 <code>\0</code> 分隔是安全的。<code>| xargs</code>（不加 <code>-0</code>）永远不要用</li>
+<li><strong><code>-mtime +7</code> 实际是「超过 8 天」</strong> —— 因为取整。精确到秒用 <code>-newermt</code></li>
+<li><strong>性能优化：便宜的测试放前面</strong> —— <code>-type f -name '*.go'</code> 比反过来快，因为短路求值</li>
+<li><strong><code>-prune</code> 是剪枝，<code>! -path</code> 是过滤</strong> —— 前者不进目录，后者仍遍历</li>
+<li><strong>现代替代：<code>fd</code>（找文件）+ <code>rg</code>（搜内容）</strong> —— 但复杂条件、<code>-exec</code>、<code>-delete</code>、可移植性仍然只能用 <code>find</code></li>
+</ul>
+<p>下一篇讲 <strong>grep、sed、awk 三剑客</strong>：grep 的零宽断言与 <code>-P</code>/<code>-E</code>/<code>-F</code> 的区别、sed 的寻址与保持空间、awk 的 <code>BEGIN</code>/<code>END</code> 与关联数组、以及它们各自擅长的场景。</p>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2026-08-12</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/linux/">linux</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/linux/linux_08_%E6%96%87%E6%9C%AC%E5%A4%84%E7%90%86%E4%B8%89%E5%89%91%E5%AE%A2/" class="prev" rel="prev" title="Linux-08 grep、sed、awk：三套正则流派与各自的工作模型"><i class="fas fa-angle-left fa-fw"></i>Linux-08 grep、sed、awk：三套正则流派与各自的工作模型</a>
+            <a href="/posts/linux/linux_06_vim%E7%94%9F%E5%AD%98%E6%8C%87%E5%8D%97/" class="next" rel="next" title="Linux-06 vim 生存指南：模式化编辑的设计意图与十几个键的高效改配置">Linux-06 vim 生存指南：模式化编辑的设计意图与十几个键的高效改配置<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2026-08-12T20:30:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Linux-07 find 与 xargs：表达式求值模型、-exec 的两种形式与 -print0 的必要性"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

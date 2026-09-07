@@ -1,0 +1,1078 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>Linux-20 VFS：一切皆文件的实现代价，file/dentry/inode 三层对象 - xingliuhua博客</title><meta name="Description" content="内核如何用函数指针表在 C 里实现多态、struct file 与 dentry 与 inode 为什么必须分成三层、fork 后父子共享文件偏移量的原因、dentry cache 解决什么问题、挂载遮盖与 bind mount 在 VFS 里怎么表示、procfs 的文件内容为什么是函数生成的。"><meta property="og:title" content="Linux-20 VFS：一切皆文件的实现代价，file/dentry/inode 三层对象" />
+<meta property="og:description" content="内核如何用函数指针表在 C 里实现多态、struct file 与 dentry 与 inode 为什么必须分成三层、fork 后父子共享文件偏移量的原因、dentry cache 解决什么问题、挂载遮盖与 bind mount 在 VFS 里怎么表示、procfs 的文件内容为什么是函数生成的。" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/linux/linux_20_VFS%E4%B8%80%E5%88%87%E7%9A%86%E6%96%87%E4%BB%B6%E7%9A%84%E5%AE%9E%E7%8E%B0/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2026-08-12T14:00:00+08:00" />
+<meta property="article:modified_time" content="2026-08-12T14:00:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="Linux-20 VFS：一切皆文件的实现代价，file/dentry/inode 三层对象"/>
+<meta name="twitter:description" content="内核如何用函数指针表在 C 里实现多态、struct file 与 dentry 与 inode 为什么必须分成三层、fork 后父子共享文件偏移量的原因、dentry cache 解决什么问题、挂载遮盖与 bind mount 在 VFS 里怎么表示、procfs 的文件内容为什么是函数生成的。"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/linux/linux_20_VFS%E4%B8%80%E5%88%87%E7%9A%86%E6%96%87%E4%BB%B6%E7%9A%84%E5%AE%9E%E7%8E%B0/" /><link rel="prev" href="https://xingliuhua.github.io/posts/linux/linux_21_%E8%BF%9B%E7%A8%8B%E7%9A%84%E8%AF%9E%E7%94%9Ffork%E4%B8%BA%E4%BB%80%E4%B9%88%E6%98%AFfork/" /><link rel="next" href="https://xingliuhua.github.io/posts/linux/linux_19_%E4%BB%8E%E6%8C%89%E4%B8%8B%E7%94%B5%E6%BA%90%E5%88%B0shell%E6%8F%90%E7%A4%BA%E7%AC%A6/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Linux-20 VFS：一切皆文件的实现代价，file/dentry/inode 三层对象",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_20_VFS%E4%B8%80%E5%88%87%E7%9A%86%E6%96%87%E4%BB%B6%E7%9A%84%E5%AE%9E%E7%8E%B0\/"
+        },"genre": "posts","keywords": "linux","wordcount":  13041 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_20_VFS%E4%B8%80%E5%88%87%E7%9A%86%E6%96%87%E4%BB%B6%E7%9A%84%E5%AE%9E%E7%8E%B0\/","datePublished": "2026-08-12T14:00:00+08:00","dateModified": "2026-08-12T14:00:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "内核如何用函数指针表在 C 里实现多态、struct file 与 dentry 与 inode 为什么必须分成三层、fork 后父子共享文件偏移量的原因、dentry cache 解决什么问题、挂载遮盖与 bind mount 在 VFS 里怎么表示、procfs 的文件内容为什么是函数生成的。"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">Linux-20 VFS：一切皆文件的实现代价，file/dentry/inode 三层对象</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2026-08-12">2026-08-12</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 13041 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 27 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-vfs-要解决的问题">1. VFS 要解决的问题</a>
+      <ol>
+        <li><a href="#11-问题几十种文件系统一套接口">1.1 问题：几十种文件系统，一套接口</a></li>
+        <li><a href="#12-c-语言里的多态函数指针表">1.2 C 语言里的多态：函数指针表</a></li>
+        <li><a href="#13-四组操作表">1.3 四组操作表</a></li>
+      </ol>
+    </li>
+    <li><a href="#2-四个核心对象">2. 四个核心对象</a>
+      <ol>
+        <li><a href="#21-开篇第二问为什么必须分三层">2.1 开篇第二问：为什么必须分三层</a></li>
+        <li><a href="#22-struct-file-里有什么">2.2 struct file 里有什么</a></li>
+        <li><a href="#23-fd-到-file-的映射">2.3 fd 到 file 的映射</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-从-fd-到磁盘完整调用链">3. 从 fd 到磁盘：完整调用链</a></li>
+    <li><a href="#4-路径解析与-dentry-cache">4. 路径解析与 dentry cache</a>
+      <ol>
+        <li><a href="#41-开篇第四问为什么需要-dentry-cache">4.1 开篇第四问：为什么需要 dentry cache</a></li>
+        <li><a href="#42-负-dentry缓存不存在">4.2 负 dentry：缓存「不存在」</a></li>
+        <li><a href="#43-快慢两条路径rcu-walk-与-ref-walk">4.3 快慢两条路径：RCU-walk 与 ref-walk</a></li>
+        <li><a href="#44-符号链接与-eloop">4.4 符号链接与 ELOOP</a></li>
+      </ol>
+    </li>
+    <li><a href="#5-挂载在-vfs-里怎么表示">5. 挂载在 VFS 里怎么表示</a>
+      <ol>
+        <li><a href="#51-挂载点是-dentry-上的一个跳板">5.1 挂载点是 dentry 上的一个「跳板」</a></li>
+        <li><a href="#52-挂载遮盖的原理">5.2 挂载遮盖的原理</a></li>
+        <li><a href="#53-bind-mount-的实现">5.3 bind mount 的实现</a></li>
+        <li><a href="#54-挂载传播容器共享目录的基础">5.4 挂载传播：容器共享目录的基础</a></li>
+        <li><a href="#55-mount-namespace容器的文件系统视图">5.5 mount namespace：容器的文件系统视图</a></li>
+      </ol>
+    </li>
+    <li><a href="#6-特殊文件系统抽象的边界">6. 特殊文件系统：抽象的边界</a>
+      <ol>
+        <li><a href="#61-procfs内容是函数生成的">6.1 procfs：内容是函数生成的</a></li>
+        <li><a href="#62-sysfs内核对象的映射">6.2 sysfs：内核对象的映射</a></li>
+        <li><a href="#63-tmpfspage-cache-就是全部">6.3 tmpfs：page cache 就是全部</a></li>
+        <li><a href="#64-overlayfs容器镜像的分层">6.4 overlayfs：容器镜像的分层</a></li>
+        <li><a href="#65-fuse把文件系统实现放到用户态">6.5 FUSE：把文件系统实现放到用户态</a></li>
+      </ol>
+    </li>
+    <li><a href="#7-这套设计的代价">7. 这套设计的代价</a></li>
+    <li><a href="#8-面试题">8. 面试题</a></li>
+    <li><a href="#小结">小结</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><p>18 篇讲了「一切皆文件」这个抽象的取舍，这一篇讲<strong>内核到底怎么实现它</strong> —— 以及为什么这个实现需要三层对象而不是一层。</p>
+<p>先看五个问题：</p>
+<ol>
+<li><code>read(fd, buf, n)</code> 从 fd 到实际的磁盘操作，中间经过哪些层？</li>
+<li><code>struct file</code>、<code>struct dentry</code>、<code>struct inode</code> 三者各自解决什么问题？<strong>为什么不能合并成一个</strong>？</li>
+<li>为什么 <code>fork()</code> 之后父子进程共享文件偏移量，而两次 <code>open()</code> 同一个文件却各自独立？</li>
+<li>为什么内核要专门做 dentry cache？</li>
+<li>挂载遮盖（11 篇）、bind mount、容器的不同文件系统视图，在 VFS 里分别是怎么表示的？</li>
+</ol>
+<h1 id="1-vfs-要解决的问题">1. VFS 要解决的问题</h1>
+<h2 id="11-问题几十种文件系统一套接口">1.1 问题：几十种文件系统，一套接口</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 一台普通机器上同时挂载着多少种&#34;文件系统&#34;</span>
+</span></span><span class="line"><span class="cl">findmnt -o TARGET,FSTYPE <span class="p">|</span> awk <span class="s1">&#39;NR&gt;1{print $2}&#39;</span> <span class="p">|</span> sort -u
+</span></span><span class="line"><span class="cl"><span class="c1"># autofs   bpf      cgroup2  configfs  debugfs  devpts   devtmpfs</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># efivarfs ext4     fusectl  hugetlbfs mqueue  overlay  proc</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># pstore   securityfs sysfs   tmpfs    tracefs  xfs</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">cat /proc/filesystems <span class="p">|</span> wc -l          <span class="c1"># 内核支持的类型数</span>
+</span></span></code></pre></div><p><strong>这些东西的差异极大</strong>：</p>
+<pre tabindex="0"><code>ext4     真实的磁盘布局，有 inode 表、日志、extent 树
+xfs      完全不同的磁盘布局，B+ 树、动态 inode 分配
+tmpfs    根本没有磁盘，数据只在 page cache 里
+procfs   文件内容是【读取时由内核函数生成的】，磁盘上不存在
+sysfs    每个文件对应一个内核对象的属性
+overlay  由多个下层目录「叠加」出来的视图（容器镜像的基础）
+nfs      数据在另一台机器上，通过网络访问
+fuse     实现代码在【用户态】进程里
+</code></pre><p><strong>而上层完全不应该关心这些差异</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="c1">// 应用代码、甚至内核里的大部分代码，都只用这一组接口
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kt">int</span> <span class="n">fd</span> <span class="o">=</span> <span class="n">open</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">flags</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="n">read</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span> <span class="n">buf</span><span class="p">,</span> <span class="n">n</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="n">write</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span> <span class="n">buf</span><span class="p">,</span> <span class="n">n</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="n">close</span><span class="p">(</span><span class="n">fd</span><span class="p">);</span>
+</span></span></code></pre></div><p><strong>VFS</strong>（Virtual File System，虚拟文件系统）就是这个「统一层」。它的职责是：<strong>定义一套抽象接口，让每种文件系统各自实现，上层只面向抽象编程。</strong></p>
+<h2 id="12-c-语言里的多态函数指针表">1.2 C 语言里的多态：函数指针表</h2>
+<p>内核是 C 写的，没有 class 和虚函数。它用<strong>结构体里的函数指针表</strong>实现同样的效果 —— 这本质上就是手写的虚函数表（vtable）：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="c1">// include/linux/fs.h（简化）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">struct</span> <span class="n">file_operations</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">struct</span> <span class="n">module</span> <span class="o">*</span><span class="n">owner</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="n">loff_t</span> <span class="p">(</span><span class="o">*</span><span class="n">llseek</span><span class="p">)(</span><span class="k">struct</span> <span class="n">file</span> <span class="o">*</span><span class="p">,</span> <span class="n">loff_t</span><span class="p">,</span> <span class="kt">int</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">    <span class="n">ssize_t</span> <span class="p">(</span><span class="o">*</span><span class="n">read_iter</span><span class="p">)(</span><span class="k">struct</span> <span class="n">kiocb</span> <span class="o">*</span><span class="p">,</span> <span class="k">struct</span> <span class="n">iov_iter</span> <span class="o">*</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">    <span class="n">ssize_t</span> <span class="p">(</span><span class="o">*</span><span class="n">write_iter</span><span class="p">)(</span><span class="k">struct</span> <span class="n">kiocb</span> <span class="o">*</span><span class="p">,</span> <span class="k">struct</span> <span class="n">iov_iter</span> <span class="o">*</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">    <span class="kt">int</span> <span class="p">(</span><span class="o">*</span><span class="n">open</span><span class="p">)(</span><span class="k">struct</span> <span class="n">inode</span> <span class="o">*</span><span class="p">,</span> <span class="k">struct</span> <span class="n">file</span> <span class="o">*</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">    <span class="kt">int</span> <span class="p">(</span><span class="o">*</span><span class="n">release</span><span class="p">)(</span><span class="k">struct</span> <span class="n">inode</span> <span class="o">*</span><span class="p">,</span> <span class="k">struct</span> <span class="n">file</span> <span class="o">*</span><span class="p">);</span>       <span class="c1">// 对应 close
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="kt">int</span> <span class="p">(</span><span class="o">*</span><span class="n">fsync</span><span class="p">)(</span><span class="k">struct</span> <span class="n">file</span> <span class="o">*</span><span class="p">,</span> <span class="n">loff_t</span><span class="p">,</span> <span class="n">loff_t</span><span class="p">,</span> <span class="kt">int</span> <span class="n">datasync</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">    <span class="kt">long</span> <span class="p">(</span><span class="o">*</span><span class="n">unlocked_ioctl</span><span class="p">)(</span><span class="k">struct</span> <span class="n">file</span> <span class="o">*</span><span class="p">,</span> <span class="kt">unsigned</span> <span class="kt">int</span><span class="p">,</span> <span class="kt">unsigned</span> <span class="kt">long</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">    <span class="kt">int</span> <span class="p">(</span><span class="o">*</span><span class="n">mmap</span><span class="p">)(</span><span class="k">struct</span> <span class="n">file</span> <span class="o">*</span><span class="p">,</span> <span class="k">struct</span> <span class="n">vm_area_struct</span> <span class="o">*</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">    <span class="n">__poll_t</span> <span class="p">(</span><span class="o">*</span><span class="n">poll</span><span class="p">)(</span><span class="k">struct</span> <span class="n">file</span> <span class="o">*</span><span class="p">,</span> <span class="k">struct</span> <span class="n">poll_table_struct</span> <span class="o">*</span><span class="p">);</span>   <span class="c1">// epoll 用它
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">ssize_t</span> <span class="p">(</span><span class="o">*</span><span class="n">splice_read</span><span class="p">)(...);</span>                                    <span class="c1">// 零拷贝
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="p">...</span>
+</span></span><span class="line"><span class="cl"><span class="p">};</span>
+</span></span></code></pre></div><p><strong>每种文件系统提供一份自己的实现</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="c1">// ext4 的实现（fs/ext4/file.c）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">const</span> <span class="k">struct</span> <span class="n">file_operations</span> <span class="n">ext4_file_operations</span> <span class="o">=</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="p">.</span><span class="n">llseek</span>         <span class="o">=</span> <span class="n">ext4_llseek</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="p">.</span><span class="n">read_iter</span>      <span class="o">=</span> <span class="n">ext4_file_read_iter</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="p">.</span><span class="n">write_iter</span>     <span class="o">=</span> <span class="n">ext4_file_write_iter</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="p">.</span><span class="n">unlocked_ioctl</span> <span class="o">=</span> <span class="n">ext4_ioctl</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="p">.</span><span class="n">mmap</span>           <span class="o">=</span> <span class="n">ext4_file_mmap</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="p">.</span><span class="n">fsync</span>          <span class="o">=</span> <span class="n">ext4_sync_file</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="p">...</span>
+</span></span><span class="line"><span class="cl"><span class="p">};</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// 管道的实现（fs/pipe.c）—— 同一组接口，完全不同的语义
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">const</span> <span class="k">struct</span> <span class="n">file_operations</span> <span class="n">pipefifo_fops</span> <span class="o">=</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="p">.</span><span class="n">llseek</span>     <span class="o">=</span> <span class="n">no_llseek</span><span class="p">,</span>          <span class="c1">// ✅ 管道不支持 seek —— 直接返回错误
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="p">.</span><span class="n">read_iter</span>  <span class="o">=</span> <span class="n">pipe_read</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="p">.</span><span class="n">write_iter</span> <span class="o">=</span> <span class="n">pipe_write</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="p">.</span><span class="n">poll</span>       <span class="o">=</span> <span class="n">pipe_poll</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="p">...</span>
+</span></span><span class="line"><span class="cl"><span class="p">};</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// socket 的实现（net/socket.c）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">static</span> <span class="k">const</span> <span class="k">struct</span> <span class="n">file_operations</span> <span class="n">socket_file_ops</span> <span class="o">=</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="p">.</span><span class="n">llseek</span>     <span class="o">=</span> <span class="n">no_llseek</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="p">.</span><span class="n">read_iter</span>  <span class="o">=</span> <span class="n">sock_read_iter</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="p">.</span><span class="n">write_iter</span> <span class="o">=</span> <span class="n">sock_write_iter</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="p">.</span><span class="n">poll</span>       <span class="o">=</span> <span class="n">sock_poll</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="p">...</span>
+</span></span><span class="line"><span class="cl"><span class="p">};</span>
+</span></span></code></pre></div><p><strong>于是 <code>read()</code> 系统调用的核心只有一行分派</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="c1">// fs/read_write.c（大幅简化）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">ssize_t</span> <span class="nf">vfs_read</span><span class="p">(</span><span class="k">struct</span> <span class="n">file</span> <span class="o">*</span><span class="n">file</span><span class="p">,</span> <span class="kt">char</span> <span class="n">__user</span> <span class="o">*</span><span class="n">buf</span><span class="p">,</span> <span class="n">size_t</span> <span class="n">count</span><span class="p">,</span> <span class="n">loff_t</span> <span class="o">*</span><span class="n">pos</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="p">(</span><span class="n">file</span><span class="o">-&gt;</span><span class="n">f_mode</span> <span class="o">&amp;</span> <span class="n">FMODE_READ</span><span class="p">))</span>  <span class="k">return</span> <span class="o">-</span><span class="n">EBADF</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">file</span><span class="o">-&gt;</span><span class="n">f_op</span><span class="o">-&gt;</span><span class="n">read_iter</span><span class="p">)</span>        <span class="k">return</span> <span class="o">-</span><span class="n">EINVAL</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="n">call_read_iter</span><span class="p">(</span><span class="n">file</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">kiocb</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">iter</span><span class="p">);</span>   <span class="c1">// ← 通过函数指针分派到具体实现
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="c1">//     ^^^^^^^^^^^^^^ 本质上是 file-&gt;f_op-&gt;read_iter(...)
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span></code></pre></div><p><strong>这就是 18 篇讲的「统一接口」在内核里的样子</strong>，也是它两个代价的来源：</p>
+<pre tabindex="0"><code>代价一：间接调用开销
+   每次 read/write 都要一次函数指针跳转（无法内联、影响 CPU 分支预测）
+   在百万 IOPS 场景下可测量 —— 这是 io_uring 想绕开的开销之一（32 篇）
+
+代价二：接口必须&#34;够宽&#34;以容纳所有实现
+   file_operations 有几十个成员，因为要覆盖普通文件、管道、socket、
+   设备、epoll 实例的全部需求 —— 而任何单一实现只用到其中一小部分
+   （管道的 llseek 只能返回错误，这就是 18 篇讲的「语义泄漏」）
+</code></pre><h2 id="13-四组操作表">1.3 四组操作表</h2>
+<p>VFS 定义了四组主要的操作表，分别挂在四个对象上：</p>
+<table>
+<thead>
+<tr>
+<th>操作表</th>
+<th>挂在哪</th>
+<th>管什么</th>
+<th>典型成员</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong><code>file_operations</code></strong></td>
+<td><code>struct file</code></td>
+<td><strong>已打开文件的 I/O</strong></td>
+<td><code>read_iter</code> <code>write_iter</code> <code>mmap</code> <code>poll</code> <code>ioctl</code> <code>fsync</code></td>
+</tr>
+<tr>
+<td><strong><code>inode_operations</code></strong></td>
+<td><code>struct inode</code></td>
+<td><strong>命名空间操作</strong>（增删改查目录项）</td>
+<td><code>lookup</code> <code>create</code> <code>link</code> <code>unlink</code> <code>symlink</code> <code>mkdir</code> <code>rename</code> <code>setattr</code></td>
+</tr>
+<tr>
+<td><strong><code>super_operations</code></strong></td>
+<td><code>struct super_block</code></td>
+<td><strong>文件系统整体</strong></td>
+<td><code>alloc_inode</code> <code>write_inode</code> <code>sync_fs</code> <code>statfs</code> <code>remount_fs</code></td>
+</tr>
+<tr>
+<td><code>dentry_operations</code></td>
+<td><code>struct dentry</code></td>
+<td>目录项的缓存行为</td>
+<td><code>d_revalidate</code> <code>d_hash</code> <code>d_compare</code> <code>d_delete</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>这个划分本身就有信息量</strong>：<code>open</code>/<code>read</code> 属于 <code>file_operations</code>（作用于「打开的实例」），而 <code>unlink</code>/<code>rename</code>/<code>mkdir</code> 属于 <code>inode_operations</code>（作用于「目录这个 inode 里的条目」）。</p>
+<p><strong>这直接印证了 04 篇讲的「删除文件看目录权限」</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="c1">// unlink 是【父目录 inode】的操作，不是文件自己的操作
+</span></span></span><span class="line"><span class="cl"><span class="c1">// fs/namei.c
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kt">int</span> <span class="nf">vfs_unlink</span><span class="p">(</span><span class="k">struct</span> <span class="n">inode</span> <span class="o">*</span><span class="n">dir</span><span class="p">,</span> <span class="k">struct</span> <span class="n">dentry</span> <span class="o">*</span><span class="n">dentry</span><span class="p">,</span> <span class="p">...)</span>
+</span></span><span class="line"><span class="cl"><span class="c1">//             ^^^^^^^^^^^^^^^^ 传进来的是【父目录】的 inode
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="n">error</span> <span class="o">=</span> <span class="n">may_delete</span><span class="p">(</span><span class="n">dir</span><span class="p">,</span> <span class="n">dentry</span><span class="p">,</span> <span class="nb">false</span><span class="p">);</span>   <span class="c1">// ← 检查【父目录】的写权限
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="p">...</span>
+</span></span><span class="line"><span class="cl">    <span class="n">error</span> <span class="o">=</span> <span class="n">dir</span><span class="o">-&gt;</span><span class="n">i_op</span><span class="o">-&gt;</span><span class="n">unlink</span><span class="p">(</span><span class="n">dir</span><span class="p">,</span> <span class="n">dentry</span><span class="p">);</span>   <span class="c1">// ← 调用父目录 inode 的 unlink
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span></code></pre></div><h1 id="2-四个核心对象">2. 四个核心对象</h1>
+<h2 id="21-开篇第二问为什么必须分三层">2.1 开篇第二问：为什么必须分三层</h2>
+<p>先给出结论，再用三个场景证明「合并会出问题」：</p>
+<table>
+<thead>
+<tr>
+<th>对象</th>
+<th>代表什么</th>
+<th>生命周期</th>
+<th>有几个</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong><code>struct file</code></strong></td>
+<td><strong>一次 <code>open()</code> 的结果</strong>（打开实例）</td>
+<td>从 <code>open</code> 到 <code>close</code></td>
+<td>每次 open 一个</td>
+</tr>
+<tr>
+<td><strong><code>struct dentry</code></strong></td>
+<td><strong>路径中的一个名字</strong>（目录项）</td>
+<td>内存缓存对象，可被回收</td>
+<td>每个「名字」一个</td>
+</tr>
+<tr>
+<td><strong><code>struct inode</code></strong></td>
+<td><strong>文件本身</strong>（元数据 + 数据位置）</td>
+<td>与磁盘上的 inode 对应</td>
+<td>每个文件唯一</td>
+</tr>
+<tr>
+<td><code>struct super_block</code></td>
+<td><strong>一个已挂载的文件系统</strong></td>
+<td>从 mount 到 umount</td>
+<td>每个挂载一个</td>
+</tr>
+</tbody>
+</table>
+<pre tabindex="0"><code>   进程 A                          进程 B
+   fd 3 ──┐                        fd 5 ──┐
+          v                               v
+   +--------------+                +--------------+
+   | struct file  |                | struct file  |     ← 各有独立的 f_pos（偏移量）
+   | f_pos = 100  |                | f_pos = 0    |       和 f_flags（打开模式）
+   | f_flags=O_RD |                | f_flags=O_WR |
+   +--------------+                +--------------+
+          |                               |
+          +---------------+---------------+
+                          v
+                 +------------------+
+                 | struct dentry    |    &#34;app.log&#34;    ← 名字与 inode 的绑定
+                 +------------------+
+                          |
+                    +-----+-----+  ← 硬链接：另一个 dentry 指向同一个 inode
+                    v           v
+             +------------------+   +------------------+
+             | dentry &#34;app.log&#34; |   | dentry &#34;app.bak&#34; |
+             +------------------+   +------------------+
+                    |                       |
+                    +-----------+-----------+
+                                v
+                       +------------------+
+                       |  struct inode    |   ← 唯一：权限、大小、时间戳、
+                       |  i_mode  i_uid   |     链接计数、数据块位置
+                       |  i_size  i_nlink |     （04 篇 1.1 讲的那些字段）
+                       |  i_op    i_fop   |
+                       +------------------+
+                                |
+                                v
+                       +------------------+
+                       | super_block      |   ← 这个文件系统实例
+                       | (ext4 on /dev/sda2)|
+                       +------------------+
+</code></pre><p><strong>三个场景证明必须分层</strong>：</p>
+<p><strong>场景一：同一文件被打开两次 → 需要两个 <code>file</code>，一个 <code>inode</code></strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 两次 open 各有独立的读写偏移量</span>
+</span></span><span class="line"><span class="cl"><span class="nb">exec</span> 3&lt; /etc/passwd
+</span></span><span class="line"><span class="cl"><span class="nb">exec</span> 4&lt; /etc/passwd
+</span></span><span class="line"><span class="cl">head -c <span class="m">10</span> &lt;<span class="p">&amp;</span><span class="m">3</span> &gt;/dev/null     <span class="c1"># fd 3 的偏移量前进 10</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># fd 4 的偏移量还是 0 —— 两个 struct file 各自独立</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">ls -l /proc/<span class="nv">$$</span>/fd/3 /proc/<span class="nv">$$</span>/fd/4     <span class="c1"># 指向同一个文件</span>
+</span></span><span class="line"><span class="cl">cat /proc/<span class="nv">$$</span>/fdinfo/3                  <span class="c1"># ✅ 能直接看到偏移量</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># pos:    10</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># flags:  02000000</span>
+</span></span><span class="line"><span class="cl">cat /proc/<span class="nv">$$</span>/fdinfo/4
+</span></span><span class="line"><span class="cl"><span class="c1"># pos:    0                            &lt;- 独立的偏移量</span>
+</span></span><span class="line"><span class="cl"><span class="nb">exec</span> 3&lt;<span class="p">&amp;</span>- 4&lt;<span class="p">&amp;</span>-
+</span></span></code></pre></div><p><strong>如果把偏移量放进 inode，两次打开就会互相干扰</strong> —— 这是必须有 <code>struct file</code> 这一层的直接原因。</p>
+<p><strong>场景二：硬链接 → 需要两个 <code>dentry</code>，一个 <code>inode</code></strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="nb">cd</span> /tmp <span class="o">&amp;&amp;</span> <span class="nb">echo</span> data &gt; a.txt <span class="o">&amp;&amp;</span> ln a.txt b.txt
+</span></span><span class="line"><span class="cl">stat -c <span class="s1">&#39;%i %h&#39;</span> a.txt b.txt
+</span></span><span class="line"><span class="cl"><span class="c1"># 2621441 2</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 2621441 2                            &lt;- 同一个 inode，两个名字（04 篇 1.1）</span>
+</span></span></code></pre></div><p><strong>元数据（权限、大小、时间戳）只有一份，必须放在 inode 里</strong>；而「名字」和「在哪个目录下」是 dentry 的职责。如果合并，改一个名字的权限会影响另一个 —— 但那正是硬链接的正确语义，所以<strong>元数据必须在共享的那一层</strong>。</p>
+<p><strong>场景三：<code>fork()</code> → 父子共享同一个 <code>file</code>（共享偏移量！）</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 这是很多人不知道的行为</span>
+</span></span><span class="line"><span class="cl">cat &gt; /tmp/fork_test.sh <span class="s">&lt;&lt;&#39;EOF&#39;
+</span></span></span><span class="line"><span class="cl"><span class="s">exec 3&gt; /tmp/out.txt
+</span></span></span><span class="line"><span class="cl"><span class="s">( echo &#34;child-line&#34; &gt;&amp;3 ) &amp;        # 子进程（fork 出来的）写
+</span></span></span><span class="line"><span class="cl"><span class="s">wait
+</span></span></span><span class="line"><span class="cl"><span class="s">echo &#34;parent-line&#34; &gt;&amp;3             # 父进程写
+</span></span></span><span class="line"><span class="cl"><span class="s">exec 3&gt;&amp;-
+</span></span></span><span class="line"><span class="cl"><span class="s">EOF</span>
+</span></span><span class="line"><span class="cl">bash /tmp/fork_test.sh <span class="o">&amp;&amp;</span> cat /tmp/out.txt
+</span></span><span class="line"><span class="cl"><span class="c1"># child-line</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># parent-line                      &lt;- ✅ 没有互相覆盖！</span>
+</span></span></code></pre></div><p><strong>因为 <code>fork()</code> 复制的是 fd（指向同一个 <code>struct file</code>），不是复制 <code>struct file</code> 本身</strong> —— 所以父子共享<strong>同一个偏移量</strong>，一个写完偏移量前进，另一个接着写。</p>
+<pre tabindex="0"><code>   fork() 前：           fork() 后：
+   父 fd 3 ──┐           父 fd 3 ──┐
+             v                     v
+      struct file            struct file      ← 只有一个！f_count 变成 2
+      f_pos = 0              f_pos = 0
+                                   ^
+                     子 fd 3 ──────┘
+</code></pre><p><strong>这解释了 shell 重定向的一个重要行为</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ✅ 多个子进程写同一个重定向目标不会互相覆盖（共享偏移量）</span>
+</span></span><span class="line"><span class="cl"><span class="o">{</span> <span class="nb">echo</span> a<span class="p">;</span> <span class="nb">echo</span> b<span class="p">;</span> <span class="o">}</span> &gt; /tmp/f          <span class="c1"># 两个 echo 是同一个 shell 的</span>
+</span></span><span class="line"><span class="cl"><span class="o">(</span> <span class="nb">echo</span> x<span class="p">;</span> <span class="nb">echo</span> y <span class="o">)</span> &gt; /tmp/f2          <span class="c1"># 子 shell 里的多条命令</span>
+</span></span><span class="line"><span class="cl"><span class="k">for</span> i in <span class="m">1</span> <span class="m">2</span> 3<span class="p">;</span> <span class="k">do</span> <span class="nb">echo</span> <span class="nv">$i</span> <span class="p">&amp;</span> <span class="k">done</span> &gt; /tmp/f3<span class="p">;</span> <span class="nb">wait</span>   <span class="c1"># 并发写，各自追加不覆盖</span>
+</span></span><span class="line"><span class="cl">cat /tmp/f3      <span class="c1"># 三行都在（顺序可能乱，但不丢）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ❌ 但每次重新打开就不共享了</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> a &gt; /tmp/f4
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> b &gt; /tmp/f4                       <span class="c1"># 第二次 open 带 O_TRUNC，截断了文件</span>
+</span></span><span class="line"><span class="cl">cat /tmp/f4      <span class="c1"># 只有 b</span>
+</span></span></code></pre></div><p><strong>对比：<code>dup()</code> 与重新 <code>open()</code> 的区别</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="kt">int</span> <span class="n">fd1</span> <span class="o">=</span> <span class="n">open</span><span class="p">(</span><span class="s">&#34;f&#34;</span><span class="p">,</span> <span class="n">O_WRONLY</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="kt">int</span> <span class="n">fd2</span> <span class="o">=</span> <span class="n">dup</span><span class="p">(</span><span class="n">fd1</span><span class="p">);</span>                    <span class="c1">// ✅ 两个 fd，【同一个 struct file】→ 共享偏移量
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kt">int</span> <span class="n">fd3</span> <span class="o">=</span> <span class="n">open</span><span class="p">(</span><span class="s">&#34;f&#34;</span><span class="p">,</span> <span class="n">O_WRONLY</span><span class="p">);</span>         <span class="c1">// 两个 struct file → 偏移量独立
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl"><span class="c1">// 这就是 09 篇 2.2 讲的 2&gt;&amp;1 的本质：
+</span></span></span><span class="line"><span class="cl"><span class="c1">//   dup2(1, 2) 让 fd 2 指向 fd 1【当时指向的那个 struct file】
+</span></span></span><span class="line"><span class="cl"><span class="c1">//   所以之后 fd 1 改指向别处，fd 2 不受影响
+</span></span></span></code></pre></div><h2 id="22-struct-file-里有什么">2.2 struct file 里有什么</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="c1">// include/linux/fs.h（简化并注释）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">struct</span> <span class="n">file</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">struct</span> <span class="n">path</span>         <span class="n">f_path</span><span class="p">;</span>       <span class="c1">// 包含 dentry 和 vfsmount（见第 5 章）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">struct</span> <span class="n">inode</span>        <span class="o">*</span><span class="n">f_inode</span><span class="p">;</span>     <span class="c1">// 缓存的 inode 指针（快速访问）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">const</span> <span class="k">struct</span> <span class="n">file_operations</span> <span class="o">*</span><span class="n">f_op</span><span class="p">;</span>   <span class="c1">// ← 操作表：决定 read/write 的实际行为
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">atomic_long_t</span>       <span class="n">f_count</span><span class="p">;</span>      <span class="c1">// 引用计数（dup/fork 会增加）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="kt">unsigned</span> <span class="kt">int</span>        <span class="n">f_flags</span><span class="p">;</span>      <span class="c1">// O_RDONLY / O_APPEND / O_NONBLOCK …
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">fmode_t</span>             <span class="n">f_mode</span><span class="p">;</span>       <span class="c1">// FMODE_READ / FMODE_WRITE
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">loff_t</span>              <span class="n">f_pos</span><span class="p">;</span>        <span class="c1">// ✅ 当前读写偏移量（每个 open 独立）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">struct</span> <span class="n">fown_struct</span>  <span class="n">f_owner</span><span class="p">;</span>      <span class="c1">// 异步 I/O 的信号接收者
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="kt">void</span>                <span class="o">*</span><span class="n">private_data</span><span class="p">;</span><span class="c1">// 具体实现的私有数据（如 socket、epoll 实例）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">struct</span> <span class="n">address_space</span> <span class="o">*</span><span class="n">f_mapping</span><span class="p">;</span>  <span class="c1">// page cache（指向 inode 的 i_mapping）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="p">...</span>
+</span></span><span class="line"><span class="cl"><span class="p">};</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 从用户态观察这些字段</span>
+</span></span><span class="line"><span class="cl"><span class="nv">PID</span><span class="o">=</span><span class="nv">$$</span>
+</span></span><span class="line"><span class="cl">cat /proc/<span class="nv">$PID</span>/fdinfo/1
+</span></span><span class="line"><span class="cl"><span class="c1"># pos:    0                          &lt;- f_pos</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># flags:  02100002                   &lt;- f_flags（八进制）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># mnt_id: 26                         &lt;- 属于哪个挂载点（vfsmount）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ino:    6                          &lt;- inode 号</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># epoll 实例的 fdinfo 更有信息量（31 篇会用到）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># tfd:    5  events: 19  data: ...   &lt;- 它监视的每个 fd</span>
+</span></span></code></pre></div><h2 id="23-fd-到-file-的映射">2.3 fd 到 file 的映射</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="c1">// fd 只是一个数组下标（04 篇 1.1 说过）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">struct</span> <span class="n">task_struct</span> <span class="p">{</span>              <span class="c1">// 进程描述符
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">struct</span> <span class="n">files_struct</span> <span class="o">*</span><span class="n">files</span><span class="p">;</span>   <span class="c1">// 打开文件表
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="p">...</span>
+</span></span><span class="line"><span class="cl"><span class="p">};</span>
+</span></span><span class="line"><span class="cl"><span class="k">struct</span> <span class="n">files_struct</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="n">atomic_t</span> <span class="n">count</span><span class="p">;</span>               <span class="c1">// ✅ 引用计数：线程共享同一份（vfork/clone 时）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">struct</span> <span class="n">fdtable</span> <span class="n">__rcu</span> <span class="o">*</span><span class="n">fdt</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="p">...</span>
+</span></span><span class="line"><span class="cl"><span class="p">};</span>
+</span></span><span class="line"><span class="cl"><span class="k">struct</span> <span class="n">fdtable</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="kt">unsigned</span> <span class="kt">int</span> <span class="n">max_fds</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="k">struct</span> <span class="n">file</span> <span class="n">__rcu</span> <span class="o">**</span><span class="n">fd</span><span class="p">;</span>       <span class="c1">// ✅ 就是一个数组：fd[3] 就是 fd 3 对应的 struct file
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="kt">unsigned</span> <span class="kt">long</span> <span class="o">*</span><span class="n">close_on_exec</span><span class="p">;</span> <span class="c1">// FD_CLOEXEC 位图
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="kt">unsigned</span> <span class="kt">long</span> <span class="o">*</span><span class="n">open_fds</span><span class="p">;</span>      <span class="c1">// 哪些 fd 已被占用
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="p">...</span>
+</span></span><span class="line"><span class="cl"><span class="p">};</span>
+</span></span></code></pre></div><p><strong>由此可以解释几件事</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ① 为什么 fd 号总是「最小可用的整数」</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    因为内核在 open_fds 位图里找第一个空位</span>
+</span></span><span class="line"><span class="cl"><span class="nb">exec</span> 3&lt;<span class="p">&amp;</span>- <span class="p">;</span> <span class="nb">exec</span> 5&lt; /etc/hosts     <span class="c1"># 关掉 3，再开一个会拿到 3 而不是 6</span>
+</span></span><span class="line"><span class="cl">ls /proc/<span class="nv">$$</span>/fd
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ② 为什么 ulimit -n 限制的是「每进程」的 fd 数（13 篇 8.1）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    因为 fdtable 是 per-process 的</span>
+</span></span><span class="line"><span class="cl">cat /proc/self/limits <span class="p">|</span> grep <span class="s1">&#39;open files&#39;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ③ 为什么线程之间共享 fd</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    clone(CLONE_FILES) 让新线程复用同一个 files_struct</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    → 一个线程 open 的 fd，另一个线程能直接用</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ④ FD_CLOEXEC 是怎么实现的</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    execve() 时内核遍历 close_on_exec 位图，关掉标记过的 fd</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    这就是为什么现代 API 都提供 O_CLOEXEC（避免 fd 泄漏给子进程）</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// Go 里所有 fd 默认带 O_CLOEXEC，这是有意的设计
+</span></span></span><span class="line"><span class="cl"><span class="c1">// 否则 exec.Command 起的子进程会继承一堆无关 fd（安全风险 + fd 泄漏）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">f</span><span class="p">,</span> <span class="nx">_</span> <span class="o">:=</span> <span class="nx">os</span><span class="p">.</span><span class="nf">Open</span><span class="p">(</span><span class="s">&#34;x&#34;</span><span class="p">)</span>     <span class="c1">// 内部用 openat(..., O_CLOEXEC)
+</span></span></span><span class="line"><span class="cl"><span class="c1">// 需要故意传给子进程时，要用 cmd.ExtraFiles
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">cmd</span> <span class="o">:=</span> <span class="nx">exec</span><span class="p">.</span><span class="nf">Command</span><span class="p">(</span><span class="s">&#34;child&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="nx">cmd</span><span class="p">.</span><span class="nx">ExtraFiles</span> <span class="p">=</span> <span class="p">[]</span><span class="o">*</span><span class="nx">os</span><span class="p">.</span><span class="nx">File</span><span class="p">{</span><span class="nx">f</span><span class="p">}</span>    <span class="c1">// 会成为子进程的 fd 3
+</span></span></span></code></pre></div><h1 id="3-从-fd-到磁盘完整调用链">3. 从 fd 到磁盘：完整调用链</h1>
+<pre tabindex="0"><code>   用户态：read(3, buf, 4096)
+        |
+        |  syscall 指令（陷入内核，切换到内核栈）
+        v
+   ① sys_read()  /  __x64_sys_read()
+        |  fdget_pos(fd) —— 查 current-&gt;files-&gt;fdt-&gt;fd[3]，拿到 struct file
+        |                   并对 f_pos 加锁（防止多线程并发读写偏移量错乱）
+        v
+   ② vfs_read(file, buf, count, pos)
+        |  权限检查（f_mode &amp; FMODE_READ）
+        |  rw_verify_area()（检查偏移量合法性、强制锁）
+        v
+   ③ call_read_iter() -&gt; file-&gt;f_op-&gt;read_iter()     ← 【VFS 分派点】
+        |
+        +---- ext4_file_read_iter    （普通文件）
+        +---- pipe_read              （管道）
+        +---- sock_read_iter         （socket）
+        +---- proc_reg_read_iter     （/proc）
+        |
+        v （以 ext4 为例）
+   ④ generic_file_read_iter()
+        |  查 page cache：filemap_read()
+        |    ├─ 命中 → 直接从 page 拷到用户缓冲区，【结束】
+        |    └─ 未命中 → 继续
+        v
+   ⑤ page_cache_sync_readahead() / filemap_get_pages()
+        |  分配 page，发起读取，并触发【预读】（readahead）
+        v
+   ⑥ ext4_readpage / ext4_readahead
+        |  通过 extent 树把「文件内偏移」翻译成「磁盘块号」
+        v
+   ⑦ submit_bio()  ← 提交给块层
+        |  bio → 请求队列 → IO 调度器（none/mq-deadline/bfq，11 篇 11.3）
+        v
+   ⑧ 块设备驱动（nvme/virtio_blk/scsi）
+        |  写入硬件队列，触发 DMA
+        v
+   ⑨ 硬件完成 → 中断 → 软中断处理 → 唤醒等待的进程
+        |  （进程在这期间处于 D 状态 —— 13 篇 2.5 讲的不可中断睡眠！）
+        v
+   ⑩ 数据从 page cache 拷到用户缓冲区，返回字节数
+</code></pre><p><strong>用工具实际观察这条链</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ① strace 看系统调用层</span>
+</span></span><span class="line"><span class="cl">strace -e <span class="nv">trace</span><span class="o">=</span>read,openat cat /etc/hostname
+</span></span><span class="line"><span class="cl"><span class="c1"># openat(AT_FDCWD, &#34;/etc/hostname&#34;, O_RDONLY) = 3</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># read(3, &#34;myhost\n&#34;, 131072) = 7</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># read(3, &#34;&#34;, 131072) = 0                    &lt;- 返回 0 = EOF</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ② ftrace 看内核函数调用链（需要 root）</span>
+</span></span><span class="line"><span class="cl">sudo trace-cmd record -p function_graph -g vfs_read -- cat /etc/hostname
+</span></span><span class="line"><span class="cl">sudo trace-cmd report <span class="p">|</span> head -40
+</span></span><span class="line"><span class="cl"><span class="c1"># 能看到 vfs_read -&gt; ext4_file_read_iter -&gt; generic_file_read_iter -&gt; filemap_read</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ③ bpftrace 统计各文件系统的 read 分布</span>
+</span></span><span class="line"><span class="cl">sudo bpftrace -e <span class="s1">&#39;kprobe:vfs_read { @[comm] = count(); }&#39;</span>
+</span></span><span class="line"><span class="cl">sudo bpftrace -e <span class="s1">&#39;kprobe:ext4_file_read_iter { @bytes = hist(arg2); }&#39;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ④ 看是否命中 page cache（未命中才会真的读磁盘）</span>
+</span></span><span class="line"><span class="cl">sudo bpftrace -e <span class="s1">&#39;
+</span></span></span><span class="line"><span class="cl"><span class="s1">  kprobe:filemap_read { @total = count(); }
+</span></span></span><span class="line"><span class="cl"><span class="s1">  kprobe:submit_bio   { @disk_io = count(); }
+</span></span></span><span class="line"><span class="cl"><span class="s1">&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># @total 远大于 @disk_io 说明 page cache 命中率高</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ⑤ 看整条路径的耗时分布</span>
+</span></span><span class="line"><span class="cl">sudo bpftrace -e <span class="s1">&#39;kprobe:vfs_read { @start[tid] = nsecs; }
+</span></span></span><span class="line"><span class="cl"><span class="s1">  kretprobe:vfs_read /@start[tid]/ { @us = hist((nsecs - @start[tid])/1000); delete(@start[tid]); }&#39;</span>
+</span></span></code></pre></div><p><strong>这条链解释了前面篇目的几个现象</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ① 为什么 page cache 命中时 read 极快（05 篇的缓冲、11 篇的 df/du）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    命中时在第 ④ 步就返回了，根本不碰磁盘</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ② 为什么进程会卡在 D 状态（13 篇 2.5）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    第 ⑨ 步等硬件完成时进程睡在不可中断状态</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ③ 为什么 O_DIRECT 能绕过 page cache</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    它跳过 ④⑤，直接走 ⑦（代价是失去缓存与预读）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ④ 为什么 sendfile/splice 能零拷贝（32 篇细讲）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    它们在内核内部把 page cache 的页直接交给 socket，省掉「拷到用户态再拷回来」</span>
+</span></span></code></pre></div><h1 id="4-路径解析与-dentry-cache">4. 路径解析与 dentry cache</h1>
+<h2 id="41-开篇第四问为什么需要-dentry-cache">4.1 开篇第四问：为什么需要 dentry cache</h2>
+<p>03 篇讲过路径是<strong>逐段解析</strong>的。把这个过程放到 VFS 的对象模型里看：</p>
+<pre tabindex="0"><code>   open(&#34;/var/log/app.log&#34;)
+
+   ① 从当前进程的 root dentry 开始（&#34;/&#34;）
+   ② 在 &#34;/&#34; 的 inode 里查找名字 &#34;var&#34;     -&gt; 需要 inode_operations-&gt;lookup()
+        lookup 要【读磁盘】：读目录的数据块，解析目录项，找到 &#34;var&#34; 的 inode 号
+   ③ 读入 var 的 inode，检查执行权限（03 篇 5.1 的 x 权限）
+   ④ 在 var 的 inode 里查找 &#34;log&#34;          -&gt; 又一次 lookup，又要读磁盘
+   ⑤ 在 log 的 inode 里查找 &#34;app.log&#34;      -&gt; 又一次
+   ⑥ 创建 struct file，返回 fd
+</code></pre><p><strong>如果每次都这样走，代价是灾难性的</strong>：</p>
+<pre tabindex="0"><code>   一个 4 级路径 = 4 次目录查找 = 最坏情况 4~8 次磁盘 I/O
+   而 open() 在真实负载里极其频繁：
+     - 每个 HTTP 请求可能 open 几个文件（模板、静态资源、日志）
+     - 编译一次大项目要 open 几十万次
+     - ls -l 一个目录要对每个文件 stat（也要走路径解析）
+   → 没有缓存，系统会被路径解析压垮
+</code></pre><p><strong>dentry cache（dcache）就是「路径名 → dentry」的缓存</strong>，它是<strong>纯内存对象</strong>，不对应磁盘上的任何结构：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 看 dcache 的规模</span>
+</span></span><span class="line"><span class="cl">grep -E <span class="s1">&#39;dentry|inode_cache&#39;</span> /proc/slabinfo <span class="p">|</span> awk <span class="s1">&#39;{print $1, $2, $3}&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># dentry            1234567  1234567       &lt;- 活跃对象数 / 总对象数</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ext4_inode_cache   456789   456789</span>
+</span></span><span class="line"><span class="cl">sudo slabtop -o <span class="p">|</span> head -8                  <span class="c1"># 更直观</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># dcache 属于「可回收的内核内存」，算在 SReclaimable 里</span>
+</span></span><span class="line"><span class="cl">grep -E <span class="s1">&#39;SReclaimable|SUnreclaim&#39;</span> /proc/meminfo
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 手动回收（⚠️ 生产上慎用，会导致后续路径解析全部 miss）</span>
+</span></span><span class="line"><span class="cl">sync<span class="p">;</span> <span class="nb">echo</span> <span class="m">2</span> <span class="p">|</span> sudo tee /proc/sys/vm/drop_caches    <span class="c1"># 2 = 只清 dentry 和 inode 缓存</span>
+</span></span></code></pre></div><h2 id="42-负-dentry缓存不存在">4.2 负 dentry：缓存「不存在」</h2>
+<p>一个反直觉但很重要的机制：<strong>dcache 也缓存「这个名字不存在」这个事实</strong>。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="c1">// 负 dentry（negative dentry）：d_inode == NULL 的 dentry
+</span></span></span><span class="line"><span class="cl"><span class="c1">// 它表示「这个名字确定不存在」，避免重复查磁盘
+</span></span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 为什么需要它？因为「查找失败」也很频繁</span>
+</span></span><span class="line"><span class="cl">strace -f -e <span class="nv">trace</span><span class="o">=</span>openat python3 -c <span class="s1">&#39;import json&#39;</span> 2&gt;<span class="p">&amp;</span><span class="m">1</span> <span class="p">|</span> grep -c ENOENT
+</span></span><span class="line"><span class="cl"><span class="c1"># 几十到上百次 ENOENT —— 解释器在多个目录里搜索模块，大部分是失败的</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 同类场景：动态链接器搜索 .so、shell 搜索 PATH（01 篇 3.1）、</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#          Java 找 class、编译器找头文件</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 没有负 dentry 的话，每次失败的查找都要读一次磁盘目录</span>
+</span></span></code></pre></div><p><strong>它的副作用</strong>：负 dentry 可能大量堆积占用内存。典型场景是频繁创建删除临时文件、或程序不断探测不存在的路径：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 观察负 dentry 数量（需要 root）</span>
+</span></span><span class="line"><span class="cl">sudo bpftrace -e <span class="s1">&#39;kprobe:d_alloc { @ = count(); }&#39;</span> 2&gt;/dev/null
+</span></span><span class="line"><span class="cl"><span class="c1"># 或者从 slabinfo 看 dentry 总数持续增长但文件数没变</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 内核会在内存压力下回收它们，但如果 dentry 占用异常大：</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="m">2</span> <span class="p">|</span> sudo tee /proc/sys/vm/drop_caches
+</span></span><span class="line"><span class="cl">sysctl vm.vfs_cache_pressure          <span class="c1"># 默认 100，调大会让内核更激进地回收 dcache</span>
+</span></span></code></pre></div><h2 id="43-快慢两条路径rcu-walk-与-ref-walk">4.3 快慢两条路径：RCU-walk 与 ref-walk</h2>
+<p>路径解析是内核里最热的代码路径之一，所以内核为它做了两套实现：</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th><strong>RCU-walk</strong>（快路径）</th>
+<th><strong>ref-walk</strong>（慢路径）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>加锁</td>
+<td><strong>完全无锁</strong>（依赖 RCU + 序号校验）</td>
+<td>对每个 dentry 加引用计数和自旋锁</td>
+</tr>
+<tr>
+<td>适用</td>
+<td>dcache 全部命中、路径中无符号链接、无挂载点跨越</td>
+<td>需要读磁盘、遇到软链接、跨挂载点、权限需要复杂检查</td>
+</tr>
+<tr>
+<td>性能</td>
+<td>极快（多核可完全并行，无 cache line 争抢）</td>
+<td>慢（原子操作 + 可能睡眠）</td>
+</tr>
+<tr>
+<td>失败处理</td>
+<td>一旦条件不满足就<strong>回退到 ref-walk 重走一遍</strong></td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
+<pre tabindex="0"><code>   为什么值得做两套？
+     因为绝大多数 open() 的路径都在 dcache 里，
+     而「给每个 dentry 加引用计数」在多核上会造成严重的 cache line 争抢
+     （几十个核同时解析 /usr/lib/... 时，都要原子地改同一个 dentry 的计数）
+   RCU-walk 完全避免了写操作 —— 这是它能线性扩展的关键。
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 观察两条路径的比例</span>
+</span></span><span class="line"><span class="cl">sudo bpftrace -e <span class="s1">&#39;
+</span></span></span><span class="line"><span class="cl"><span class="s1">  kprobe:path_lookupat { @lookup = count(); }
+</span></span></span><span class="line"><span class="cl"><span class="s1">  kprobe:unlazy_walk   { @fallback_to_refwalk = count(); }
+</span></span></span><span class="line"><span class="cl"><span class="s1">&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># @fallback 占比高说明有大量软链接或跨挂载点访问</span>
+</span></span></code></pre></div><h2 id="44-符号链接与-eloop">4.4 符号链接与 ELOOP</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="c1">// 软链接在 VFS 里的处理：inode_operations 里有 get_link()
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">struct</span> <span class="n">inode_operations</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">const</span> <span class="kt">char</span> <span class="o">*</span><span class="p">(</span><span class="o">*</span><span class="n">get_link</span><span class="p">)(</span><span class="k">struct</span> <span class="n">dentry</span> <span class="o">*</span><span class="p">,</span> <span class="k">struct</span> <span class="n">inode</span> <span class="o">*</span><span class="p">,</span> <span class="k">struct</span> <span class="n">delayed_call</span> <span class="o">*</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">    <span class="p">...</span>
+</span></span><span class="line"><span class="cl"><span class="p">};</span>
+</span></span><span class="line"><span class="cl"><span class="c1">// 路径解析遇到软链接时：
+</span></span></span><span class="line"><span class="cl"><span class="c1">//   ① 调 get_link() 拿到目标路径字符串
+</span></span></span><span class="line"><span class="cl"><span class="c1">//   ② 【递归】解析这个新路径
+</span></span></span><span class="line"><span class="cl"><span class="c1">//   ③ 用 nd-&gt;depth 计数，超过 MAXSYMLINKS（40）就返回 ELOOP
+</span></span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 验证 40 层限制（03 篇 6.3 提过）</span>
+</span></span><span class="line"><span class="cl"><span class="nb">cd</span> /tmp <span class="o">&amp;&amp;</span> ln -s a b <span class="o">&amp;&amp;</span> ln -s b a
+</span></span><span class="line"><span class="cl">cat a
+</span></span><span class="line"><span class="cl"><span class="c1"># cat: a: Too many levels of symbolic links       &lt;- ELOOP</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 内核里这个限制是编译期常量（不可调）</span>
+</span></span><span class="line"><span class="cl">grep -rn <span class="s1">&#39;MAXSYMLINKS&#39;</span> /usr/include/linux/limits.h
+</span></span><span class="line"><span class="cl"><span class="c1"># #define MAXSYMLINKS 40</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 这也解释了 03 篇的另一件事：为什么硬链接不能指向目录</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   软链接成环有【可数的跟随层数】作为兜底</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   硬链接成环没有任何计数器能发现 -&gt; 内核直接禁止</span>
+</span></span></code></pre></div><h1 id="5-挂载在-vfs-里怎么表示">5. 挂载在 VFS 里怎么表示</h1>
+<h2 id="51-挂载点是-dentry-上的一个跳板">5.1 挂载点是 dentry 上的一个「跳板」</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="k">struct</span> <span class="n">vfsmount</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">struct</span> <span class="n">dentry</span> <span class="o">*</span><span class="n">mnt_root</span><span class="p">;</span>        <span class="c1">// 这个文件系统的根 dentry
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">struct</span> <span class="n">super_block</span> <span class="o">*</span><span class="n">mnt_sb</span><span class="p">;</span>     <span class="c1">// 对应的超级块
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="kt">int</span> <span class="n">mnt_flags</span><span class="p">;</span>                  <span class="c1">// MNT_NOSUID / MNT_NODEV / MNT_NOEXEC / MNT_READONLY
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">};</span>
+</span></span><span class="line"><span class="cl"><span class="k">struct</span> <span class="n">mount</span> <span class="p">{</span>                      <span class="c1">// 内部结构（fs/mount.h）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">struct</span> <span class="n">mount</span> <span class="o">*</span><span class="n">mnt_parent</span><span class="p">;</span>       <span class="c1">// ✅ 父挂载
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">struct</span> <span class="n">dentry</span> <span class="o">*</span><span class="n">mnt_mountpoint</span><span class="p">;</span>  <span class="c1">// ✅ 挂在【哪个 dentry】上
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">struct</span> <span class="n">vfsmount</span> <span class="n">mnt</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="k">struct</span> <span class="n">list_head</span> <span class="n">mnt_mounts</span><span class="p">;</span>    <span class="c1">// 子挂载列表
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="kt">int</span> <span class="n">mnt_id</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="k">struct</span> <span class="n">mnt_namespace</span> <span class="o">*</span><span class="n">mnt_ns</span><span class="p">;</span>   <span class="c1">// ✅ 属于哪个 mount namespace（容器基础）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="p">...</span>
+</span></span><span class="line"><span class="cl"><span class="p">};</span>
+</span></span></code></pre></div><p><strong>路径解析走到一个挂载点时会「跳转」</strong>：</p>
+<pre tabindex="0"><code>   解析 /data/file，其中 /data 是一个挂载点
+
+   ① 正常解析到 &#34;/&#34; 下的 dentry &#34;data&#34;
+   ② 发现这个 dentry 被标记了 DCACHE_MOUNTED
+   ③ 查 mount hash 表，找到挂在它上面的 vfsmount
+   ④ 【切换】到那个 vfsmount 的 mnt_root（新文件系统的根 dentry）
+   ⑤ 从新的 dentry 继续解析 &#34;file&#34;
+
+   → 所以 struct path 需要【两个】成员：
+       struct path { struct vfsmount *mnt; struct dentry *dentry; };
+     光有 dentry 不够 —— 同一个 dentry 可能属于不同的挂载实例（bind mount）
+</code></pre><h2 id="52-挂载遮盖的原理">5.2 挂载遮盖的原理</h2>
+<p><strong>这就是 11 篇 5.3 那个现象的实现原因</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 现象回顾</span>
+</span></span><span class="line"><span class="cl">sudo mkdir -p /data <span class="o">&amp;&amp;</span> <span class="nb">echo</span> <span class="s2">&#34;重要数据&#34;</span> <span class="p">|</span> sudo tee /data/important.txt
+</span></span><span class="line"><span class="cl">sudo mount /dev/sdb1 /data
+</span></span><span class="line"><span class="cl">ls /data          <span class="c1"># 空的！important.txt 不见了</span>
+</span></span><span class="line"><span class="cl">sudo umount /data
+</span></span><span class="line"><span class="cl">ls /data          <span class="c1"># 又回来了</span>
+</span></span></code></pre></div><p><strong>原理</strong>：挂载<strong>没有动原来的任何东西</strong>。它只是在 <code>/data</code> 这个 dentry 上放了一个「跳板」标记 —— 之后所有路径解析走到这里都会被<strong>转向</strong>新文件系统的根，于是原来的目录内容再也不会被访问到（但它仍然占着原文件系统的空间）。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 所以「用 bind mount 从另一个位置访问被遮盖的内容」是完全合理的</span>
+</span></span><span class="line"><span class="cl">sudo mount --bind / /mnt/rootfs
+</span></span><span class="line"><span class="cl"><span class="c1">#          ^^^^^^ 把根文件系统在另一个 dentry 上再挂一次</span>
+</span></span><span class="line"><span class="cl">sudo ls /mnt/rootfs/data          <span class="c1"># ✅ 能看到被遮盖的原始内容</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#         ^^^^^^^^^^^^ 这条路径解析时不会经过 /data 那个跳板</span>
+</span></span><span class="line"><span class="cl">sudo du -sh /mnt/rootfs/data
+</span></span><span class="line"><span class="cl">sudo umount /mnt/rootfs
+</span></span></code></pre></div><h2 id="53-bind-mount-的实现">5.3 bind mount 的实现</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">sudo mount --bind /data/www /var/www
+</span></span><span class="line"><span class="cl"><span class="c1"># 内核做的事：创建一个新的 struct mount，</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   mnt_mountpoint = /var/www 的 dentry</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   mnt_root       = /data/www 的 dentry      ← 关键：指向【已有的】dentry</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   mnt_sb         = 与源相同的 super_block</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 所以它不是拷贝，而是「同一份 inode 树的第二个入口」</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 验证：bind mount 的两边是同一个 inode</span>
+</span></span><span class="line"><span class="cl">sudo mount --bind /data/www /var/www
+</span></span><span class="line"><span class="cl">stat -c <span class="s1">&#39;%i %d&#39;</span> /data/www /var/www
+</span></span><span class="line"><span class="cl"><span class="c1"># 2621500 2049</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 2621500 2049                    &lt;- inode 和设备号都相同</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">findmnt /var/www
+</span></span><span class="line"><span class="cl"><span class="c1"># TARGET   SOURCE            FSTYPE OPTIONS</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># /var/www /dev/sdb1[/www]   ext4   rw,relatime</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                    ^^^^^^ 方括号里显示「源是该文件系统里的哪个子目录」</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 只读 bind mount 需要两步（11 篇 5.4 提过）</span>
+</span></span><span class="line"><span class="cl">sudo mount --bind /data/config /app/config
+</span></span><span class="line"><span class="cl">sudo mount -o remount,bind,ro /app/config
+</span></span><span class="line"><span class="cl"><span class="c1"># 原因：bind 时的 ro 在老内核上不生效 —— 因为第一步只是建立跳板，</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#      挂载标志（MNT_READONLY）要在第二步才能设到新的 struct mount 上</span>
+</span></span></code></pre></div><h2 id="54-挂载传播容器共享目录的基础">5.4 挂载传播：容器共享目录的基础</h2>
+<p>一个 dentry 上的挂载操作，是否应该「传播」到其他挂载了同一目录的地方？内核提供了四种策略：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">findmnt -o TARGET,PROPAGATION <span class="p">|</span> head
+</span></span><span class="line"><span class="cl"><span class="c1"># TARGET  PROPAGATION</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># /       shared</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># /proc   shared</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 四种传播类型</span>
+</span></span><span class="line"><span class="cl">sudo mount --make-shared /mnt/a      <span class="c1"># shared：双向传播（A 下面挂新东西，B 也能看到）</span>
+</span></span><span class="line"><span class="cl">sudo mount --make-private /mnt/a     <span class="c1"># private：不传播（默认）</span>
+</span></span><span class="line"><span class="cl">sudo mount --make-slave /mnt/a       <span class="c1"># slave：单向接收（上游的变化会传下来，反之不会）</span>
+</span></span><span class="line"><span class="cl">sudo mount --make-unbindable /mnt/a  <span class="c1"># unbindable：不能被 bind</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 为什么需要这个机制？</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 场景：容器里挂载了宿主机的 /media，宿主机插了 U 盘自动挂到 /media/usb</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   shared  -&gt; 容器里也能看到 /media/usb（数据共享场景需要）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   slave   -&gt; 容器能看到宿主的挂载，但容器内的挂载不影响宿主（K8s 的默认行为之一）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   private -&gt; 完全隔离（安全，但共享存储场景不方便）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># K8s 的 volume mountPropagation 就是这三种：</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   None（private）/ HostToContainer（slave）/ Bidirectional（shared）</span>
+</span></span></code></pre></div><h2 id="55-mount-namespace容器的文件系统视图">5.5 mount namespace：容器的文件系统视图</h2>
+<p><strong>开篇第五问的答案</strong>：每个 mount namespace 有<strong>自己的一份挂载树</strong>（<code>struct mnt_namespace</code>），所以不同容器能看到完全不同的文件系统视图。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 每个进程属于某个 mount namespace</span>
+</span></span><span class="line"><span class="cl">ls -l /proc/self/ns/mnt
+</span></span><span class="line"><span class="cl"><span class="c1"># lrwxrwxrwx ... /proc/self/ns/mnt -&gt; &#39;mnt:[4026531840]&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                                          ^^^^^^^^^^ namespace 的 inode 号</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 对比宿主与容器的挂载树</span>
+</span></span><span class="line"><span class="cl">sudo readlink /proc/1/ns/mnt
+</span></span><span class="line"><span class="cl">sudo readlink /proc/<span class="k">$(</span>docker inspect -f <span class="s1">&#39;{{.State.Pid}}&#39;</span> mycontainer<span class="k">)</span>/ns/mnt
+</span></span><span class="line"><span class="cl"><span class="c1"># 数字不同 = 不同的 namespace = 不同的挂载树</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 手动创建一个（不需要容器运行时）</span>
+</span></span><span class="line"><span class="cl">sudo unshare --mount --propagation private bash
+</span></span><span class="line"><span class="cl"><span class="c1"># 现在在新的 mount namespace 里</span>
+</span></span><span class="line"><span class="cl">mount -t tmpfs tmpfs /mnt              <span class="c1"># 这个挂载【只在这个 namespace 里可见】</span>
+</span></span><span class="line"><span class="cl">findmnt /mnt
+</span></span><span class="line"><span class="cl"><span class="nb">exit</span>
+</span></span><span class="line"><span class="cl">findmnt /mnt                           <span class="c1"># 宿主机上看不到 ✅</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 进入某个容器的挂载视图（15 篇用过同样的技巧看网络）</span>
+</span></span><span class="line"><span class="cl">sudo nsenter -t &lt;PID&gt; -m findmnt
+</span></span><span class="line"><span class="cl">sudo nsenter -t &lt;PID&gt; -m --wd<span class="o">=</span>/ ls /
+</span></span></code></pre></div><p><strong>这是容器「文件系统隔离」的全部秘密</strong>：不是什么特殊的沙箱技术，就是<strong>每个 namespace 一份挂载树 + chroot 到镜像目录</strong>。36 篇会完整展开。</p>
+<h1 id="6-特殊文件系统抽象的边界">6. 特殊文件系统：抽象的边界</h1>
+<p>VFS 的抽象力度可以从这些「根本不是文件的东西也能当文件用」来体现：</p>
+<h2 id="61-procfs内容是函数生成的">6.1 procfs：内容是函数生成的</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="c1">// procfs 的每个文件注册一个 show 函数
+</span></span></span><span class="line"><span class="cl"><span class="c1">// fs/proc/meminfo.c
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">static</span> <span class="kt">int</span> <span class="nf">meminfo_proc_show</span><span class="p">(</span><span class="k">struct</span> <span class="n">seq_file</span> <span class="o">*</span><span class="n">m</span><span class="p">,</span> <span class="kt">void</span> <span class="o">*</span><span class="n">v</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">struct</span> <span class="n">sysinfo</span> <span class="n">i</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="n">si_meminfo</span><span class="p">(</span><span class="o">&amp;</span><span class="n">i</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">    <span class="n">seq_printf</span><span class="p">(</span><span class="n">m</span><span class="p">,</span> <span class="s">&#34;MemTotal:       %8lu kB</span><span class="se">\n</span><span class="s">&#34;</span><span class="p">,</span> <span class="p">...);</span>   <span class="c1">// ← 读的瞬间才生成文本
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="p">...</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><strong>这解释了 03 篇 3.5 的现象</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">ls -l /proc/meminfo
+</span></span><span class="line"><span class="cl"><span class="c1"># -r--r--r-- 1 root root 0 Aug 12 14:00 /proc/meminfo</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                        ^ 大小是 0，因为内容还不存在！</span>
+</span></span><span class="line"><span class="cl">wc -c /proc/meminfo                    <span class="c1"># 但 cat 出来有上千字节</span>
+</span></span><span class="line"><span class="cl">df /proc                               <span class="c1"># 大小 0 —— 不占任何磁盘</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 更有意思的是：有些 proc 文件不支持部分读</span>
+</span></span><span class="line"><span class="cl">dd <span class="k">if</span><span class="o">=</span>/proc/meminfo <span class="nv">bs</span><span class="o">=</span><span class="m">10</span> <span class="nv">count</span><span class="o">=</span><span class="m">1</span> 2&gt;/dev/null <span class="p">|</span> wc -c
+</span></span><span class="line"><span class="cl"><span class="c1"># 结果可能不是 10 —— seq_file 的语义与普通文件不同（18 篇讲的语义泄漏）</span>
+</span></span></code></pre></div><h2 id="62-sysfs内核对象的映射">6.2 sysfs：内核对象的映射</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># sysfs 的每个文件对应一个 kobject 的属性，有 show/store 两个回调</span>
+</span></span><span class="line"><span class="cl">cat /sys/class/net/eth0/mtu            <span class="c1"># 调用 show 回调</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="m">1400</span> <span class="p">|</span> sudo tee /sys/class/net/eth0/mtu    <span class="c1"># 调用 store 回调</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                                                  ^^ 这就是 15 篇 ip link set mtu 的另一条路径</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># sysfs 的组织是「一个属性一个文件」，这是有意的设计（对比 ioctl）</span>
+</span></span><span class="line"><span class="cl">ls /sys/block/sda/queue/
+</span></span><span class="line"><span class="cl"><span class="c1"># scheduler  rotational  nr_requests  read_ahead_kb  max_sectors_kb ...</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#            ^^^^^^^^^^ 11 篇用它判断 SSD/机械盘</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 好处：可发现（ls 就知道有哪些参数）、可脚本化、有独立的权限控制</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#      —— 正是 18 篇 2.3 说的「ioctl 的结构化替代方案」</span>
+</span></span></code></pre></div><h2 id="63-tmpfspage-cache-就是全部">6.3 tmpfs：page cache 就是全部</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># tmpfs 的实现极简：文件数据【直接】就是 page cache 里的页，没有后备存储</span>
+</span></span><span class="line"><span class="cl">findmnt /dev/shm
+</span></span><span class="line"><span class="cl"><span class="c1"># /dev/shm tmpfs tmpfs rw,nosuid,nodev</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 所以：</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   ✓ 极快（没有磁盘 I/O）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   ✓ 可以被 swap 出去（与 ramdisk 的关键区别）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   ✗ 占的是内存（11 篇 3.4 讲的「往 /tmp 写大文件会吃内存」）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 常见的 tmpfs</span>
+</span></span><span class="line"><span class="cl">findmnt -t tmpfs -o TARGET,SIZE,USED
+</span></span><span class="line"><span class="cl"><span class="c1"># /run        1.6G   1.2M      &lt;- 03 篇讲的 pid 文件与 socket</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># /dev/shm    7.8G   0         &lt;- POSIX 共享内存</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># /tmp        7.8G   12M       &lt;- 部分发行版</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># /sys/fs/cgroup ...</span>
+</span></span></code></pre></div><h2 id="64-overlayfs容器镜像的分层">6.4 overlayfs：容器镜像的分层</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 容器的根文件系统就是一个 overlay 挂载</span>
+</span></span><span class="line"><span class="cl">findmnt -t overlay
+</span></span><span class="line"><span class="cl"><span class="c1"># TARGET SOURCE  FSTYPE  OPTIONS</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># /      overlay overlay rw,lowerdir=/l1:/l2:/l3,upperdir=/u,workdir=/w</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 手动做一个（理解镜像分层）</span>
+</span></span><span class="line"><span class="cl">mkdir -p /tmp/ov/<span class="o">{</span>lower1,lower2,upper,work,merged<span class="o">}</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;from lower1&#34;</span> &gt; /tmp/ov/lower1/a.txt
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;from lower2&#34;</span> &gt; /tmp/ov/lower2/a.txt      <span class="c1"># 同名文件</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;only in lower2&#34;</span> &gt; /tmp/ov/lower2/b.txt
+</span></span><span class="line"><span class="cl">sudo mount -t overlay overlay <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>     -o <span class="nv">lowerdir</span><span class="o">=</span>/tmp/ov/lower1:/tmp/ov/lower2,upperdir<span class="o">=</span>/tmp/ov/upper,workdir<span class="o">=</span>/tmp/ov/work <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>     /tmp/ov/merged
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">cat /tmp/ov/merged/a.txt        <span class="c1"># from lower1     &lt;- 靠前的 lower 优先（镜像层的覆盖语义）</span>
+</span></span><span class="line"><span class="cl">cat /tmp/ov/merged/b.txt        <span class="c1"># only in lower2</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;modified&#34;</span> &gt; /tmp/ov/merged/a.txt           <span class="c1"># 写入 -&gt; 触发 copy-up</span>
+</span></span><span class="line"><span class="cl">ls /tmp/ov/upper/                <span class="c1"># a.txt          &lt;- ✅ 被复制到 upper 层再修改</span>
+</span></span><span class="line"><span class="cl">cat /tmp/ov/lower1/a.txt         <span class="c1"># from lower1    &lt;- 下层【未被修改】</span>
+</span></span><span class="line"><span class="cl">rm /tmp/ov/merged/b.txt
+</span></span><span class="line"><span class="cl">ls -l /tmp/ov/upper/b.txt        <span class="c1"># c--------- ... &lt;- ✅ whiteout：用字符设备标记「已删除」</span>
+</span></span><span class="line"><span class="cl">sudo umount /tmp/ov/merged
+</span></span></code></pre></div><p><strong>这解释了容器的三个特性</strong>：镜像层只读且可共享（多个容器共用同一份 lower）、容器内的修改只影响自己的 upper 层（copy-up）、容器删除后 upper 层丢弃即可。</p>
+<h2 id="65-fuse把文件系统实现放到用户态">6.5 FUSE：把文件系统实现放到用户态</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># FUSE 是 18 篇讲的「宏内核里的微内核思想」</span>
+</span></span><span class="line"><span class="cl">ls -l /dev/fuse
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 工作方式：</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   ① 内核的 fuse 模块注册成一个文件系统类型</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   ② 用户态守护进程通过 /dev/fuse 与内核通信</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   ③ 应用的 read() -&gt; VFS -&gt; fuse 模块 -&gt; 【转发给用户态进程】-&gt; 结果返回</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 常见的 FUSE 文件系统</span>
+</span></span><span class="line"><span class="cl">sshfs user@host:/remote /mnt/remote      <span class="c1"># 通过 SSH 访问远程目录（16 篇）</span>
+</span></span><span class="line"><span class="cl">rclone mount remote:bucket /mnt/cloud    <span class="c1"># 对象存储当文件系统</span>
+</span></span><span class="line"><span class="cl">gocryptfs /enc /mnt/plain                <span class="c1"># 加密目录</span>
+</span></span><span class="line"><span class="cl">s3fs mybucket /mnt/s3
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 代价：每次 I/O 要多两次用户态↔内核态切换 + 数据拷贝</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#      → 性能远低于内核态文件系统（这正是 18 篇讲的微内核 IPC 开销）</span>
+</span></span><span class="line"><span class="cl">findmnt -t fuse.sshfs
+</span></span></code></pre></div><h1 id="7-这套设计的代价">7. 这套设计的代价</h1>
+<p><strong>回收 18 篇的论点，现在有了具体依据</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>代价</th>
+<th>具体表现</th>
+<th>缓解手段</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>间接调用开销</strong></td>
+<td>每次 I/O 至少一次函数指针跳转 + 系统调用陷入</td>
+<td>io_uring 批量提交（32 篇）、DPDK/SPDK 完全旁路</td>
+</tr>
+<tr>
+<td><strong>接口必须够宽</strong></td>
+<td><code>file_operations</code> 有几十个成员，任何实现只用一小部分</td>
+<td>未实现的成员填 <code>NULL</code> 或返回 <code>-EINVAL</code>（如管道的 <code>llseek</code>）</td>
+</tr>
+<tr>
+<td><strong>语义泄漏</strong></td>
+<td><code>read()</code> 在文件/管道/socket 上的行为不同（能否 seek、部分读）</td>
+<td>只能靠文档和应用侧适配</td>
+</tr>
+<tr>
+<td><strong>缓存一致性复杂</strong></td>
+<td>page cache、dcache、inode cache 三层缓存要保持一致；mmap 与 read/write 混用要小心</td>
+<td>大量锁与 RCU；这是内核里最容易出 bug 的地方之一</td>
+</tr>
+<tr>
+<td><strong>元数据操作难以并行</strong></td>
+<td>同一目录下并发创建文件要竞争父目录的 inode 锁</td>
+<td>每个文件系统各自优化（xfs 在这方面强于 ext4）</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 观察 VFS 层的锁竞争（元数据密集负载下）</span>
+</span></span><span class="line"><span class="cl">sudo perf top -e <span class="s1">&#39;lock:*&#39;</span> 2&gt;/dev/null <span class="p">|</span> head
+</span></span><span class="line"><span class="cl">sudo perf record -g -- bash -c <span class="s1">&#39;for i in {1..20000}; do touch /tmp/many/f$i; done&#39;</span>
+</span></span><span class="line"><span class="cl">sudo perf report <span class="p">|</span> head -20
+</span></span><span class="line"><span class="cl"><span class="c1"># 能看到 inode_lock、d_lock 这类符号占比</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 对比：同目录并发创建 vs 分散到多目录</span>
+</span></span><span class="line"><span class="cl">mkdir -p /tmp/bench1 /tmp/bench2/<span class="o">{</span>a,b,c,d<span class="o">}</span>
+</span></span><span class="line"><span class="cl"><span class="nb">time</span> <span class="o">(</span><span class="k">for</span> i in <span class="k">$(</span>seq <span class="m">1</span> 5000<span class="k">)</span><span class="p">;</span> <span class="k">do</span> touch /tmp/bench1/f<span class="nv">$i</span><span class="p">;</span> <span class="k">done</span><span class="o">)</span>
+</span></span><span class="line"><span class="cl"><span class="nb">time</span> <span class="o">(</span><span class="k">for</span> i in <span class="k">$(</span>seq <span class="m">1</span> 5000<span class="k">)</span><span class="p">;</span> <span class="k">do</span> touch /tmp/bench2/<span class="k">$((</span>i%4<span class="o">==</span><span class="m">0</span>?<span class="s2">&#34;a&#34;</span>:i%4<span class="o">==</span><span class="m">1</span>?<span class="s2">&#34;b&#34;</span>:i%4<span class="o">==</span><span class="m">2</span>?<span class="s2">&#34;c&#34;</span>:<span class="s2">&#34;d&#34;</span><span class="k">))</span>/f<span class="nv">$i</span> 2&gt;/dev/null<span class="p">;</span> <span class="k">done</span><span class="o">)</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 大量小文件的场景下，「分散到多个目录」通常更快</span>
+</span></span></code></pre></div><h1 id="8-面试题">8. 面试题</h1>
+<p><strong>Q：VFS 是什么？内核用 C 语言怎么实现「多态」？</strong></p>
+<p>VFS（Virtual File System）是内核里的<strong>统一抽象层</strong>：它定义一套接口，让几十种差异极大的文件系统（ext4 的磁盘布局、tmpfs 的纯内存、procfs 的函数生成内容、overlay 的分层叠加、nfs 的网络访问、fuse 的用户态实现）各自实现，而上层只面向抽象编程。</p>
+<p>C 语言没有虚函数，内核用<strong>结构体里的函数指针表</strong>实现同样效果 —— 本质是手写的 vtable。有四组主要操作表：<strong><code>file_operations</code></strong>（已打开文件的 I/O：<code>read_iter</code>/<code>write_iter</code>/<code>mmap</code>/<code>poll</code>）、<strong><code>inode_operations</code></strong>（命名空间操作：<code>lookup</code>/<code>create</code>/<code>unlink</code>/<code>rename</code>）、<strong><code>super_operations</code></strong>（文件系统整体）、<code>dentry_operations</code>（缓存行为）。</p>
+<p>于是 <code>vfs_read()</code> 的核心只是一行分派：<code>file-&gt;f_op-&gt;read_iter(...)</code> —— 具体跳到 <code>ext4_file_read_iter</code> 还是 <code>pipe_read</code> 还是 <code>sock_read_iter</code>，取决于 <code>open</code> 时挂上的是哪张表。</p>
+<p>这个划分本身有信息量：<strong><code>unlink</code> 属于 <code>inode_operations</code> 且参数是父目录的 inode</strong>（<code>vfs_unlink(struct inode *dir, ...)</code> 里检查的是 <code>dir</code> 的写权限）—— 这就是 04 篇「删除文件看目录权限」在内核里的直接依据。</p>
+<p><strong>Q：<code>struct file</code>、<code>dentry</code>、<code>inode</code> 为什么必须分成三层？</strong></p>
+<p>三个场景各自证明一层的必要性：</p>
+<ol>
+<li><strong>同一文件被打开两次</strong> → 需要两个 <code>file</code>、一个 <code>inode</code>。因为<strong>读写偏移量（<code>f_pos</code>）必须是 per-open 的</strong>，放进 inode 会让两次打开互相干扰。可以用 <code>cat /proc/$$/fdinfo/N</code> 直接看到各自独立的 <code>pos</code></li>
+<li><strong>硬链接</strong> → 需要两个 <code>dentry</code>、一个 <code>inode</code>。因为元数据（权限、大小、时间戳、链接计数）只有一份，必须在共享的那一层；而「名字」和「在哪个目录下」属于 dentry</li>
+<li><strong><code>fork()</code></strong> → 父子共享<strong>同一个</strong> <code>file</code>。所以它们<strong>共享偏移量</strong> —— 这正是 <code>{ echo a; echo b; } &gt; f</code> 和多个后台进程写同一个重定向目标不会互相覆盖的原因</li>
+</ol>
+<p>同理 <code>dup(fd)</code> 得到的两个 fd 指向<strong>同一个 <code>struct file</code></strong>（共享偏移量），而重新 <code>open()</code> 得到两个独立的 <code>file</code>。这也是 09 篇 <code>2&gt;&amp;1</code> 的本质：<code>dup2</code> 让 fd 2 指向 fd 1 <strong>当时指向的那个 <code>struct file</code></strong>，所以之后 fd 1 改指向别处不影响 fd 2。</p>
+<p><strong>Q：fd 到底是什么？为什么 fd 号总是最小可用的整数？</strong></p>
+<p>fd 就是<strong>进程打开文件表里的数组下标</strong>：<code>task_struct → files_struct → fdtable → fd[]</code>，<code>fd[3]</code> 存的是指向 <code>struct file</code> 的指针。</p>
+<p>由此可以解释四件事：<strong>fd 号是最小可用整数</strong>（内核在 <code>open_fds</code> 位图里找第一个空位）；<strong><code>ulimit -n</code> 限制的是每进程的 fd 数</strong>（因为 fdtable 是 per-process 的）；<strong>线程之间共享 fd</strong>（<code>clone(CLONE_FILES)</code> 复用同一个 <code>files_struct</code>）；<strong><code>FD_CLOEXEC</code> 的实现</strong>是 <code>execve()</code> 时内核遍历 <code>close_on_exec</code> 位图关掉标记过的 fd。</p>
+<p>最后这点有实际意义：<strong>Go 里所有 fd 默认带 <code>O_CLOEXEC</code></strong>，避免 <code>exec.Command</code> 起的子进程继承一堆无关 fd（既是安全风险也是 fd 泄漏源）；需要故意传递时用 <code>cmd.ExtraFiles</code>。</p>
+<p><strong>Q：<code>read()</code> 从 fd 到磁盘经过哪些层？</strong></p>
+<p>十步：<code>sys_read</code> → <code>fdget_pos</code>（查 fdtable 拿 <code>struct file</code> 并锁住偏移量）→ <code>vfs_read</code>（权限检查）→ <strong><code>file-&gt;f_op-&gt;read_iter</code>（VFS 分派点）</strong> → <code>generic_file_read_iter</code> → <strong>查 page cache（命中就直接返回，不碰磁盘）</strong> → 未命中则分配页 + 触发预读 → 文件系统把「文件内偏移」翻译成「磁盘块号」（ext4 走 extent 树）→ <code>submit_bio</code> 提交给块层 → IO 调度器 → 驱动 → DMA → 硬件完成中断 → 唤醒进程 → 拷到用户缓冲区。</p>
+<p><strong>这条链解释了前面遇到的几个现象</strong>：page cache 命中时极快（在第 6 步就返回）；进程等硬件时处于 <strong>D 状态</strong>（13 篇的不可中断睡眠）；<code>O_DIRECT</code> 跳过 page cache 直接走块层（代价是失去缓存与预读）；<code>sendfile</code>/<code>splice</code> 在内核内部把 page cache 的页直接交给 socket 实现零拷贝。</p>
+<p>可以用 <code>trace-cmd record -p function_graph -g vfs_read</code> 实际看到这条调用链。</p>
+<p><strong>Q：dentry cache 解决什么问题？什么是负 dentry？</strong></p>
+<p>路径解析是<strong>逐段</strong>的：<code>open(&quot;/var/log/app.log&quot;)</code> 要在 <code>/</code> 里查 <code>var</code>、在 <code>var</code> 里查 <code>log</code>、在 <code>log</code> 里查 <code>app.log</code>，<strong>每一次查找都要调 <code>inode_operations-&gt;lookup()</code> 读磁盘目录</strong>。一个 4 级路径最坏是 4~8 次磁盘 I/O，而 <code>open()</code> 极其频繁（编译一次大项目要几十万次）—— 没有缓存系统会被压垮。</p>
+<p>dcache 缓存「路径名 → dentry」的映射，是<strong>纯内存对象</strong>（不对应磁盘上任何结构），算在 <code>SReclaimable</code> 里。</p>
+<p><strong>负 dentry</strong> 是 <code>d_inode == NULL</code> 的 dentry，缓存「<strong>这个名字确定不存在</strong>」。为什么需要？因为查找失败也极其频繁 —— <code>strace python3 -c 'import json'</code> 会看到几十上百个 <code>ENOENT</code>（解释器在多个目录里搜模块），同类场景还有动态链接器找 <code>.so</code>、shell 搜 PATH、编译器找头文件。没有它，每次失败的查找都要读一次磁盘。</p>
+<p>内核还为路径解析做了<strong>两条路径</strong>：<strong>RCU-walk</strong>（完全无锁，靠 RCU + 序号校验，适用于全部命中且无软链接的情况）和 <strong>ref-walk</strong>（加引用计数与锁，需要读磁盘或遇软链接时回退到它）。做两套的理由是：给每个 dentry 加引用计数会在多核上造成严重的 cache line 争抢，RCU-walk 完全避免了写操作，这是它能线性扩展的关键。</p>
+<p><strong>Q：挂载遮盖是怎么实现的？为什么 <code>mount --bind /</code> 能看到被遮盖的内容？</strong></p>
+<p>挂载<strong>没有动原来的任何东西</strong>。它只是在挂载点那个 dentry 上放了一个标记（<code>DCACHE_MOUNTED</code>），路径解析走到这里时会查 mount hash 表，<strong>切换</strong>到新文件系统的 <code>mnt_root</code> 继续解析。所以原目录的内容再也不会被访问到，但<strong>仍然占着原文件系统的空间</strong> —— 这就是 11 篇「<code>df</code> 满了但 <code>du</code> 找不到」的原因之一。</p>
+<p><code>mount --bind / /mnt/rootfs</code> 创建一个新的 <code>struct mount</code>，它的 <code>mnt_root</code> 指向根文件系统的根 dentry。<strong>访问 <code>/mnt/rootfs/data</code> 这条路径不会经过 <code>/data</code> 那个「跳板」</strong>，所以看到的是原始内容。</p>
+<p>顺带说 bind mount 本身的实现：新 <code>struct mount</code> 的 <code>mnt_root</code> 指向<strong>已有的</strong> dentry、<code>mnt_sb</code> 与源相同 —— 所以它不是拷贝，而是「同一份 inode 树的第二个入口」（<code>stat -c '%i %d'</code> 两边完全相同）。这也解释了为什么<strong>只读 bind mount 需要两步</strong>：第一步只建立跳板，<code>MNT_READONLY</code> 标志要在 <code>remount</code> 时才能设到新的 <code>struct mount</code> 上。</p>
+<p><strong>Q：容器的文件系统隔离是怎么做到的？</strong></p>
+<p><strong>每个 mount namespace 有自己的一份挂载树</strong>（<code>struct mnt_namespace</code>）。<code>struct mount</code> 里的 <code>mnt_ns</code> 字段决定它属于哪个 namespace，所以不同容器能看到完全不同的文件系统视图。</p>
+<p>这不是什么特殊的沙箱技术，就是「<strong>每个 namespace 一份挂载树 + 切换根目录到镜像的 overlay 挂载点</strong>」。可以手动验证：<code>unshare --mount bash</code> 后 <code>mount -t tmpfs tmpfs /mnt</code>，这个挂载只在新 namespace 里可见。</p>
+<p>配套机制是<strong>挂载传播</strong>（<code>shared</code>/<code>private</code>/<code>slave</code>/<code>unbindable</code>）：宿主机插了 U 盘自动挂到 <code>/media/usb</code>，容器里是否能看到？<code>shared</code> 双向传播、<code>slave</code> 只接收上游变化、<code>private</code> 完全隔离 —— K8s 的 <code>mountPropagation</code>（<code>None</code>/<code>HostToContainer</code>/<code>Bidirectional</code>）就是这三种。</p>
+<p><strong>Q：procfs 的文件为什么大小是 0，但能 <code>cat</code> 出内容？</strong></p>
+<p>因为 procfs 的文件<strong>内容不存在于任何存储上，而是读取的瞬间由内核函数生成的</strong>。每个 proc 文件注册一个 <code>show</code> 回调（如 <code>meminfo_proc_show</code>），<code>cat</code> 触发它时才调 <code>si_meminfo()</code> 取当前数据并 <code>seq_printf</code> 成文本。</p>
+<p>所以 <code>ls -l /proc/meminfo</code> 显示大小 0（内容还不存在），<code>df /proc</code> 也是 0（不占磁盘）。副作用是<strong>有些 proc 文件不支持部分读或 seek</strong>，<code>dd bs=10 count=1</code> 的结果可能不是 10 字节 —— 又一个 18 篇讲的「语义泄漏」实例。</p>
+<p>同族的 sysfs 是<strong>一个属性一个文件</strong>（对应 kobject 的 show/store 回调），这个设计是有意针对 ioctl 的缺陷：<strong>可发现</strong>（<code>ls</code> 就知道有哪些参数）、可脚本化、有独立权限控制。tmpfs 则是「page cache 就是全部」—— 极快、可被 swap 出去，但占的是内存（这就是「往 <code>/tmp</code> 写大文件会吃内存」）。</p>
+<p><strong>Q：overlayfs 怎么实现容器镜像的分层？</strong></p>
+<p><code>mount -t overlay -o lowerdir=L1:L2,upperdir=U,workdir=W merged</code>：</p>
+<ul>
+<li><strong>读</strong>：按 lowerdir 顺序查找，<strong>靠前的层优先</strong>（镜像层的覆盖语义）</li>
+<li><strong>写</strong>：触发 <strong>copy-up</strong> —— 把文件从 lower 复制到 upper 再修改，<strong>下层永不改变</strong></li>
+<li><strong>删</strong>：在 upper 层创建一个<strong>字符设备</strong>作为 whiteout 标记（<code>ls -l</code> 能看到 <code>c---------</code>）</li>
+</ul>
+<p>这解释了容器的三个特性：<strong>镜像层只读且可被多个容器共享</strong>（共用同一份 lower）、<strong>容器内的修改只影响自己的 upper</strong>、<strong>容器删除只需丢弃 upper</strong>。</p>
+<p>相关的 <strong>FUSE</strong> 则是 18 篇讲的「宏内核里的微内核思想」：文件系统实现跑在用户态进程里，内核的 fuse 模块把 VFS 请求转发给它（sshfs、rclone mount、gocryptfs）。代价是每次 I/O 多两次用户态↔内核态切换 + 数据拷贝，性能远低于内核态文件系统 —— 正是微内核 IPC 开销的具体体现。</p>
+<hr>
+<h1 id="小结">小结</h1>
+<ul>
+<li><strong>VFS 用函数指针表在 C 里实现多态</strong>：<code>file_operations</code>/<code>inode_operations</code>/<code>super_operations</code> 三张主表，<code>vfs_read</code> 的核心只是一行分派</li>
+<li><strong>三层对象各有不可替代的职责</strong>：<code>file</code> 持有 per-open 的偏移量、<code>dentry</code> 承载「名字」、<code>inode</code> 承载唯一的元数据与数据位置</li>
+<li><strong><code>fork</code> 共享 <code>struct file</code>（共享偏移量），重新 <code>open</code> 则独立</strong> —— 这解释了 shell 重定向的行为和 <code>2&gt;&amp;1</code> 的本质</li>
+<li><strong>fd 就是数组下标</strong>，由此推出「最小可用整数」、<code>ulimit -n</code> 的作用域、线程共享 fd、<code>FD_CLOEXEC</code> 的实现</li>
+<li><strong><code>read()</code> 的十步链条</strong>解释了 page cache 命中为何极快、D 状态从哪来、<code>O_DIRECT</code> 与零拷贝绕过了哪一步</li>
+<li><strong>dcache 是路径解析的性能命门</strong>，还要缓存「不存在」（负 dentry）；RCU-walk 无锁快路径是多核扩展的关键</li>
+<li><strong>挂载只是在 dentry 上放跳板</strong> → 挂载遮盖、bind mount、mount namespace 全部由此推导</li>
+<li><strong>procfs 内容是函数生成的</strong>（所以大小为 0）、<strong>overlayfs 靠 copy-up 与 whiteout</strong> 实现镜像分层、<strong>FUSE 是宏内核里的微内核</strong></li>
+<li>这套抽象的代价：间接调用开销、接口必须够宽、语义泄漏、三层缓存的一致性复杂度</li>
+</ul>
+<p>下一篇讲 <strong>进程的诞生：fork 为什么是 fork</strong> —— 对比 Windows 的 <code>CreateProcess</code> 和 <code>posix_spawn</code>，COW 是原始设计还是后来的补丁，为什么必须有僵尸进程，以及为什么 Go 程序禁止在 fork 后的子进程里跑 runtime。</p>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2026-08-12</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/linux/">linux</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/linux/linux_21_%E8%BF%9B%E7%A8%8B%E7%9A%84%E8%AF%9E%E7%94%9Ffork%E4%B8%BA%E4%BB%80%E4%B9%88%E6%98%AFfork/" class="prev" rel="prev" title="Linux-21 进程的诞生：fork 为什么是 fork"><i class="fas fa-angle-left fa-fw"></i>Linux-21 进程的诞生：fork 为什么是 fork</a>
+            <a href="/posts/linux/linux_19_%E4%BB%8E%E6%8C%89%E4%B8%8B%E7%94%B5%E6%BA%90%E5%88%B0shell%E6%8F%90%E7%A4%BA%E7%AC%A6/" class="next" rel="next" title="Linux-19 从按下电源到 shell 提示符：每一环为什么必须存在">Linux-19 从按下电源到 shell 提示符：每一环为什么必须存在<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2026-08-12T14:00:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Linux-20 VFS：一切皆文件的实现代价，file/dentry/inode 三层对象"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

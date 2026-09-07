@@ -1,0 +1,999 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>Linux-25 内核如何管理物理内存：buddy、slab、页回收与 OOM - xingliuhua博客</title><meta name="Description" content="buddy 分配器为什么用 2 的幂、有了 buddy 为什么还要 slab、free 显示的 free 很少为什么是正常的、双 LRU 为什么需要两个链表、refault 检测解决什么问题、OOM Killer 的评分函数为什么按比例而不是绝对值、以及 Redis 为什么要求 overcommit_memory=1。"><meta property="og:title" content="Linux-25 内核如何管理物理内存：buddy、slab、页回收与 OOM" />
+<meta property="og:description" content="buddy 分配器为什么用 2 的幂、有了 buddy 为什么还要 slab、free 显示的 free 很少为什么是正常的、双 LRU 为什么需要两个链表、refault 检测解决什么问题、OOM Killer 的评分函数为什么按比例而不是绝对值、以及 Redis 为什么要求 overcommit_memory=1。" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/linux/linux_25_%E5%86%85%E6%A0%B8%E5%A6%82%E4%BD%95%E7%AE%A1%E7%90%86%E7%89%A9%E7%90%86%E5%86%85%E5%AD%98/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2026-08-12T11:30:00+08:00" />
+<meta property="article:modified_time" content="2026-08-12T11:30:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="Linux-25 内核如何管理物理内存：buddy、slab、页回收与 OOM"/>
+<meta name="twitter:description" content="buddy 分配器为什么用 2 的幂、有了 buddy 为什么还要 slab、free 显示的 free 很少为什么是正常的、双 LRU 为什么需要两个链表、refault 检测解决什么问题、OOM Killer 的评分函数为什么按比例而不是绝对值、以及 Redis 为什么要求 overcommit_memory=1。"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/linux/linux_25_%E5%86%85%E6%A0%B8%E5%A6%82%E4%BD%95%E7%AE%A1%E7%90%86%E7%89%A9%E7%90%86%E5%86%85%E5%AD%98/" /><link rel="prev" href="https://xingliuhua.github.io/posts/linux/linux_26_%E7%94%A8%E6%88%B7%E6%80%81%E5%88%86%E9%85%8D%E5%99%A8%E4%BB%8Ebrk%E5%88%B0Go%E7%9A%84mspan/" /><link rel="next" href="https://xingliuhua.github.io/posts/linux/linux_24_%E8%99%9A%E6%8B%9F%E5%86%85%E5%AD%98%E4%B8%BA%E4%BB%80%E4%B9%88%E5%80%BC%E5%BE%97%E8%BF%99%E4%B8%AA%E4%BB%A3%E4%BB%B7/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Linux-25 内核如何管理物理内存：buddy、slab、页回收与 OOM",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_25_%E5%86%85%E6%A0%B8%E5%A6%82%E4%BD%95%E7%AE%A1%E7%90%86%E7%89%A9%E7%90%86%E5%86%85%E5%AD%98\/"
+        },"genre": "posts","keywords": "linux","wordcount":  12623 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_25_%E5%86%85%E6%A0%B8%E5%A6%82%E4%BD%95%E7%AE%A1%E7%90%86%E7%89%A9%E7%90%86%E5%86%85%E5%AD%98\/","datePublished": "2026-08-12T11:30:00+08:00","dateModified": "2026-08-12T11:30:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "buddy 分配器为什么用 2 的幂、有了 buddy 为什么还要 slab、free 显示的 free 很少为什么是正常的、双 LRU 为什么需要两个链表、refault 检测解决什么问题、OOM Killer 的评分函数为什么按比例而不是绝对值、以及 Redis 为什么要求 overcommit_memory=1。"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">Linux-25 内核如何管理物理内存：buddy、slab、页回收与 OOM</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2026-08-12">2026-08-12</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 12623 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 26 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-物理内存的分层管理">1. 物理内存的分层管理</a>
+      <ol>
+        <li><a href="#11-zone为什么要给内存分区">1.1 zone：为什么要给内存分区</a></li>
+        <li><a href="#12-numa内存也有远近">1.2 NUMA：内存也有远近</a></li>
+      </ol>
+    </li>
+    <li><a href="#2-buddy-分配器">2. buddy 分配器</a>
+      <ol>
+        <li><a href="#21-开篇第一问它要解决什么">2.1 开篇第一问：它要解决什么</a></li>
+        <li><a href="#22-算法分裂与合并">2.2 算法：分裂与合并</a></li>
+        <li><a href="#23-为什么必须是-2-的幂">2.3 为什么必须是 2 的幂</a></li>
+        <li><a href="#24-碎片化与内存规整">2.4 碎片化与内存规整</a></li>
+        <li><a href="#25-分配失败的表现">2.5 分配失败的表现</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-slabslub小对象分配">3. slab/slub：小对象分配</a>
+      <ol>
+        <li><a href="#31-开篇第二问为什么-buddy-不够">3.1 开篇第二问：为什么 buddy 不够</a></li>
+        <li><a href="#32-slab--slub--slob">3.2 slab / slub / slob</a></li>
+        <li><a href="#33-观察与排查">3.3 观察与排查</a></li>
+      </ol>
+    </li>
+    <li><a href="#4-page-cache-与内存回收">4. page cache 与内存回收</a>
+      <ol>
+        <li><a href="#41-开篇第三问free-少不是问题">4.1 开篇第三问：free 少不是问题</a></li>
+        <li><a href="#42-双-lru为什么需要两个链表">4.2 双 LRU：为什么需要两个链表</a></li>
+        <li><a href="#43-开篇第四问refault-检测">4.3 开篇第四问：refault 检测</a></li>
+        <li><a href="#44-回收的触发水位线与两条路径">4.4 回收的触发：水位线与两条路径</a></li>
+        <li><a href="#45-swappiness-的真实含义">4.5 swappiness 的真实含义</a></li>
+      </ol>
+    </li>
+    <li><a href="#5-psi内存压力的量化">5. PSI：内存压力的量化</a>
+      <ol>
+        <li><a href="#51-load-average-的不足">5.1 load average 的不足</a></li>
+        <li><a href="#52-psi-的设计">5.2 PSI 的设计</a></li>
+      </ol>
+    </li>
+    <li><a href="#6-oom-killer">6. OOM Killer</a>
+      <ol>
+        <li><a href="#61-它为什么必须存在">6.1 它为什么必须存在</a></li>
+        <li><a href="#62-开篇第五问评分函数">6.2 开篇第五问：评分函数</a></li>
+        <li><a href="#63-两层-oomcgroup-vs-全局">6.3 两层 OOM：cgroup vs 全局</a></li>
+        <li><a href="#64-为什么-oom-killer-有时杀错">6.4 为什么 OOM Killer 有时「杀错」</a></li>
+      </ol>
+    </li>
+    <li><a href="#7-overcommit-策略">7. overcommit 策略</a></li>
+    <li><a href="#8-go-视角">8. Go 视角</a></li>
+    <li><a href="#9-面试题">9. 面试题</a></li>
+    <li><a href="#小结">小结</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><p>24 篇讲的是「虚拟地址如何映射到物理页」。这一篇讲<strong>那些物理页本身是怎么被管理的</strong> —— 从分配到回收到杀进程。</p>
+<p>先看五个问题：</p>
+<ol>
+<li>buddy 分配器怎么对抗外部碎片？为什么它的分配单位必须是 <strong>2 的幂</strong>？</li>
+<li>既然有了 buddy，为什么还要 <strong>slab</strong>？</li>
+<li><code>free</code> 显示 <code>free</code> 只剩几百 MB，是不是内存快满了？为什么 <strong><code>available</code></strong> 才是关键？</li>
+<li>内核怎么决定换出哪些页？<strong>refault 检测</strong>解决什么问题？</li>
+<li><strong>OOM Killer 的评分函数为什么这么算</strong>？为什么它有时候「杀错」？</li>
+</ol>
+<h1 id="1-物理内存的分层管理">1. 物理内存的分层管理</h1>
+<pre tabindex="0"><code>   +--------------------------------------------------------------+
+   |  各子系统的需求                                                |
+   |  page cache | 匿名页 | 页表 | dentry/inode | task_struct | ... |
+   +--------------------------------------------------------------+
+        |                                    |
+        | 需要【整页】(4KB 的倍数)             | 需要【小对象】(几十~几百字节)
+        v                                    v
+   +-------------------+            +----------------------------+
+   |   buddy 分配器     | &lt;--------- |   slab / slub 分配器        |
+   |   （页级，2^n 页） |   向它批发  |   （对象级，按大小分池）      |
+   +-------------------+            +----------------------------+
+        |
+        v
+   +--------------------------------------------------------------+
+   |  zone（内存区域）：DMA / DMA32 / Normal / Movable              |
+   +--------------------------------------------------------------+
+        |
+        v
+   +--------------------------------------------------------------+
+   |  NUMA node（物理内存节点）                                     |
+   +--------------------------------------------------------------+
+</code></pre><h2 id="11-zone为什么要给内存分区">1.1 zone：为什么要给内存分区</h2>
+<p><strong>因为不是所有物理内存都等价</strong> —— 某些硬件只能访问低地址：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">cat /proc/zoneinfo <span class="p">|</span> grep -E <span class="s1">&#39;^Node|^  pages free&#39;</span> <span class="p">|</span> head -12
+</span></span><span class="line"><span class="cl"><span class="c1"># Node 0, zone      DMA</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   pages free     3968</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Node 0, zone    DMA32</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   pages free     512340</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Node 0, zone   Normal</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   pages free     1234567</span>
+</span></span></code></pre></div><table>
+<thead>
+<tr>
+<th>zone</th>
+<th>范围</th>
+<th>存在理由</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ZONE_DMA</code></td>
+<td>&lt; 16MB</td>
+<td><strong>老式 ISA 设备只有 24 位地址线</strong>，只能 DMA 到低 16MB</td>
+</tr>
+<tr>
+<td><code>ZONE_DMA32</code></td>
+<td>&lt; 4GB</td>
+<td><strong>32 位 DMA 设备</strong>（很多 PCI 设备）只能访问低 4GB</td>
+</tr>
+<tr>
+<td><code>ZONE_NORMAL</code></td>
+<td>其余</td>
+<td>常规内存</td>
+</tr>
+<tr>
+<td><code>ZONE_MOVABLE</code></td>
+<td>可选</td>
+<td>只放「可迁移」的页（<strong>为内存热插拔与大页规整服务</strong>）</td>
+</tr>
+<tr>
+<td><code>ZONE_HIGHMEM</code></td>
+<td>仅 32 位系统</td>
+<td>内核虚拟地址空间不够时的补丁（<strong>64 位系统已不存在</strong>）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>这个划分是硬件约束的直接产物</strong>（又一个 18 篇的例子）。它的实际后果是：<strong>内存不是一个整体，「还有 10GB 空闲」不代表「能满足一个 DMA32 的分配请求」</strong>。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 分配失败时的日志会明确指出是哪个 zone 不够</span>
+</span></span><span class="line"><span class="cl">dmesg <span class="p">|</span> grep -A <span class="m">20</span> <span class="s1">&#39;page allocation failure&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># order:3, mode:0x2d20(GFP_ATOMIC|__GFP_COMP), nodemask=(null)</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Node 0 DMA32 free:12345kB min:16000kB low:20000kB high:24000kB</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                  ^^^^^^^^^^^^ free 低于 min 水位 -&gt; 分配失败</span>
+</span></span></code></pre></div><h2 id="12-numa内存也有远近">1.2 NUMA：内存也有远近</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">numactl --hardware
+</span></span><span class="line"><span class="cl"><span class="c1"># available: 2 nodes (0-1)</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># node 0 cpus: 0 1 2 3 ... </span>
+</span></span><span class="line"><span class="cl"><span class="c1"># node 0 size: 32768 MB</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># node distances:</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># node   0   1</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   0:  10  21          &lt;- 访问本节点内存的&#34;距离&#34;是 10，跨节点是 21（约 2 倍延迟）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   1:  21  10</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">numastat                              <span class="c1"># 每个节点的分配统计</span>
+</span></span><span class="line"><span class="cl">numastat -p <span class="k">$(</span>pgrep -n myapp<span class="k">)</span>         <span class="c1"># 某进程的内存分布在哪些节点</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># NUMA 的实际影响：跨节点访存慢约一倍</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 所以内核默认策略是「优先从本地节点分配」</span>
+</span></span><span class="line"><span class="cl">cat /proc/sys/vm/zone_reclaim_mode     <span class="c1"># 0 = 本地不够时去别的节点借（而不是先回收本地）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 绑定策略（延迟敏感服务的常见调优）</span>
+</span></span><span class="line"><span class="cl">numactl --cpunodebind<span class="o">=</span><span class="m">0</span> --membind<span class="o">=</span><span class="m">0</span> ./myapp     <span class="c1"># CPU 和内存都绑在节点 0</span>
+</span></span><span class="line"><span class="cl">numactl --interleave<span class="o">=</span>all ./myapp                 <span class="c1"># 交叉分配（吞吐型负载，避免单节点热点）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ⚠️ Go 服务通常不需要手动绑，但要知道两个现象：</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   ① 大内存机器上，跨 NUMA 访问会让延迟分布变宽</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   ② 容器如果被调度到跨 NUMA 的 CPU 集合上，性能会有波动</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#      （K8s 的 topologyManager 就是解决这个的）</span>
+</span></span></code></pre></div><h1 id="2-buddy-分配器">2. buddy 分配器</h1>
+<h2 id="21-开篇第一问它要解决什么">2.1 开篇第一问：它要解决什么</h2>
+<p><strong>buddy（伙伴）分配器负责「按页分配物理内存」</strong>，它的目标有两个而且互相冲突：</p>
+<pre tabindex="0"><code>   目标 A：快速满足【连续多页】的请求
+     内核经常需要连续物理页：
+       - DMA 缓冲区（硬件按物理地址访问，必须连续）
+       - 大页（2MB = 512 个连续页）
+       - slab 的底层批发（一次要几页）
+       - 内核栈（每个线程 16KB = 4 个连续页）
+
+   目标 B：对抗【外部碎片】
+     24 篇讲过分页消灭了「虚拟地址的外部碎片」，
+     但【物理内存的连续性】仍然是稀缺资源 ——
+     一台运行几个月的机器，可能有 10GB 空闲内存，
+     却找不出 4 个连续的物理页。
+</code></pre><h2 id="22-算法分裂与合并">2.2 算法：分裂与合并</h2>
+<pre tabindex="0"><code>   内核维护 11 个链表（order 0 ~ 10），order n 的链表挂着「2^n 个连续页」的块
+
+   order 0: 4KB      order 1: 8KB      order 2: 16KB   ...   order 10: 4MB
+
+   ── 分配（要 order 2 = 16KB）──
+   ① 看 order 2 链表有没有空闲块 -&gt; 有就直接给，结束
+   ② 没有 -&gt; 看 order 3（32KB）
+   ③ order 3 有一块 -&gt; 【分裂】成两个 order 2 的块
+        一块给申请者，另一块挂到 order 2 链表
+   ④ order 3 也没有 -&gt; 继续向上找，逐级分裂
+
+   ── 释放 ──
+   ① 把块放回对应 order 的链表
+   ② 检查它的【伙伴】（buddy）是否也空闲
+   ③ 如果是 -&gt; 【合并】成一个更大的块，升到上一级
+   ④ 递归向上合并
+</code></pre><h2 id="23-为什么必须是-2-的幂">2.3 为什么必须是 2 的幂</h2>
+<p><strong>这是 buddy 算法的精髓：2 的幂让「找伙伴」变成一次位运算。</strong></p>
+<pre tabindex="0"><code>   两个块是「伙伴」的条件：
+     ① 大小相同（同一 order）
+     ② 物理地址连续
+     ③ 【对齐】到 2 倍大小的边界
+
+   于是给定一个块的起始页帧号 pfn 和 order，它的伙伴是：
+     buddy_pfn = pfn ^ (1 &lt;&lt; order)
+                     ^^^ 一次 XOR 就算出来了！O(1)
+
+   例：order 1（2 页）的块，起始 pfn = 4
+       buddy_pfn = 4 ^ 2 = 6      -&gt; 伙伴是 pfn 6 开始的那 2 页
+       合并后：pfn 4 开始的 4 页（order 2），且【天然对齐到 4 的边界】✅
+
+   如果不用 2 的幂：
+     ✗ 找伙伴要遍历或查表（不再是 O(1)）
+     ✗ 合并后的块可能不对齐 -&gt; 无法继续向上合并
+     ✗ 分裂的结果大小不一致 -&gt; 链表管理复杂化
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 观察每个 order 的空闲块数量</span>
+</span></span><span class="line"><span class="cl">cat /proc/buddyinfo
+</span></span><span class="line"><span class="cl"><span class="c1"># Node 0, zone   Normal  1234  567  234  89  34  12  5  2  1  0  0</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                        ^^^^  ^^^  ^^^ ...                    ^^ ^^</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                      order 0        ...                    order 9,10</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ⚠️ 高 order 全是 0 = 【内存碎片化严重】，无法分配大块连续内存</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    此时即使 free 显示还有很多内存，大页分配和某些驱动的 DMA 分配也会失败</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 换个更直观的算法</span>
+</span></span><span class="line"><span class="cl">awk <span class="s1">&#39;NR&gt;1 {printf &#34;%s %s: &#34;, $2, $4; for(i=5;i&lt;=NF;i++) printf &#34;%s &#34;, $i; print &#34;&#34;}&#39;</span> /proc/buddyinfo
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 碎片化指数（0~1000，越高越碎）</span>
+</span></span><span class="line"><span class="cl">sudo cat /sys/kernel/debug/extfrag/extfrag_index 2&gt;/dev/null
+</span></span><span class="line"><span class="cl">sudo cat /sys/kernel/debug/extfrag/unusable_index 2&gt;/dev/null
+</span></span></code></pre></div><h2 id="24-碎片化与内存规整">2.4 碎片化与内存规整</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 手动触发内存规整（compaction）：移动页来腾出连续空间</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="m">1</span> <span class="p">|</span> sudo tee /proc/sys/vm/compact_memory
+</span></span><span class="line"><span class="cl">cat /proc/vmstat <span class="p">|</span> grep -E <span class="s1">&#39;compact_&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># compact_migrate_scanned 1234567     扫描了多少页</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># compact_free_scanned    2345678</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># compact_isolated        123456</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># compact_stall           89          ✅ 有多少次分配【被阻塞】等待规整</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># compact_fail            12          规整失败次数</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ⚠️ compact_stall 就是 24 篇 7.2 讲的 THP 延迟尖刺的来源：</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    分配大页时若找不到连续空间，会同步触发规整 -&gt; 进程阻塞几百毫秒</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 内核如何减少碎片：按「可迁移性」分组</span>
+</span></span><span class="line"><span class="cl">cat /proc/pagetypeinfo <span class="p">|</span> head -15
+</span></span><span class="line"><span class="cl"><span class="c1"># Free pages count per migrate type at order  0  1  2 ...</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Node 0, zone Normal, type    Unmovable  ...        &lt;- 内核数据（不能移动）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Node 0, zone Normal, type      Movable  ...        &lt;- 用户页、page cache（可移动）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Node 0, zone Normal, type  Reclaimable  ...        &lt;- 可回收（如 dentry 缓存）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 思路：把「不能移动的页」聚在一起，避免它们零散地打断大块连续区域</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#      -&gt; 这样规整时才有腾挪空间</span>
+</span></span></code></pre></div><h2 id="25-分配失败的表现">2.5 分配失败的表现</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># order 越高越容易失败</span>
+</span></span><span class="line"><span class="cl">dmesg <span class="p">|</span> grep -B2 -A20 <span class="s1">&#39;page allocation failure&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># myapp: page allocation failure: order:4, mode:0x40cc0(GFP_KERNEL|__GFP_COMP)</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                                        ^^^^^^^ order 4 = 64KB 连续</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 常见受害者：</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   - 网卡驱动分配大的接收缓冲（jumbo frame）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   - 某些文件系统的元数据操作</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   - THP 分配（但它会静默回退到 4KB 页）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 这就是为什么内核代码里高 order 分配要么用 kvmalloc（失败时回退到 vmalloc），</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    要么必须能容忍失败</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># vmalloc 用【虚拟地址连续但物理地址不连续】的方式绕开碎片问题</span>
+</span></span><span class="line"><span class="cl">grep VmallocUsed /proc/meminfo
+</span></span></code></pre></div><h1 id="3-slabslub小对象分配">3. slab/slub：小对象分配</h1>
+<h2 id="31-开篇第二问为什么-buddy-不够">3.1 开篇第二问：为什么 buddy 不够</h2>
+<pre tabindex="0"><code>   buddy 的最小分配单位是【一整页】（4KB）。
+   但内核里绝大多数对象小得多：
+
+     struct task_struct     ~ 8KB      （每个进程一个）
+     struct file            ~ 256 字节  （每个打开的文件一个，20 篇）
+     struct dentry          ~ 192 字节  （每个路径名一个，20 篇 4.1）
+     struct inode           ~ 600 字节
+     struct sk_buff         ~ 240 字节  （每个网络包一个！33 篇）
+     struct kmalloc-32/64/128/...       （通用小块）
+
+   如果每个 dentry 都用一整页：
+     ✗ 浪费 95% 的内存（192 字节 vs 4096 字节）
+     ✗ 而 dcache 里可能有几百万个 dentry -&gt; 完全不可行
+</code></pre><p><strong>slab 的三个设计目标</strong>：</p>
+<pre tabindex="0"><code>   ① 减少内部碎片
+      一页里塞满同类对象（4096 / 192 = 21 个 dentry 挤在一页里）
+
+   ② 缓存已初始化的对象
+      「slab」这个名字来自 Solaris 的原始论文：
+      对象释放后不立即归还内核，而是【保留在池子里】，
+      下次分配时直接复用 —— 省掉了初始化开销（构造函数只跑一次）
+
+   ③ 缓存友好
+      同类对象紧凑排列 -&gt; 遍历时 cache 命中率高
+      早期的 slab 还做「着色」（cache coloring）：给每个 slab 加不同的偏移，
+      避免同一 cache set 被反复冲突
+</code></pre><h2 id="32-slab--slub--slob">3.2 slab / slub / slob</h2>
+<pre tabindex="0"><code>   slab（1994，源自 Solaris）
+     功能完整但【元数据开销大】、每 CPU 队列复杂
+        |
+   slub（2007，✅ 现在的默认）
+     大幅简化：去掉了大部分队列，用 page 结构体本身存元数据
+     更好的多核扩展性、更少的内存开销
+        |
+   slob（极简，用于嵌入式）
+     只有几百行，牺牲性能换体积
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">grep -o <span class="s1">&#39;slub_debug\|CONFIG_SLUB&#39;</span> /boot/config-<span class="k">$(</span>uname -r<span class="k">)</span> <span class="p">|</span> head -2
+</span></span></code></pre></div><h2 id="33-观察与排查">3.3 观察与排查</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ✅ slabtop：按占用排序（内核内存排查的第一工具）</span>
+</span></span><span class="line"><span class="cl">sudo slabtop -o <span class="p">|</span> head -15
+</span></span><span class="line"><span class="cl"><span class="c1">#  OBJS ACTIVE  USE OBJ SIZE  SLABS OBJ/SLAB CACHE SIZE NAME</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 891234 891234 100%    0.19K  42440       21    169760K dentry</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 456789 456789 100%    0.58K  16314       28    261024K ext4_inode_cache</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 234567 234567 100%    0.10K   6015       39     24060K buffer_head</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                             ^^^^^^^^^^^ 每个对象的大小  ^^^^^^^^^^^ 总占用</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 原始数据</span>
+</span></span><span class="line"><span class="cl">sudo head -3 /proc/slabinfo
+</span></span><span class="line"><span class="cl">awk <span class="s1">&#39;NR&gt;2 {print $1, $2, $3, $4}&#39;</span> /proc/slabinfo <span class="p">|</span> sort -k4 -rn <span class="p">|</span> head
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 系统级的 slab 总量</span>
+</span></span><span class="line"><span class="cl">grep -E <span class="s1">&#39;Slab|SReclaimable|SUnreclaim&#39;</span> /proc/meminfo
+</span></span><span class="line"><span class="cl"><span class="c1"># Slab:            1234567 kB</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># SReclaimable:    1000000 kB      &lt;- ✅ 可回收（dentry/inode 缓存，20 篇 4.1）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># SUnreclaim:       234567 kB      &lt;- ⚠️ 不可回收（task_struct、页表等）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                                     这部分持续增长 = 内核内存泄漏</span>
+</span></span></code></pre></div><p><strong>内核内存泄漏的排查</strong>（应用侧看不到，<code>ps</code> 的 RSS 里也没有）：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 现象：free 显示内存不断减少，但所有进程的 RSS 加起来对不上</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ① 先确认是不是内核内存</span>
+</span></span><span class="line"><span class="cl">grep -E <span class="s1">&#39;MemTotal|MemAvailable|Slab|SUnreclaim|KernelStack|PageTables|VmallocUsed&#39;</span> /proc/meminfo
+</span></span><span class="line"><span class="cl">ps -eo rss --no-headers <span class="p">|</span> awk <span class="s1">&#39;{s+=$1} END {print &#34;所有进程 RSS 合计: &#34; s/1024 &#34; MB&#34;}&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 两者差距很大 -&gt; 内核内存（slab / 页表 / vmalloc / 网络缓冲）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ② 找出增长的 slab（对比两个时间点）</span>
+</span></span><span class="line"><span class="cl">sudo slabtop -o <span class="p">|</span> head -20 &gt; /tmp/slab1<span class="p">;</span> sleep <span class="m">300</span>
+</span></span><span class="line"><span class="cl">sudo slabtop -o <span class="p">|</span> head -20 &gt; /tmp/slab2<span class="p">;</span> diff /tmp/slab1 /tmp/slab2
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ③ 常见的「不是泄漏」的增长</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   dentry / inode_cache 大 -&gt; 正常（20 篇 4.1，可回收，内存压力下自动释放）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   验证：echo 2 &gt; /proc/sys/vm/drop_caches 之后应该明显下降</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ④ 真正的内核泄漏（需要 CONFIG_DEBUG_KMEMLEAK）</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> scan <span class="p">|</span> sudo tee /sys/kernel/debug/kmemleak
+</span></span><span class="line"><span class="cl">sudo cat /sys/kernel/debug/kmemleak <span class="p">|</span> head -30
+</span></span></code></pre></div><h1 id="4-page-cache-与内存回收">4. page cache 与内存回收</h1>
+<h2 id="41-开篇第三问free-少不是问题">4.1 开篇第三问：free 少不是问题</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">free -h
+</span></span><span class="line"><span class="cl"><span class="c1">#               total        used        free      shared  buff/cache   available</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Mem:           15Gi       4.2Gi       231Mi       128Mi        11Gi        10Gi</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                                       ^^^^^                   ^^^^^        ^^^^</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                                     只剩 231MB？          11GB 缓存    实际可用 10GB</span>
+</span></span></code></pre></div><p><strong>「free 很少」是健康的表现，不是问题。</strong> 因为<strong>空闲内存是浪费的内存</strong> —— 内核会把所有暂时不用的内存拿去做 page cache（20 篇讲过它在 <code>read()</code> 路径里的作用），需要时再回收。</p>
+<pre tabindex="0"><code>   available 的计算（内核在 /proc/meminfo 里直接给出）：
+     ≈ free
+     + 【可回收的】page cache（不含脏页与被 mmap 锁住的）
+     + 可回收的 slab（dentry/inode 缓存）
+     - 各 zone 的 min 水位（必须保留的应急储备）
+
+   -&gt; 所以 available 才是「应用还能拿到多少内存而不触发换页」的答案
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ✅ 正确的内存健康判断</span>
+</span></span><span class="line"><span class="cl">awk <span class="s1">&#39;/MemTotal/{t=$2} /MemAvailable/{a=$2} END {printf &#34;available: %.1f%% (%.1f GB / %.1f GB)\n&#34;, a/t*100, a/1048576, t/1048576}&#39;</span> /proc/meminfo
+</span></span><span class="line"><span class="cl"><span class="c1"># available: 65.3%      &lt;- 健康</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ⚠️ 更灵敏的指标不是「剩多少」，而是「有没有在换页」</span>
+</span></span><span class="line"><span class="cl">vmstat <span class="m">1</span> <span class="m">5</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># procs -----------memory---------- ---swap-- -----io----</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#  r  b   swpd   free   buff  cache   si   so    bi    bo</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#  1  0      0 236892  12345 1234567   0    0  4096   512</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                                      ^^   ^^ ✅ si/so 都是 0 = 健康</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#  2  3 524288  98765   1234  456789  45  120  8192  2048</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                                      ^^  ^^^ ❌ 正在换页 = 内存真的不够了</span>
+</span></span></code></pre></div><h2 id="42-双-lru为什么需要两个链表">4.2 双 LRU：为什么需要两个链表</h2>
+<p>内核为每个 zone 维护<strong>四条 LRU 链表</strong>（匿名页和文件页各有 active/inactive 两条）：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">grep -E <span class="s1">&#39;Active|Inactive&#39;</span> /proc/meminfo
+</span></span><span class="line"><span class="cl"><span class="c1"># Active:          6234567 kB</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Inactive:        4567890 kB</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Active(anon):    3456789 kB      &lt;- 活跃的匿名页（堆栈）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Inactive(anon):   234567 kB</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Active(file):    2777778 kB      &lt;- 活跃的文件页（page cache）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Inactive(file):  4333323 kB</span>
+</span></span></code></pre></div><p><strong>为什么不用单一 LRU？</strong> 因为<strong>一次大扫描会冲掉所有热数据</strong>：</p>
+<pre tabindex="0"><code>   场景：数据库正在服务请求（热数据都在 cache 里），
+        此时有人执行 `tar -czf backup.tar.gz /data`（顺序读 100GB）
+
+   单 LRU 的后果：
+     那 100GB 的数据依次进入 LRU 头部，把数据库的热数据全部挤到尾部并淘汰
+     -&gt; 备份跑完后，数据库的缓存命中率归零，性能断崖式下跌
+     -&gt; 而那 100GB 数据【只被读了一次】，留在缓存里毫无价值
+     这个现象叫「cache 污染」或「scan resistance 缺失」
+
+   双 LRU 的解法：
+     ① 新读入的页先进【inactive】链表
+     ② 只有【被再次访问】才提升到 active 链表
+     ③ 回收时【优先从 inactive 尾部】拿
+     -&gt; 顺序扫描的数据只会在 inactive 里进出，碰不到 active 里的热数据 ✅
+</code></pre><pre tabindex="0"><code>   ┌─────────────── active list ───────────────┐
+   │  热数据（被访问过 ≥2 次）                    │  &lt;- 回收时最后才动
+   └───────────────────────────────────────────┘
+              ↑ 第二次访问时提升         ↓ 长期不访问时降级
+   ┌─────────────── inactive list ─────────────┐
+   │  新读入的页 / 冷数据                        │  &lt;- ✅ 回收从这里的尾部开始
+   └───────────────────────────────────────────┘
+                                     ↓ 淘汰
+</code></pre><h2 id="43-开篇第四问refault-检测">4.3 开篇第四问：refault 检测</h2>
+<p><strong>双 LRU 还有一个缺陷</strong>：怎么知道 inactive 链表的长度是否合适？</p>
+<pre tabindex="0"><code>   问题：如果 inactive 太小，真正的热数据可能在「第二次访问之前」就被淘汰了
+        -&gt; 这个页很快又被读回来（refault）
+        -&gt; 说明它其实是热的，只是没来得及被提升
+
+   这种「刚淘汰就又被读回来」的现象叫 refault（重新缺页），
+   它是【缓存容量不足】的直接信号 —— 但内核在 4.20 之前无法区分：
+     「这是第一次读这个页」 vs 「这个页刚被我淘汰又回来了」
+</code></pre><p><strong>Linux 4.20 引入的 refault 检测（workingset）</strong>：淘汰一个页时，<strong>记录当时的「LRU 时钟」</strong>（一个全局的淘汰计数器），存在 page cache 的 radix tree 里（用一个特殊的 shadow entry）。</p>
+<pre tabindex="0"><code>   页被再次读入时：
+     ① 发现有 shadow entry -&gt; 这是一次 refault
+     ② 计算「距离」= 当前 LRU 时钟 - 记录的时钟
+        = 这个页被淘汰后，又有多少页被淘汰了
+     ③ 如果距离 &lt; active 链表的长度
+        -&gt; 说明「如果 inactive 再大一点，这个页本来不会被淘汰」
+        -&gt; ✅ 直接把它放进 active 链表（承认它是热的）
+        -&gt; 并且【缩小 active 的目标大小】，给 inactive 更多空间
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 观察 refault</span>
+</span></span><span class="line"><span class="cl">grep -E <span class="s1">&#39;workingset_refault|workingset_activate|workingset_restore&#39;</span> /proc/vmstat
+</span></span><span class="line"><span class="cl"><span class="c1"># workingset_refault_file   1234567      &lt;- 文件页的 refault 次数</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># workingset_activate_file   234567      &lt;- 其中被判定为「本该是热的」而直接激活的</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># workingset_refault_anon     12345</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ⚠️ refault 持续高增长 = 【内存不足导致缓存反复失效】</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    这比「free 少」灵敏得多，是真正的内存压力信号</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 每个 cgroup 也有（容器场景）</span>
+</span></span><span class="line"><span class="cl">cat /sys/fs/cgroup/myapp/memory.stat <span class="p">|</span> grep workingset
+</span></span></code></pre></div><p><strong>这个机制也是 PSI 指标（第 5 章）的数据基础之一</strong>，它让「内存压力」第一次变得可量化。</p>
+<h2 id="44-回收的触发水位线与两条路径">4.4 回收的触发：水位线与两条路径</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">cat /proc/zoneinfo <span class="p">|</span> grep -A <span class="m">4</span> <span class="s1">&#39;Node 0, zone   Normal&#39;</span> <span class="p">|</span> head -6
+</span></span><span class="line"><span class="cl"><span class="c1">#   pages free     1234567</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#         min      16000        &lt;- ❌ 低于它：分配会阻塞/失败，触发【直接回收】</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#         low      20000        &lt;- ⚠️ 低于它：唤醒 kswapd【后台回收】</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#         high     24000        &lt;- ✅ kswapd 回收到这里就停</span>
+</span></span></code></pre></div><pre tabindex="0"><code>   两条回收路径，性能差异巨大：
+
+   ① kswapd（后台回收）—— ✅ 好
+        free 降到 low 水位时被唤醒，在后台异步回收，回到 high 水位才停
+        对应用【无感知】
+
+   ② 直接回收（direct reclaim）—— ❌ 坏
+        free 降到 min 水位时，【申请内存的那个进程自己去做回收】
+        -&gt; 进程在 alloc_pages() 里【同步阻塞】，可能要几十到几百毫秒
+        -&gt; 表现为「应用突然卡一下」，而且极难定位
+        -&gt; 这是内存类长尾延迟的头号原因
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 观察直接回收（这个指标非常重要）</span>
+</span></span><span class="line"><span class="cl">grep -E <span class="s1">&#39;pgscan_direct|pgsteal_direct|allocstall&#39;</span> /proc/vmstat
+</span></span><span class="line"><span class="cl"><span class="c1"># allocstall_normal   1234      &lt;- ✅ 有多少次分配【被迫等待直接回收】</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                                   持续增长 = 内存压力大，应用会有延迟尖刺</span>
+</span></span><span class="line"><span class="cl">grep -E <span class="s1">&#39;pgscan_kswapd|pgsteal_kswapd&#39;</span> /proc/vmstat      <span class="c1"># 后台回收的量</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 调优：提高水位线，让 kswapd 更早开始工作（用空间换延迟稳定性）</span>
+</span></span><span class="line"><span class="cl">sysctl vm.min_free_kbytes                 <span class="c1"># 默认按内存大小计算</span>
+</span></span><span class="line"><span class="cl">sudo sysctl -w vm.min_free_kbytes<span class="o">=</span><span class="m">1048576</span>  <span class="c1"># 提到 1GB，给 kswapd 更多缓冲</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ⚠️ 设太大会浪费内存，设太小会频繁触发直接回收</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 观察 kswapd 是否忙不过来</span>
+</span></span><span class="line"><span class="cl">ps -eo pid,comm,pcpu <span class="p">|</span> grep kswapd
+</span></span><span class="line"><span class="cl"><span class="c1"># kswapd 持续占用 CPU = 回收压力大</span>
+</span></span></code></pre></div><h2 id="45-swappiness-的真实含义">4.5 swappiness 的真实含义</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">cat /proc/sys/vm/swappiness       <span class="c1"># 60（默认）</span>
+</span></span></code></pre></div><p><strong>它不是「多久开始用 swap」，而是「回收时在『换出匿名页』和『丢弃文件页』之间的权重」</strong>（11 篇 7.2 提过）：</p>
+<pre tabindex="0"><code>   内核回收内存时有两个选择：
+     A. 换出匿名页（堆、栈）-&gt; 必须写到 swap（有 I/O 开销，且换回来也要 I/O）
+     B. 丢弃文件页（page cache）-&gt; 干净页直接丢（零成本），脏页要先写回
+
+   swappiness 就是这两者的权重：
+     0    -&gt; 几乎只丢文件页（但【不等于禁用 swap】，内存极度紧张时仍会换）
+     60   -&gt; 默认平衡
+     100  -&gt; 两者同等对待
+     200  -&gt; 更倾向换出匿名页（内核 5.8+ 允许超过 100）
+
+   实践：
+     数据库/缓存服务（数据在匿名内存里，且延迟敏感）-&gt; 1~10
+     文件服务器（page cache 就是价值所在）-&gt; 保持默认或调高
+     K8s 节点 -&gt; 直接关 swap（11 篇 7.3 讲过三个理由）
+</code></pre><h1 id="5-psi内存压力的量化">5. PSI：内存压力的量化</h1>
+<h2 id="51-load-average-的不足">5.1 load average 的不足</h2>
+<p>13 篇讲过 load average 混合了「等 CPU」和「等 IO」两种瓶颈。<strong>它还有一个更大的问题：完全看不到内存压力。</strong></p>
+<pre tabindex="0"><code>   一台机器内存紧张时会发生：
+     - 大量直接回收（进程同步阻塞）
+     - 频繁的 refault（缓存反复失效）
+     - swap 换入换出
+   但这些可能【完全不体现在 load average 上】：
+     进程只是在 alloc_pages() 里等了 50ms，既不算 R 也不算 D
+</code></pre><h2 id="52-psi-的设计">5.2 PSI 的设计</h2>
+<p><strong>PSI</strong>（Pressure Stall Information，内核 4.20+）直接测量「<strong>因为资源不足而损失的时间比例</strong>」：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">cat /proc/pressure/memory
+</span></span><span class="line"><span class="cl"><span class="c1"># some avg10=0.15 avg60=0.08 avg300=0.02 total=12345678</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># full avg10=0.00 avg60=0.00 avg300=0.00 total=234567</span>
+</span></span><span class="line"><span class="cl">cat /proc/pressure/cpu
+</span></span><span class="line"><span class="cl">cat /proc/pressure/io
+</span></span></code></pre></div><table>
+<thead>
+<tr>
+<th>指标</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong><code>some</code></strong></td>
+<td><strong>至少有一个任务</strong>因为该资源而停滞的时间占比</td>
+</tr>
+<tr>
+<td><strong><code>full</code></strong></td>
+<td><strong>所有任务都</strong>在因该资源停滞的时间占比（= 完全无法推进工作）</td>
+</tr>
+<tr>
+<td><code>avg10/60/300</code></td>
+<td>10 秒 / 60 秒 / 300 秒的移动平均（百分比）</td>
+</tr>
+<tr>
+<td><code>total</code></td>
+<td>累计微秒数（自己算速率更精确）</td>
+</tr>
+</tbody>
+</table>
+<pre tabindex="0"><code>   为什么分 some 和 full？
+     some 高但 full 低  -&gt; 部分任务受影响，系统整体还在推进（可接受）
+     full 高            -&gt; ❌ 系统在【空转】，所有任务都在等内存
+                            这是「内存不足」最明确的信号
+
+   PSI 相对 load average 的优势：
+     ✅ 直接量化「损失了多少工作时间」，语义明确
+     ✅ 区分 CPU / 内存 / IO 三种资源
+     ✅ 支持 cgroup 级别（能定位到具体容器）
+     ✅ 支持 poll（可以做事件驱动的告警）
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># cgroup 级别（容器场景的关键）</span>
+</span></span><span class="line"><span class="cl">cat /sys/fs/cgroup/myapp.service/memory.pressure
+</span></span><span class="line"><span class="cl">cat /sys/fs/cgroup/myapp.service/io.pressure
+</span></span><span class="line"><span class="cl">systemctl status myapp <span class="p">|</span> grep -i pressure           <span class="c1"># systemd 也会展示</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 实用的告警阈值（经验值）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># memory full avg60 &gt; 1%   -&gt; 值得关注</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># memory full avg60 &gt; 10%  -&gt; 严重，应用已经在明显受损</span>
+</span></span><span class="line"><span class="cl">awk <span class="s1">&#39;/^full/{split($2,a,&#34;=&#34;); if (a[2]+0 &gt; 1) print &#34;内存压力告警: &#34; $0}&#39;</span> /proc/pressure/memory
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 事件驱动监听（Facebook 的 oomd、systemd-oomd 就基于它）</span>
+</span></span><span class="line"><span class="cl">systemctl status systemd-oomd
+</span></span><span class="line"><span class="cl">cat /etc/systemd/oomd.conf
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ systemd-oomd 的价值：在【内核 OOM Killer 出手之前】，</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    根据 PSI 主动杀掉压力最大的 cgroup —— 比内核 OOM 更可控、更早介入</span>
+</span></span></code></pre></div><h1 id="6-oom-killer">6. OOM Killer</h1>
+<h2 id="61-它为什么必须存在">6.1 它为什么必须存在</h2>
+<p><strong>OOM Killer 是 overcommit 的必然结果。</strong></p>
+<pre tabindex="0"><code>   内核允许 overcommit（承诺的虚拟内存 &gt; 物理内存 + swap），因为：
+     - 大部分程序申请的内存远多于实际使用（24 篇的按需分页）
+     - fork 的 COW 意味着「承诺了双份但实际共享」（21 篇）
+     - 如果严格禁止 overcommit，内存利用率会极低
+
+   但 overcommit 是一张【可能兑付不了的空头支票】：
+     当所有进程真的开始写入它们申请的内存时，物理内存会耗尽。
+     
+   此时内核只有三个选择：
+     ① 让分配失败 -&gt; 但很多分配路径【无法处理失败】（比如缺页时已经无法回退）
+     ② 无限阻塞等待 -&gt; 系统完全僵死（比崩溃更糟，连 ssh 都进不去）
+     ③ 【杀掉一个进程】腾出内存 -&gt; OOM Killer
+</code></pre><h2 id="62-开篇第五问评分函数">6.2 开篇第五问：评分函数</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="c1">// mm/oom_kill.c（简化）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kt">long</span> <span class="nf">oom_badness</span><span class="p">(</span><span class="k">struct</span> <span class="n">task_struct</span> <span class="o">*</span><span class="n">p</span><span class="p">,</span> <span class="kt">unsigned</span> <span class="kt">long</span> <span class="n">totalpages</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="kt">long</span> <span class="n">points</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// 核心：按【占用内存的比例】计分
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">points</span> <span class="o">=</span> <span class="n">get_mm_rss</span><span class="p">(</span><span class="n">p</span><span class="o">-&gt;</span><span class="n">mm</span><span class="p">)</span>                    <span class="c1">// RSS（13 篇 2.3）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>           <span class="o">+</span> <span class="n">get_mm_counter</span><span class="p">(</span><span class="n">p</span><span class="o">-&gt;</span><span class="n">mm</span><span class="p">,</span> <span class="n">MM_SWAPENTS</span><span class="p">)</span>   <span class="c1">// 被换出的部分
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>           <span class="o">+</span> <span class="n">mm_pgtables_bytes</span><span class="p">(</span><span class="n">p</span><span class="o">-&gt;</span><span class="n">mm</span><span class="p">)</span> <span class="o">/</span> <span class="n">PAGE_SIZE</span><span class="p">;</span><span class="c1">// ✅ 连页表也算进去（24 篇 3.5）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// oom_score_adj 的影响：按 totalpages 的千分比调整
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">points</span> <span class="o">+=</span> <span class="n">p</span><span class="o">-&gt;</span><span class="n">signal</span><span class="o">-&gt;</span><span class="n">oom_score_adj</span> <span class="o">*</span> <span class="n">totalpages</span> <span class="o">/</span> <span class="mi">1000</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="n">points</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="c1">// 最终的 oom_score 是把它归一化到 0~1000
+</span></span></span></code></pre></div><p><strong>为什么按「占用比例」而不是「绝对值」或别的标准？</strong></p>
+<pre tabindex="0"><code>   ① 目标是「杀一个就能解决问题」
+      杀掉占用最多的进程，最有可能一次性缓解内存压力。
+      如果杀小进程，可能杀了十个还不够 —— 那就制造了十次故障而不是一次。
+
+   ② 为什么不按「运行时间」或「优先级」？
+      因为 OOM 是【紧急情况】，评分必须简单快速且可预测。
+      复杂的启发式（比如「这个进程更重要」）内核无法判断 ——
+      「重要性」是策略，属于用户态（18 篇的机制与策略分离）
+      -&gt; 所以内核只提供机制（按占用打分）+ 一个策略旋钮（oom_score_adj）
+
+   ③ 为什么把【页表】也算进去？
+      因为一个进程可能 RSS 不大但页表巨大（大量稀疏映射），
+      那些页表同样是不可回收的内核内存（24 篇 3.5）
+
+   ④ 为什么不杀内核线程和 init？
+      杀了它们系统直接完蛋（19 篇 6.1 的 PID 1 规则）
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 查看每个进程的 OOM 评分</span>
+</span></span><span class="line"><span class="cl"><span class="k">for</span> p in /proc/<span class="o">[</span>0-9<span class="o">]</span>*<span class="p">;</span> <span class="k">do</span>
+</span></span><span class="line"><span class="cl">  <span class="nv">s</span><span class="o">=</span><span class="k">$(</span>cat <span class="nv">$p</span>/oom_score 2&gt;/dev/null<span class="k">)</span>
+</span></span><span class="line"><span class="cl">  <span class="o">[[</span> -n <span class="nv">$s</span> <span class="o">&amp;&amp;</span> <span class="nv">$s</span> -gt <span class="m">0</span> <span class="o">]]</span> <span class="o">&amp;&amp;</span> <span class="nb">echo</span> <span class="s2">&#34;</span><span class="nv">$s</span><span class="s2"> </span><span class="si">${</span><span class="nv">p</span><span class="p">##*/</span><span class="si">}</span><span class="s2"> </span><span class="k">$(</span>cat <span class="nv">$p</span>/comm 2&gt;/dev/null<span class="k">)</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="k">done</span> <span class="p">|</span> sort -rn <span class="p">|</span> head -8
+</span></span><span class="line"><span class="cl"><span class="c1">#  ^^ 分数最高的就是下一个受害者</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">cat /proc/<span class="k">$(</span>pgrep -n myapp<span class="k">)</span>/oom_score       <span class="c1"># 0~1000</span>
+</span></span><span class="line"><span class="cl">cat /proc/<span class="k">$(</span>pgrep -n myapp<span class="k">)</span>/oom_score_adj   <span class="c1"># -1000 ~ 1000（可调）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 保护关键进程</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> -1000 <span class="p">|</span> sudo tee /proc/<span class="k">$(</span>pgrep -n myapp<span class="k">)</span>/oom_score_adj    <span class="c1"># 几乎永不被选中</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># systemd 里：OOMScoreAdjust=-500（10 篇 8 章的加固项之一）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 让非关键的批处理优先被杀</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="m">500</span> <span class="p">|</span> sudo tee /proc/<span class="k">$(</span>pgrep -n batchjob<span class="k">)</span>/oom_score_adj
+</span></span></code></pre></div><h2 id="63-两层-oomcgroup-vs-全局">6.3 两层 OOM：cgroup vs 全局</h2>
+<pre tabindex="0"><code>   ① cgroup OOM（容器超限）
+        触发：cgroup 的内存用量达到 memory.max
+        范围：【只杀这个 cgroup 内】的进程
+        观察：/sys/fs/cgroup/&lt;path&gt;/memory.events 的 oom_kill 计数
+
+   ② 全局 OOM（整机内存耗尽）
+        触发：所有 zone 都无法满足分配且回收无效
+        范围：可能杀【任何】进程
+        观察：dmesg / journalctl -k
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ── 容器场景的完整排查 ──</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ① 容器退出码 137 = 128 + 9（SIGKILL）（01 篇 6.3 讲过）</span>
+</span></span><span class="line"><span class="cl">docker inspect mycontainer --format <span class="s1">&#39;{{.State.ExitCode}} {{.State.OOMKilled}}&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 137 true</span>
+</span></span><span class="line"><span class="cl">kubectl describe pod mypod <span class="p">|</span> grep -A3 <span class="s1">&#39;Last State&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   Reason: OOMKilled</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   Exit Code: 137</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ② cgroup 的 OOM 计数</span>
+</span></span><span class="line"><span class="cl">cat /sys/fs/cgroup/system.slice/myapp.service/memory.events
+</span></span><span class="line"><span class="cl"><span class="c1"># low 0</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># high 234              &lt;- 超过 memory.high 的次数（触发了激进回收）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># max 12                &lt;- 达到 memory.max 的次数</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># oom 3                 &lt;- 发生过 3 次 OOM</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># oom_kill 3            &lt;- ✅ 杀了 3 个进程</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ③ 看内存构成，判断是谁在占（这一步最关键）</span>
+</span></span><span class="line"><span class="cl">cat /sys/fs/cgroup/system.slice/myapp.service/memory.stat <span class="p">|</span> grep -E <span class="s1">&#39;^(anon|file|slab|sock|kernel)&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># anon 3221225472        &lt;- ✅ 匿名页（堆栈），【不可回收】，主要嫌疑</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># file 838860800         &lt;- page cache，可回收</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># slab 104857600         &lt;- 内核对象</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># sock 8388608           &lt;- socket 缓冲区（连接多时会很大）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ④ 内核日志里的完整现场</span>
+</span></span><span class="line"><span class="cl">sudo dmesg -T <span class="p">|</span> grep -A <span class="m">25</span> <span class="s1">&#39;Out of memory&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Out of memory: Killed process 12345 (java) total-vm:8388608kB,</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   anon-rss:7340032kB, file-rss:0kB, shmem-rss:0kB, UID:1000</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   pgtables:14848kB oom_score_adj:0</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#            ^^^^^^^^^^ 注意：页表 14MB 也被计入了评分</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 前面还会 dump 当时【所有进程】的内存占用 —— 这是判断「是否杀对了」的依据</span>
+</span></span><span class="line"><span class="cl">sudo journalctl -k <span class="p">|</span> grep -i -A <span class="m">25</span> <span class="s1">&#39;out of memory&#39;</span>
+</span></span></code></pre></div><h2 id="64-为什么-oom-killer-有时杀错">6.4 为什么 OOM Killer 有时「杀错」</h2>
+<pre tabindex="0"><code>   典型抱怨：「我的数据库被杀了，而那个吃内存的批处理还在跑」
+
+   原因分析：
+     ① 评分只看【当前占用】—— 数据库的 buffer pool 就是它的核心，
+        自然占用最多，于是它得分最高
+        -&gt; ✅ 解法：给它设 oom_score_adj=-500，同时给批处理设正值
+
+     ② cgroup OOM 只在【该 cgroup 内】选择
+        -&gt; 如果数据库和批处理在同一个 cgroup，评分仍按占用比
+
+     ③ 内核无法知道「业务重要性」（这是策略，18 篇）
+        -&gt; ✅ 正确的解法不是抱怨内核，而是：
+             - 用 cgroup 给不同服务【硬隔离】内存额度（memory.max）
+             - 用 memory.high 让某些服务在超限时先被限速而不是被杀
+             - 用 systemd-oomd / oomd 在内核出手前按 PSI 做更聪明的选择
+             - 给关键服务设 OOMScoreAdjust
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 更好的做法：用 memory.high 做「软限制」</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># [Service]</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># MemoryHigh=1500M          &lt;- 超过就激进回收 + 限速（进程变慢但不死）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># MemoryMax=2000M           &lt;- 硬上限（超过才 OOM）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 这给了应用一个「减速带」，而不是直接的悬崖</span>
+</span></span><span class="line"><span class="cl">systemctl show myapp -p MemoryHigh -p MemoryMax
+</span></span></code></pre></div><h1 id="7-overcommit-策略">7. overcommit 策略</h1>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">cat /proc/sys/vm/overcommit_memory
+</span></span></code></pre></div><table>
+<thead>
+<tr>
+<th>值</th>
+<th>名称</th>
+<th>行为</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>0</strong></td>
+<td>启发式（默认）</td>
+<td>内核估算，<strong>明显不合理的大额申请会被拒绝</strong>（比如一次申请超过总内存）</td>
+</tr>
+<tr>
+<td><strong>1</strong></td>
+<td>总是允许</td>
+<td><strong>不做任何检查</strong>，来者不拒</td>
+</tr>
+<tr>
+<td><strong>2</strong></td>
+<td>严格</td>
+<td>总承诺量不得超过 <code>swap + 物理内存 × overcommit_ratio</code></td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">grep -E <span class="s1">&#39;CommitLimit|Committed_AS&#39;</span> /proc/meminfo
+</span></span><span class="line"><span class="cl"><span class="c1"># CommitLimit:     9876543 kB      &lt;- 模式 2 下的上限</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Committed_AS:   12345678 kB      &lt;- ✅ 当前已承诺的总量（可以超过 CommitLimit！）</span>
+</span></span><span class="line"><span class="cl">sysctl vm.overcommit_ratio          <span class="c1"># 50（默认）</span>
+</span></span></code></pre></div><p><strong>为什么 Redis 要求 <code>overcommit_memory=1</code></strong>（21 篇 3.3 提过）：</p>
+<pre tabindex="0"><code>   Redis 的 BGSAVE 用 fork 做快照。fork 时内核在【启发式模式（0）】下会估算：
+     「子进程可能需要与父进程等量的内存」
+     -&gt; 如果 Redis 占了 60% 的内存，这个估算会认为「不够」-&gt; fork 失败（ENOMEM）
+     -&gt; BGSAVE 无法执行，持久化中断（Redis 会在日志里报错）
+
+   但实际上因为 COW，子进程几乎不会真的用那么多内存。
+   -&gt; 所以要设 overcommit_memory=1，让 fork 无条件成功
+
+   代价：真的内存不够时，问题会推迟到「写入内存的那一刻」才暴露（触发 OOM）
+        -&gt; 这是一个有意识的取舍：用「可能被 OOM」换「fork 一定成功」
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># Redis 的官方要求</span>
+</span></span><span class="line"><span class="cl">sudo sysctl -w vm.overcommit_memory<span class="o">=</span><span class="m">1</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s1">&#39;vm.overcommit_memory = 1&#39;</span> <span class="p">|</span> sudo tee /etc/sysctl.d/99-redis.conf
+</span></span><span class="line"><span class="cl">redis-cli info persistence <span class="p">|</span> grep -E <span class="s1">&#39;rdb_last_bgsave_status|rdb_bgsave_in_progress&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># rdb_last_bgsave_status:err     &lt;- 如果是 err，检查 overcommit 与内存</span>
+</span></span></code></pre></div><h1 id="8-go-视角">8. Go 视角</h1>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># Go 服务的内存问题排查顺序（把本篇的工具串起来）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ① 先确认是应用内存还是内核内存</span>
+</span></span><span class="line"><span class="cl">grep -E <span class="s1">&#39;MemAvailable|Slab|SUnreclaim|PageTables&#39;</span> /proc/meminfo
+</span></span><span class="line"><span class="cl">ps -eo rss --no-headers <span class="p">|</span> awk <span class="s1">&#39;{s+=$1} END {print s/1024 &#34; MB&#34;}&#39;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ② 确认是 Go 堆内还是堆外（13 篇 10.2 的对照表）</span>
+</span></span><span class="line"><span class="cl">curl -s localhost:6060/debug/pprof/heap &gt; heap.prof
+</span></span><span class="line"><span class="cl">go tool pprof -top heap.prof <span class="p">|</span> head
+</span></span><span class="line"><span class="cl"><span class="c1"># 对比 runtime.MemStats 的 Sys 与进程 RSS：</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   Sys ≈ RSS 且 HeapAlloc 小 -&gt; 堆外（cgo/mmap/goroutine 栈）</span>
+</span></span><span class="line"><span class="cl">curl -s <span class="s1">&#39;localhost:6060/debug/pprof/heap?debug=1&#39;</span> <span class="p">|</span> grep -E <span class="s1">&#39;^# (Sys|HeapAlloc|HeapSys|HeapReleased|StackSys) &#39;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ③ 确认有没有内存压力（本篇的核心指标）</span>
+</span></span><span class="line"><span class="cl">cat /proc/pressure/memory                       <span class="c1"># PSI</span>
+</span></span><span class="line"><span class="cl">grep -E <span class="s1">&#39;workingset_refault|allocstall&#39;</span> /proc/vmstat    <span class="c1"># refault 与直接回收</span>
+</span></span><span class="line"><span class="cl">vmstat <span class="m">1</span> <span class="m">3</span>                                       <span class="c1"># si/so</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ④ 容器场景</span>
+</span></span><span class="line"><span class="cl">cat /sys/fs/cgroup/memory.max /sys/fs/cgroup/memory.current
+</span></span><span class="line"><span class="cl">cat /sys/fs/cgroup/memory.events <span class="p">|</span> grep -E <span class="s1">&#39;high|max|oom&#39;</span>
+</span></span><span class="line"><span class="cl">cat /sys/fs/cgroup/memory.stat <span class="p">|</span> grep -E <span class="s1">&#39;^(anon|file|slab|sock)&#39;</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// 三个必须设的（12/24 篇讲过）
+</span></span></span><span class="line"><span class="cl"><span class="c1">// GOMEMLIMIT=1800MiB       让 GC 感知容器上限（否则必然 OOMKilled）
+</span></span></span><span class="line"><span class="cl"><span class="c1">// GOGC=100 或按需调整
+</span></span></span><span class="line"><span class="cl"><span class="c1">// automaxprocs             让 GOMAXPROCS 感知 cgroup CPU 限额
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl"><span class="c1">// 主动降低内存占用的手段
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">debug</span><span class="p">.</span><span class="nf">SetMemoryLimit</span><span class="p">(</span><span class="mi">1800</span> <span class="o">&lt;&lt;</span> <span class="mi">20</span><span class="p">)</span>     <span class="c1">// 等价于 GOMEMLIMIT，可运行时调整
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">debug</span><span class="p">.</span><span class="nf">SetGCPercent</span><span class="p">(</span><span class="mi">50</span><span class="p">)</span>                <span class="c1">// 更激进的 GC（用 CPU 换内存）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">debug</span><span class="p">.</span><span class="nf">FreeOSMemory</span><span class="p">()</span>                  <span class="c1">// 立即归还（24 篇 8.2）
+</span></span></span></code></pre></div><p><strong>一条重要的经验</strong>：容器里 <strong><code>MemoryHigh</code> 比 <code>MemoryMax</code> 更有价值</strong>。只设 <code>MemoryMax</code> 时，应用是「一路正常然后突然被杀」；配上 <code>MemoryHigh</code> 后，超限时先触发激进回收和限速，Go 的 GC 有机会响应压力 —— 加上 <code>GOMEMLIMIT</code>，通常能避免真正的 OOM。</p>
+<h1 id="9-面试题">9. 面试题</h1>
+<p><strong>Q：buddy 分配器为什么必须用「2 的幂」作为分配单位？</strong></p>
+<p>因为<strong>2 的幂让「找伙伴」变成一次位运算</strong>。两个块是伙伴的条件是「大小相同 + 地址连续 + 对齐到 2 倍大小的边界」，于是给定起始页帧号和 order，伙伴的位置就是 <code>buddy_pfn = pfn ^ (1 &lt;&lt; order)</code> —— <strong>一次 XOR，O(1)</strong>。</p>
+<p>如果不用 2 的幂：找伙伴要遍历或查表（不再是 O(1)）、合并后的块可能不对齐（<strong>无法继续向上合并</strong>）、分裂结果大小不一致导致链表管理复杂化。</p>
+<p>buddy 要同时满足两个冲突的目标：<strong>快速满足连续多页的请求</strong>（DMA 缓冲、大页、内核栈都需要物理连续）和<strong>对抗外部碎片</strong>。它维护 order 0~10 共 11 个链表，分配时逐级向上找并分裂，释放时递归向上合并。</p>
+<p>关键认知是：<strong>物理内存的连续性是稀缺资源</strong> —— 一台运行几个月的机器可能有 10GB 空闲内存却找不出 4 个连续物理页。<code>cat /proc/buddyinfo</code> 里高 order 全是 0 就是这个状态，此时大页分配和某些驱动的 DMA 分配会失败。</p>
+<p><strong>Q：有了 buddy 为什么还要 slab？</strong></p>
+<p>因为 <strong>buddy 的最小单位是一整页（4KB），而内核对象小得多</strong>：<code>dentry</code> 约 192 字节、<code>file</code> 约 256 字节、<code>sk_buff</code> 约 240 字节。dcache 里可能有几百万个 dentry，如果每个占一页就是 95% 的浪费。</p>
+<p>slab 的三个设计目标：<strong>减少内部碎片</strong>（一页塞 21 个 dentry）、<strong>缓存已初始化的对象</strong>（释放后留在池里，下次直接复用，省掉初始化 —— 这是 &ldquo;slab&rdquo; 这个名字的来源）、<strong>缓存友好</strong>（同类对象紧凑排列，早期还做 cache coloring 避免冲突）。</p>
+<p>现在的默认实现是 <strong>slub</strong>（2007），它相对原始 slab 大幅简化了元数据和队列，多核扩展性更好。</p>
+<p>排查用 <strong><code>slabtop -o</code></strong>（按占用排序）和 <code>/proc/meminfo</code> 的 <strong><code>SReclaimable</code></strong>（dentry/inode 缓存，可回收，大是正常的）vs <strong><code>SUnreclaim</code></strong>（不可回收，<strong>持续增长才是内核内存泄漏</strong>）。</p>
+<p><strong>Q：<code>free</code> 显示 free 只剩 231MB，内存是不是快满了？</strong></p>
+<p><strong>不是，这是健康状态。</strong> 空闲内存是浪费的内存 —— 内核会把暂时不用的内存全部拿去做 page cache，需要时再回收。</p>
+<p><strong><code>available</code> 才是答案</strong>：它约等于 <code>free + 可回收的 page cache + 可回收的 slab - 各 zone 的 min 水位</code>，表示「应用还能拿到多少内存而不触发换页」。</p>
+<p>但<strong>更灵敏的指标不是「剩多少」，而是「有没有在换页和回收」</strong>：</p>
+<ul>
+<li><code>vmstat 1</code> 的 <strong><code>si</code>/<code>so</code></strong>（换入换出）—— 非 0 就是内存真的不够</li>
+<li><code>/proc/vmstat</code> 的 <strong><code>allocstall_*</code></strong> —— 有多少次分配被迫等待<strong>直接回收</strong></li>
+<li><code>/proc/vmstat</code> 的 <strong><code>workingset_refault_*</code></strong> —— 缓存反复失效</li>
+<li><code>/proc/pressure/memory</code> 的 <strong>PSI</strong></li>
+</ul>
+<p><strong>Q：为什么页回收要用「双 LRU」而不是单一 LRU？</strong></p>
+<p><strong>为了抵抗一次性大扫描造成的 cache 污染。</strong></p>
+<p>场景：数据库热数据都在 page cache 里，此时有人 <code>tar -czf backup.tar.gz /data</code>（顺序读 100GB）。单 LRU 下这 100GB 会依次进入链表头部，<strong>把数据库的热数据全部挤出去淘汰</strong> —— 而那 100GB 只被读了一次，留在缓存里毫无价值。备份跑完后数据库缓存命中率归零。</p>
+<p>双 LRU 的解法：<strong>新读入的页先进 inactive 链表，只有被再次访问才提升到 active；回收时优先从 inactive 尾部拿</strong>。于是顺序扫描的数据只在 inactive 里进出，碰不到 active 里的热数据。</p>
+<p>内核实际维护<strong>四条</strong>链表（匿名页和文件页各有 active/inactive），因为这两类页的回收成本完全不同（匿名页必须写 swap，干净的文件页可以直接丢）。</p>
+<p><strong>Q：refault 检测解决什么问题？</strong></p>
+<p>它补上了双 LRU 的一个缺陷：<strong>怎么知道 inactive 链表的长度够不够</strong>。</p>
+<p>如果 inactive 太小，真正的热数据可能在「第二次访问之前」就被淘汰，然后很快又被读回来。内核在 4.20 之前无法区分「第一次读这个页」和「这个页刚被我淘汰又回来了」。</p>
+<p><strong>Linux 4.20 的做法</strong>：淘汰页时把当时的<strong>全局 LRU 时钟</strong>记在 page cache 的 shadow entry 里。页被再次读入时，计算「距离 = 当前时钟 - 记录的时钟」（= 它被淘汰后又有多少页被淘汰）。<strong>如果距离小于 active 链表的长度，说明「inactive 再大一点它本来不会被淘汰」→ 直接把它放进 active，并缩小 active 的目标大小给 inactive 让空间。</strong></p>
+<p>观察 <code>grep workingset /proc/vmstat</code> —— <strong><code>workingset_refault</code> 持续高增长是「内存不足导致缓存反复失效」的明确信号</strong>，比「free 少」灵敏得多。它也是 PSI 的数据基础之一。</p>
+<p><strong>Q：kswapd 回收和「直接回收」有什么区别？为什么后者是延迟尖刺的来源？</strong></p>
+<p>内核为每个 zone 设了三条水位线：</p>
+<ul>
+<li><strong>free &lt; low</strong> → 唤醒 <strong>kswapd</strong> 后台异步回收，回到 high 才停 —— <strong>应用无感知</strong> ✅</li>
+<li><strong>free &lt; min</strong> → <strong>直接回收（direct reclaim）</strong>：申请内存的那个进程<strong>自己去做回收</strong>，在 <code>alloc_pages()</code> 里<strong>同步阻塞</strong>，可能几十到几百毫秒 ❌</li>
+</ul>
+<p><strong>直接回收是内存类长尾延迟的头号原因</strong>，而且极难定位（应用侧只看到「某次请求突然慢了」）。观察指标是 <code>/proc/vmstat</code> 的 <strong><code>allocstall_*</code></strong>。</p>
+<p>缓解手段是<strong>提高 <code>vm.min_free_kbytes</code></strong>，让 kswapd 更早开始工作 —— 用一点内存换延迟稳定性。同时检查 kswapd 是否持续占 CPU（说明回收压力已经超出它的处理能力）。</p>
+<p><strong>Q：PSI 相比 load average 好在哪？</strong></p>
+<p>load average 有两个问题：<strong>混合了「等 CPU」和「等 IO」</strong>（13 篇讲过），以及<strong>完全看不到内存压力</strong> —— 进程在 <code>alloc_pages()</code> 里等 50ms 既不算 R 也不算 D。</p>
+<p><strong>PSI 直接测量「因为资源不足而损失的时间比例」</strong>，分 CPU/内存/IO 三种资源，每种给两个数：</p>
+<ul>
+<li><strong><code>some</code></strong> = 至少有一个任务因该资源停滞的时间占比</li>
+<li><strong><code>full</code></strong> = <strong>所有任务都</strong>在停滞的占比（系统在空转）</li>
+</ul>
+<p><code>some</code> 高但 <code>full</code> 低表示部分任务受影响、系统整体还在推进；<strong><code>full</code> 高就是明确的资源不足信号</strong>。经验阈值是 <code>memory full avg60 &gt; 1%</code> 值得关注、<code>&gt; 10%</code> 已经严重受损。</p>
+<p>它还支持 <strong>cgroup 级别</strong>（能定位到具体容器）和 <strong>poll</strong>（事件驱动告警）—— <strong><code>systemd-oomd</code>/Facebook 的 oomd 就基于它，在内核 OOM Killer 出手之前主动杀掉压力最大的 cgroup</strong>，比内核 OOM 更早介入也更可控。</p>
+<p><strong>Q：OOM Killer 的评分函数为什么按「内存占用比例」算？</strong></p>
+<p>因为<strong>目标是「杀一个就能解决问题」</strong> —— 杀掉占用最多的进程最有可能一次性缓解压力。如果杀小进程，可能杀十个还不够，那就制造了十次故障而不是一次。</p>
+<p>评分是 <code>RSS + swap 占用 + 页表页数</code>（<strong>连页表也算进去</strong>，因为一个进程可能 RSS 不大但页表巨大，那同样是不可回收的内核内存），再加上 <code>oom_score_adj × totalpages / 1000</code>。</p>
+<p><strong>为什么不用更聪明的启发式（比如「哪个进程更重要」）？</strong> 因为 OOM 是紧急情况，评分必须简单快速可预测；而且「业务重要性」是<strong>策略</strong>，内核无法判断 —— 所以它只提供机制（按占用打分）+ 一个策略旋钮（<code>oom_score_adj</code>），这又是 18 篇的机制与策略分离。</p>
+<p><strong>Q：为什么 OOM Killer 有时「杀错」（杀了数据库而不是批处理）？怎么办？</strong></p>
+<p>因为<strong>评分只看当前占用</strong> —— 数据库的 buffer pool 就是它的核心，自然得分最高。内核无法知道业务重要性。</p>
+<p>正确的应对不是抱怨内核，而是<strong>在用户态表达策略</strong>：</p>
+<ol>
+<li>给关键服务设 <strong><code>OOMScoreAdjust=-500</code></strong>，给批处理设正值</li>
+<li>用 cgroup 给不同服务<strong>硬隔离</strong>内存额度（<code>MemoryMax</code>）</li>
+<li><strong>更重要的是配 <code>MemoryHigh</code></strong> —— 只设 <code>MemoryMax</code> 时应用是「一路正常然后突然被杀」，配上 <code>MemoryHigh</code> 后超限时先触发激进回收和限速，<strong>给了应用一个减速带而不是悬崖</strong>（配合 Go 的 <code>GOMEMLIMIT</code> 通常能避免真正的 OOM）</li>
+<li>用 <code>systemd-oomd</code> 按 PSI 做更早、更聪明的选择</li>
+</ol>
+<p>容器场景的排查链：退出码 <strong>137</strong>（=128+9）→ <code>memory.events</code> 的 <code>oom_kill</code> 计数 → <strong><code>memory.stat</code> 看内存构成</strong>（<code>anon</code> 不可回收是主要嫌疑，<code>file</code> 可回收，<code>sock</code> 在连接多时会很大）→ <code>dmesg</code> 里的完整现场（会 dump 当时所有进程的占用）。</p>
+<p><strong>Q：为什么 Redis 要求 <code>vm.overcommit_memory=1</code>？</strong></p>
+<p>Redis 的 BGSAVE 用 <code>fork</code> 做快照。在**默认的启发式模式（0）**下，内核 fork 时会估算「子进程可能需要与父进程等量的内存」—— 如果 Redis 已占 60% 内存，这个估算会判定「不够」并让 <strong>fork 失败（ENOMEM）</strong>，导致持久化中断。</p>
+<p>但实际上因为 <strong>COW</strong>（21 篇），子进程几乎不会真用那么多内存。所以设 <code>overcommit_memory=1</code>（不做任何检查）让 fork 无条件成功。</p>
+<p><strong>代价是有意识的取舍</strong>：真的内存不够时，问题会推迟到「写入内存的那一刻」才暴露（触发 OOM）—— 用「可能被 OOM」换「fork 一定成功」。</p>
+<p>更本质地说，<strong>OOM Killer 本身就是 overcommit 的必然结果</strong>：内核允许承诺超过物理内存（因为按需分页和 COW 让大部分承诺不会兑付），当承诺真的被兑付时，内核只有三个选择 —— 让分配失败（但很多路径无法处理失败）、无限阻塞（系统僵死，比崩溃更糟）、或者杀一个进程。</p>
+<hr>
+<h1 id="小结">小结</h1>
+<ul>
+<li><strong>zone 的划分是硬件约束的产物</strong>（DMA 设备的地址线限制）→ 「还有 10GB 空闲」不代表能满足一个 DMA32 分配</li>
+<li><strong>buddy 用 2 的幂是为了让找伙伴变成一次 XOR</strong>；<code>/proc/buddyinfo</code> 高 order 全 0 = 碎片化严重</li>
+<li><strong>slab 存在是因为 buddy 最小 4KB 而内核对象只有几百字节</strong>；<code>SReclaimable</code> 大是正常的，<strong><code>SUnreclaim</code> 持续涨才是泄漏</strong></li>
+<li><strong><code>free</code> 少是健康的，<code>available</code> 才是答案</strong>；但最灵敏的是 <code>si/so</code>、<code>allocstall</code>、<code>workingset_refault</code>、PSI</li>
+<li><strong>双 LRU 是为了抗 cache 污染</strong>（一次 <code>tar</code> 不该冲掉数据库的热数据）；<strong>refault 检测</strong>让「inactive 是否太小」变得可测量</li>
+<li><strong>直接回收（<code>allocstall</code>）是内存类长尾延迟的头号原因</strong>，靠提高 <code>min_free_kbytes</code> 让 kswapd 早点干活</li>
+<li><strong>PSI 的 <code>full</code> 才是明确的资源不足信号</strong>；<code>systemd-oomd</code> 靠它在内核 OOM 之前介入</li>
+<li><strong>OOM 评分按占用比例是为了「杀一个就够」</strong>；内核不判断业务重要性（那是策略）→ 用 <code>OOMScoreAdjust</code> + <strong><code>MemoryHigh</code> 减速带</strong></li>
+<li><strong>OOM Killer 是 overcommit 的必然结果</strong>；Redis 要 <code>overcommit_memory=1</code> 是用「可能被 OOM」换「fork 一定成功」</li>
+</ul>
+<p>下一篇讲 <strong>用户态分配器：从 brk 到 Go 的 mspan</strong> —— <code>malloc</code> 为什么不直接用系统调用、glibc 的 arena 如何应对多线程竞争、<code>free</code> 之后内存为什么不还给操作系统、以及 <strong>Go 的 mcache/mcentral/mheap 三级结构如何完全绕开 libc</strong>。</p>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2026-08-12</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/linux/">linux</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/linux/linux_26_%E7%94%A8%E6%88%B7%E6%80%81%E5%88%86%E9%85%8D%E5%99%A8%E4%BB%8Ebrk%E5%88%B0Go%E7%9A%84mspan/" class="prev" rel="prev" title="Linux-26 用户态分配器：从 brk 到 Go 的 mspan"><i class="fas fa-angle-left fa-fw"></i>Linux-26 用户态分配器：从 brk 到 Go 的 mspan</a>
+            <a href="/posts/linux/linux_24_%E8%99%9A%E6%8B%9F%E5%86%85%E5%AD%98%E4%B8%BA%E4%BB%80%E4%B9%88%E5%80%BC%E5%BE%97%E8%BF%99%E4%B8%AA%E4%BB%A3%E4%BB%B7/" class="next" rel="next" title="Linux-24 虚拟内存：为什么值得付出这么大代价">Linux-24 虚拟内存：为什么值得付出这么大代价<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2026-08-12T11:30:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Linux-25 内核如何管理物理内存：buddy、slab、页回收与 OOM"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

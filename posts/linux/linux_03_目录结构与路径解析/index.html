@@ -1,0 +1,1469 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>Linux-03 目录结构与路径解析：FHS 的设计骨架与软链接下的路径陷阱 - xingliuhua博客</title><meta name="Description" content="/usr 为什么不是 user 目录、/bin 为什么变成了软链接、/tmp 与 /var/tmp 差在哪、一个 Go 服务的文件该怎么摆、cd /a/b/../c 和 cd /a/c 什么时候不等价、pwd 与 pwd -P 的区别。附 namei 逐层排查权限的实战。"><meta property="og:title" content="Linux-03 目录结构与路径解析：FHS 的设计骨架与软链接下的路径陷阱" />
+<meta property="og:description" content="/usr 为什么不是 user 目录、/bin 为什么变成了软链接、/tmp 与 /var/tmp 差在哪、一个 Go 服务的文件该怎么摆、cd /a/b/../c 和 cd /a/c 什么时候不等价、pwd 与 pwd -P 的区别。附 namei 逐层排查权限的实战。" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/linux/linux_03_%E7%9B%AE%E5%BD%95%E7%BB%93%E6%9E%84%E4%B8%8E%E8%B7%AF%E5%BE%84%E8%A7%A3%E6%9E%90/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2026-08-12T22:30:00+08:00" />
+<meta property="article:modified_time" content="2026-08-12T22:30:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="Linux-03 目录结构与路径解析：FHS 的设计骨架与软链接下的路径陷阱"/>
+<meta name="twitter:description" content="/usr 为什么不是 user 目录、/bin 为什么变成了软链接、/tmp 与 /var/tmp 差在哪、一个 Go 服务的文件该怎么摆、cd /a/b/../c 和 cd /a/c 什么时候不等价、pwd 与 pwd -P 的区别。附 namei 逐层排查权限的实战。"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/linux/linux_03_%E7%9B%AE%E5%BD%95%E7%BB%93%E6%9E%84%E4%B8%8E%E8%B7%AF%E5%BE%84%E8%A7%A3%E6%9E%90/" /><link rel="prev" href="https://xingliuhua.github.io/posts/linux/linux_04_%E6%96%87%E4%BB%B6%E4%B8%8E%E7%9B%AE%E5%BD%95%E6%93%8D%E4%BD%9C/" /><link rel="next" href="https://xingliuhua.github.io/posts/linux/linux_02_%E5%8C%85%E7%AE%A1%E7%90%86%E5%99%A8%E7%9A%84%E4%BD%BF%E7%94%A8%E7%A6%BB%E7%BA%BF%E5%AE%89%E8%A3%85%E4%B8%8E%E4%BA%8B%E5%8A%A1%E5%8E%9F%E7%90%86/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Linux-03 目录结构与路径解析：FHS 的设计骨架与软链接下的路径陷阱",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_03_%E7%9B%AE%E5%BD%95%E7%BB%93%E6%9E%84%E4%B8%8E%E8%B7%AF%E5%BE%84%E8%A7%A3%E6%9E%90\/"
+        },"genre": "posts","keywords": "linux","wordcount":  14371 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_03_%E7%9B%AE%E5%BD%95%E7%BB%93%E6%9E%84%E4%B8%8E%E8%B7%AF%E5%BE%84%E8%A7%A3%E6%9E%90\/","datePublished": "2026-08-12T22:30:00+08:00","dateModified": "2026-08-12T22:30:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "/usr 为什么不是 user 目录、/bin 为什么变成了软链接、/tmp 与 /var/tmp 差在哪、一个 Go 服务的文件该怎么摆、cd /a/b/../c 和 cd /a/c 什么时候不等价、pwd 与 pwd -P 的区别。附 namei 逐层排查权限的实战。"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">Linux-03 目录结构与路径解析：FHS 的设计骨架与软链接下的路径陷阱</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2026-08-12">2026-08-12</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 14371 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 29 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-fhs目录结构不是约定俗成是一份标准">1. FHS：目录结构不是约定俗成，是一份标准</a>
+      <ol>
+        <li><a href="#11-fhs-的设计骨架两个维度">1.1 FHS 的设计骨架：两个维度</a></li>
+        <li><a href="#12-根目录下每个目录的职责">1.2 根目录下每个目录的职责</a></li>
+      </ol>
+    </li>
+    <li><a href="#2-历史包袱binusrbinusrlocalbin-的三层">2. 历史包袱：/bin、/usr/bin、/usr/local/bin 的三层</a>
+      <ol>
+        <li><a href="#21-usr-为什么叫-usr">2.1 /usr 为什么叫 usr</a></li>
+        <li><a href="#22-usrmerge把分裂合并回去">2.2 usrmerge：把分裂合并回去</a></li>
+        <li><a href="#23-三层的现代分工装软件到底该装哪">2.3 三层的现代分工：装软件到底该装哪</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-关键目录详解">3. 关键目录详解</a>
+      <ol>
+        <li><a href="#31-etc所有配置的家">3.1 /etc：所有配置的家</a></li>
+        <li><a href="#32-var唯一会持续长大的地方">3.2 /var：唯一会持续长大的地方</a></li>
+        <li><a href="#33-run为什么-pid-文件从-varrun-搬走了">3.3 /run：为什么 pid 文件从 /var/run 搬走了</a></li>
+        <li><a href="#34-tmp-与-vartmp-的区别">3.4 /tmp 与 /var/tmp 的区别</a></li>
+        <li><a href="#35-proc-与-sys不占磁盘的虚拟文件系统">3.5 /proc 与 /sys：不占磁盘的虚拟文件系统</a></li>
+        <li><a href="#36-dev设备也是文件">3.6 /dev：设备也是文件</a></li>
+        <li><a href="#37-家目录隐藏文件的意外起源与-xdg-规范">3.7 家目录：隐藏文件的意外起源与 XDG 规范</a></li>
+      </ol>
+    </li>
+    <li><a href="#4-一个-go-服务的文件应该怎么摆">4. 一个 Go 服务的文件应该怎么摆</a></li>
+    <li><a href="#5-路径解析内核怎么一段段走">5. 路径解析：内核怎么一段段走</a>
+      <ol>
+        <li><a href="#51-绝对路径与相对路径">5.1 绝对路径与相对路径</a></li>
+        <li><a href="#52-路径的语法细节">5.2 路径的语法细节</a></li>
+        <li><a href="#53--和--是真实存在的目录项">5.3 <code>.</code> 和 <code>..</code> 是真实存在的目录项</a></li>
+        <li><a href="#54-排查permission-deniednamei">5.4 排查「Permission denied」：namei</a></li>
+      </ol>
+    </li>
+    <li><a href="#6-软链接让路径解析变得诡异">6. 软链接让路径解析变得诡异</a>
+      <ol>
+        <li><a href="#61-cd-abc-不一定等于-cd-ac">6.1 cd /a/b/../c 不一定等于 cd /a/c</a></li>
+        <li><a href="#62-四个路径解析命令的区别">6.2 四个路径解析命令的区别</a></li>
+        <li><a href="#63-软链接循环与-40-层限制">6.3 软链接循环与 40 层限制</a></li>
+      </ol>
+    </li>
+    <li><a href="#7-目录跳转的效率技巧">7. 目录跳转的效率技巧</a></li>
+    <li><a href="#8-知识点扩展">8. 知识点扩展</a>
+      <ol>
+        <li><a href="#81-cd--change-directory">8.1 cd — change directory</a></li>
+        <li><a href="#82-pwd--print-working-directory">8.2 pwd — print working directory</a></li>
+        <li><a href="#83-realpath--readlink">8.3 realpath / readlink</a></li>
+        <li><a href="#84-namei--逐层解析路径">8.4 namei — 逐层解析路径</a></li>
+        <li><a href="#85-挂载点相关findmnt--mount--df">8.5 挂载点相关：findmnt / mount / df</a></li>
+        <li><a href="#86-目录栈与其他">8.6 目录栈与其他</a></li>
+      </ol>
+    </li>
+    <li><a href="#9-面试题">9. 面试题</a></li>
+    <li><a href="#小结">小结</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><p>上一篇讲软件怎样通过包管理器进入系统，这一篇继续解决「东西该放哪、路径怎么解析」。同样先看五个问题：</p>
+<ol>
+<li><code>/usr</code> 里放的全是系统程序，为什么叫 <strong>usr</strong>（user）？</li>
+<li><code>/bin</code> 和 <code>/usr/bin</code> 有什么区别？为什么现代系统里 <code>/bin</code> 只是个软链接？</li>
+<li>自己编译的软件装 <code>/usr/local</code> 还是 <code>/opt</code>？Go 服务的日志、配置、pid 文件各放哪？</li>
+<li><code>cd /a/b/../c</code> 和 <code>cd /a/c</code> 一定等价吗？</li>
+<li><code>pwd</code> 和 <code>pwd -P</code> 什么时候输出不一样？</li>
+</ol>
+<p>前三个的答案在 FHS 这份标准里，后两个的答案在软链接身上。</p>
+<h1 id="1-fhs目录结构不是约定俗成是一份标准">1. FHS：目录结构不是约定俗成，是一份标准</h1>
+<p>目录结构叫 <strong>FHS</strong>（Filesystem Hierarchy Standard，文件系统层次标准），现行 3.0 版。它规定了根目录下每个目录放什么，各发行版遵守它，所以你在 Ubuntu 上学的目录知识在 Rocky 上同样适用。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">ls / --group-directories-first
+</span></span><span class="line"><span class="cl"><span class="c1"># bin  boot  dev  etc  home  lib  lib64  media  mnt  opt  proc  root  run</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># sbin  srv  sys  tmp  usr  var</span>
+</span></span></code></pre></div><h2 id="11-fhs-的设计骨架两个维度">1.1 FHS 的设计骨架：两个维度</h2>
+<p>死记 20 个目录没有意义。FHS 真正的设计逻辑是<strong>用两个维度给数据分类</strong>，这才是「所以然」：</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th><strong>静态</strong>（装完就不变）</th>
+<th><strong>可变</strong>（运行时会改）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>可共享</strong>（多台机器能用同一份）</td>
+<td><code>/usr</code>、<code>/opt</code></td>
+<td><code>/home</code>、<code>/var/mail</code></td>
+</tr>
+<tr>
+<td><strong>不可共享</strong>（每台机器必须有自己的）</td>
+<td><code>/etc</code>、<code>/boot</code></td>
+<td><code>/var/log</code>、<code>/var/run</code>、<code>/proc</code></td>
+</tr>
+</tbody>
+</table>
+<p>这个 2×2 的划分不是学院派分类，它直接决定了运维手段：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ① /usr 是【静态可共享】 -&gt; 可以只读挂载，也可以多机共享一份</span>
+</span></span><span class="line"><span class="cl">mount -o remount,ro /usr
+</span></span><span class="line"><span class="cl"><span class="c1">#                   ^^ 只读挂载 /usr 是嵌入式设备和高安全环境的常规做法：</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                      系统程序不可能被篡改，因为分区本身就是只读的</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 容器镜像的分层设计也是同一个思路：/usr 那层是只读的镜像层</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ② /etc 是【静态不可共享】 -&gt; 每台机器的配置不同，但装完基本不变</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    所以 /etc 应该进版本控制（etckeeper），也应该重点备份</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ③ /var 是【可变不可共享】 -&gt; 唯一会持续增长的地方</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    所以生产机的标准做法是给 /var 单独分区，防止日志打满根分区导致系统不可用</span>
+</span></span><span class="line"><span class="cl">df -h /var
+</span></span><span class="line"><span class="cl"><span class="c1"># /dev/vdb1  100G  12G  88G  12% /var</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#  ^^^^^^^^ 独立分区。就算日志写爆了，/ 还有空间让你 ssh 进来处理</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ④ /home 是【可变可共享】 -&gt; 所以企业里常用 NFS 挂载家目录，</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    用户在任意一台机器登录都能看到自己的文件</span>
+</span></span></code></pre></div><p><strong>记住这条：能只读挂载的（<code>/usr</code>）、必须本机独有的（<code>/etc</code>）、会不断长大的（<code>/var</code>）——分区规划和备份策略都是按这三类来的。</strong></p>
+<h2 id="12-根目录下每个目录的职责">1.2 根目录下每个目录的职责</h2>
+<table>
+<thead>
+<tr>
+<th>目录</th>
+<th>全称 / 来源</th>
+<th>放什么</th>
+<th>服务端是否常打交道</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/bin</code></td>
+<td><strong>bin</strong>aries</td>
+<td>基本命令（<code>ls</code>、<code>cp</code>、<code>bash</code>）。<strong>现代系统是 <code>/usr/bin</code> 的软链接</strong></td>
+<td>间接</td>
+</tr>
+<tr>
+<td><code>/sbin</code></td>
+<td><strong>s</strong>ystem <strong>bin</strong>aries</td>
+<td>系统管理命令（<code>fdisk</code>、<code>ip</code>、<code>iptables</code>）</td>
+<td>是</td>
+</tr>
+<tr>
+<td><code>/usr</code></td>
+<td><strong>U</strong>nix <strong>S</strong>ystem <strong>R</strong>esources</td>
+<td>绝大多数程序、库、文档。<strong>系统的主体</strong></td>
+<td>是</td>
+</tr>
+<tr>
+<td><code>/etc</code></td>
+<td><strong>etc</strong>etera（&ldquo;其他&rdquo;）</td>
+<td>所有配置文件</td>
+<td><strong>非常</strong></td>
+</tr>
+<tr>
+<td><code>/var</code></td>
+<td><strong>var</strong>iable</td>
+<td>会变化的数据：日志、数据库、缓存、队列</td>
+<td><strong>非常</strong></td>
+</tr>
+<tr>
+<td><code>/run</code></td>
+<td>run(time)</td>
+<td><strong>tmpfs</strong>，运行时数据：pid 文件、unix socket。<strong>重启清空</strong></td>
+<td>是</td>
+</tr>
+<tr>
+<td><code>/tmp</code></td>
+<td><strong>t</strong>e<strong>mp</strong>orary</td>
+<td>临时文件，重启清空，<strong>所有人可写</strong>（带 Sticky 位）</td>
+<td>是</td>
+</tr>
+<tr>
+<td><code>/home</code></td>
+<td>—</td>
+<td>普通用户家目录</td>
+<td>是</td>
+</tr>
+<tr>
+<td><code>/root</code></td>
+<td>—</td>
+<td>root 的家目录（<strong>不是根目录</strong>，根目录是 <code>/</code>）</td>
+<td>是</td>
+</tr>
+<tr>
+<td><code>/opt</code></td>
+<td><strong>opt</strong>ional</td>
+<td>第三方整包软件（自带完整目录结构的）</td>
+<td>是</td>
+</tr>
+<tr>
+<td><code>/srv</code></td>
+<td><strong>s</strong>e<strong>rv</strong>ice</td>
+<td>本机对外提供的服务数据（实际很少用）</td>
+<td>少</td>
+</tr>
+<tr>
+<td><code>/proc</code></td>
+<td><strong>proc</strong>ess</td>
+<td><strong>虚拟文件系统</strong>：进程与内核信息，不占磁盘</td>
+<td><strong>非常</strong></td>
+</tr>
+<tr>
+<td><code>/sys</code></td>
+<td><strong>sys</strong>fs</td>
+<td><strong>虚拟文件系统</strong>：设备与内核对象，cgroup 在这</td>
+<td>是</td>
+</tr>
+<tr>
+<td><code>/dev</code></td>
+<td><strong>dev</strong>ices</td>
+<td>设备文件（<code>/dev/null</code>、<code>/dev/sda</code>）</td>
+<td>是</td>
+</tr>
+<tr>
+<td><code>/boot</code></td>
+<td>—</td>
+<td>内核镜像、initramfs、引导器配置</td>
+<td>少（第 19 篇讲）</td>
+</tr>
+<tr>
+<td><code>/lib</code> <code>/lib64</code></td>
+<td><strong>lib</strong>raries</td>
+<td>共享库。同样是 <code>/usr/lib</code> 的软链接</td>
+<td>间接</td>
+</tr>
+<tr>
+<td><code>/media</code></td>
+<td>—</td>
+<td>可移动介质的自动挂载点（U 盘、光盘）</td>
+<td>少</td>
+</tr>
+<tr>
+<td><code>/mnt</code></td>
+<td><strong>m</strong>ou<strong>nt</strong></td>
+<td>临时手动挂载点</td>
+<td>是</td>
+</tr>
+<tr>
+<td><code>/lost+found</code></td>
+<td>—</td>
+<td><code>fsck</code> 修复时找回的孤儿文件（每个 ext 分区都有一个）</td>
+<td>极少</td>
+</tr>
+</tbody>
+</table>
+<h1 id="2-历史包袱binusrbinusrlocalbin-的三层">2. 历史包袱：/bin、/usr/bin、/usr/local/bin 的三层</h1>
+<h2 id="21-usr-为什么叫-usr">2.1 /usr 为什么叫 usr</h2>
+<p>开篇第一问。教科书上说 <code>/usr</code> = <strong>U</strong>nix <strong>S</strong>ystem <strong>R</strong>esources，但这是<strong>后来编的解释</strong>（backronym）。真实历史是：</p>
+<blockquote>
+<p>1970 年代初，Unix 跑在 PDP-11 上，配的 RK05 硬盘只有 <strong>1.5MB</strong>。系统装着装着，根分区满了。开发者（Ken Thompson 和 Dennis Ritchie）就把一部分内容挪到第二块盘上，而那块盘当时挂在 <code>/usr</code>——它原本是<strong>放用户家目录</strong>的地方（就是字面意思 user）。</p>
+<p>于是 <code>/bin</code> 装不下的程序被放进了 <code>/usr/bin</code>，<code>/lib</code> 放不下的库进了 <code>/usr/lib</code>。<strong>这个纯粹因为硬盘太小而产生的分裂，被后世当成了设计，一直延续了 50 年。</strong></p>
+</blockquote>
+<p>分裂之后，人们需要给它编一个理由，于是有了这套说法：</p>
+<ul>
+<li><code>/bin</code>、<code>/sbin</code>、<code>/lib</code> 放<strong>启动过程必需</strong>的东西（因为它们在根分区上，开机就能用）</li>
+<li><code>/usr</code> 放其他的（<code>/usr</code> 可能是单独分区甚至网络挂载，挂载时机较晚）</li>
+</ul>
+<p>这个理由在 <strong>initramfs</strong>（初始内存文件系统）出现后彻底失效了——现在系统启动时先加载 initramfs，由它负责挂载所有分区，等真正的根文件系统就位时 <code>/usr</code> 早就挂好了，「启动必需」的划分不再有意义。</p>
+<h2 id="22-usrmerge把分裂合并回去">2.2 usrmerge：把分裂合并回去</h2>
+<p>于是 2012 年起（Fedora 17 带头，Debian/Ubuntu 后来跟进）有了 <strong>usrmerge</strong> 改革：把 <code>/bin</code>、<code>/sbin</code>、<code>/lib</code> 全部变成指向 <code>/usr/</code> 下对应目录的<strong>软链接</strong>。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">ls -ld /bin /sbin /lib /lib64
+</span></span><span class="line"><span class="cl"><span class="c1"># lrwxrwxrwx 1 root root 7 Apr 22  2023 /bin -&gt; usr/bin</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># lrwxrwxrwx 1 root root 8 Apr 22  2023 /sbin -&gt; usr/sbin</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># lrwxrwxrwx 1 root root 7 Apr 22  2023 /lib -&gt; usr/lib</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># lrwxrwxrwx 1 root root 9 Apr 22  2023 /lib64 -&gt; usr/lib64</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                                        ^^^^^^^^^^^^^^^^ 全是软链接</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 所以这两条命令跑的是【同一个文件】</span>
+</span></span><span class="line"><span class="cl">ls -i /bin/ls /usr/bin/ls
+</span></span><span class="line"><span class="cl"><span class="c1"># 2097347 /bin/ls    2097347 /usr/bin/ls     &lt;- inode 号相同</span>
+</span></span></code></pre></div><p><strong>这解释了一个常见困惑</strong>：为什么有的脚本写 <code>#!/bin/bash</code>，有的写 <code>#!/usr/bin/bash</code>，两个都能跑？因为它们指向同一个文件。但注意可移植性：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="cp">#!/bin/bash              # 大多数 Linux 通用（/bin 一定存在）
+</span></span></span><span class="line"><span class="cl"><span class="cp"></span><span class="c1">#!/usr/bin/bash          # 在没做 usrmerge 的老系统上可能不存在</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#!/usr/bin/env bash      # ✅ 最可移植：去 PATH 里找 bash</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                           macOS 上 bash 在 /opt/homebrew/bin，这种写法才能兼容</span>
+</span></span></code></pre></div><p>顺带澄清 <strong><code>sbin</code> 的 <code>s</code></strong>：常见说法是 super user，但更准确的历史来源是 <strong>statically linked binaries</strong>（静态链接的程序，那时候为了在库还没挂载好时也能运行）。现在它的实际含义是 <strong>system binaries</strong>——系统管理类命令，非 root 通常也能执行只是干不了实事。现代发行版（Debian 13）甚至在推进把 <code>/usr/sbin</code> 也合并进 <code>/usr/bin</code>。</p>
+<h2 id="23-三层的现代分工装软件到底该装哪">2.3 三层的现代分工：装软件到底该装哪</h2>
+<p>这才是每天要做的决策：</p>
+<table>
+<thead>
+<tr>
+<th>位置</th>
+<th>谁在管</th>
+<th>什么时候用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/usr/bin</code>、<code>/usr/lib</code></td>
+<td><strong>包管理器</strong>（apt/dnf）</td>
+<td>你不该手动往这写东西——下次升级会被覆盖，还会让包管理器状态错乱</td>
+</tr>
+<tr>
+<td><code>/usr/local/bin</code>、<code>/usr/local/lib</code></td>
+<td><strong>你</strong>（系统管理员）</td>
+<td>手动编译安装（<code>make install</code> 默认前缀就是 <code>/usr/local</code>）、下载的单个二进制</td>
+</tr>
+<tr>
+<td><code>/opt/&lt;软件名&gt;/</code></td>
+<td><strong>软件自己</strong></td>
+<td>自带完整目录结构的第三方整包（如 <code>/opt/google/chrome</code>）</td>
+</tr>
+<tr>
+<td><code>~/.local/bin</code></td>
+<td><strong>你</strong>（仅当前用户）</td>
+<td>不想影响其他用户，或者没有 root 权限时</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 场景一：手动装 Go（官方 tarball 建议解压到 /usr/local）</span>
+</span></span><span class="line"><span class="cl">sudo tar -C /usr/local -xzf go1.22.0.linux-amd64.tar.gz
+</span></span><span class="line"><span class="cl"><span class="nb">export</span> <span class="nv">PATH</span><span class="o">=</span><span class="nv">$PATH</span>:/usr/local/go/bin
+</span></span><span class="line"><span class="cl"><span class="c1">#                 ^^^^^^^^^^^^^^^^^ Go 是&#34;自带目录结构&#34;的，所以放 /usr/local/go 整个目录</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 场景二：编译安装某个工具（GNU 三部曲）</span>
+</span></span><span class="line"><span class="cl">./configure --prefix<span class="o">=</span>/usr/local     <span class="c1"># 默认就是它，会装到 /usr/local/{bin,lib,share,include}</span>
+</span></span><span class="line"><span class="cl">make <span class="o">&amp;&amp;</span> sudo make install
+</span></span><span class="line"><span class="cl"><span class="c1"># 卸载困难是这种方式的最大问题（没有清单），所以更推荐 checkinstall 或直接用包管理器</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 场景三：下载的单个二进制</span>
+</span></span><span class="line"><span class="cl">sudo install -m <span class="m">755</span> kubectl /usr/local/bin/kubectl
+</span></span><span class="line"><span class="cl"><span class="c1">#    ^^^^^^^ 用 install 而不是 cp：一步完成复制 + 权限（见 04 篇 10.14）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 场景四：自己写的 Go 工具，只给自己用</span>
+</span></span><span class="line"><span class="cl">go install github.com/x/tool@latest       <span class="c1"># 装到 $(go env GOPATH)/bin，即 ~/go/bin</span>
+</span></span><span class="line"><span class="cl"><span class="nb">export</span> <span class="nv">PATH</span><span class="o">=</span><span class="nv">$PATH</span>:<span class="k">$(</span>go env GOPATH<span class="k">)</span>/bin
+</span></span></code></pre></div><p><strong>一条铁律：永远不要手动往 <code>/usr/bin</code> 里塞文件。</strong> 它属于包管理器，你放进去的东西会在系统升级时被覆盖或造成文件冲突，而且 <code>dpkg -S</code>/<code>rpm -qf</code> 查不到归属，接手的人无从判断这个文件哪来的。</p>
+<h1 id="3-关键目录详解">3. 关键目录详解</h1>
+<h2 id="31-etc所有配置的家">3.1 /etc：所有配置的家</h2>
+<p><code>etc</code> 来自 <strong>et cetera</strong>（拉丁语「等等、其他」）——最初 Unix 就是把不属于任何分类的杂项丢这，结果它成了配置文件的标准位置。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">/etc/
+</span></span><span class="line"><span class="cl">├── passwd, shadow, group          <span class="c1"># 用户与组（第 10 篇）</span>
+</span></span><span class="line"><span class="cl">├── hosts, resolv.conf, hostname   <span class="c1"># 网络基础（第 15 篇）</span>
+</span></span><span class="line"><span class="cl">├── fstab                          <span class="c1"># 开机挂载表（第 11 篇）</span>
+</span></span><span class="line"><span class="cl">├── crontab, cron.d/               <span class="c1"># 定时任务（第 14 篇）</span>
+</span></span><span class="line"><span class="cl">├── sudoers, sudoers.d/            <span class="c1"># 提权规则（第 10 篇）</span>
+</span></span><span class="line"><span class="cl">├── ssh/sshd_config                <span class="c1"># SSH 服务端配置（第 16 篇）</span>
+</span></span><span class="line"><span class="cl">├── systemd/system/                <span class="c1"># systemd 单元文件（第 14 篇）</span>
+</span></span><span class="line"><span class="cl">├── nginx/, mysql/                 <span class="c1"># 各软件自己的配置目录</span>
+</span></span><span class="line"><span class="cl">├── profile, profile.d/, bash.bashrc   <span class="c1"># 全局 shell 配置</span>
+</span></span><span class="line"><span class="cl">├── default/  <span class="o">(</span>Debian 系<span class="o">)</span>          <span class="c1"># 服务的环境变量与启动参数</span>
+</span></span><span class="line"><span class="cl">└── sysconfig/  <span class="o">(</span>RHEL 系<span class="o">)</span>          <span class="c1"># 同上，RHEL 的叫法</span>
+</span></span></code></pre></div><p>有三个模式值得注意：</p>
+<p><strong>① <code>conf.d/</code> 目录模式。</strong> 现代软件都支持「主配置文件 + 一个目录里的碎片文件」：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">grep -r <span class="s1">&#39;include&#39;</span> /etc/nginx/nginx.conf
+</span></span><span class="line"><span class="cl"><span class="c1"># include /etc/nginx/conf.d/*.conf;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># include /etc/nginx/sites-enabled/*;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 为什么这么设计？因为它让【自动化】变得安全：</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 加一个站点 = 往目录里丢一个文件（幂等、可回滚、不用改主文件）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 而不是用 sed 去主配置文件里插一段（容易改坏、无法回滚、并发写会冲突）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 所以你的部署脚本应该这样做</span>
+</span></span><span class="line"><span class="cl">sudo tee /etc/nginx/conf.d/myapp.conf &gt; /dev/null <span class="s">&lt;&lt;&#39;EOF&#39;
+</span></span></span><span class="line"><span class="cl"><span class="s">server { listen 8080; location / { proxy_pass http://127.0.0.1:3000; } }
+</span></span></span><span class="line"><span class="cl"><span class="s">EOF</span>
+</span></span><span class="line"><span class="cl">sudo nginx -t <span class="o">&amp;&amp;</span> sudo systemctl reload nginx
+</span></span><span class="line"><span class="cl"><span class="c1">#         ^^ 永远先测试语法再 reload</span>
+</span></span></code></pre></div><p><strong>② <code>/etc/default/</code>（Debian）与 <code>/etc/sysconfig/</code>（RHEL）。</strong> 存放服务的启动参数和环境变量，与主配置分开，避免升级时冲突：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">cat /etc/default/grub          <span class="c1"># GRUB 的配置在这，改完要 update-grub</span>
+</span></span></code></pre></div><p><strong>③ <code>/etc</code> 应该进版本控制。</strong> 生产机上配置漂移（drift）是事故的常见来源：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">sudo apt install etckeeper     <span class="c1"># 自动把 /etc 变成 git 仓库，每次 apt 操作自动提交</span>
+</span></span><span class="line"><span class="cl"><span class="nb">cd</span> /etc <span class="o">&amp;&amp;</span> sudo git log --oneline <span class="p">|</span> head
+</span></span><span class="line"><span class="cl"><span class="c1"># 谁在什么时候改了什么配置，一目了然</span>
+</span></span></code></pre></div><h2 id="32-var唯一会持续长大的地方">3.2 /var：唯一会持续长大的地方</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">/var/
+</span></span><span class="line"><span class="cl">├── log/          <span class="c1"># 日志 ← 磁盘爆满的头号元凶</span>
+</span></span><span class="line"><span class="cl">├── lib/          <span class="c1"># 程序的持久化数据（/var/lib/mysql、/var/lib/docker）</span>
+</span></span><span class="line"><span class="cl">├── cache/        <span class="c1"># 缓存，删了不影响正确性（只是变慢）</span>
+</span></span><span class="line"><span class="cl">├── spool/        <span class="c1"># 队列：待发邮件、打印任务、cron 任务</span>
+</span></span><span class="line"><span class="cl">├── tmp/          <span class="c1"># 临时文件，【跨重启保留】</span>
+</span></span><span class="line"><span class="cl">├── run  -&gt; /run  <span class="c1"># 软链接，见下</span>
+</span></span><span class="line"><span class="cl">└── www/          <span class="c1"># 网站文件（有些发行版放这）</span>
+</span></span></code></pre></div><p>区分 <code>lib</code> 和 <code>cache</code> 很重要：<strong><code>/var/cache</code> 里的东西删掉只影响性能，<code>/var/lib</code> 里的删掉就丢数据了。</strong> 清理磁盘时先动 cache：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">sudo du -xh --max-depth<span class="o">=</span><span class="m">1</span> /var <span class="p">|</span> sort -h <span class="p">|</span> tail
+</span></span><span class="line"><span class="cl"><span class="c1"># 12G    /var/lib          &lt;- 数据，慎动</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 8.2G   /var/log          &lt;- 日志，可清</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 3.1G   /var/cache        &lt;- 缓存，随便清</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">sudo apt clean                       <span class="c1"># 清 /var/cache/apt/archives 里的 deb 包</span>
+</span></span><span class="line"><span class="cl">sudo journalctl --vacuum-size<span class="o">=</span>500M   <span class="c1"># 把 journal 日志压到 500MB 以内</span>
+</span></span><span class="line"><span class="cl">sudo docker system prune -a          <span class="c1"># 清未使用的镜像（/var/lib/docker 常是最大头）</span>
+</span></span></code></pre></div><h2 id="33-run为什么-pid-文件从-varrun-搬走了">3.3 /run：为什么 pid 文件从 /var/run 搬走了</h2>
+<p><code>/run</code> 是一个 <strong>tmpfs（内存文件系统）</strong>，重启后一定是空的：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">findmnt /run
+</span></span><span class="line"><span class="cl"><span class="c1"># TARGET SOURCE FSTYPE OPTIONS</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># /run   tmpfs  tmpfs  rw,nosuid,nodev,noexec,relatime,size=1608468k,mode=755</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#               ^^^^^ 内存文件系统，不落盘</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">ls /run
+</span></span><span class="line"><span class="cl"><span class="c1"># containerd/  docker.sock  lock/  nginx.pid  sshd.pid  systemd/  user/  utmp</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">ls -ld /var/run
+</span></span><span class="line"><span class="cl"><span class="c1"># lrwxrwxrwx 1 root root 4 Aug 12 22:00 /var/run -&gt; /run     &lt;- 历史兼容软链接</span>
+</span></span></code></pre></div><p><strong>为什么要从 <code>/var/run</code> 搬到 <code>/run</code>？</strong> 因为启动顺序：<code>/var</code> 可能是<strong>独立分区</strong>（甚至 NFS），在启动早期还没挂载；但 udev、systemd 这些早期服务就已经需要写 pid 文件和 socket 了。把它放在根分区下的 tmpfs（<code>/run</code>）就没有这个依赖。</p>
+<p>顺带解决了另一个问题：<strong>tmpfs 保证重启后一定干净</strong>。旧时代 <code>/var/run</code> 在磁盘上，机器异常断电后会残留陈旧的 pid 文件，导致服务启动时误判「已有实例在运行」而拒绝启动。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 你的 Go 服务如果要写 pid 或 unix socket，正确位置是</span>
+</span></span><span class="line"><span class="cl">/run/myapp/myapp.pid
+</span></span><span class="line"><span class="cl">/run/myapp/myapp.sock
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 目录需要提前创建，systemd 提供了声明式的方式（不用自己 mkdir）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># /etc/systemd/system/myapp.service</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># [Service]</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># RuntimeDirectory=myapp            &lt;- systemd 自动创建 /run/myapp，停止时自动删除</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># RuntimeDirectoryMode=0750</span>
+</span></span></code></pre></div><h2 id="34-tmp-与-vartmp-的区别">3.4 /tmp 与 /var/tmp 的区别</h2>
+<table>
+<thead>
+<tr>
+<th></th>
+<th><code>/tmp</code></th>
+<th><code>/var/tmp</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>生命周期</td>
+<td><strong>重启即清空</strong></td>
+<td><strong>跨重启保留</strong></td>
+</tr>
+<tr>
+<td>实现</td>
+<td>很多发行版挂成 tmpfs（<strong>在内存里</strong>）</td>
+<td>一定在磁盘上</td>
+</tr>
+<tr>
+<td>大小限制</td>
+<td>tmpfs 时受内存限制（默认物理内存的一半）</td>
+<td>受分区大小限制</td>
+</tr>
+<tr>
+<td>用途</td>
+<td>短命的临时文件</td>
+<td>需要熬过重启的中间文件（如大型编译的中间产物）</td>
+</tr>
+<tr>
+<td>权限</td>
+<td><code>1777</code>（人人可写 + <strong>Sticky 位</strong>）</td>
+<td><code>1777</code></td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">findmnt /tmp
+</span></span><span class="line"><span class="cl"><span class="c1"># /tmp tmpfs tmpfs rw,nosuid,nodev,size=8065536k       &lt;- 是 tmpfs，写它等于写内存</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">ls -ld /tmp
+</span></span><span class="line"><span class="cl"><span class="c1"># drwxrwxrwt 20 root root 4096 Aug 12 22:00 /tmp</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#          ^ 这个 t 是 Sticky 位：人人可写，但【只能删自己的文件】</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#            没有它，任何人都能删别人的临时文件（第 10 篇讲）</span>
+</span></span></code></pre></div><p>两个实战要点：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ① /tmp 是 tmpfs 时，往它写大文件 = 吃内存，可能触发 OOM</span>
+</span></span><span class="line"><span class="cl">dd <span class="k">if</span><span class="o">=</span>/dev/zero <span class="nv">of</span><span class="o">=</span>/tmp/big <span class="nv">bs</span><span class="o">=</span>1M <span class="nv">count</span><span class="o">=</span><span class="m">10000</span>      <span class="c1"># 💀 直接吃掉 10GB 内存</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 大文件应该写 /var/tmp 或专门的数据目录</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ② systemd 服务默认可能启用 PrivateTmp，此时服务看到的 /tmp 不是你看到的 /tmp</span>
+</span></span><span class="line"><span class="cl">systemctl show nginx -p PrivateTmp
+</span></span><span class="line"><span class="cl"><span class="c1"># PrivateTmp=yes</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># -&gt; nginx 的 /tmp 实际是 /tmp/systemd-private-xxx-nginx.service-yyy/tmp</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 这解释了&#34;程序说文件写在 /tmp 但我找不到&#34;的困惑</span>
+</span></span><span class="line"><span class="cl">sudo ls /tmp/systemd-private-*/tmp/
+</span></span></code></pre></div><h2 id="35-proc-与-sys不占磁盘的虚拟文件系统">3.5 /proc 与 /sys：不占磁盘的虚拟文件系统</h2>
+<p>这两个目录里的「文件」<strong>不存在于任何磁盘上</strong>——它们是内核在你读取的瞬间生成的。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">df -h /proc /sys
+</span></span><span class="line"><span class="cl"><span class="c1"># Filesystem  Size  Used Avail Use% Mounted on</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># proc           0     0     0    - /proc            &lt;- 大小是 0</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># sysfs          0     0     0    - /sys</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">ls -l /proc/meminfo
+</span></span><span class="line"><span class="cl"><span class="c1"># -r--r--r-- 1 root root 0 Aug 12 22:00 /proc/meminfo</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                        ^ 大小显示 0，但 cat 出来有几十行 —— 内容是读时才生成的</span>
+</span></span></code></pre></div><p><code>/proc</code> 里最常用的：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 系统级</span>
+</span></span><span class="line"><span class="cl">cat /proc/cpuinfo          <span class="c1"># CPU 详情</span>
+</span></span><span class="line"><span class="cl">cat /proc/meminfo          <span class="c1"># 内存详情（free 命令的数据来源）</span>
+</span></span><span class="line"><span class="cl">cat /proc/loadavg          <span class="c1"># 平均负载（uptime 的数据来源）</span>
+</span></span><span class="line"><span class="cl">cat /proc/version          <span class="c1"># 内核版本</span>
+</span></span><span class="line"><span class="cl">cat /proc/mounts           <span class="c1"># 当前挂载表（比 /etc/mtab 可靠）</span>
+</span></span><span class="line"><span class="cl">cat /proc/net/tcp          <span class="c1"># TCP 连接表（ss 的数据来源之一）</span>
+</span></span><span class="line"><span class="cl">ls /proc/sys/net/ipv4/     <span class="c1"># 内核参数，可读可写（sysctl 操作的就是这里）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 进程级：/proc/&lt;pid&gt;/ ← 排查问题的金矿</span>
+</span></span><span class="line"><span class="cl"><span class="nv">PID</span><span class="o">=</span><span class="m">1234</span>
+</span></span><span class="line"><span class="cl">ls -l /proc/<span class="nv">$PID</span>/exe       <span class="c1"># 程序的真实路径（即使被删了也能看到）</span>
+</span></span><span class="line"><span class="cl">ls -l /proc/<span class="nv">$PID</span>/cwd       <span class="c1"># 进程的当前工作目录</span>
+</span></span><span class="line"><span class="cl">ls -l /proc/<span class="nv">$PID</span>/fd/       <span class="c1"># 打开的所有 fd（查 fd 泄漏、查已删除文件）</span>
+</span></span><span class="line"><span class="cl">cat /proc/<span class="nv">$PID</span>/cmdline <span class="p">|</span> tr <span class="s1">&#39;\0&#39;</span> <span class="s1">&#39; &#39;</span>    <span class="c1"># 完整启动命令（参数用 \0 分隔）</span>
+</span></span><span class="line"><span class="cl">cat /proc/<span class="nv">$PID</span>/environ <span class="p">|</span> tr <span class="s1">&#39;\0&#39;</span> <span class="s1">&#39;\n&#39;</span>   <span class="c1"># 环境变量（查&#34;配置没生效&#34;）</span>
+</span></span><span class="line"><span class="cl">cat /proc/<span class="nv">$PID</span>/status      <span class="c1"># 状态汇总：内存、线程数、uid、信号掩码</span>
+</span></span><span class="line"><span class="cl">cat /proc/<span class="nv">$PID</span>/limits      <span class="c1"># 资源限制（查 too many open files）</span>
+</span></span><span class="line"><span class="cl">cat /proc/<span class="nv">$PID</span>/stack       <span class="c1"># 内核栈（进程 D 状态卡死时看它卡在哪个内核函数）</span>
+</span></span><span class="line"><span class="cl">wc -l &lt; /proc/<span class="nv">$PID</span>/maps    <span class="c1"># 内存映射区域数量</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 自己进程的快捷方式</span>
+</span></span><span class="line"><span class="cl">ls -l /proc/self/cwd
+</span></span></code></pre></div><p><code>/sys</code> 主要是设备与内核对象，服务端最常打交道的是 cgroup：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">cat /sys/fs/cgroup/cpu.max          <span class="c1"># 容器的 CPU 限额（cgroup v2）</span>
+</span></span><span class="line"><span class="cl">cat /sys/fs/cgroup/memory.max       <span class="c1"># 内存限额</span>
+</span></span><span class="line"><span class="cl">cat /sys/fs/cgroup/memory.current   <span class="c1"># 当前用量</span>
+</span></span><span class="line"><span class="cl">cat /sys/block/vda/queue/scheduler  <span class="c1"># 磁盘 IO 调度器</span>
+</span></span><span class="line"><span class="cl">cat /sys/class/net/eth0/mtu         <span class="c1"># 网卡 MTU</span>
+</span></span></code></pre></div><p><strong>一个容器里的重要陷阱</strong>：<code>/proc</code> 默认<strong>没有被容器命名空间隔离</strong>，所以容器里 <code>cat /proc/meminfo</code>、<code>nproc</code>、<code>free -h</code> 看到的都是<strong>宿主机</strong>的数据：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 容器里（限额 512MB）</span>
+</span></span><span class="line"><span class="cl">free -h
+</span></span><span class="line"><span class="cl"><span class="c1">#                total        used        free</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Mem:            62Gi        20Gi        30Gi        &lt;- 宿主机的数据！</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 真实限额要读 cgroup</span>
+</span></span><span class="line"><span class="cl">cat /sys/fs/cgroup/memory.max
+</span></span><span class="line"><span class="cl"><span class="c1"># 536870912                                           &lt;- 512MB，这才是真的</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 后果：JVM/Go 的自动内存调优会按 62GB 来算，然后被 OOMKilled</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 解法：Go 设 GOMEMLIMIT，或用 lxcfs 让 /proc 反映 cgroup 值</span>
+</span></span></code></pre></div><h2 id="36-dev设备也是文件">3.6 /dev：设备也是文件</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">ls -l /dev/null /dev/zero /dev/urandom /dev/sda
+</span></span><span class="line"><span class="cl"><span class="c1"># crw-rw-rw- 1 root root  1, 3 Aug 12 /dev/null      &lt;- c = 字符设备</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># crw-rw-rw- 1 root root  1, 5 Aug 12 /dev/zero</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># crw-rw-rw- 1 root root  1, 9 Aug 12 /dev/urandom</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># brw-rw---- 1 root disk  8, 0 Aug 12 /dev/sda       &lt;- b = 块设备</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                         ^^^^ 主设备号,次设备号 —— 内核靠这两个数字找到驱动，</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                              而不是靠文件名（文件名只是给人看的）</span>
+</span></span></code></pre></div><p>常用的几个「虚拟设备」：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">cmd &gt; /dev/null 2&gt;<span class="p">&amp;</span><span class="m">1</span>        <span class="c1"># 黑洞：丢弃所有输出</span>
+</span></span><span class="line"><span class="cl">dd <span class="k">if</span><span class="o">=</span>/dev/zero <span class="nv">of</span><span class="o">=</span>f <span class="nv">bs</span><span class="o">=</span>1M <span class="nv">count</span><span class="o">=</span><span class="m">100</span>    <span class="c1"># 零源：产生无限个 \0</span>
+</span></span><span class="line"><span class="cl">head -c <span class="m">32</span> /dev/urandom <span class="p">|</span> base64        <span class="c1"># 随机数（生成密钥/密码）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># /dev/random vs /dev/urandom：现代内核（5.6+）两者行为已基本一致，</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   直接用 urandom 即可，别再迷信 random 更安全（它只是可能阻塞）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;hi&#34;</span> &gt; /dev/tty        <span class="c1"># 直接写到终端（绕过重定向，脚本里给用户提示用）</span>
+</span></span><span class="line"><span class="cl">cat /dev/stdin              <span class="c1"># 标准输入（等价 -）</span>
+</span></span><span class="line"><span class="cl">ls -l /dev/std<span class="o">{</span>in,out,err<span class="o">}</span>  <span class="c1"># 都是指向 /proc/self/fd/{0,1,2} 的软链接</span>
+</span></span></code></pre></div><h2 id="37-家目录隐藏文件的意外起源与-xdg-规范">3.7 家目录：隐藏文件的意外起源与 XDG 规范</h2>
+<p>先讲一个「所以然」：<strong>隐藏文件（点文件）是一个 bug 的产物。</strong></p>
+<blockquote>
+<p>早期 Unix 的 <code>ls</code> 需要跳过 <code>.</code> 和 <code>..</code> 这两条特殊目录项。实现时程序员图省事，写成了「跳过所有以 <code>.</code> 开头的名字」。于是任何以点开头的文件都被顺带藏了起来——这个偷懒的判断被当成了特性，后来所有程序都开始把配置文件命名成 <code>.xxx</code> 丢进家目录。Rob Pike 在回忆里明确说过：这是个 bug，不是设计。</p>
+</blockquote>
+<p>后果是家目录变成了垃圾场：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">ls -A ~ <span class="p">|</span> head -20
+</span></span><span class="line"><span class="cl"><span class="c1"># .bashrc  .bash_history  .profile  .vimrc  .gitconfig  .ssh  .cache</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># .config  .local  .npm  .docker  .kube  .aws  .gnupg  .python_history  ...</span>
+</span></span><span class="line"><span class="cl">ls -A ~ <span class="p">|</span> wc -l         <span class="c1"># 几十上百个，配置、缓存、数据全混在一起</span>
+</span></span></code></pre></div><p><strong>XDG Base Directory 规范</strong>就是来收拾这个烂摊子的，它把家目录下的东西按用途分成四类：</p>
+<table>
+<thead>
+<tr>
+<th>环境变量</th>
+<th>默认值</th>
+<th>放什么</th>
+<th>要不要备份</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>XDG_CONFIG_HOME</code></td>
+<td><code>~/.config</code></td>
+<td><strong>配置</strong>（用户手改的东西）</td>
+<td><strong>要</strong>，最重要</td>
+</tr>
+<tr>
+<td><code>XDG_DATA_HOME</code></td>
+<td><code>~/.local/share</code></td>
+<td><strong>数据</strong>（程序生成、丢了会疼）</td>
+<td><strong>要</strong></td>
+</tr>
+<tr>
+<td><code>XDG_STATE_HOME</code></td>
+<td><code>~/.local/state</code></td>
+<td>状态（日志、历史记录、上次窗口位置）</td>
+<td>可选</td>
+</tr>
+<tr>
+<td><code>XDG_CACHE_HOME</code></td>
+<td><code>~/.cache</code></td>
+<td><strong>缓存</strong>（删了只是变慢）</td>
+<td><strong>不用</strong></td>
+</tr>
+<tr>
+<td><code>XDG_RUNTIME_DIR</code></td>
+<td><code>/run/user/&lt;UID&gt;</code></td>
+<td>运行时的 socket、锁（<strong>tmpfs</strong>，登出即清）</td>
+<td>不用</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">ls ~/.config              <span class="c1"># nvim/  git/  gh/  htop/  systemd/</span>
+</span></span><span class="line"><span class="cl">ls ~/.local/share         <span class="c1"># nvim/  fish/  containers/</span>
+</span></span><span class="line"><span class="cl">du -sh ~/.cache           <span class="c1"># 3.2G    &lt;- 经常是家目录最大的部分，随时可删</span>
+</span></span><span class="line"><span class="cl">rm -rf ~/.cache/*         <span class="c1"># 安全操作（程序会自己重建）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="nv">$XDG_RUNTIME_DIR</span>     <span class="c1"># /run/user/1000</span>
+</span></span><span class="line"><span class="cl">ls -ld /run/user/1000
+</span></span><span class="line"><span class="cl"><span class="c1"># drwx------ 8 lhx lhx 240 Aug 12 22:00 /run/user/1000</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#          ^^^^^^ 只有你自己能进，由 systemd-logind 在登录时创建、登出时销毁</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># podman、pipewire、tmux 的 socket 都放这</span>
+</span></span></code></pre></div><p><strong>这个划分的实际价值</strong>：备份和迁移时规则变得极简——<strong>备份 <code>~/.config</code> 和 <code>~/.local/share</code>，忽略 <code>~/.cache</code></strong>。而在老式的点文件模式下，你根本分不清 <code>~/.npm</code>（缓存，40GB）和 <code>~/.ssh</code>（密钥，必须备份）哪个该带走。</p>
+<p>Go 程序应该遵守它（标准库直接支持）：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// ✅ 用标准库，自动遵守 XDG（并在 macOS/Windows 上给出对应位置）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">cfgDir</span><span class="p">,</span> <span class="nx">_</span> <span class="o">:=</span> <span class="nx">os</span><span class="p">.</span><span class="nf">UserConfigDir</span><span class="p">()</span>    <span class="c1">// Linux: ~/.config    macOS: ~/Library/Application Support
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">cacheDir</span><span class="p">,</span> <span class="nx">_</span> <span class="o">:=</span> <span class="nx">os</span><span class="p">.</span><span class="nf">UserCacheDir</span><span class="p">()</span>   <span class="c1">// Linux: ~/.cache     macOS: ~/Library/Caches
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">homeDir</span><span class="p">,</span> <span class="nx">_</span> <span class="o">:=</span> <span class="nx">os</span><span class="p">.</span><span class="nf">UserHomeDir</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="nx">configPath</span> <span class="o">:=</span> <span class="nx">filepath</span><span class="p">.</span><span class="nf">Join</span><span class="p">(</span><span class="nx">cfgDir</span><span class="p">,</span> <span class="s">&#34;myapp&#34;</span><span class="p">,</span> <span class="s">&#34;config.yaml&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// ❌ 不要硬编码
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">configPath</span> <span class="o">:=</span> <span class="nx">os</span><span class="p">.</span><span class="nf">Getenv</span><span class="p">(</span><span class="s">&#34;HOME&#34;</span><span class="p">)</span> <span class="o">+</span> <span class="s">&#34;/.myapp/config.yaml&#34;</span>   <span class="c1">// 又往家目录扔垃圾了
+</span></span></span></code></pre></div><p>注意 <code>XDG_RUNTIME_DIR</code> 有个真实的坑：<strong>它只在有登录会话时存在</strong>。用 <code>su - user</code> 切过去或在 cron 里执行时，这个变量是空的，依赖它的程序（如 rootless podman、<code>systemctl --user</code>）会报错：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">sudo -u app systemctl --user status
+</span></span><span class="line"><span class="cl"><span class="c1"># Failed to connect to bus: $DBUS_SESSION_BUS_ADDRESS and $XDG_RUNTIME_DIR not defined</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 解法：用 machinectl shell 或给该用户开启 linger</span>
+</span></span><span class="line"><span class="cl">sudo loginctl enable-linger app     <span class="c1"># 让该用户的 /run/user/&lt;uid&gt; 常驻，不随登出销毁</span>
+</span></span></code></pre></div><h1 id="4-一个-go-服务的文件应该怎么摆">4. 一个 Go 服务的文件应该怎么摆</h1>
+<p>把 FHS 落到实处。假设服务叫 <code>myapp</code>：</p>
+<table>
+<thead>
+<tr>
+<th>内容</th>
+<th>路径</th>
+<th>权限</th>
+<th>理由</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>二进制</td>
+<td><code>/usr/local/bin/myapp</code></td>
+<td><code>755 root:root</code></td>
+<td>管理员手动装的程序</td>
+</tr>
+<tr>
+<td>配置</td>
+<td><code>/etc/myapp/config.yaml</code></td>
+<td><code>640 root:myapp</code></td>
+<td>配置在 <code>/etc</code>；含密钥时 other 不可读</td>
+</tr>
+<tr>
+<td>配置片段</td>
+<td><code>/etc/myapp/conf.d/*.yaml</code></td>
+<td><code>640</code></td>
+<td>便于自动化增删</td>
+</tr>
+<tr>
+<td>环境变量</td>
+<td><code>/etc/default/myapp</code></td>
+<td><code>640</code></td>
+<td>与主配置分离，systemd 的 <code>EnvironmentFile</code> 读它</td>
+</tr>
+<tr>
+<td>持久数据</td>
+<td><code>/var/lib/myapp/</code></td>
+<td><code>750 myapp:myapp</code></td>
+<td>丢了就出事的数据</td>
+</tr>
+<tr>
+<td>缓存</td>
+<td><code>/var/cache/myapp/</code></td>
+<td><code>750 myapp:myapp</code></td>
+<td>删了只影响性能</td>
+</tr>
+<tr>
+<td>日志</td>
+<td><code>/var/log/myapp/</code></td>
+<td><code>750 myapp:myapp</code></td>
+<td>或者直接写 stdout 交给 journald</td>
+</tr>
+<tr>
+<td>pid / socket</td>
+<td><code>/run/myapp/</code></td>
+<td><code>750 myapp:myapp</code></td>
+<td>tmpfs，重启自动清</td>
+</tr>
+<tr>
+<td>systemd 单元</td>
+<td><code>/etc/systemd/system/myapp.service</code></td>
+<td><code>644 root:root</code></td>
+<td>管理员定义的单元放这（<strong>不是 <code>/lib/systemd</code></strong>）</td>
+</tr>
+<tr>
+<td>大型整包安装</td>
+<td><code>/opt/myapp/{bin,conf,data}</code></td>
+<td>—</td>
+<td>不遵循 FHS 拆分时的替代方案</td>
+</tr>
+</tbody>
+</table>
+<p>对应的 systemd 单元（<code>RuntimeDirectory</code> 这类指令让你不用自己 mkdir 和 chown）：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-ini" data-lang="ini"><span class="line"><span class="cl"><span class="c1"># /etc/systemd/system/myapp.service</span>
+</span></span><span class="line"><span class="cl"><span class="k">[Unit]</span>
+</span></span><span class="line"><span class="cl"><span class="na">Description</span><span class="o">=</span><span class="s">My Go Service</span>
+</span></span><span class="line"><span class="cl"><span class="na">After</span><span class="o">=</span><span class="s">network-online.target</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">[Service]</span>
+</span></span><span class="line"><span class="cl"><span class="na">Type</span><span class="o">=</span><span class="s">notify</span>
+</span></span><span class="line"><span class="cl"><span class="na">User</span><span class="o">=</span><span class="s">myapp</span>
+</span></span><span class="line"><span class="cl"><span class="na">Group</span><span class="o">=</span><span class="s">myapp</span>
+</span></span><span class="line"><span class="cl"><span class="na">ExecStart</span><span class="o">=</span><span class="s">/usr/local/bin/myapp --config /etc/myapp/config.yaml</span>
+</span></span><span class="line"><span class="cl"><span class="na">EnvironmentFile</span><span class="o">=</span><span class="s">-/etc/default/myapp</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># systemd 自动创建这些目录并设好属主，服务停止时按需清理</span>
+</span></span><span class="line"><span class="cl"><span class="na">RuntimeDirectory</span><span class="o">=</span><span class="s">myapp              # -&gt; /run/myapp        （停止时删除）</span>
+</span></span><span class="line"><span class="cl"><span class="na">StateDirectory</span><span class="o">=</span><span class="s">myapp                # -&gt; /var/lib/myapp    （保留）</span>
+</span></span><span class="line"><span class="cl"><span class="na">CacheDirectory</span><span class="o">=</span><span class="s">myapp                # -&gt; /var/cache/myapp</span>
+</span></span><span class="line"><span class="cl"><span class="na">LogsDirectory</span><span class="o">=</span><span class="s">myapp                 # -&gt; /var/log/myapp</span>
+</span></span><span class="line"><span class="cl"><span class="na">ConfigurationDirectory</span><span class="o">=</span><span class="s">myapp        # -&gt; /etc/myapp</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 顺带一提，这几个加固选项建议默认开</span>
+</span></span><span class="line"><span class="cl"><span class="na">ProtectSystem</span><span class="o">=</span><span class="s">strict                # /usr /boot /etc 只读（呼应 1.1 的&#34;静态可共享&#34;）</span>
+</span></span><span class="line"><span class="cl"><span class="na">ProtectHome</span><span class="o">=</span><span class="s">yes                     # 看不到 /home</span>
+</span></span><span class="line"><span class="cl"><span class="na">PrivateTmp</span><span class="o">=</span><span class="s">yes                      # 独立的 /tmp</span>
+</span></span><span class="line"><span class="cl"><span class="na">NoNewPrivileges</span><span class="o">=</span><span class="s">yes                 # 禁止提权</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">[Install]</span>
+</span></span><span class="line"><span class="cl"><span class="na">WantedBy</span><span class="o">=</span><span class="s">multi-user.target</span>
+</span></span></code></pre></div><p><strong>为什么值得遵守这套约定？</strong> 三个实际收益：① 备份策略可以简单表达为「备份 <code>/etc</code> 和 <code>/var/lib</code>」；② 权限和 SELinux 上下文有现成的规则可套；③ 接手的人不用问你「数据在哪、配置在哪」。容器里可以简化（配置走环境变量、日志走 stdout），但目录语义仍然沿用同一套。</p>
+<h1 id="5-路径解析内核怎么一段段走">5. 路径解析：内核怎么一段段走</h1>
+<h2 id="51-绝对路径与相对路径">5.1 绝对路径与相对路径</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">/var/log/app.log        <span class="c1"># 绝对路径：以 / 开头，从根目录开始</span>
+</span></span><span class="line"><span class="cl">var/log/app.log         <span class="c1"># 相对路径：从【当前工作目录】开始</span>
+</span></span><span class="line"><span class="cl">./app.log               <span class="c1"># 显式相对（. 表示当前目录）</span>
+</span></span><span class="line"><span class="cl">../sibling/f            <span class="c1"># 上一级</span>
+</span></span><span class="line"><span class="cl">~/project/main.go       <span class="c1"># ~ 由 shell 展开成 $HOME，【内核不认识 ~】</span>
+</span></span><span class="line"><span class="cl">~root/.ssh              <span class="c1"># 展开成 root 用户的家目录</span>
+</span></span></code></pre></div><p>注意 <code>~</code> 是 <strong>shell 的展开</strong>，不是路径语法。这带来一个常见的坑：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ✅ 能用：shell 展开了 ~</span>
+</span></span><span class="line"><span class="cl">ls ~/data
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ❌ 不能用：引号阻止了展开，内核收到的是字面量 &#34;~/data&#34;</span>
+</span></span><span class="line"><span class="cl">ls <span class="s2">&#34;~/data&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ls: cannot access &#39;~/data&#39;: No such file or directory</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 正确写法</span>
+</span></span><span class="line"><span class="cl">ls <span class="s2">&#34;</span><span class="nv">$HOME</span><span class="s2">/data&#34;</span>
+</span></span><span class="line"><span class="cl">ls ~/<span class="s2">&#34;data with space&#34;</span>       <span class="c1"># ~ 在引号外，路径其余部分在引号内</span>
+</span></span></code></pre></div><p>内核解析一条路径时，是**逐段（component by component）**走的，每一段都要：查目录 → 找到 inode → 检查执行权限（<code>x</code>）→ 继续下一段。这就是 04 篇讲的那条链：</p>
+<pre tabindex="0"><code>/var/log/app.log
+ │   │    └── 在 log 目录里查 &#34;app.log&#34; -&gt; inode
+ │   └────── 在 var 目录里查 &#34;log&#34;     -&gt; inode，需要 var 有 x 权限
+ └────────── 从根 inode（固定为 2）开始
+</code></pre><p>由此得到两个重要推论：</p>
+<p><strong>① 路径中间的每一级目录都需要 <code>x</code>（执行/通行）权限</strong>，否则整条路径走不通——哪怕最终文件是 <code>777</code>。这是「权限明明给了却还是 Permission denied」的头号原因，5.4 节给排查工具。</p>
+<p><strong>② 路径越深，<code>open()</code> 的开销越大</strong>（要多走几级）。内核用 dentry cache 缓解，但在超深路径 + 冷缓存时仍可测量到差异。</p>
+<h2 id="52-路径的语法细节">5.2 路径的语法细节</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ① 多个连续斜杠等价于一个</span>
+</span></span><span class="line"><span class="cl">ls /var//log///app.log        <span class="c1"># 与 /var/log/app.log 完全相同</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 例外：开头恰好两个斜杠（//）POSIX 允许实现自定义含义，Linux 上仍等价于 /</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ② 末尾斜杠 = 断言&#34;这必须是个目录&#34;</span>
+</span></span><span class="line"><span class="cl">ls /etc/                      <span class="c1"># 正常</span>
+</span></span><span class="line"><span class="cl">ls /etc/passwd/               <span class="c1"># ls: cannot access: Not a directory</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 实用价值：mv src dst/ 能确保 dst 是目录，避免把 src 重命名成 dst 文件</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ③ 长度限制</span>
+</span></span><span class="line"><span class="cl">getconf PATH_MAX /            <span class="c1"># 4096   整条路径的最大字节数</span>
+</span></span><span class="line"><span class="cl">getconf NAME_MAX /            <span class="c1"># 255    单个文件名的最大字节数（注意是字节，中文占 3 字节）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 中文文件名最多 85 个字（255/3）</span>
+</span></span><span class="line"><span class="cl">python3 -c <span class="s2">&#34;print(len(&#39;很长的中文名&#39;.encode()))&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ④ 路径里什么字符都行，除了 / 和 \0（见 04 篇第 8 节）</span>
+</span></span></code></pre></div><h2 id="53--和--是真实存在的目录项">5.3 <code>.</code> 和 <code>..</code> 是真实存在的目录项</h2>
+<p>它们不是 shell 的语法糖，而是<strong>每个目录里真实存在的两条记录</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">ls -ai /tmp <span class="p">|</span> head -3
+</span></span><span class="line"><span class="cl"><span class="c1"># 2621441 .          &lt;- 指向自己</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#       2 ..         &lt;- 指向父目录（这里 /tmp 的父是 /，inode 号 2）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 2621500 somefile</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">stat -c <span class="s1">&#39;%i&#39;</span> /tmp /tmp/. /tmp/..
+</span></span><span class="line"><span class="cl"><span class="c1"># 2621441</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 2621441        &lt;- . 和 /tmp 是同一个 inode</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 2               &lt;- .. 就是 / 的 inode</span>
+</span></span></code></pre></div><p>这解释了 04 篇那个「空目录硬链接数为 2」的现象，也解释了根目录的特殊性：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">stat -c <span class="s1">&#39;%i&#39;</span> / /.. /../..
+</span></span><span class="line"><span class="cl"><span class="c1"># 2</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 2          &lt;- 根目录的 .. 指向它自己（到顶了就不再往上）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 2</span>
+</span></span></code></pre></div><h2 id="54-排查permission-deniednamei">5.4 排查「Permission denied」：namei</h2>
+<p>这是本篇最实用的一个工具。当某个路径访问被拒，用 <code>namei -l</code> <strong>逐层</strong>列出权限，一眼看出是哪一级挡住的：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">namei -l /var/www/html/index.html
+</span></span><span class="line"><span class="cl"><span class="c1"># f: /var/www/html/index.html</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># dr-xr-xr-x root root /</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># drwxr-xr-x root root var</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># drwx------ root root www           &lt;- 就是这一层！other 没有 x，任何非 root 都进不去</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># drwxr-xr-x root root html</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># -rw-r--r-- root root index.html</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                      ^^^^^^^^^^ 文件本身是 644 人人可读，但根本走不到这</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 参数</span>
+</span></span><span class="line"><span class="cl">namei -l path        <span class="c1"># l = long，显示权限、属主、属组</span>
+</span></span><span class="line"><span class="cl">namei -m path        <span class="c1"># 只显示权限</span>
+</span></span><span class="line"><span class="cl">namei -x path        <span class="c1"># 用 ? 标记不存在的部分</span>
+</span></span><span class="line"><span class="cl">namei -o path        <span class="c1"># 显示属主</span>
+</span></span><span class="line"><span class="cl">namei /path/to/link  <span class="c1"># 会把软链接的每一跳都展开显示</span>
+</span></span></code></pre></div><p><code>namei</code> 对软链接的展示尤其有用：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">namei -l /opt/app/current/bin/server
+</span></span><span class="line"><span class="cl"><span class="c1"># f: /opt/app/current/bin/server</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># drwxr-xr-x root root  /</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># drwxr-xr-x root root  opt</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># drwxr-xr-x root root  app</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># lrwxrwxrwx root root  current -&gt; releases/v1.2.3       &lt;- 展开了软链接</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   drwxr-xr-x root root  releases</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   drwxr-xr-x root root  v1.2.3</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># drwxr-xr-x root root  bin</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># -rwxr-xr-x root root  server</span>
+</span></span></code></pre></div><p>没有 <code>namei</code> 时的替代方案：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 手工逐层看</span>
+</span></span><span class="line"><span class="cl"><span class="nv">d</span><span class="o">=</span>/var/www/html/index.html<span class="p">;</span> <span class="k">while</span> <span class="o">[</span> <span class="s2">&#34;</span><span class="nv">$d</span><span class="s2">&#34;</span> !<span class="o">=</span> / <span class="o">]</span><span class="p">;</span> <span class="k">do</span> ls -ld <span class="s2">&#34;</span><span class="nv">$d</span><span class="s2">&#34;</span><span class="p">;</span> <span class="nv">d</span><span class="o">=</span><span class="k">$(</span>dirname <span class="s2">&#34;</span><span class="nv">$d</span><span class="s2">&#34;</span><span class="k">)</span><span class="p">;</span> <span class="k">done</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 或者用 sudo -u 直接验证某用户能不能访问（最直接）</span>
+</span></span><span class="line"><span class="cl">sudo -u www-data <span class="nb">test</span> -r /var/www/html/index.html <span class="o">&amp;&amp;</span> <span class="nb">echo</span> OK <span class="o">||</span> <span class="nb">echo</span> DENIED
+</span></span><span class="line"><span class="cl">sudo -u www-data ls /var/www/html/
+</span></span></code></pre></div><h1 id="6-软链接让路径解析变得诡异">6. 软链接让路径解析变得诡异</h1>
+<p>开篇第四、五问。这一节的所有现象都源于一件事：<strong>shell 记的路径（逻辑路径）和内核认的路径（物理路径）可能不一致。</strong></p>
+<h2 id="61-cd-abc-不一定等于-cd-ac">6.1 cd /a/b/../c 不一定等于 cd /a/c</h2>
+<p>先造一个场景：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">mkdir -p /tmp/demo/real/sub /tmp/demo/other
+</span></span><span class="line"><span class="cl">ln -s /tmp/demo/real /tmp/demo/link          <span class="c1"># link 是指向 real 的软链接</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="nb">cd</span> /tmp/demo/link
+</span></span><span class="line"><span class="cl"><span class="nb">pwd</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># /tmp/demo/link              &lt;- shell 说我在 link 里</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="nb">cd</span> ..
+</span></span><span class="line"><span class="cl"><span class="nb">pwd</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># /tmp/demo                   &lt;- shell 认为上一级是 /tmp/demo</span>
+</span></span></code></pre></div><p>看起来很正常。但换成 <code>-P</code> 模式，结果完全不同：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="nb">cd</span> -P /tmp/demo/link          <span class="c1"># -P = physical，先解析成真实路径再进去</span>
+</span></span><span class="line"><span class="cl"><span class="nb">pwd</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># /tmp/demo/real              &lt;- 直接落到真实目录</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="nb">cd</span> ..
+</span></span><span class="line"><span class="cl"><span class="nb">pwd</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># /tmp/demo                   &lt;- 这次上一级是 real 的父目录，恰好也是 /tmp/demo</span>
+</span></span></code></pre></div><p>真正会出问题的是<strong>软链接跨目录</strong>时：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">mkdir -p /tmp/x/deep/dir /tmp/y
+</span></span><span class="line"><span class="cl">ln -s /tmp/x/deep/dir /tmp/y/mylink
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="nb">cd</span> /tmp/y/mylink <span class="o">&amp;&amp;</span> <span class="nb">pwd</span>       <span class="c1"># /tmp/y/mylink        （逻辑路径）</span>
+</span></span><span class="line"><span class="cl"><span class="nb">cd</span> .. <span class="o">&amp;&amp;</span> <span class="nb">pwd</span>                  <span class="c1"># /tmp/y               （shell 按字符串算的）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="nb">cd</span> -P /tmp/y/mylink <span class="o">&amp;&amp;</span> <span class="nb">pwd</span>    <span class="c1"># /tmp/x/deep/dir      （物理路径）</span>
+</span></span><span class="line"><span class="cl"><span class="nb">cd</span> .. <span class="o">&amp;&amp;</span> <span class="nb">pwd</span>                  <span class="c1"># /tmp/x/deep          （真实的父目录！完全不同）</span>
+</span></span></code></pre></div><p><strong>为什么会这样？</strong> 因为有两套 <code>..</code> 的处理逻辑：</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>shell 的默认行为（<code>-L</code> 逻辑模式）</th>
+<th>内核 / <code>-P</code> 物理模式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>..</code> 怎么算</td>
+<td><strong>纯字符串操作</strong>：把 <code>$PWD</code> 末尾一段去掉</td>
+<td><strong>真的去读目录里的 <code>..</code> 条目</strong>，得到真实父目录</td>
+</tr>
+<tr>
+<td>记录的路径</td>
+<td>你走过来的路径（含软链接名）</td>
+<td>真实路径</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 验证：内核（也就是任何外部程序）看到的永远是物理路径</span>
+</span></span><span class="line"><span class="cl"><span class="nb">cd</span> /tmp/y/mylink
+</span></span><span class="line"><span class="cl"><span class="nb">pwd</span>                <span class="c1"># /tmp/y/mylink        &lt;- bash 内建的 pwd，读的是 $PWD 变量</span>
+</span></span><span class="line"><span class="cl">/bin/pwd           <span class="c1"># /tmp/x/deep/dir      &lt;- 外部程序，调 getcwd() 问内核</span>
+</span></span><span class="line"><span class="cl"><span class="nb">pwd</span> -P             <span class="c1"># /tmp/x/deep/dir      &lt;- 显式要物理路径</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="nv">$PWD</span>          <span class="c1"># /tmp/y/mylink        &lt;- $PWD 只是 shell 维护的一个字符串</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">ls -l /proc/<span class="nv">$$</span>/cwd
+</span></span><span class="line"><span class="cl"><span class="c1"># lrwxrwxrwx ... /proc/1234/cwd -&gt; /tmp/x/deep/dir       &lt;- 内核记的也是物理路径</span>
+</span></span></code></pre></div><p><strong>所以第五问的答案是</strong>：<code>pwd</code> 是 bash 内建，默认输出 shell 维护的逻辑路径（含软链接）；<code>pwd -P</code> 和 <code>/bin/pwd</code> 输出内核记录的物理路径。当路径里有软链接时两者不同。</p>
+<p>这个差异在脚本里是真实的 bug 来源：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ❌ 危险：在有软链接的路径下，用 .. 拼路径可能指向意料之外的地方</span>
+</span></span><span class="line"><span class="cl"><span class="nb">cd</span> <span class="s2">&#34;</span><span class="nv">$APP_DIR</span><span class="s2">/current&#34;</span>          <span class="c1"># current 是软链接</span>
+</span></span><span class="line"><span class="cl">rm -rf ../old_data             <span class="c1"># 你以为删的是 $APP_DIR/old_data</span>
+</span></span><span class="line"><span class="cl">                               <span class="c1"># 但如果用了 cd -P 或在子进程里执行，可能删到别处</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 安全：先解析成绝对物理路径再操作</span>
+</span></span><span class="line"><span class="cl"><span class="nv">APP_ROOT</span><span class="o">=</span><span class="k">$(</span><span class="nb">cd</span> -P <span class="s2">&#34;</span><span class="nv">$APP_DIR</span><span class="s2">&#34;</span> <span class="o">&amp;&amp;</span> <span class="nb">pwd</span><span class="k">)</span>
+</span></span><span class="line"><span class="cl">rm -rf <span class="s2">&#34;</span><span class="nv">$APP_ROOT</span><span class="s2">/old_data&#34;</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 全局改变 shell 的默认行为（很少用，但要知道有）</span>
+</span></span><span class="line"><span class="cl"><span class="nb">set</span> -o physical        <span class="c1"># 让 cd/pwd 默认走物理模式</span>
+</span></span><span class="line"><span class="cl"><span class="nb">set</span> +o physical        <span class="c1"># 恢复默认（逻辑模式）</span>
+</span></span><span class="line"><span class="cl"><span class="nb">shopt</span> -s autocd        <span class="c1"># 顺带一提：直接敲目录名就能 cd 进去</span>
+</span></span></code></pre></div><h2 id="62-四个路径解析命令的区别">6.2 四个路径解析命令的区别</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">mkdir -p /tmp/p/real <span class="o">&amp;&amp;</span> ln -s /tmp/p/real /tmp/p/link
+</span></span><span class="line"><span class="cl"><span class="nb">cd</span> /tmp/p
+</span></span></code></pre></div><table>
+<thead>
+<tr>
+<th>命令</th>
+<th>作用</th>
+<th><code>/tmp/p/link</code></th>
+<th>不存在的路径</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>readlink link</code></td>
+<td>只读<strong>一层</strong>链接的内容</td>
+<td><code>/tmp/p/real</code></td>
+<td>报错</td>
+</tr>
+<tr>
+<td><code>readlink -f X</code></td>
+<td>递归解析，<strong>最后一层可以不存在</strong></td>
+<td><code>/tmp/p/real</code></td>
+<td>仍输出结果</td>
+</tr>
+<tr>
+<td><code>readlink -e X</code></td>
+<td>递归解析，<strong>所有部分必须存在</strong></td>
+<td><code>/tmp/p/real</code></td>
+<td>无输出，退出码 1</td>
+</tr>
+<tr>
+<td><code>readlink -m X</code></td>
+<td>递归解析，<strong>完全不检查存在性</strong></td>
+<td><code>/tmp/p/real</code></td>
+<td>输出结果</td>
+</tr>
+<tr>
+<td><code>realpath X</code></td>
+<td>等价 <code>readlink -e</code>，语义更清晰，<strong>推荐</strong></td>
+<td><code>/tmp/p/real</code></td>
+<td>报错</td>
+</tr>
+<tr>
+<td><code>realpath -m X</code></td>
+<td>允许不存在</td>
+<td>—</td>
+<td>输出结果</td>
+</tr>
+<tr>
+<td><code>realpath -s X</code></td>
+<td><strong>只做词法规范化</strong>（去掉 <code>.</code>、<code>..</code>），不解析软链接</td>
+<td><code>/tmp/p/link</code></td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">realpath /tmp/p/link                    <span class="c1"># /tmp/p/real          解析软链接</span>
+</span></span><span class="line"><span class="cl">realpath -s /tmp/p/link                 <span class="c1"># /tmp/p/link          不解析</span>
+</span></span><span class="line"><span class="cl">realpath --relative-to<span class="o">=</span>/tmp /tmp/p/real <span class="c1"># p/real               算相对路径</span>
+</span></span><span class="line"><span class="cl">realpath -m /nonexistent/a/b            <span class="c1"># /nonexistent/a/b     不检查存在</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">readlink -f /proc/self/exe              <span class="c1"># 当前进程的真实程序路径</span>
+</span></span><span class="line"><span class="cl">readlink -f <span class="s2">&#34;</span><span class="k">$(</span><span class="nb">command</span> -v python3<span class="k">)</span><span class="s2">&#34;</span>     <span class="c1"># python3 最终指向哪个版本  ← 排查多版本必用</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># /usr/bin/python3.10</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 脚本里获取自身所在的真实目录（标准写法）</span>
+</span></span><span class="line"><span class="cl"><span class="nv">SCRIPT_DIR</span><span class="o">=</span><span class="k">$(</span><span class="nb">cd</span> -- <span class="s2">&#34;</span><span class="k">$(</span>dirname -- <span class="s2">&#34;</span><span class="k">$(</span>readlink -f <span class="s2">&#34;</span><span class="nv">$0</span><span class="s2">&#34;</span><span class="k">)</span><span class="s2">&#34;</span><span class="k">)</span><span class="s2">&#34;</span> <span class="o">&amp;&amp;</span> <span class="nb">pwd</span><span class="k">)</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                                        ^^^^^^^^^^^ 先解析软链接，</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#            否则脚本被软链接调用时会拿到链接所在目录而不是真实目录</span>
+</span></span></code></pre></div><h2 id="63-软链接循环与-40-层限制">6.3 软链接循环与 40 层限制</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">ln -s a b <span class="o">&amp;&amp;</span> ln -s b a          <span class="c1"># 造一个环</span>
+</span></span><span class="line"><span class="cl">cat a
+</span></span><span class="line"><span class="cl"><span class="c1"># cat: a: Too many levels of symbolic links</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ 对应错误码 ELOOP</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 内核的保护：解析一条路径时最多跟随 40 层软链接</span>
+</span></span><span class="line"><span class="cl">cat /proc/sys/fs/... <span class="c1"># （这个限制是编译期常量 MAXSYMLINKS=40，不可调）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 检测环</span>
+</span></span><span class="line"><span class="cl">realpath a
+</span></span><span class="line"><span class="cl"><span class="c1"># realpath: a: Too many levels of symbolic links</span>
+</span></span><span class="line"><span class="cl">find /opt -follow 2&gt;<span class="p">&amp;</span><span class="m">1</span> <span class="p">|</span> grep -i loop      <span class="c1"># find 会报告检测到的环</span>
+</span></span></code></pre></div><p>这也解释了 04 篇提到的「为什么硬链接不能指向目录」：硬链接成环时<strong>没有任何计数器能发现</strong>（因为它们是平等的目录项，不像软链接有跟随层数可数），递归工具会真的无限循环下去。软链接允许指向目录，正是因为有这个 40 层的可检测边界。</p>
+<h1 id="7-目录跳转的效率技巧">7. 目录跳转的效率技巧</h1>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="nb">cd</span>              <span class="c1"># 不带参数 = 回家目录（等价 cd ~ 或 cd $HOME）</span>
+</span></span><span class="line"><span class="cl"><span class="nb">cd</span> -            <span class="c1"># 回到【上一个】目录（在两个目录间来回切最常用）</span>
+</span></span><span class="line"><span class="cl"><span class="nb">cd</span> -P dir       <span class="c1"># 物理模式进入</span>
+</span></span><span class="line"><span class="cl"><span class="nb">cd</span> -e           <span class="c1"># 配合 -P：如果 getcwd 失败则返回非零（脚本里防御用）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 目录栈：适合&#34;临时去别处，办完事回来&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="nb">pushd</span> /var/log      <span class="c1"># 进入 /var/log，并把当前目录压栈</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ~/project /var/log       &lt;- 打印当前栈</span>
+</span></span><span class="line"><span class="cl"><span class="nb">pushd</span> /etc/nginx    <span class="c1"># 再压一层</span>
+</span></span><span class="line"><span class="cl"><span class="nb">dirs</span> -v             <span class="c1"># 带编号查看栈</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 0  /etc/nginx</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 1  /var/log</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 2  ~/project</span>
+</span></span><span class="line"><span class="cl"><span class="nb">popd</span>                <span class="c1"># 弹栈并回到 /var/log</span>
+</span></span><span class="line"><span class="cl"><span class="nb">popd</span>                <span class="c1"># 回到 ~/project</span>
+</span></span><span class="line"><span class="cl"><span class="nb">cd</span> ~2               <span class="c1"># 直接跳到栈里第 2 个（配合 dirs -v 的编号）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># CDPATH：给 cd 加搜索路径（谨慎使用）</span>
+</span></span><span class="line"><span class="cl"><span class="nb">export</span> <span class="nv">CDPATH</span><span class="o">=</span><span class="s2">&#34;.:</span><span class="nv">$HOME</span><span class="s2">/projects&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="nb">cd</span> myapp            <span class="c1"># 会在当前目录找不到时，去 ~/projects/myapp</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ⚠️ 坑：CDPATH 里【必须】把 . 放第一个，否则 cd somedir 可能跳到意想不到的地方；</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#        脚本里绝对不要设 CDPATH，会让 cd 的行为不可预测</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 现代工具（需安装）：按使用频率智能跳转</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># zoxide：z log  -&gt; 直接跳到最常用的含 log 的目录</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># autojump / fasd 同类</span>
+</span></span></code></pre></div><h1 id="8-知识点扩展">8. 知识点扩展</h1>
+<h2 id="81-cd--change-directory">8.1 cd — change directory</h2>
+<p><strong>全称</strong>：<code>cd</code> = <strong>c</strong>hange <strong>d</strong>irectory。<strong>shell 内建命令</strong>（原因见 01 篇 3.2：必须改自己进程的 cwd）。</p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>全称</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>（无）</td>
+<td>—</td>
+<td>回 <code>$HOME</code></td>
+</tr>
+<tr>
+<td><code>-</code></td>
+<td>—</td>
+<td>回上一个目录（<code>$OLDPWD</code>），并打印新路径</td>
+</tr>
+<tr>
+<td><code>-L</code></td>
+<td>logical</td>
+<td><strong>默认</strong>：保留路径中的软链接名</td>
+</tr>
+<tr>
+<td><code>-P</code></td>
+<td>physical</td>
+<td>解析软链接，进入真实目录</td>
+</tr>
+<tr>
+<td><code>-e</code></td>
+<td>—</td>
+<td>配合 <code>-P</code>，若 <code>getcwd()</code> 失败则返回非零退出码</td>
+</tr>
+<tr>
+<td><code>-@</code></td>
+<td>—</td>
+<td>把文件的扩展属性当目录访问（极少用）</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="nb">cd</span> /var/log <span class="o">&amp;&amp;</span> <span class="nb">cd</span> - <span class="o">&amp;&amp;</span> <span class="nb">cd</span> -      <span class="c1"># 在两个目录间反复横跳</span>
+</span></span><span class="line"><span class="cl"><span class="nb">cd</span> -P /opt/app/current           <span class="c1"># 进入软链接指向的真实目录</span>
+</span></span><span class="line"><span class="cl"><span class="o">(</span><span class="nb">cd</span> /tmp <span class="o">&amp;&amp;</span> ls<span class="o">)</span>                  <span class="c1"># ✅ 用子 shell 临时切换，不影响当前 shell 的 cwd</span>
+</span></span></code></pre></div><p>最后这个技巧很有用：<strong>用括号包起来就是子 shell，里面的 <code>cd</code> 不影响外面</strong>。脚本里比「cd 过去再 cd 回来」安全得多（后者在中途出错时回不来）。</p>
+<h2 id="82-pwd--print-working-directory">8.2 pwd — print working directory</h2>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>（无）/ <code>-L</code></td>
+<td>打印<strong>逻辑</strong>路径（<code>$PWD</code> 的值，含软链接名）——bash 内建的默认行为</td>
+</tr>
+<tr>
+<td><code>-P</code></td>
+<td>打印<strong>物理</strong>路径（问内核要，<code>getcwd()</code>）</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">pwd<span class="p">;</span> <span class="nb">pwd</span> -P<span class="p">;</span> /bin/pwd            <span class="c1"># 三者在有软链接时可能不同</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="nv">$PWD</span>                        <span class="c1"># shell 变量，等价 pwd -L</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="nv">$OLDPWD</span>                     <span class="c1"># 上一个目录，cd - 用的就是它</span>
+</span></span><span class="line"><span class="cl">readlink /proc/self/cwd          <span class="c1"># 内核视角的真实 cwd</span>
+</span></span></code></pre></div><h2 id="83-realpath--readlink">8.3 realpath / readlink</h2>
+<p>见 6.2 的对比表。补充常用参数：</p>
+<table>
+<thead>
+<tr>
+<th>命令</th>
+<th>参数</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>realpath</code></td>
+<td><code>-e</code></td>
+<td>所有部分必须存在（默认）</td>
+</tr>
+<tr>
+<td></td>
+<td><code>-m</code></td>
+<td>允许不存在</td>
+</tr>
+<tr>
+<td></td>
+<td><code>-s</code> / <code>--no-symlinks</code></td>
+<td>只做词法规范化</td>
+</tr>
+<tr>
+<td></td>
+<td><code>--relative-to=DIR</code></td>
+<td>输出相对于 DIR 的路径</td>
+</tr>
+<tr>
+<td></td>
+<td><code>--relative-base=DIR</code></td>
+<td>在 DIR 内部时输出相对路径，否则输出绝对路径</td>
+</tr>
+<tr>
+<td></td>
+<td><code>-q</code></td>
+<td>静默（出错不打印）</td>
+</tr>
+<tr>
+<td></td>
+<td><code>-z</code></td>
+<td>输出以 <code>\0</code> 结尾（配合 <code>xargs -0</code>）</td>
+</tr>
+<tr>
+<td><code>readlink</code></td>
+<td><code>-f</code> / <code>-e</code> / <code>-m</code></td>
+<td>三种存在性策略（见上表）</td>
+</tr>
+<tr>
+<td></td>
+<td><code>-n</code></td>
+<td>不输出末尾换行</td>
+</tr>
+<tr>
+<td></td>
+<td><code>-z</code></td>
+<td><code>\0</code> 结尾</td>
+</tr>
+</tbody>
+</table>
+<h2 id="84-namei--逐层解析路径">8.4 namei — 逐层解析路径</h2>
+<p><strong>全称</strong>：<code>namei</code> = <strong>name</strong> to <strong>i</strong>node（follow a pathname until a terminal point is found）</p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>全称</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>-l</code></td>
+<td><code>--long</code></td>
+<td>显示权限、属主、属组（<strong>最常用</strong>）</td>
+</tr>
+<tr>
+<td><code>-m</code></td>
+<td><code>--modes</code></td>
+<td>只显示权限</td>
+</tr>
+<tr>
+<td><code>-o</code></td>
+<td><code>--owners</code></td>
+<td>只显示属主</td>
+</tr>
+<tr>
+<td><code>-x</code></td>
+<td><code>--mountpoints</code></td>
+<td>用 <code>D</code> 标出挂载点</td>
+</tr>
+<tr>
+<td><code>-v</code></td>
+<td><code>--vertical</code></td>
+<td>竖排输出</td>
+</tr>
+<tr>
+<td><code>-n</code></td>
+<td><code>--nosymlinks</code></td>
+<td>不跟随软链接</td>
+</tr>
+</tbody>
+</table>
+<p>输出首字母的含义：<code>f:</code> 起始路径、<code>d</code> 目录、<code>l</code> 软链接、<code>-</code> 普通文件、<code>?</code> 出错（权限不足或不存在）。</p>
+<h2 id="85-挂载点相关findmnt--mount--df">8.5 挂载点相关：findmnt / mount / df</h2>
+<p>判断「这个目录属于哪个文件系统」时用：</p>
+<table>
+<thead>
+<tr>
+<th>命令</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>findmnt</code></td>
+<td>树形列出所有挂载点（<strong>比 <code>mount</code> 好读</strong>）</td>
+</tr>
+<tr>
+<td><code>findmnt /path</code></td>
+<td>查某个路径属于哪个挂载点</td>
+</tr>
+<tr>
+<td><code>findmnt -t ext4,xfs</code></td>
+<td>只看指定类型</td>
+</tr>
+<tr>
+<td><code>findmnt --df</code></td>
+<td>带用量的挂载表</td>
+</tr>
+<tr>
+<td><code>findmnt -o TARGET,SOURCE,FSTYPE,OPTIONS</code></td>
+<td>自定义列</td>
+</tr>
+<tr>
+<td><code>mount</code></td>
+<td>列出挂载（旧式，输出杂乱）</td>
+</tr>
+<tr>
+<td><code>cat /proc/mounts</code></td>
+<td>内核视角的挂载表（最可靠，脚本用）</td>
+</tr>
+<tr>
+<td><code>df -hT /path</code></td>
+<td>看用量与类型</td>
+</tr>
+<tr>
+<td><code>stat -f /path</code></td>
+<td>看文件系统级信息（块大小、inode 总数）</td>
+</tr>
+<tr>
+<td><code>lsblk -f</code></td>
+<td>块设备树 + 文件系统 + UUID + 挂载点</td>
+</tr>
+<tr>
+<td><code>mountpoint -q /path</code></td>
+<td>判断是不是挂载点（脚本里防「往未挂载的目录写数据」）</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">findmnt /var/log
+</span></span><span class="line"><span class="cl"><span class="c1"># TARGET SOURCE    FSTYPE OPTIONS</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># /var   /dev/vdb1 ext4   rw,relatime</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#  ^^^^ 说明 /var/log 属于 /var 这个挂载点，不是根分区</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 部署脚本里的防御性检查（数据盘没挂载就往上写，会把根分区写爆）</span>
+</span></span><span class="line"><span class="cl">mountpoint -q /data <span class="o">||</span> <span class="o">{</span> <span class="nb">echo</span> <span class="s2">&#34;/data 未挂载，中止&#34;</span><span class="p">;</span> <span class="nb">exit</span> 1<span class="p">;</span> <span class="o">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 判断两个路径是否在同一文件系统（决定 mv 是否原子、能否硬链接）</span>
+</span></span><span class="line"><span class="cl"><span class="o">[[</span> <span class="k">$(</span>stat -c <span class="s1">&#39;%d&#39;</span> /a<span class="k">)</span> <span class="o">==</span> <span class="k">$(</span>stat -c <span class="s1">&#39;%d&#39;</span> /b<span class="k">)</span> <span class="o">]]</span> <span class="o">&amp;&amp;</span> <span class="nb">echo</span> <span class="s2">&#34;同一文件系统&#34;</span>
+</span></span></code></pre></div><h2 id="86-目录栈与其他">8.6 目录栈与其他</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="nb">pushd</span> DIR       <span class="c1"># 压栈并进入</span>
+</span></span><span class="line"><span class="cl"><span class="nb">pushd</span>           <span class="c1"># 交换栈顶两个目录</span>
+</span></span><span class="line"><span class="cl"><span class="nb">pushd</span> +2        <span class="c1"># 把栈里第 2 个转到栈顶并进入</span>
+</span></span><span class="line"><span class="cl"><span class="nb">popd</span>            <span class="c1"># 弹栈并进入新的栈顶</span>
+</span></span><span class="line"><span class="cl"><span class="nb">popd</span> +1         <span class="c1"># 只删除栈里第 1 个条目，不改变当前目录</span>
+</span></span><span class="line"><span class="cl"><span class="nb">dirs</span> -v         <span class="c1"># 带编号显示目录栈</span>
+</span></span><span class="line"><span class="cl"><span class="nb">dirs</span> -c         <span class="c1"># 清空栈</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">tree -L <span class="m">2</span> -d /etc        <span class="c1"># 看目录骨架（见 04 篇 10.11）</span>
+</span></span><span class="line"><span class="cl">du -xh -d1 /var <span class="p">|</span> sort -h    <span class="c1"># 看哪个子目录大（-x 不跨文件系统）</span>
+</span></span><span class="line"><span class="cl">find / -maxdepth <span class="m">1</span> -type d   <span class="c1"># 列出根下所有目录</span>
+</span></span></code></pre></div><h1 id="9-面试题">9. 面试题</h1>
+<p><strong>Q：FHS 是按什么逻辑组织目录的？为什么 <code>/usr</code> 可以只读挂载而 <code>/var</code> 要单独分区？</strong></p>
+<p>FHS 用<strong>两个维度</strong>给数据分类：<strong>静态 / 可变</strong>（装完是否还会改）和 <strong>可共享 / 不可共享</strong>（多台机器能否用同一份）。</p>
+<p><code>/usr</code> 是「静态 + 可共享」——装完就不变，所有机器的内容可以一样。所以它能<strong>只读挂载</strong>（嵌入式和高安全环境的标准做法，系统程序在物理上就不可能被篡改），也能通过 NFS 多机共享一份。容器镜像的只读层本质上是同一个思路。</p>
+<p><code>/var</code> 是「可变 + 不可共享」——它是系统里<strong>唯一会持续增长</strong>的地方（日志、数据库、缓存）。给它单独分区的理由是<strong>故障隔离</strong>：日志写爆了只会撑满 <code>/var</code>，根分区还有空间让你 ssh 进去处理；如果共用根分区，磁盘满了会导致连登录都做不到（登录要写 utmp、要创建临时文件）。</p>
+<p><code>/etc</code> 是「静态 + 不可共享」——每台机器配置不同但装完基本不变，所以它是<strong>备份和版本控制的重点</strong>（etckeeper）。</p>
+<p><strong>Q：<code>/bin</code> 和 <code>/usr/bin</code> 有什么区别？为什么现在 <code>/bin</code> 是软链接？</strong></p>
+<p>历史上的区别是「启动必需 vs 其他」：<code>/bin</code> 在根分区，开机就能用；<code>/usr</code> 可能是独立分区甚至网络挂载，挂载时机晚。</p>
+<p>但这个分裂的<strong>真实起因不是设计，而是硬盘太小</strong>——1970 年代 PDP-11 的硬盘只有 1.5MB，根分区装满后开发者把溢出的程序挪到了第二块盘，那块盘恰好挂在 <code>/usr</code>（当时是放用户家目录的地方，就是字面意思 user）。「Unix System Resources」是后来编的解释。</p>
+<p><strong>initramfs</strong> 出现后，启动早期由它负责挂载所有分区，「启动必需」的划分失去意义。于是 2012 年起有了 <strong>usrmerge</strong>：<code>/bin</code>、<code>/sbin</code>、<code>/lib</code> 全部变成指向 <code>/usr/</code> 下对应目录的软链接。可以用 <code>ls -i /bin/ls /usr/bin/ls</code> 验证它们 inode 相同。</p>
+<p>实践含义：脚本的 shebang 用 <code>#!/usr/bin/env bash</code> 最可移植（macOS 上 bash 根本不在 <code>/bin</code>）。</p>
+<p><strong>Q：<code>/tmp</code> 和 <code>/var/tmp</code> 有什么区别？往 <code>/tmp</code> 写大文件有什么风险？</strong></p>
+<p><code>/tmp</code> <strong>重启即清空</strong>，且多数发行版把它挂成 <strong>tmpfs（内存文件系统）</strong>；<code>/var/tmp</code> 在磁盘上，<strong>跨重启保留</strong>，适合放需要熬过重启的中间产物。两者都是 <code>1777</code> 权限——人人可写，但带 <strong>Sticky 位</strong>（只能删自己的文件，否则任何人都能删别人的临时文件）。</p>
+<p>风险是：<code>/tmp</code> 是 tmpfs 时<strong>写它等于吃内存</strong>，默认上限是物理内存的一半，往里 <code>dd</code> 一个 10GB 文件可能直接触发 OOM。大文件应该写 <code>/var/tmp</code> 或专门的数据目录。</p>
+<p>还有一个容易困惑的点：systemd 服务如果启用了 <code>PrivateTmp=yes</code>，它看到的 <code>/tmp</code> 是 <code>/tmp/systemd-private-xxx-服务名-yyy/tmp</code>，与你在 shell 里看到的不是同一个目录——这解释了「程序说文件写在 /tmp 但我找不到」。</p>
+<p><strong>Q：<code>/run</code> 是什么？为什么 pid 文件和 socket 要放这里而不是 <code>/var/run</code>？</strong></p>
+<p><code>/run</code> 是挂在根分区下的 <strong>tmpfs</strong>，存放运行时数据（pid 文件、unix socket、锁文件），<strong>重启后必定为空</strong>。<code>/var/run</code> 现在只是指向它的兼容软链接。</p>
+<p>搬家的原因是<strong>启动顺序</strong>：<code>/var</code> 可能是独立分区甚至 NFS，在启动早期尚未挂载，但 udev、systemd 这些早期服务就已经需要写 pid 文件了。放在根分区的 tmpfs 上就没有这个依赖。</p>
+<p>附带解决了另一个老问题：tmpfs 保证重启后干净，不会像磁盘上的 <code>/var/run</code> 那样在异常断电后残留陈旧 pid 文件，导致服务误判「已有实例在运行」而拒绝启动。</p>
+<p>服务端实践：Go 服务的 pid/socket 放 <code>/run/myapp/</code>，用 systemd 的 <code>RuntimeDirectory=myapp</code> 声明，systemd 会自动创建并在服务停止时清理，不用自己 mkdir + chown。</p>
+<p><strong>Q：<code>cd /a/b/../c</code> 和 <code>cd /a/c</code> 一定等价吗？<code>pwd</code> 和 <code>pwd -P</code> 什么时候不同？</strong></p>
+<p><strong>不一定等价</strong>——当 <code>b</code> 是指向别处的软链接时就不同。</p>
+<p>根源是有两套 <code>..</code> 的处理方式：<strong>shell 默认是逻辑模式（<code>-L</code>）</strong>，<code>..</code> 是<strong>纯字符串操作</strong>（把 <code>$PWD</code> 末尾一段去掉）；<strong>内核是物理模式</strong>，<code>..</code> 是真的去读目录里的 <code>..</code> 条目，得到真实的父目录。所以 <code>cd /tmp/y/mylink &amp;&amp; cd ..</code> 在 shell 里回到 <code>/tmp/y</code>，而 <code>cd -P /tmp/y/mylink &amp;&amp; cd ..</code> 回到的是链接目标的真实父目录。</p>
+<p><code>pwd</code> 是 bash 内建，输出 shell 维护的 <code>$PWD</code>（逻辑路径，含软链接名）；<code>pwd -P</code> 和外部的 <code>/bin/pwd</code> 调 <code>getcwd()</code> 问内核，输出物理路径。<code>readlink /proc/self/cwd</code> 也是物理路径——<strong>内核只知道物理路径，逻辑路径纯粹是 shell 的记账。</strong></p>
+<p>脚本里的安全写法是先解析成绝对物理路径再操作：<code>APP_ROOT=$(cd -P &quot;$dir&quot; &amp;&amp; pwd)</code>，避免用 <code>..</code> 拼路径时删错东西。</p>
+<p><strong>Q：一个文件权限是 644，属主也对，为什么读不了？怎么快速定位？</strong></p>
+<p>因为<strong>路径上每一级目录都需要 <code>x</code>（通行）权限</strong>，内核逐段解析路径时，任何一级缺 <code>x</code> 就直接返回 <code>EACCES</code>，根本走不到文件本身。</p>
+<p>定位工具是 <strong><code>namei -l /完整/路径</code></strong>，它逐层打印每一级的权限、属主、属组，一眼就能看出是哪一级挡住了（比如 <code>drwx------ root root www</code> 这一层）。它还会展开路径中的软链接，显示每一跳。</p>
+<p>另一种直接验证方式是 <code>sudo -u www-data test -r /path &amp;&amp; echo OK</code>，直接以目标用户身份试一次。</p>
+<p><strong>Q：<code>/proc</code> 占磁盘空间吗？容器里 <code>free -h</code> 为什么显示的是宿主机内存？</strong></p>
+<p><code>/proc</code> 是 <strong>procfs 虚拟文件系统</strong>，内容由内核在你<strong>读取的瞬间</strong>生成，不占任何磁盘（<code>df /proc</code> 显示大小为 0，<code>ls -l /proc/meminfo</code> 显示大小也是 0 但能 <code>cat</code> 出内容）。</p>
+<p>容器里看到宿主机数据，是因为 <strong><code>/proc</code> 没有被容器的命名空间隔离</strong>——<code>free</code>、<code>nproc</code>、<code>top</code> 读的都是 <code>/proc</code> 里的宿主机全局信息，cgroup 的限额它们不认。后果是 JVM/Go 的自动调优会按宿主机的内存和核数计算，然后被 OOMKilled 或产生大量无效调度。</p>
+<p>真实限额要读 cgroup：<code>/sys/fs/cgroup/memory.max</code>、<code>/sys/fs/cgroup/cpu.max</code>（v2）。解法是 Go 里设 <code>GOMEMLIMIT</code> + 引入 <code>automaxprocs</code>，或者在宿主上部署 lxcfs 让容器的 <code>/proc</code> 反映 cgroup 值。</p>
+<p><strong>Q：自己编译的软件应该装到哪？为什么不能装 <code>/usr/bin</code>？</strong></p>
+<p><code>/usr/bin</code> 属于<strong>包管理器</strong>。手动往里放文件有三个问题：系统升级时可能被覆盖或产生文件冲突；<code>dpkg -S</code>/<code>rpm -qf</code> 查不到归属，接手的人不知道这文件哪来的；卸载时无从清理。</p>
+<p>正确的位置分三种：<strong><code>/usr/local/</code></strong>——管理员手动装的东西（<code>./configure</code> 的默认 <code>--prefix</code> 就是它，下载的单个二进制也放 <code>/usr/local/bin</code>）；<strong><code>/opt/&lt;软件名&gt;/</code></strong>——自带完整目录结构的第三方整包（如 Go 官方 tarball 建议解压到 <code>/usr/local/go</code>）；<strong><code>~/.local/bin</code></strong>——只给当前用户、或者没有 root 权限时。</p>
+<p>PATH 的默认顺序把 <code>/usr/local/bin</code> 排在 <code>/usr/bin</code> <strong>前面</strong>，正是为了让手动装的新版本能覆盖系统自带的旧版本，这是设计意图不是巧合。</p>
+<p><strong>Q：软链接为什么允许指向目录，硬链接却不允许？</strong></p>
+<p>两者都会导致目录树成环，区别在于<strong>环是否可检测</strong>。</p>
+<p>软链接的解析是「跟随」语义，内核给了一个硬性上限 <strong>40 层</strong>（<code>MAXSYMLINKS</code>），超过就返回 <code>ELOOP</code>（<code>Too many levels of symbolic links</code>）。这是一个廉价且可靠的兜底。</p>
+<p>硬链接是「平等的目录项」，成环之后<strong>没有任何计数器能发现</strong>——<code>find</code>、<code>du</code>、<code>rm -r</code> 递归时会真的无限循环下去；而且 <code>..</code> 该指向哪个父目录变得无解，<code>getcwd()</code> 也无法唯一还原路径。所以内核直接禁止普通用户给目录建硬链接（<code>.</code> 和 <code>..</code> 是内核自己维护的例外）。</p>
+<hr>
+<h1 id="小结">小结</h1>
+<ul>
+<li>FHS 的骨架是 <strong>静态/可变 × 可共享/不可共享</strong> 这个 2×2，分区规划和备份策略都从它推导：<code>/usr</code> 可只读、<code>/etc</code> 要版控、<code>/var</code> 要单独分区</li>
+<li><code>/usr</code> 的名字来自 1970 年代硬盘装不下的意外，<strong>usrmerge</strong> 之后 <code>/bin</code>、<code>/sbin</code>、<code>/lib</code> 都只是软链接</li>
+<li>装软件：包管理器管 <code>/usr</code>，你管 <code>/usr/local</code>，整包软件用 <code>/opt</code>，<strong>永远别手动写 <code>/usr/bin</code></strong></li>
+<li><code>/run</code> 是 tmpfs 且在根分区，所以 pid 和 socket 放它；<code>/tmp</code> 可能是内存，别往里写大文件</li>
+<li><code>/proc</code>、<code>/sys</code> 不占磁盘，但<strong>没有被容器隔离</strong>——容器里要读 cgroup 才知道真实限额</li>
+<li>路径<strong>逐段解析</strong>，每一级目录都要 <code>x</code> 权限，排查用 <strong><code>namei -l</code></strong></li>
+<li><strong>逻辑路径是 shell 的记账，物理路径才是内核认的</strong>：<code>pwd</code> vs <code>pwd -P</code>、<code>cd</code> vs <code>cd -P</code>，有软链接时它们不同</li>
+</ul>
+<p>下一篇（04 篇）讲<strong>文件与目录操作的深水区</strong>：inode 到底是什么、删除为什么叫 unlink、<code>mv</code> 什么时候是原子的、<code>cp</code> 默认丢了什么、<code>ls</code> 在百万文件目录里为什么会卡住。</p>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2026-08-12</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/linux/">linux</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/linux/linux_04_%E6%96%87%E4%BB%B6%E4%B8%8E%E7%9B%AE%E5%BD%95%E6%93%8D%E4%BD%9C/" class="prev" rel="prev" title="Linux-04 文件与目录操作：从 ls 的每个参数到 inode 引用计数"><i class="fas fa-angle-left fa-fw"></i>Linux-04 文件与目录操作：从 ls 的每个参数到 inode 引用计数</a>
+            <a href="/posts/linux/linux_02_%E5%8C%85%E7%AE%A1%E7%90%86%E5%99%A8%E7%9A%84%E4%BD%BF%E7%94%A8%E7%A6%BB%E7%BA%BF%E5%AE%89%E8%A3%85%E4%B8%8E%E4%BA%8B%E5%8A%A1%E5%8E%9F%E7%90%86/" class="next" rel="next" title="Linux-02 包管理器：从 apt、yum、dnf 的使用到离线安装与事务原理">Linux-02 包管理器：从 apt、yum、dnf 的使用到离线安装与事务原理<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2026-08-12T22:30:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Linux-03 目录结构与路径解析：FHS 的设计骨架与软链接下的路径陷阱"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

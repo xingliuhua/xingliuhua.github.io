@@ -1,0 +1,1022 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>Linux-26 用户态分配器：从 brk 到 Go 的 mspan - xingliuhua博客</title><meta name="Description" content="malloc 为什么不直接用系统调用、free 之后 RSS 为什么不下降、glibc 的 arena 如何导致多线程程序内存膨胀、tcache 解决什么问题、jemalloc/tcmalloc 值不值得换、以及 Go 的 mcache/mcentral/mheap 三级结构为什么要完全绕开 libc。"><meta property="og:title" content="Linux-26 用户态分配器：从 brk 到 Go 的 mspan" />
+<meta property="og:description" content="malloc 为什么不直接用系统调用、free 之后 RSS 为什么不下降、glibc 的 arena 如何导致多线程程序内存膨胀、tcache 解决什么问题、jemalloc/tcmalloc 值不值得换、以及 Go 的 mcache/mcentral/mheap 三级结构为什么要完全绕开 libc。" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/linux/linux_26_%E7%94%A8%E6%88%B7%E6%80%81%E5%88%86%E9%85%8D%E5%99%A8%E4%BB%8Ebrk%E5%88%B0Go%E7%9A%84mspan/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2026-08-12T11:00:00+08:00" />
+<meta property="article:modified_time" content="2026-08-12T11:00:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="Linux-26 用户态分配器：从 brk 到 Go 的 mspan"/>
+<meta name="twitter:description" content="malloc 为什么不直接用系统调用、free 之后 RSS 为什么不下降、glibc 的 arena 如何导致多线程程序内存膨胀、tcache 解决什么问题、jemalloc/tcmalloc 值不值得换、以及 Go 的 mcache/mcentral/mheap 三级结构为什么要完全绕开 libc。"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/linux/linux_26_%E7%94%A8%E6%88%B7%E6%80%81%E5%88%86%E9%85%8D%E5%99%A8%E4%BB%8Ebrk%E5%88%B0Go%E7%9A%84mspan/" /><link rel="prev" href="https://xingliuhua.github.io/posts/linux/linux_27_%E8%B0%83%E5%BA%A6%E5%99%A8%E6%BC%94%E8%BF%9B%E4%BB%8EOn%E5%88%B0EEVDF/" /><link rel="next" href="https://xingliuhua.github.io/posts/linux/linux_25_%E5%86%85%E6%A0%B8%E5%A6%82%E4%BD%95%E7%AE%A1%E7%90%86%E7%89%A9%E7%90%86%E5%86%85%E5%AD%98/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Linux-26 用户态分配器：从 brk 到 Go 的 mspan",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_26_%E7%94%A8%E6%88%B7%E6%80%81%E5%88%86%E9%85%8D%E5%99%A8%E4%BB%8Ebrk%E5%88%B0Go%E7%9A%84mspan\/"
+        },"genre": "posts","keywords": "linux","wordcount":  12157 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_26_%E7%94%A8%E6%88%B7%E6%80%81%E5%88%86%E9%85%8D%E5%99%A8%E4%BB%8Ebrk%E5%88%B0Go%E7%9A%84mspan\/","datePublished": "2026-08-12T11:00:00+08:00","dateModified": "2026-08-12T11:00:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "malloc 为什么不直接用系统调用、free 之后 RSS 为什么不下降、glibc 的 arena 如何导致多线程程序内存膨胀、tcache 解决什么问题、jemalloc/tcmalloc 值不值得换、以及 Go 的 mcache/mcentral/mheap 三级结构为什么要完全绕开 libc。"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">Linux-26 用户态分配器：从 brk 到 Go 的 mspan</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2026-08-12">2026-08-12</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 12157 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 25 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-用户态分配器的职责">1. 用户态分配器的职责</a>
+      <ol>
+        <li><a href="#11-内核给的是页程序要的是对象">1.1 内核给的是页，程序要的是对象</a></li>
+        <li><a href="#12-开篇第一问为什么不直接用系统调用">1.2 开篇第一问：为什么不直接用系统调用</a></li>
+        <li><a href="#13-三个互相冲突的目标">1.3 三个互相冲突的目标</a></li>
+      </ol>
+    </li>
+    <li><a href="#2-brk-与-mmap两条要内存的路">2. brk 与 mmap：两条要内存的路</a>
+      <ol>
+        <li><a href="#21-两条路的分工">2.1 两条路的分工</a></li>
+        <li><a href="#22-开篇第二问为什么-free-之后-rss-不降">2.2 开篇第二问：为什么 free 之后 RSS 不降</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-glibc-mallocptmalloc2">3. glibc malloc（ptmalloc2）</a>
+      <ol>
+        <li><a href="#31-chunk一切的基本单位">3.1 chunk：一切的基本单位</a></li>
+        <li><a href="#32-分箱不同大小走不同的路">3.2 分箱：不同大小走不同的路</a></li>
+        <li><a href="#33-开篇第三问arena-与多线程膨胀">3.3 开篇第三问：arena 与多线程膨胀</a></li>
+        <li><a href="#34-调优与观测">3.4 调优与观测</a></li>
+      </ol>
+    </li>
+    <li><a href="#4-其他分配器">4. 其他分配器</a>
+      <ol>
+        <li><a href="#41-三个主流替代品">4.1 三个主流替代品</a></li>
+        <li><a href="#42-怎么换与什么时候值得换">4.2 怎么换与什么时候值得换</a></li>
+      </ol>
+    </li>
+    <li><a href="#5-碎片用户态的形态">5. 碎片：用户态的形态</a>
+      <ol>
+        <li><a href="#51-两种碎片">5.1 两种碎片</a></li>
+        <li><a href="#52-为什么用户态碎片比内核更难处理">5.2 为什么用户态碎片比内核更难处理</a></li>
+        <li><a href="#53-定位碎片问题">5.3 定位碎片问题</a></li>
+      </ol>
+    </li>
+    <li><a href="#6-go-的分配器">6. Go 的分配器</a>
+      <ol>
+        <li><a href="#61-开篇第四问为什么不用-libc">6.1 开篇第四问：为什么不用 libc</a></li>
+        <li><a href="#62-三级结构">6.2 三级结构</a></li>
+        <li><a href="#63-size-class-与-span">6.3 size class 与 span</a></li>
+        <li><a href="#64-与-gc-的耦合">6.4 与 GC 的耦合</a></li>
+        <li><a href="#65-归还给-os">6.5 归还给 OS</a></li>
+      </ol>
+    </li>
+    <li><a href="#7-实战内存问题的分层定位">7. 实战：内存问题的分层定位</a></li>
+    <li><a href="#8-面试题">8. 面试题</a></li>
+    <li><a href="#小结">小结</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><p>25 篇讲了内核如何管理物理页。这一篇讲<strong>用户态如何把「页」切成「对象」</strong> —— 以及为什么每个大型运行时（glibc、Go、JVM、Redis）都要自己写一套分配器。</p>
+<p>先看五个问题：</p>
+<ol>
+<li><code>malloc</code> 为什么不直接用 <code>mmap</code>/<code>brk</code> 系统调用？</li>
+<li><code>free</code> 之后内存为什么<strong>不还给操作系统</strong>（RSS 不下降）？</li>
+<li>glibc 的 <strong>arena</strong> 是什么？为什么多线程程序的内存占用会「莫名膨胀」？</li>
+<li>Go 为什么<strong>完全不用</strong> libc 的 <code>malloc</code>，自己实现一套？</li>
+<li>用户态的<strong>内存碎片</strong>是怎么产生的，怎么衡量？</li>
+</ol>
+<h1 id="1-用户态分配器的职责">1. 用户态分配器的职责</h1>
+<h2 id="11-内核给的是页程序要的是对象">1.1 内核给的是页，程序要的是对象</h2>
+<pre tabindex="0"><code>   应用代码
+     malloc(37)   malloc(1024)   new Foo()   make([]byte, 100)
+        |
+        v
+   ┌──────────────────────────────────────────────────────┐
+   │  用户态分配器（glibc malloc / jemalloc / Go runtime） │
+   │  职责：把「大块内存」切成「任意大小的对象」并管理复用    │
+   └──────────────────────────────────────────────────────┘
+        |  brk() / mmap()  ← 只在需要更多内存时才调（次数要尽可能少）
+        v
+   ┌──────────────────────────────────────────────────────┐
+   │  内核：VMA 管理 + 缺页分配（24 篇）                    │
+   │        buddy 分配器（25 篇）                          │
+   └──────────────────────────────────────────────────────┘
+</code></pre><h2 id="12-开篇第一问为什么不直接用系统调用">1.2 开篇第一问：为什么不直接用系统调用</h2>
+<p><strong>三个原因，每一个都是致命的</strong>：</p>
+<pre tabindex="0"><code>   ① 系统调用太贵
+      一次 mmap/munmap 约 1~2 微秒（陷入内核 + VMA 操作 + TLB 刷新）
+      而一次 malloc 应该在【几十纳秒】级别
+      -&gt; 差 50 倍以上。一个每秒分配百万次的程序会把时间全耗在内核里
+
+   ② 粒度不匹配
+      内核的最小单位是 4KB 页，而 malloc(37) 只要 37 字节
+      -&gt; 每个小对象占一页 = 浪费 99%
+
+   ③ 缺页开销
+      即使 mmap 成功，第一次访问还要触发缺页异常（24 篇第 5 章）
+      -&gt; 又是一次陷入内核 + 清零页面
+</code></pre><p><strong>所以分配器的核心策略是「批发零售」</strong>：向内核<strong>批量</strong>要内存（一次几百 KB 到几 MB），然后在用户态<strong>零售</strong>给应用，释放的对象<strong>留在自己的池子里复用</strong>而不还给内核。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 验证：一百万次 malloc 只产生了几十次系统调用</span>
+</span></span><span class="line"><span class="cl">cat &gt; /tmp/malloc_syscall.c <span class="s">&lt;&lt;&#39;EOF&#39;
+</span></span></span><span class="line"><span class="cl"><span class="s">#include &lt;stdlib.h&gt;
+</span></span></span><span class="line"><span class="cl"><span class="s">int main(){ for(int i=0;i&lt;1000000;i++){ void*p=malloc(64); free(p); } }
+</span></span></span><span class="line"><span class="cl"><span class="s">EOF</span>
+</span></span><span class="line"><span class="cl">gcc -O0 -o /tmp/ms /tmp/malloc_syscall.c
+</span></span><span class="line"><span class="cl">strace -c -e <span class="nv">trace</span><span class="o">=</span>brk,mmap,munmap /tmp/ms 2&gt;<span class="p">&amp;</span><span class="m">1</span> <span class="p">|</span> tail -6
+</span></span><span class="line"><span class="cl"><span class="c1"># 系统调用次数是【个位数】—— 因为 free 的对象被立刻复用了</span>
+</span></span></code></pre></div><h2 id="13-三个互相冲突的目标">1.3 三个互相冲突的目标</h2>
+<pre tabindex="0"><code>   ① 快    —— 分配/释放要在纳秒级，且多线程下不能有锁竞争
+   ② 省    —— 元数据开销小、内部碎片少
+   ③ 抗碎片 —— 长期运行不会因为碎片而无限增长
+
+   这三者互相拉扯：
+     为了「快」要做 per-thread 缓存 -&gt; 但每个线程都缓存一份就「不省」
+     为了「省」要精细的 size class -&gt; 但查找和管理变复杂就「不快」
+     为了「抗碎片」要主动合并空闲块 -&gt; 合并本身有开销，也可能破坏缓存局部性
+   
+   不同分配器的差异，本质就是【在这三者之间选了不同的平衡点】
+</code></pre><h1 id="2-brk-与-mmap两条要内存的路">2. brk 与 mmap：两条要内存的路</h1>
+<h2 id="21-两条路的分工">2.1 两条路的分工</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="c1">// ① brk / sbrk：移动「堆的末端指针」
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kt">void</span> <span class="o">*</span><span class="nf">sbrk</span><span class="p">(</span><span class="n">intptr_t</span> <span class="n">increment</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="kt">int</span> <span class="nf">brk</span><span class="p">(</span><span class="kt">void</span> <span class="o">*</span><span class="n">addr</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="c1">// 堆是一段【连续】的虚拟地址区域，brk 只能线性地扩展/收缩它的末端
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl"><span class="c1">// ② mmap：映射一段新的匿名区域
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kt">void</span> <span class="o">*</span><span class="nf">mmap</span><span class="p">(</span><span class="nb">NULL</span><span class="p">,</span> <span class="n">len</span><span class="p">,</span> <span class="n">PROT_READ</span><span class="o">|</span><span class="n">PROT_WRITE</span><span class="p">,</span> <span class="n">MAP_PRIVATE</span><span class="o">|</span><span class="n">MAP_ANONYMOUS</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="c1">// 可以在地址空间的任意位置映射，彼此独立
+</span></span></span></code></pre></div><table>
+<thead>
+<tr>
+<th></th>
+<th><strong>brk</strong></th>
+<th><strong>mmap</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>形态</td>
+<td>一段<strong>连续</strong>的堆，只能移动末端</td>
+<td><strong>独立</strong>的映射区域，位置任意</td>
+</tr>
+<tr>
+<td>开销</td>
+<td>低（只改一个指针 + 扩展一个 VMA）</td>
+<td>较高（创建新 VMA，<code>munmap</code> 还要刷 TLB）</td>
+</tr>
+<tr>
+<td>归还内核</td>
+<td>❌ <strong>只能从末端收缩</strong></td>
+<td>✅ <strong>可以单独 <code>munmap</code></strong></td>
+</tr>
+<tr>
+<td>适合</td>
+<td>大量小对象（堆的自然增长）</td>
+<td>大块内存、需要单独释放的内存</td>
+</tr>
+<tr>
+<td>观察</td>
+<td><code>/proc/pid/maps</code> 里的 <code>[heap]</code></td>
+<td>匿名映射区域</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># glibc 的分界线：默认 128KB</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 小于它 -&gt; 从堆里切（brk 扩展）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 大于它 -&gt; 直接 mmap，free 时直接 munmap</span>
+</span></span><span class="line"><span class="cl">strace -e <span class="nv">trace</span><span class="o">=</span>brk,mmap ./myapp 2&gt;<span class="p">&amp;</span><span class="m">1</span> <span class="p">|</span> head -20
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">cat &gt; /tmp/threshold.c <span class="s">&lt;&lt;&#39;EOF&#39;
+</span></span></span><span class="line"><span class="cl"><span class="s">#include &lt;stdlib.h&gt;
+</span></span></span><span class="line"><span class="cl"><span class="s">int main(){
+</span></span></span><span class="line"><span class="cl"><span class="s">    void *a = malloc(100*1024);      // 100KB -&gt; 从堆里切
+</span></span></span><span class="line"><span class="cl"><span class="s">    void *b = malloc(200*1024);      // 200KB -&gt; 直接 mmap
+</span></span></span><span class="line"><span class="cl"><span class="s">    free(a); free(b);
+</span></span></span><span class="line"><span class="cl"><span class="s">}
+</span></span></span><span class="line"><span class="cl"><span class="s">EOF</span>
+</span></span><span class="line"><span class="cl">gcc -o /tmp/th /tmp/threshold.c <span class="o">&amp;&amp;</span> strace -e <span class="nv">trace</span><span class="o">=</span>brk,mmap,munmap /tmp/th 2&gt;<span class="p">&amp;</span><span class="m">1</span> <span class="p">|</span> grep -E <span class="s1">&#39;brk|mmap|munmap&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># brk(NULL) / brk(0x...)                      &lt;- 100KB 走堆</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># mmap(NULL, 208896, PROT_READ|PROT_WRITE...) &lt;- 200KB 走 mmap</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># munmap(0x..., 208896)                        &lt;- ✅ 立刻归还内核</span>
+</span></span></code></pre></div><h2 id="22-开篇第二问为什么-free-之后-rss-不降">2.2 开篇第二问：为什么 free 之后 RSS 不降</h2>
+<p><strong>这是最常被误判为「内存泄漏」的现象。</strong> 三个原因：</p>
+<pre tabindex="0"><code>   原因① brk 的线性性 —— 只能从末端收缩
+   
+   堆的布局（地址从低到高）：
+   +--------+--------+--------+--------+--------+
+   | 已释放 | 已释放 | 【存活】| 已释放 | 已释放 |  &lt;- brk 末端
+   +--------+--------+--------+--------+--------+
+                        ^^^^^^ 只要这个对象活着，
+                               它【右边】的空间可以还，左边的【还不了】
+   -&gt; 一个长寿命的小对象就能「钉住」整个堆
+   -&gt; 这是 malloc 无法解决的结构性问题（不是 bug）
+
+   原因② 分配器故意保留（这是特性）
+     刚 free 的内存马上还给内核，下次 malloc 又要重新申请 + 缺页
+     -&gt; 保留在池子里复用才是正确的策略
+     -&gt; glibc 有 M_TRIM_THRESHOLD（默认 128KB）：堆末端的空闲区
+        超过这个值才考虑收缩
+
+   原因③ 内存碎片
+     空闲块分散在各处，无法合并成足够大的连续区域归还
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 观察这个现象</span>
+</span></span><span class="line"><span class="cl">cat &gt; /tmp/nofree.c <span class="s">&lt;&lt;&#39;EOF&#39;
+</span></span></span><span class="line"><span class="cl"><span class="s">#include &lt;stdio.h&gt;
+</span></span></span><span class="line"><span class="cl"><span class="s">#include &lt;stdlib.h&gt;
+</span></span></span><span class="line"><span class="cl"><span class="s">#include &lt;malloc.h&gt;
+</span></span></span><span class="line"><span class="cl"><span class="s">int main(){
+</span></span></span><span class="line"><span class="cl"><span class="s">    void *arr[10000];
+</span></span></span><span class="line"><span class="cl"><span class="s">    for (int i=0;i&lt;10000;i++) arr[i] = malloc(10240);      // 分配 100MB
+</span></span></span><span class="line"><span class="cl"><span class="s">    printf(&#34;分配完成，看 RSS: &#34;); fflush(stdout); getchar();
+</span></span></span><span class="line"><span class="cl"><span class="s">    for (int i=1;i&lt;10000;i++) free(arr[i]);                 // ✅ 只留 arr[0] 不释放
+</span></span></span><span class="line"><span class="cl"><span class="s">    printf(&#34;释放了 99.99%%，RSS 还是很高: &#34;); fflush(stdout); getchar();
+</span></span></span><span class="line"><span class="cl"><span class="s">    malloc_trim(0);                                          // ✅ 主动归还
+</span></span></span><span class="line"><span class="cl"><span class="s">    printf(&#34;malloc_trim 之后: &#34;); fflush(stdout); getchar();
+</span></span></span><span class="line"><span class="cl"><span class="s">    free(arr[0]);
+</span></span></span><span class="line"><span class="cl"><span class="s">}
+</span></span></span><span class="line"><span class="cl"><span class="s">EOF</span>
+</span></span><span class="line"><span class="cl">gcc -o /tmp/nofree /tmp/nofree.c <span class="o">&amp;&amp;</span> /tmp/nofree <span class="p">&amp;</span>
+</span></span><span class="line"><span class="cl">watch -n1 <span class="s2">&#34;grep -E &#39;VmRSS&#39; /proc/</span><span class="k">$(</span>pgrep -n nofree<span class="k">)</span><span class="s2">/status; grep -A1 &#39;\[heap\]&#39; /proc/</span><span class="k">$(</span>pgrep -n nofree<span class="k">)</span><span class="s2">/smaps | head -2&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 主动归还的手段</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ① 程序里调 malloc_trim(0)</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ② 让大块走 mmap（降低阈值，free 时直接 munmap）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    mallopt(M_MMAP_THRESHOLD, 65536);</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ③ 换成 jemalloc/tcmalloc（它们有后台线程主动归还，见第 4 章）</span>
+</span></span></code></pre></div><p><strong>关键结论：判断内存泄漏不能只看 RSS，要看「存活对象总量是否持续增长」。</strong></p>
+<h1 id="3-glibc-mallocptmalloc2">3. glibc malloc（ptmalloc2）</h1>
+<h2 id="31-chunk一切的基本单位">3.1 chunk：一切的基本单位</h2>
+<pre tabindex="0"><code>   glibc 把堆切成一个个 chunk，每个 chunk 有 8/16 字节的头部：
+
+   +--------------------------------+
+   | prev_size（前一个 chunk 的大小） |  &lt;- 只在前一个 chunk 空闲时有意义
+   +--------------------------------+
+   | size | A | M | P               |  &lt;- 大小 + 3 个标志位
+   +--------------------------------+  &lt;- malloc 返回的指针指向这里
+   | 用户数据…                       |
+   |                                |
+   +--------------------------------+
+
+   P（PREV_INUSE）：前一个 chunk 是否在使用（用于合并判断）
+   M（IS_MMAPPED）：这个 chunk 是不是单独 mmap 的
+   A（NON_MAIN_ARENA）：属于非主 arena（见 3.3）
+
+   ✅ 精妙之处：空闲 chunk 的【用户数据区】被复用来存链表指针（fd/bk）
+      -&gt; 空闲块的管理不需要额外内存
+   ⚠️ 代价：chunk 头部与用户数据相邻 -&gt; 缓冲区溢出可以篡改头部
+      -&gt; 这是「堆溢出利用」的基础（unlink 攻击、tcache poisoning 等）
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 实际的开销：malloc(1) 会占多少？</span>
+</span></span><span class="line"><span class="cl">cat &gt; /tmp/chunk.c <span class="s">&lt;&lt;&#39;EOF&#39;
+</span></span></span><span class="line"><span class="cl"><span class="s">#include &lt;stdio.h&gt;
+</span></span></span><span class="line"><span class="cl"><span class="s">#include &lt;stdlib.h&gt;
+</span></span></span><span class="line"><span class="cl"><span class="s">#include &lt;malloc.h&gt;
+</span></span></span><span class="line"><span class="cl"><span class="s">int main(){
+</span></span></span><span class="line"><span class="cl"><span class="s">    void *p = malloc(1);
+</span></span></span><span class="line"><span class="cl"><span class="s">    printf(&#34;请求 1 字节，实际可用 %zu 字节\n&#34;, malloc_usable_size(p));
+</span></span></span><span class="line"><span class="cl"><span class="s">    void *q = malloc(25);
+</span></span></span><span class="line"><span class="cl"><span class="s">    printf(&#34;请求 25 字节，实际可用 %zu 字节\n&#34;, malloc_usable_size(q));
+</span></span></span><span class="line"><span class="cl"><span class="s">}
+</span></span></span><span class="line"><span class="cl"><span class="s">EOF</span>
+</span></span><span class="line"><span class="cl">gcc -o /tmp/chunk /tmp/chunk.c <span class="o">&amp;&amp;</span> /tmp/chunk
+</span></span><span class="line"><span class="cl"><span class="c1"># 请求 1 字节，实际可用 24 字节      &lt;- 最小 chunk 是 32 字节（含头部）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 请求 25 字节，实际可用 40 字节      &lt;- 按 16 字节对齐</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 这就是【内部碎片】：小对象的开销比例极高</span>
+</span></span></code></pre></div><h2 id="32-分箱不同大小走不同的路">3.2 分箱：不同大小走不同的路</h2>
+<pre tabindex="0"><code>   ┌─ tcache（线程本地缓存，glibc 2.26+）──────────────────┐
+   │  64 个桶（16~1032 字节），每桶最多 7 个 chunk           │
+   │  ✅ 完全【无锁】—— 命中时就是几条指令                    │
+   └────────────────────────────────────────────────────┘
+              ↓ miss
+   ┌─ fastbin ──────────────────────────────────────────┐
+   │  小块（≤128 字节）的单向链表，LIFO                     │
+   │  ✅ 不合并相邻块（快，但会积累碎片）                     │
+   └────────────────────────────────────────────────────┘
+              ↓
+   ┌─ unsorted bin ─────────────────────────────────────┐
+   │  刚释放的块先扔这里（一个缓冲带），分配时顺手整理         │
+   └────────────────────────────────────────────────────┘
+              ↓
+   ┌─ smallbin（&lt; 512B，每 bin 固定大小）────────────────┐
+   │  largebin（≥ 512B，每 bin 一个大小范围，内部按大小排序）│
+   │  ✅ 会做相邻空闲块的【合并】                            │
+   └────────────────────────────────────────────────────┘
+              ↓ 都没有
+   ┌─ top chunk（堆顶的大块）───────────────────────────┐
+   │  从这里切一块出来；不够就 brk 扩展堆                    │
+   └────────────────────────────────────────────────────┘
+              ↓ 请求 &gt; 128KB
+   ┌─ 直接 mmap ────────────────────────────────────────┐
+   └────────────────────────────────────────────────────┘
+</code></pre><p><strong><code>tcache</code> 是 glibc 2.26（2017）的关键改进</strong>：</p>
+<pre tabindex="0"><code>   在它之前，即使命中 fastbin 也要【加 arena 的锁】
+     -&gt; 多线程下即使各自分配小对象也会竞争同一把锁
+   tcache 是【纯线程本地】的，命中时完全无锁
+     -&gt; 小对象分配性能提升数倍
+   
+   代价：每个线程多占一点内存（64 个桶 × 7 个 chunk）
+        以及新的安全问题（tcache poisoning 成为主流的堆利用手法）
+</code></pre><h2 id="33-开篇第三问arena-与多线程膨胀">3.3 开篇第三问：arena 与多线程膨胀</h2>
+<pre tabindex="0"><code>   问题：多个线程同时 malloc，都要操作同一个堆 -&gt; 锁竞争严重
+
+   glibc 的解法：给线程分配【多个 arena】（各自独立的堆）
+     - 主 arena：用 brk 扩展（就是 [heap]）
+     - 非主 arena：用 mmap 申请 64MB 的区域（HEAP_MAX_SIZE）
+     - 每个线程首次 malloc 时绑定到一个 arena，之后固定使用它
+
+   arena 数量上限：
+     32 位：2 × 核数
+     64 位：8 × 核数        &lt;- 一台 32 核机器最多 256 个 arena！
+</code></pre><p><strong>这就是「多线程程序内存莫名膨胀」的原因</strong>：</p>
+<pre tabindex="0"><code>   场景：一个 16 核机器上的服务，创建了 64 个线程
+     -&gt; 最多 128 个 arena
+     -&gt; 每个 arena 都会保留自己的空闲内存（互相不共享！）
+     -&gt; 线程 A 释放的内存，线程 B 用不上
+     -&gt; 总内存占用 = 各 arena 的峰值之和，而不是全局峰值
+     
+   典型表现：RSS 是「所有线程各自峰值的总和」，远大于实际同时存活的对象总量
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 观察 arena 的数量与内存</span>
+</span></span><span class="line"><span class="cl">cat &gt; /tmp/arena.c <span class="s">&lt;&lt;&#39;EOF&#39;
+</span></span></span><span class="line"><span class="cl"><span class="s">#include &lt;pthread.h&gt;
+</span></span></span><span class="line"><span class="cl"><span class="s">#include &lt;stdlib.h&gt;
+</span></span></span><span class="line"><span class="cl"><span class="s">#include &lt;unistd.h&gt;
+</span></span></span><span class="line"><span class="cl"><span class="s">#include &lt;stdio.h&gt;
+</span></span></span><span class="line"><span class="cl"><span class="s">void *worker(void *a){
+</span></span></span><span class="line"><span class="cl"><span class="s">    void *p[200];
+</span></span></span><span class="line"><span class="cl"><span class="s">    for(int i=0;i&lt;200;i++) p[i]=malloc(64*1024);    // 每线程分配 12.8MB
+</span></span></span><span class="line"><span class="cl"><span class="s">    for(int i=0;i&lt;200;i++) free(p[i]);              // 全部释放
+</span></span></span><span class="line"><span class="cl"><span class="s">    sleep(60);                                       // ✅ 保持线程存活
+</span></span></span><span class="line"><span class="cl"><span class="s">    return NULL;
+</span></span></span><span class="line"><span class="cl"><span class="s">}
+</span></span></span><span class="line"><span class="cl"><span class="s">int main(){
+</span></span></span><span class="line"><span class="cl"><span class="s">    pthread_t t[32];
+</span></span></span><span class="line"><span class="cl"><span class="s">    for(int i=0;i&lt;32;i++) pthread_create(&amp;t[i],NULL,worker,NULL);
+</span></span></span><span class="line"><span class="cl"><span class="s">    printf(&#34;PID=%d，32 个线程各分配又释放了 12.8MB\n&#34;, getpid());
+</span></span></span><span class="line"><span class="cl"><span class="s">    for(int i=0;i&lt;32;i++) pthread_join(t[i],NULL);
+</span></span></span><span class="line"><span class="cl"><span class="s">}
+</span></span></span><span class="line"><span class="cl"><span class="s">EOF</span>
+</span></span><span class="line"><span class="cl">gcc -pthread -o /tmp/arena /tmp/arena.c <span class="o">&amp;&amp;</span> /tmp/arena <span class="p">&amp;</span>
+</span></span><span class="line"><span class="cl">sleep <span class="m">3</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 看 RSS：远大于 0（内存被各 arena 保留着）</span>
+</span></span><span class="line"><span class="cl">grep VmRSS /proc/<span class="k">$(</span>pgrep -n arena<span class="k">)</span>/status
+</span></span><span class="line"><span class="cl"><span class="c1"># 看 mmap 出来的 arena（每个 64MB 的匿名区域）</span>
+</span></span><span class="line"><span class="cl">grep -c <span class="s1">&#39;rw-p&#39;</span> /proc/<span class="k">$(</span>pgrep -n arena<span class="k">)</span>/maps
+</span></span><span class="line"><span class="cl">awk <span class="s1">&#39;$2==&#34;rw-p&#34; &amp;&amp; $6==&#34;&#34; {split($1,a,&#34;-&#34;); s+=strtonum(&#34;0x&#34;a[2])-strtonum(&#34;0x&#34;a[1])} END {print s/1024/1024 &#34; MB 匿名映射&#34;}&#39;</span> /proc/<span class="k">$(</span>pgrep -n arena<span class="k">)</span>/maps
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ✅ 三种缓解手段</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ① 限制 arena 数量（最常用）</span>
+</span></span><span class="line"><span class="cl"><span class="nv">MALLOC_ARENA_MAX</span><span class="o">=</span><span class="m">2</span> ./myapp
+</span></span><span class="line"><span class="cl"><span class="c1"># 或者代码里：mallopt(M_ARENA_MAX, 2);</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 取舍：arena 少 -&gt; 内存省但锁竞争增加</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ② 降低 mmap 阈值，让大块直接归还</span>
+</span></span><span class="line"><span class="cl"><span class="nv">MALLOC_MMAP_THRESHOLD_</span><span class="o">=</span><span class="m">65536</span> ./myapp
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ③ 换分配器（第 4 章）</span>
+</span></span><span class="line"><span class="cl"><span class="nv">LD_PRELOAD</span><span class="o">=</span>/usr/lib/x86_64-linux-gnu/libjemalloc.so.2 ./myapp
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ⚠️ 这是很多 Java/Python/C++ 服务在容器里「内存超限」的真实原因：</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    容器限制 2GB，应用堆只用了 1GB，但 arena 保留的内存让 RSS 到了 2GB -&gt; OOMKilled</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    Java 社区甚至有专门的建议：容器里设 MALLOC_ARENA_MAX=2 或 4</span>
+</span></span></code></pre></div><h2 id="34-调优与观测">3.4 调优与观测</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 环境变量（不用改代码）</span>
+</span></span><span class="line"><span class="cl"><span class="nv">MALLOC_ARENA_MAX</span><span class="o">=</span><span class="m">2</span>                <span class="c1"># arena 数量上限</span>
+</span></span><span class="line"><span class="cl"><span class="nv">MALLOC_MMAP_THRESHOLD_</span><span class="o">=</span><span class="m">131072</span>     <span class="c1"># 超过多大直接 mmap</span>
+</span></span><span class="line"><span class="cl"><span class="nv">MALLOC_TRIM_THRESHOLD_</span><span class="o">=</span><span class="m">131072</span>     <span class="c1"># 堆顶空闲多大才收缩</span>
+</span></span><span class="line"><span class="cl"><span class="nv">MALLOC_TOP_PAD_</span><span class="o">=</span><span class="m">131072</span>            <span class="c1"># 每次扩展堆时多要一点（减少 brk 次数）</span>
+</span></span><span class="line"><span class="cl"><span class="nv">MALLOC_MMAP_MAX_</span><span class="o">=</span><span class="m">65536</span>            <span class="c1"># 最多同时有多少个 mmap 块</span>
+</span></span><span class="line"><span class="cl"><span class="nv">MALLOC_PERTURB_</span><span class="o">=</span><span class="m">42</span>                <span class="c1"># ✅ 调试用：free 后填充固定字节（暴露 use-after-free）</span>
+</span></span><span class="line"><span class="cl"><span class="nv">MALLOC_CHECK_</span><span class="o">=</span><span class="m">3</span>                   <span class="c1"># ✅ 调试用：检测堆破坏并 abort</span>
+</span></span><span class="line"><span class="cl"><span class="nv">GLIBC_TUNABLES</span><span class="o">=</span>glibc.malloc.arena_max<span class="o">=</span>2:glibc.malloc.tcache_count<span class="o">=</span><span class="m">0</span>   <span class="c1"># 新式写法</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="c1">// 程序内观测
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="cp">#include</span> <span class="cpf">&lt;malloc.h&gt;</span><span class="cp">
+</span></span></span><span class="line"><span class="cl"><span class="cp"></span><span class="k">struct</span> <span class="n">mallinfo2</span> <span class="n">mi</span> <span class="o">=</span> <span class="n">mallinfo2</span><span class="p">();</span>
+</span></span><span class="line"><span class="cl"><span class="n">printf</span><span class="p">(</span><span class="s">&#34;arena=%zu (brk 得到的总量)</span><span class="se">\n</span><span class="s">&#34;</span><span class="p">,</span> <span class="n">mi</span><span class="p">.</span><span class="n">arena</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="n">printf</span><span class="p">(</span><span class="s">&#34;hblkhd=%zu (mmap 得到的总量)</span><span class="se">\n</span><span class="s">&#34;</span><span class="p">,</span> <span class="n">mi</span><span class="p">.</span><span class="n">hblkhd</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="n">printf</span><span class="p">(</span><span class="s">&#34;uordblks=%zu (【正在使用】的字节)</span><span class="se">\n</span><span class="s">&#34;</span><span class="p">,</span> <span class="n">mi</span><span class="p">.</span><span class="n">uordblks</span><span class="p">);</span>     <span class="c1">// ✅ 这才是&#34;真实使用量&#34;
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">printf</span><span class="p">(</span><span class="s">&#34;fordblks=%zu (空闲但保留的字节)</span><span class="se">\n</span><span class="s">&#34;</span><span class="p">,</span> <span class="n">mi</span><span class="p">.</span><span class="n">fordblks</span><span class="p">);</span>       <span class="c1">// ✅ 这是&#34;被池子占着的&#34;
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">printf</span><span class="p">(</span><span class="s">&#34;keepcost=%zu (可归还的堆顶空闲)</span><span class="se">\n</span><span class="s">&#34;</span><span class="p">,</span> <span class="n">mi</span><span class="p">.</span><span class="n">keepcost</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="n">malloc_stats</span><span class="p">();</span>                   <span class="c1">// 打印到 stderr 的详细统计
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">malloc_info</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">stdout</span><span class="p">);</span>           <span class="c1">// XML 格式，含每个 arena 的明细
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">malloc_trim</span><span class="p">(</span><span class="mi">0</span><span class="p">);</span>                   <span class="c1">// 主动归还
+</span></span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ✅ 判断「是真泄漏还是分配器保留」的关键对比</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    uordblks 持续增长 -&gt; 真泄漏（存活对象在涨）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    uordblks 稳定但 RSS 高 -&gt; 分配器保留/碎片（不是泄漏）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 外部观测</span>
+</span></span><span class="line"><span class="cl">sudo grep -A <span class="m">12</span> <span class="s1">&#39;\[heap\]&#39;</span> /proc/<span class="k">$(</span>pgrep -n myapp<span class="k">)</span>/smaps
+</span></span><span class="line"><span class="cl"><span class="c1"># Rss / Pss / Private_Dirty 就是堆真实占用的物理内存（13 篇 2.3）</span>
+</span></span></code></pre></div><h1 id="4-其他分配器">4. 其他分配器</h1>
+<h2 id="41-三个主流替代品">4.1 三个主流替代品</h2>
+<table>
+<thead>
+<tr>
+<th></th>
+<th><strong>glibc malloc</strong></th>
+<th><strong>tcmalloc</strong>（Google）</th>
+<th><strong>jemalloc</strong>（FB/FreeBSD）</th>
+<th><strong>mimalloc</strong>（MS）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>核心结构</td>
+<td>arena + bins + tcache</td>
+<td><strong>per-thread cache + 中央堆</strong></td>
+<td><strong>arena + 精细 size class + slab</strong></td>
+<td>per-thread 分片 + 免费列表分片</td>
+</tr>
+<tr>
+<td>小对象速度</td>
+<td>好（tcache 之后）</td>
+<td><strong>很好</strong></td>
+<td>好</td>
+<td><strong>最好</strong>（宣称）</td>
+</tr>
+<tr>
+<td><strong>多线程扩展性</strong></td>
+<td>⚠️ 一般（arena 数量有限）</td>
+<td>✅ 好</td>
+<td>✅ <strong>很好</strong></td>
+<td>✅ 很好</td>
+</tr>
+<tr>
+<td><strong>碎片控制</strong></td>
+<td>⚠️ 一般</td>
+<td>好</td>
+<td>✅ <strong>最好</strong>（精细 size class + 主动 purge）</td>
+<td>好</td>
+</tr>
+<tr>
+<td><strong>主动归还 OS</strong></td>
+<td>❌ 需手动 <code>malloc_trim</code></td>
+<td>✅ 有后台线程</td>
+<td>✅ <strong>有 decay 机制可调</strong></td>
+<td>✅ 有</td>
+</tr>
+<tr>
+<td>内存开销</td>
+<td>中</td>
+<td>中</td>
+<td>稍高（元数据多）</td>
+<td>低</td>
+</tr>
+<tr>
+<td>可观测性</td>
+<td>弱（<code>mallinfo</code>）</td>
+<td>好（pprof 集成）</td>
+<td>✅ <strong>最好</strong>（<code>malloc_stats_print</code>、丰富的 mallctl）</td>
+<td>一般</td>
+</tr>
+<tr>
+<td>典型用户</td>
+<td>默认</td>
+<td>Chrome、Google 内部</td>
+<td><strong>Redis、Firefox、Rust 曾用、FreeBSD 默认</strong></td>
+<td>.NET</td>
+</tr>
+</tbody>
+</table>
+<h2 id="42-怎么换与什么时候值得换">4.2 怎么换与什么时候值得换</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ── 方式一：LD_PRELOAD（不改代码、不重编译）──</span>
+</span></span><span class="line"><span class="cl">sudo apt install libjemalloc2 libtcmalloc-minimal4
+</span></span><span class="line"><span class="cl"><span class="nv">LD_PRELOAD</span><span class="o">=</span>/usr/lib/x86_64-linux-gnu/libjemalloc.so.2 ./myapp
+</span></span><span class="line"><span class="cl"><span class="nv">LD_PRELOAD</span><span class="o">=</span>/usr/lib/x86_64-linux-gnu/libtcmalloc_minimal.so.4 ./myapp
+</span></span><span class="line"><span class="cl"><span class="c1"># 验证生效</span>
+</span></span><span class="line"><span class="cl">grep -E <span class="s1">&#39;jemalloc|tcmalloc&#39;</span> /proc/<span class="k">$(</span>pgrep -n myapp<span class="k">)</span>/maps
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># systemd 里</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># [Service]</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Environment=LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so.2</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 方式二：编译时链接 ──</span>
+</span></span><span class="line"><span class="cl">gcc myapp.c -ljemalloc -o myapp
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── jemalloc 的观测（这是它最大的优势之一）──</span>
+</span></span><span class="line"><span class="cl"><span class="nv">MALLOC_CONF</span><span class="o">=</span>stats_print:true ./myapp        <span class="c1"># 退出时打印详细统计</span>
+</span></span><span class="line"><span class="cl"><span class="nv">MALLOC_CONF</span><span class="o">=</span>background_thread:true,dirty_decay_ms:5000,muzzy_decay_ms:5000 ./myapp
+</span></span><span class="line"><span class="cl"><span class="c1">#            ^^^^^^^^^^^^^^^^^^^^^ 开后台线程主动归还</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                                  ^^^^^^^^^^^^^^^^^^ 脏页多久后归还 OS</span>
+</span></span></code></pre></div><p><strong>什么时候值得换</strong>：</p>
+<pre tabindex="0"><code>   ✅ 值得：
+      - 多线程 + 大量小对象分配（glibc 的 arena 膨胀明显）
+      - 长期运行的服务出现碎片累积（RSS 持续缓涨但 uordblks 稳定）
+      - 需要精细的内存可观测性（jemalloc 的统计非常详细）
+      - Redis 就默认用 jemalloc，原因正是「碎片控制 + 可观测」
+
+   ❌ 不必：
+      - Go 程序（有自己的分配器，libc 的 malloc 根本不参与，见第 6 章）
+      - 短生命周期的进程（CLI 工具、批处理）
+      - 单线程程序（glibc 已经够快）
+      - 内存占用不是瓶颈的服务
+      
+   ⚠️ 换之前必须实测：
+      不同负载的表现差异很大，「换了 jemalloc 就变好」不是普遍规律
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># Redis 的例子（它把碎片率作为一个正式指标暴露出来）</span>
+</span></span><span class="line"><span class="cl">redis-cli info memory <span class="p">|</span> grep -E <span class="s1">&#39;mem_allocator|mem_fragmentation_ratio|used_memory_rss&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># mem_allocator:jemalloc-5.2.1</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># mem_fragmentation_ratio:1.08          &lt;- RSS / used_memory</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   ≈1.0     健康</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   &gt;1.5     碎片明显（可开 activedefrag）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   &lt;1.0     部分内存被换出到 swap（❌ 更糟）</span>
+</span></span><span class="line"><span class="cl">redis-cli config <span class="nb">set</span> activedefrag yes   <span class="c1"># jemalloc 支持的主动碎片整理</span>
+</span></span></code></pre></div><h1 id="5-碎片用户态的形态">5. 碎片：用户态的形态</h1>
+<h2 id="51-两种碎片">5.1 两种碎片</h2>
+<pre tabindex="0"><code>   内部碎片（internal fragmentation）
+     原因：size class 舍入 + chunk 头部开销
+     例：malloc(1) 实际占 32 字节（3.1 节验证过）
+         malloc(129) 在 128/256 两档的分配器里会占 256 字节
+     衡量：实际请求字节数 / 实际占用字节数
+     -&gt; 小对象多的负载里，这个损耗可能达 30%~50%
+
+   外部碎片（external fragmentation）
+     原因：空闲块分散，无法合并成足够大的连续区域
+     例：有 100 个 4KB 的空闲块，但来了一个 8KB 的请求，
+         如果这些块不相邻，就得向内核再要内存
+     衡量：RSS / 存活对象总量（Redis 的 mem_fragmentation_ratio 就是这个）
+</code></pre><h2 id="52-为什么用户态碎片比内核更难处理">5.2 为什么用户态碎片比内核更难处理</h2>
+<pre tabindex="0"><code>   内核可以做【内存规整】（25 篇 2.4）：把物理页搬走，腾出连续空间
+     -&gt; 因为有页表这个间接层，搬动物理页对进程【透明】（24 篇）
+
+   用户态【不能搬动对象】：
+     应用手里拿着裸指针，分配器一旦移动对象，那些指针全部失效
+     -&gt; 所以用户态分配器只能「避免产生碎片」，不能「事后整理」
+
+   ✅ 例外：有 GC 的运行时【可以】搬动对象（因为 GC 知道所有引用）
+      - Java 的压缩式 GC（mark-compact）会整理堆
+      - Go 的 GC 【不移动】对象（非移动式 GC）—— 这是个有意的取舍：
+          简化了 cgo 交互与内部指针，代价是不能做堆压缩
+      - 所以 Go 靠【精细的 size class + span 管理】来控制碎片，而不是靠整理
+</code></pre><h2 id="53-定位碎片问题">5.3 定位碎片问题</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ① 应用视角：存活对象总量（这是关键对比项）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    C/C++: mallinfo2().uordblks</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    Go:    runtime.MemStats.HeapAlloc</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    Java:  堆使用量（jstat / JMX）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    Redis: used_memory</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ② 进程视角：真实物理占用</span>
+</span></span><span class="line"><span class="cl">grep VmRSS /proc/<span class="k">$(</span>pgrep -n myapp<span class="k">)</span>/status
+</span></span><span class="line"><span class="cl">awk <span class="s1">&#39;/^Private_Dirty/{s+=$2} END {print s/1024 &#34; MB 独占脏页&#34;}&#39;</span> /proc/<span class="k">$(</span>pgrep -n myapp<span class="k">)</span>/smaps
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ③ 判断</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    RSS ≈ 存活对象      -&gt; 健康</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    RSS ≫ 存活对象且存活稳定 -&gt; ✅ 碎片或分配器保留（不是泄漏！）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    RSS 与存活对象【同步增长】 -&gt; ❌ 真泄漏</span>
+</span></span></code></pre></div><h1 id="6-go-的分配器">6. Go 的分配器</h1>
+<h2 id="61-开篇第四问为什么不用-libc">6.1 开篇第四问：为什么不用 libc</h2>
+<pre tabindex="0"><code>   ① CGO_ENABLED=0 时根本没有 libc（01 篇 2.3）
+      静态编译的 Go 程序不链接 libc，malloc 无从调用
+
+   ② GC 需要知道每个对象的元数据
+      「这块内存里哪些位置是指针」是 GC 扫描的前提。
+      libc 的 malloc 只返回一块裸内存，不携带任何类型信息。
+      Go 需要把「对象大小、是否含指针、所属 span」这些信息组织起来。
+
+   ③ 分配单位是 goroutine 而不是线程
+      glibc 的 arena 是 per-thread 的，而 Go 有几十万个 goroutine
+      跑在几个 OS 线程上 —— per-thread 缓存的模型不匹配。
+      Go 用 per-P（逻辑处理器）缓存，正好对应 GMP 模型。
+
+   ④ 需要与调度器、GC 协同
+      分配时可能触发 GC 辅助标记（mutator assist）、
+      可能需要抢占检查 —— 这些只能在 runtime 内部做。
+
+   ⑤ 性能可控
+      逃逸分析让大量对象根本不上堆（分配在栈上），
+      这是编译器与分配器协同设计的结果，libc 无法参与。
+</code></pre><h2 id="62-三级结构">6.2 三级结构</h2>
+<pre tabindex="0"><code>   ┌──────────────────────────────────────────────────────────┐
+   │  mcache（每个 P 一个，✅ 完全无锁）                        │
+   │  为 68 个 size class 各持有一个 mspan                     │
+   │  分配路径：从对应 size class 的 span 里取一个空闲槽位        │
+   └──────────────────────────────────────────────────────────┘
+              ↓ 本地 span 用完了
+   ┌──────────────────────────────────────────────────────────┐
+   │  mcentral（每个 size class 一个，全局共享，加锁）           │
+   │  维护该 size class 的 span 列表（有空位的 / 已满的）        │
+   └──────────────────────────────────────────────────────────┘
+              ↓ 没有可用 span
+   ┌──────────────────────────────────────────────────────────┐
+   │  mheap（全局唯一，管理所有页）                             │
+   │  按 page（8KB）管理，用 pageAlloc（基数树位图）找空闲页      │
+   └──────────────────────────────────────────────────────────┘
+              ↓ 不够
+   ┌──────────────────────────────────────────────────────────┐
+   │  向 OS 申请：mmap 一个 64MB 的 arena                       │
+   └──────────────────────────────────────────────────────────┘
+</code></pre><p><strong>这个结构与 glibc 的对应关系很清晰</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>Go</th>
+<th>glibc</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>mcache</code>（per-P，无锁）</td>
+<td><code>tcache</code>（per-thread，无锁）</td>
+<td>快路径</td>
+</tr>
+<tr>
+<td><code>mcentral</code>（per size class）</td>
+<td><code>arena</code> 的 bins</td>
+<td>中央池</td>
+</tr>
+<tr>
+<td><code>mheap</code> + <code>pageAlloc</code></td>
+<td>top chunk + brk</td>
+<td>页级管理</td>
+</tr>
+<tr>
+<td><code>arena</code>（64MB，<code>mmap</code>）</td>
+<td>非主 arena（64MB，<code>mmap</code>）</td>
+<td>向内核批发</td>
+</tr>
+</tbody>
+</table>
+<h2 id="63-size-class-与-span">6.3 size class 与 span</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># Go 有 68 个 size class（8B 到 32KB）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># runtime/sizeclasses.go 里有完整的表，前几档：</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># class  bytes/obj  bytes/span  objects  tail waste  max waste</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#     1          8        8192     1024           0     87.50%</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#     2         16        8192      512           0     43.75%</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#     3         24        8192      341           8     29.24%</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    ...</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    67      32768       32768        1           0      12.50%</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 为什么要 68 档而不是简单的 2 的幂？</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    2 的幂（8/16/32/64…）的最坏内部碎片是 50%（申请 33 要给 64）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    68 档精细划分把最坏浪费压到 ~12%（大对象）—— 这是「省」的直接投入</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// span（mspan）：一段连续的页，被切成同一 size class 的槽位
+</span></span></span><span class="line"><span class="cl"><span class="c1">// 一个 span 里所有对象大小相同 —— 这带来三个好处：
+</span></span></span><span class="line"><span class="cl"><span class="c1">//   ① 分配 = 从位图里找一个空闲位（O(1)）
+</span></span></span><span class="line"><span class="cl"><span class="c1">//   ② 不需要 chunk 头部（对象大小由 span 决定！）
+</span></span></span><span class="line"><span class="cl"><span class="c1">//      -&gt; ✅ Go 没有 glibc 那样「每个对象 16 字节头部」的开销
+</span></span></span><span class="line"><span class="cl"><span class="c1">//   ③ GC 扫描时可以按 span 批量处理，元数据集中存放（不与用户数据相邻）
+</span></span></span><span class="line"><span class="cl"><span class="c1">//      -&gt; 也顺带避免了 glibc 的「堆溢出篡改 chunk 头部」这类问题
+</span></span></span></code></pre></div><pre tabindex="0"><code>   三条分配路径：
+   
+   ① tiny 分配器（&lt; 16 字节 且【不含指针】）
+        把多个微小对象打包进同一个 16 字节块
+        -&gt; 大量 int/bool/小 struct 的场景节省显著
+        
+   ② 小对象（16B ~ 32KB）
+        走 mcache -&gt; mcentral -&gt; mheap 三级
+        
+   ③ 大对象（&gt; 32KB）
+        直接从 mheap 分配（专属的 span），不经过 mcache
+</code></pre><h2 id="64-与-gc-的耦合">6.4 与 GC 的耦合</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># Go 的 GC 是【非移动式】的三色标记清除（并发）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 分配器为它提供三样东西：</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   ① 对象的精确边界（靠 span 的 size class）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   ② 指针位图（哪些字段是指针 —— 编译器生成，存在类型元数据里）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   ③ 标记位图（每个 span 有 allocBits / gcmarkBits）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 观察 GC 与分配</span>
+</span></span><span class="line"><span class="cl"><span class="nv">GODEBUG</span><span class="o">=</span><span class="nv">gctrace</span><span class="o">=</span><span class="m">1</span> ./myapp 2&gt;<span class="p">&amp;</span><span class="m">1</span> <span class="p">|</span> head -5
+</span></span><span class="line"><span class="cl"><span class="c1"># gc 1 @0.021s 0%: 0.018+1.3+0.006 ms clock, 0.14+0.35/1.2/0+0.052 ms cpu,</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    4-&gt;4-&gt;1 MB, 5 MB goal, 8 P</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    ^^^^^^^^^^^ GC 开始时堆大小 -&gt; 结束时 -&gt; 存活量</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                        ^^^^^^^^^ 下次触发的目标</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="nv">GODEBUG</span><span class="o">=</span><span class="nv">allocfreetrace</span><span class="o">=</span><span class="m">1</span> ./myapp    <span class="c1"># ⚠️ 极其详细（每次分配都打印），只用于调试</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 内存统计</span>
+</span></span><span class="line"><span class="cl">curl -s <span class="s1">&#39;localhost:6060/debug/pprof/heap?debug=1&#39;</span> <span class="p">|</span> grep -E <span class="s1">&#39;^# (Sys|HeapSys|HeapAlloc|HeapIdle|HeapReleased|HeapInuse|StackSys|MSpanSys|MCacheSys) &#39;</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">var</span> <span class="nx">m</span> <span class="nx">runtime</span><span class="p">.</span><span class="nx">MemStats</span>
+</span></span><span class="line"><span class="cl"><span class="nx">runtime</span><span class="p">.</span><span class="nf">ReadMemStats</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">m</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="c1">// 关键字段（这些是 Go 内存排查的核心指标）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">m</span><span class="p">.</span><span class="nx">Sys</span>           <span class="c1">// ✅ runtime 从 OS 拿到的总量（≈ 进程 RSS 的上界）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">m</span><span class="p">.</span><span class="nx">HeapAlloc</span>     <span class="c1">// ✅ 【存活对象】的字节数（等价于 glibc 的 uordblks）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">m</span><span class="p">.</span><span class="nx">HeapSys</span>       <span class="c1">// 堆向 OS 申请的总量
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">m</span><span class="p">.</span><span class="nx">HeapIdle</span>      <span class="c1">// 空闲的 span（可归还）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">m</span><span class="p">.</span><span class="nx">HeapReleased</span>  <span class="c1">// ✅ 已经归还给 OS 的部分
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">m</span><span class="p">.</span><span class="nx">HeapInuse</span>     <span class="c1">// 正在使用的 span
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">m</span><span class="p">.</span><span class="nx">StackSys</span>      <span class="c1">// goroutine 栈占用（goroutine 泄漏时这个涨）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">m</span><span class="p">.</span><span class="nx">MSpanSys</span> <span class="o">+</span> <span class="nx">m</span><span class="p">.</span><span class="nx">MCacheSys</span> <span class="o">+</span> <span class="nx">m</span><span class="p">.</span><span class="nx">GCSys</span>   <span class="c1">// runtime 自身的元数据开销
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">m</span><span class="p">.</span><span class="nx">NumGC</span>         <span class="c1">// GC 次数
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">m</span><span class="p">.</span><span class="nx">PauseTotalNs</span>  <span class="c1">// 累计 STW 时间
+</span></span></span></code></pre></div><p><strong>Go 的内存问题判断表</strong>（回收 13 篇 10.2）：</p>
+<table>
+<thead>
+<tr>
+<th>现象</th>
+<th>判断</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>HeapAlloc</code> 持续增长</td>
+<td><strong>堆内泄漏</strong> → <code>pprof heap</code> 找引用</td>
+</tr>
+<tr>
+<td><code>HeapAlloc</code> 稳定但 <code>HeapIdle</code> 大</td>
+<td>碎片或 span 未归还 → 正常，或调 <code>GOGC</code></td>
+</tr>
+<tr>
+<td><strong><code>Sys</code> ≈ RSS 但 <code>HeapAlloc</code> 小</strong></td>
+<td><strong>堆外</strong>：cgo 的 <code>C.malloc</code>、<code>mmap</code>、goroutine 栈</td>
+</tr>
+<tr>
+<td><code>StackSys</code> 持续增长</td>
+<td><strong>goroutine 泄漏</strong> → <code>pprof goroutine</code></td>
+</tr>
+<tr>
+<td><code>HeapReleased</code> 大但 RSS 不降</td>
+<td><code>MADV_FREE</code> 的延迟回收（24 篇 8.2）</td>
+</tr>
+</tbody>
+</table>
+<h2 id="65-归还给-os">6.5 归还给 OS</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// Go 有一个后台的 scavenger（清扫器）负责归还内存
+</span></span></span><span class="line"><span class="cl"><span class="c1">// runtime/mgcscavenge.go
+</span></span></span><span class="line"><span class="cl"><span class="c1">//   ① 按「内存增长速率」计算一个归还目标（避免归还了又立刻要回来）
+</span></span></span><span class="line"><span class="cl"><span class="c1">//   ② 把长时间空闲的 span 用 madvise 交还
+</span></span></span><span class="line"><span class="cl"><span class="c1">//   ③ Go 1.16+ 默认用 MADV_DONTNEED（RSS 立即下降，24 篇 8.2）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl"><span class="c1">// 手动触发
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">debug</span><span class="p">.</span><span class="nf">FreeOSMemory</span><span class="p">()</span>      <span class="c1">// 立刻 GC + 尽可能归还（相当于 glibc 的 malloc_trim）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl"><span class="c1">// 与 GOMEMLIMIT 的配合（12/23/25 篇反复提到）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">debug</span><span class="p">.</span><span class="nf">SetMemoryLimit</span><span class="p">(</span><span class="mi">1800</span> <span class="o">&lt;&lt;</span> <span class="mi">20</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="c1">// 它让 GC 在接近上限时更积极：
+</span></span></span><span class="line"><span class="cl"><span class="c1">//   ① 提前触发 GC
+</span></span></span><span class="line"><span class="cl"><span class="c1">//   ② 让 mutator 承担更多辅助标记工作（assist）
+</span></span></span><span class="line"><span class="cl"><span class="c1">//   ③ 更积极地归还内存
+</span></span></span><span class="line"><span class="cl"><span class="c1">// ✅ 容器里必须设，否则 Go 只按 GOGC 的比例增长，不知道 cgroup 上限
+</span></span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># Go 的 VSZ 为什么大（12/24 篇讲过，这里是分配器视角的原因）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># runtime 启动时预留（reserve）大块地址空间用于 arena：</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   mmap(PROT_NONE) 只占虚拟地址不占物理页</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   目的：让堆能连续增长，简化指针到 span 的映射计算</span>
+</span></span><span class="line"><span class="cl">grep -c <span class="s1">&#39;PROT_NONE\|---p&#39;</span> /proc/<span class="k">$(</span>pgrep -n myapp<span class="k">)</span>/maps
+</span></span><span class="line"><span class="cl">awk <span class="s1">&#39;$2==&#34;---p&#34; {split($1,a,&#34;-&#34;); s+=strtonum(&#34;0x&#34;a[2])-strtonum(&#34;0x&#34;a[1])} END {print s/1024/1024/1024 &#34; GB 预留（未提交）&#34;}&#39;</span> /proc/<span class="k">$(</span>pgrep -n myapp<span class="k">)</span>/maps
+</span></span></code></pre></div><h1 id="7-实战内存问题的分层定位">7. 实战：内存问题的分层定位</h1>
+<pre tabindex="0"><code>   现象：进程 RSS 持续增长
+        |
+        v
+   ① 是应用内存还是内核内存？（25 篇 3.3）
+      所有进程 RSS 之和 vs MemTotal - MemAvailable
+        ├─ 差距大 -&gt; 内核内存（slab / 页表 / 网络缓冲）-&gt; slabtop
+        └─ 对得上 -&gt; 继续
+        |
+        v
+   ② 是哪个进程？
+      ps aux --sort=-rss | head  或按 PSS 排序（13 篇 2.3）
+        |
+        v
+   ③ 存活对象是否在增长？（本篇的核心判断）
+      C/C++: mallinfo2().uordblks    Go: MemStats.HeapAlloc
+      Java: 堆使用量                 Redis: used_memory
+        ├─ 增长 -&gt; ❌ 【真泄漏】-&gt; 用 pprof / valgrind / heaptrack 找引用
+        └─ 稳定 -&gt; 继续（不是泄漏！）
+        |
+        v
+   ④ RSS ≫ 存活对象，差在哪？
+        ├─ glibc + 多线程 -&gt; ✅ 【arena 膨胀】-&gt; MALLOC_ARENA_MAX=2
+        ├─ 长期运行 -&gt; ✅ 【碎片】-&gt; malloc_trim / 换 jemalloc
+        ├─ Go 且 HeapIdle 大 -&gt; span 未归还 -&gt; debug.FreeOSMemory() / 调 GOGC
+        ├─ Go 且 Sys≈RSS 但 HeapAlloc 小 -&gt; 【堆外】cgo / mmap / goroutine 栈
+        └─ 24 篇的 MADV_FREE 延迟回收（Go &lt; 1.16）
+        |
+        v
+   ⑤ 容器场景额外检查
+      cgroup 的 memory.current / memory.max / memory.stat（25 篇 6.3）
+      MemoryHigh 是否配了（减速带）
+      GOMEMLIMIT / -XX:MaxRAMPercentage 是否设了
+</code></pre><h1 id="8-面试题">8. 面试题</h1>
+<p><strong>Q：<code>malloc</code> 为什么不直接用 <code>mmap</code>/<code>brk</code> 系统调用？</strong></p>
+<p>三个原因都是致命的：<strong>系统调用太贵</strong>（<code>mmap</code> 约 1~2 微秒，而 <code>malloc</code> 应该在几十纳秒级 —— 差 50 倍以上）、<strong>粒度不匹配</strong>（内核最小 4KB 页，而 <code>malloc(37)</code> 只要 37 字节，每个小对象占一页浪费 99%）、<strong>缺页开销</strong>（即使 mmap 成功，首次访问还要触发缺页异常）。</p>
+<p>所以分配器的核心策略是<strong>批发零售</strong>：向内核批量要内存（一次几百 KB 到几 MB），在用户态零售，释放的对象<strong>留在池子里复用</strong>而不还给内核。可以用 <code>strace -c</code> 验证：一百万次 <code>malloc</code>/<code>free</code> 只产生个位数的系统调用。</p>
+<p>分配器要同时满足三个互相冲突的目标：<strong>快</strong>（纳秒级、多线程无锁竞争）、<strong>省</strong>（元数据小、碎片少）、<strong>抗碎片</strong>（长期运行不无限增长）。不同分配器的差异本质就是在这三者间选了不同的平衡点。</p>
+<p><strong>Q：<code>free</code> 之后 RSS 为什么不下降？</strong></p>
+<p>三个原因，其中第一个是<strong>结构性的</strong>：</p>
+<ol>
+<li><strong><code>brk</code> 只能从末端收缩</strong> —— 堆是一段连续区域，如果中间有一个存活对象，它<strong>左边</strong>的空闲空间永远还不了。<strong>一个长寿命的小对象就能钉住整个堆</strong>，这不是 bug 而是 <code>brk</code> 的固有限制</li>
+<li><strong>分配器故意保留</strong>（这是特性）—— 刚 free 就还给内核，下次 malloc 又要重新申请 + 缺页。glibc 的 <code>M_TRIM_THRESHOLD</code>（默认 128KB）决定堆顶空闲多大才收缩</li>
+<li><strong>碎片</strong> —— 空闲块分散，无法合并成足够大的连续区域</li>
+</ol>
+<p><strong>关键结论：判断内存泄漏不能只看 RSS，要看「存活对象总量是否持续增长」</strong>（C 看 <code>mallinfo2().uordblks</code>、Go 看 <code>HeapAlloc</code>、Redis 看 <code>used_memory</code>）。</p>
+<p>主动归还的手段：<code>malloc_trim(0)</code>、降低 <code>M_MMAP_THRESHOLD</code> 让大块走 mmap（<code>free</code> 时直接 <code>munmap</code>）、或换 jemalloc/tcmalloc（有后台线程主动归还）。</p>
+<p><strong>Q：glibc 的 arena 是什么？为什么会导致多线程程序内存膨胀？</strong></p>
+<p>arena 是<strong>独立的堆</strong>。多线程都操作同一个堆会有严重锁竞争，所以 glibc 给线程分配多个 arena（主 arena 用 <code>brk</code>，非主 arena 用 <code>mmap</code> 申请 64MB 区域），<strong>每个线程首次 malloc 时绑定一个 arena 并固定使用</strong>。</p>
+<p>上限是 <strong>8 × 核数</strong>（64 位）—— 一台 32 核机器最多 <strong>256 个 arena</strong>。</p>
+<p>膨胀的原因是<strong>各 arena 的空闲内存互不共享</strong>：线程 A 释放的内存线程 B 用不上。于是<strong>总内存占用 = 各 arena 峰值之和</strong>，而不是全局峰值。</p>
+<p><strong>这是很多 Java/Python/C++ 服务在容器里被 OOMKilled 的真实原因</strong>：容器限制 2GB，应用堆只用了 1GB，但 arena 保留的内存让 RSS 到了 2GB。缓解手段是 <strong><code>MALLOC_ARENA_MAX=2</code></strong>（Java 社区有专门的这条建议）—— 代价是 arena 少了锁竞争会增加。</p>
+<p><strong>Q：<code>tcache</code> 解决了什么问题？</strong></p>
+<p>在 glibc 2.26（2017）之前，<strong>即使命中 fastbin 也要加 arena 的锁</strong> —— 多线程下即使各自分配小对象也会竞争同一把锁。</p>
+<p><code>tcache</code> 是<strong>纯线程本地</strong>的缓存（64 个桶，16~1032 字节，每桶最多 7 个 chunk），命中时<strong>完全无锁</strong>，只有几条指令，小对象分配性能提升数倍。</p>
+<p>代价有两个：每个线程多占一点内存；以及<strong>新的安全问题</strong> —— tcache 的实现简单（单向链表，早期缺少校验），使得 <strong>tcache poisoning 成为主流的堆利用手法</strong>。</p>
+<p>顺带一个 glibc 的精妙设计：<strong>空闲 chunk 的用户数据区被复用来存链表指针</strong>，所以空闲块管理不需要额外内存。代价是 chunk 头部与用户数据相邻，<strong>缓冲区溢出可以篡改头部</strong> —— 这是所有堆溢出利用的基础。</p>
+<p><strong>Q：<code>malloc(1)</code> 实际占多少内存？</strong></p>
+<p><strong>32 字节</strong>（<code>malloc_usable_size</code> 返回 24，加上头部）。因为 glibc 的 chunk 有 8/16 字节头部（存 size 和标志位），且按 16 字节对齐，最小 chunk 是 32 字节。</p>
+<p>这就是<strong>内部碎片</strong>的典型形态 —— 小对象的开销比例极高。在小对象密集的负载里，内部碎片可能损耗 30%~50%。</p>
+<p><strong>对比 Go：它没有 per-object 头部</strong> —— 对象大小由所属 span 的 size class 决定，元数据集中存放在 span 里。这既省内存，也顺带避免了「堆溢出篡改对象头部」这类问题。Go 用 <strong>68 个 size class</strong> 把最坏内部碎片压到约 12%（如果只用 2 的幂，最坏是 50%）。</p>
+<p><strong>Q：为什么用户态的碎片比内核的更难处理？</strong></p>
+<p>因为<strong>用户态不能搬动对象</strong>。内核可以做内存规整（25 篇）把物理页搬走腾出连续空间 —— 因为有页表这个间接层，搬动对物理页对进程<strong>透明</strong>（24 篇）。而应用手里拿着<strong>裸指针</strong>，分配器一旦移动对象，那些指针全部失效。</p>
+<p><strong>所以用户态分配器只能「避免产生碎片」，不能「事后整理」。</strong></p>
+<p>例外是<strong>有 GC 的运行时</strong>：GC 知道所有引用，所以可以搬动对象（Java 的 mark-compact 会压缩堆）。但 <strong>Go 的 GC 是非移动式的</strong> —— 这是个有意的取舍（简化 cgo 交互和内部指针），代价是不能做堆压缩，只能靠<strong>精细的 size class + span 管理</strong>来控制碎片。</p>
+<p><strong>Q：Go 为什么不用 libc 的 <code>malloc</code>，自己实现一套？</strong></p>
+<p>五个原因：</p>
+<ol>
+<li><strong><code>CGO_ENABLED=0</code> 时根本没有 libc</strong>（01 篇）—— 静态编译的 Go 程序不链接它</li>
+<li><strong>GC 需要对象元数据</strong> —— 「这块内存里哪些位置是指针」是扫描的前提，而 <code>malloc</code> 只返回一块裸内存，不携带任何类型信息</li>
+<li><strong>分配单位是 goroutine 而不是线程</strong> —— glibc 的 arena 是 per-thread 的，而 Go 有几十万 goroutine 跑在几个 OS 线程上。Go 用 <strong>per-P</strong> 缓存，正好对应 GMP 模型</li>
+<li><strong>要与调度器、GC 协同</strong> —— 分配时可能触发 GC 辅助标记（mutator assist）、抢占检查</li>
+<li><strong>性能可控</strong> —— 逃逸分析让大量对象根本不上堆，这是编译器与分配器协同设计的结果</li>
+</ol>
+<p>它的三级结构与 glibc 有清晰的对应：<strong><code>mcache</code>（per-P，无锁）↔ <code>tcache</code></strong>、<strong><code>mcentral</code>（per size class）↔ arena 的 bins</strong>、<strong><code>mheap</code> + <code>pageAlloc</code> ↔ top chunk + brk</strong>、<strong>64MB arena ↔ 非主 arena</strong>。</p>
+<p><strong>Q：Go 的内存问题怎么分层定位？</strong></p>
+<p>关键是<strong>对比「存活对象」和「RSS」</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>现象</th>
+<th>判断</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>HeapAlloc</code> 持续增长</td>
+<td><strong>堆内泄漏</strong> → <code>pprof heap</code> 找引用</td>
+</tr>
+<tr>
+<td><code>HeapAlloc</code> 稳定但 <code>HeapIdle</code> 大</td>
+<td>碎片或 span 未归还（不是泄漏）</td>
+</tr>
+<tr>
+<td><strong><code>Sys</code> ≈ RSS 但 <code>HeapAlloc</code> 小</strong></td>
+<td><strong>堆外</strong> —— cgo 的 <code>C.malloc</code>、<code>mmap</code>、goroutine 栈</td>
+</tr>
+<tr>
+<td><code>StackSys</code> 持续增长</td>
+<td><strong>goroutine 泄漏</strong> → <code>pprof goroutine</code></td>
+</tr>
+<tr>
+<td><code>HeapReleased</code> 大但 RSS 不降</td>
+<td><code>MADV_FREE</code> 的延迟回收（Go &lt; 1.16）</td>
+</tr>
+</tbody>
+</table>
+<p>完整的排查顺序是：<strong>① 应用内存还是内核内存</strong>（所有进程 RSS 之和 vs <code>MemTotal - MemAvailable</code>，差距大就查 <code>slabtop</code>）→ <strong>② 哪个进程</strong>（按 PSS 排序）→ <strong>③ 存活对象是否增长</strong>（这一步区分「真泄漏」和「分配器保留」）→ <strong>④ 差额在哪</strong>（arena 膨胀 / 碎片 / 堆外 / 未归还）→ <strong>⑤ 容器额外检查</strong> <code>memory.current</code>、<code>MemoryHigh</code>、<code>GOMEMLIMIT</code>。</p>
+<p><strong>Q：什么时候值得换 jemalloc/tcmalloc？</strong></p>
+<p><strong>值得</strong>：多线程 + 大量小对象分配（glibc arena 膨胀明显）；长期运行出现碎片累积（<strong>RSS 持续缓涨但 <code>uordblks</code> 稳定</strong>）；需要精细的内存可观测性。Redis 默认用 jemalloc 正是为了「碎片控制 + 可观测」—— 它把 <code>mem_fragmentation_ratio</code>（RSS / used_memory）作为正式指标暴露出来。</p>
+<p><strong>不必</strong>：<strong>Go 程序</strong>（有自己的分配器，libc 的 malloc 根本不参与）、短生命周期进程、单线程程序、内存不是瓶颈的服务。</p>
+<p>换的方式很简单（<code>LD_PRELOAD=/usr/lib/.../libjemalloc.so.2</code>，不用改代码），jemalloc 还能用 <code>MALLOC_CONF=background_thread:true,dirty_decay_ms:5000</code> 配置主动归还。但<strong>必须实测</strong> —— 不同负载差异很大，「换了就变好」不是普遍规律。</p>
+<hr>
+<h1 id="小结">小结</h1>
+<ul>
+<li><strong>分配器的存在理由是「系统调用太贵 + 粒度不匹配」</strong> → 批发零售，释放的对象留在池里复用</li>
+<li><strong>快、省、抗碎片三者冲突</strong>，各分配器的差异就是平衡点不同</li>
+<li><strong><code>brk</code> 只能从末端收缩</strong> → 一个长寿命对象就能钉住整个堆 → <strong>RSS 不降不等于泄漏</strong></li>
+<li><strong>判断泄漏要看「存活对象总量」</strong>（<code>uordblks</code> / <code>HeapAlloc</code> / <code>used_memory</code>），不是看 RSS</li>
+<li><strong>glibc 的 arena 上限是 8 × 核数</strong>，各 arena 内存互不共享 → <strong>容器里 OOM 的常见真凶</strong> → <code>MALLOC_ARENA_MAX=2</code></li>
+<li><strong><code>tcache</code>（2.26+）让小对象分配无锁</strong>，代价是成了主流的堆利用入口</li>
+<li><strong>用户态不能搬动对象</strong>（裸指针），所以只能避免碎片不能整理；有 GC 的运行时才能压缩，而 <strong>Go 有意选择了非移动式 GC</strong></li>
+<li><strong>Go 自己实现分配器有五个理由</strong>，核心是 GC 需要元数据 + per-P 而非 per-thread；它<strong>没有 per-object 头部</strong>，用 68 个 size class 把内部碎片压到 ~12%</li>
+<li><strong>换 jemalloc 对 Go 无意义</strong>（libc 不参与），对多线程 C/C++/Java 服务可能收益显著</li>
+</ul>
+<p>下一篇讲 <strong>调度器演进：O(n) → O(1) → CFS → EEVDF</strong> —— 每一代被什么问题逼着换代、虚拟运行时与 nice 权重表怎么来的、抢占点在哪、以及<strong>容器的 CPU 限流（CFS quota）如何造成 Go 服务的尾延迟</strong>。</p>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2026-08-12</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/linux/">linux</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/linux/linux_27_%E8%B0%83%E5%BA%A6%E5%99%A8%E6%BC%94%E8%BF%9B%E4%BB%8EOn%E5%88%B0EEVDF/" class="prev" rel="prev" title="Linux-27 调度器演进：O(n) → O(1) → CFS → EEVDF"><i class="fas fa-angle-left fa-fw"></i>Linux-27 调度器演进：O(n) → O(1) → CFS → EEVDF</a>
+            <a href="/posts/linux/linux_25_%E5%86%85%E6%A0%B8%E5%A6%82%E4%BD%95%E7%AE%A1%E7%90%86%E7%89%A9%E7%90%86%E5%86%85%E5%AD%98/" class="next" rel="next" title="Linux-25 内核如何管理物理内存：buddy、slab、页回收与 OOM">Linux-25 内核如何管理物理内存：buddy、slab、页回收与 OOM<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2026-08-12T11:00:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Linux-26 用户态分配器：从 brk 到 Go 的 mspan"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

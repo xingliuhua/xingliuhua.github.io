@@ -1,0 +1,1578 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>Linux-12 归档、压缩与 rsync：tar 的古怪参数、压缩算法选型与危险的 --delete - xingliuhua博客</title><meta name="Description" content="tar 为什么叫 tape archive 且参数可以不带横杠、归档与压缩为什么是两件事、gzip/xz/zstd 的实测对比与选型、tar 的绝对路径陷阱、rsync 末尾斜杠的语义差异、--delete 什么时候会清空目标目录。附增量快照与备份策略。"><meta property="og:title" content="Linux-12 归档、压缩与 rsync：tar 的古怪参数、压缩算法选型与危险的 --delete" />
+<meta property="og:description" content="tar 为什么叫 tape archive 且参数可以不带横杠、归档与压缩为什么是两件事、gzip/xz/zstd 的实测对比与选型、tar 的绝对路径陷阱、rsync 末尾斜杠的语义差异、--delete 什么时候会清空目标目录。附增量快照与备份策略。" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/linux/linux_12_%E5%BD%92%E6%A1%A3%E5%8E%8B%E7%BC%A9%E4%B8%8Ersync/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2026-08-12T18:00:00+08:00" />
+<meta property="article:modified_time" content="2026-08-12T18:00:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="Linux-12 归档、压缩与 rsync：tar 的古怪参数、压缩算法选型与危险的 --delete"/>
+<meta name="twitter:description" content="tar 为什么叫 tape archive 且参数可以不带横杠、归档与压缩为什么是两件事、gzip/xz/zstd 的实测对比与选型、tar 的绝对路径陷阱、rsync 末尾斜杠的语义差异、--delete 什么时候会清空目标目录。附增量快照与备份策略。"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/linux/linux_12_%E5%BD%92%E6%A1%A3%E5%8E%8B%E7%BC%A9%E4%B8%8Ersync/" /><link rel="prev" href="https://xingliuhua.github.io/posts/linux/linux_13_%E8%BF%9B%E7%A8%8B%E4%B8%8E%E4%BD%9C%E4%B8%9A%E6%8E%A7%E5%88%B6/" /><link rel="next" href="https://xingliuhua.github.io/posts/linux/linux_11_%E7%A3%81%E7%9B%98%E5%88%86%E5%8C%BA%E4%B8%8E%E6%8C%82%E8%BD%BD/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Linux-12 归档、压缩与 rsync：tar 的古怪参数、压缩算法选型与危险的 --delete",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_12_%E5%BD%92%E6%A1%A3%E5%8E%8B%E7%BC%A9%E4%B8%8Ersync\/"
+        },"genre": "posts","keywords": "linux","wordcount":  13100 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_12_%E5%BD%92%E6%A1%A3%E5%8E%8B%E7%BC%A9%E4%B8%8Ersync\/","datePublished": "2026-08-12T18:00:00+08:00","dateModified": "2026-08-12T18:00:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "tar 为什么叫 tape archive 且参数可以不带横杠、归档与压缩为什么是两件事、gzip/xz/zstd 的实测对比与选型、tar 的绝对路径陷阱、rsync 末尾斜杠的语义差异、--delete 什么时候会清空目标目录。附增量快照与备份策略。"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">Linux-12 归档、压缩与 rsync：tar 的古怪参数、压缩算法选型与危险的 --delete</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2026-08-12">2026-08-12</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 13100 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 27 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-归档与压缩是两件事">1. 归档与压缩是两件事</a></li>
+    <li><a href="#2-tar">2. tar</a>
+      <ol>
+        <li><a href="#21-名字与古怪参数的来源">2.1 名字与古怪参数的来源</a></li>
+        <li><a href="#22-操作模式必须选一个">2.2 操作模式：必须选一个</a></li>
+        <li><a href="#23-常用修饰参数">2.3 常用修饰参数</a></li>
+        <li><a href="#24-常用配方">2.4 常用配方</a></li>
+        <li><a href="#25-开篇第三问绝对路径陷阱">2.5 开篇第三问：绝对路径陷阱</a></li>
+        <li><a href="#26-其他陷阱">2.6 其他陷阱</a></li>
+        <li><a href="#27-增量备份">2.7 增量备份</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-压缩工具选型">3. 压缩工具选型</a>
+      <ol>
+        <li><a href="#31-开篇第二问实测对比">3.1 开篇第二问：实测对比</a></li>
+        <li><a href="#32-决策树">3.2 决策树</a></li>
+        <li><a href="#33-各工具的参数">3.3 各工具的参数</a></li>
+        <li><a href="#34-多线程压缩常被忽略的加速">3.4 多线程压缩：常被忽略的加速</a></li>
+      </ol>
+    </li>
+    <li><a href="#4-zip跨平台场景">4. zip：跨平台场景</a></li>
+    <li><a href="#5-rsync">5. rsync</a>
+      <ol>
+        <li><a href="#51-它凭什么比-cp-好">5.1 它凭什么比 cp 好</a></li>
+        <li><a href="#52-开篇第四问末尾斜杠的语义">5.2 开篇第四问：末尾斜杠的语义</a></li>
+        <li><a href="#53-开篇第五问--delete-什么时候会清空目标">5.3 开篇第五问：&ndash;delete 什么时候会清空目标</a></li>
+        <li><a href="#54--a-到底包含什么">5.4 <code>-a</code> 到底包含什么</a></li>
+        <li><a href="#55-完整参数表">5.5 完整参数表</a></li>
+        <li><a href="#56-常用场景">5.6 常用场景</a></li>
+        <li><a href="#57-增量快照--link-dest">5.7 增量快照：&ndash;link-dest</a></li>
+      </ol>
+    </li>
+    <li><a href="#6-备份策略">6. 备份策略</a>
+      <ol>
+        <li><a href="#61-快照不是备份">6.1 快照不是备份</a></li>
+        <li><a href="#62-3-2-1-原则">6.2 3-2-1 原则</a></li>
+        <li><a href="#63-现代备份工具">6.3 现代备份工具</a></li>
+        <li><a href="#64-备份必须验证">6.4 备份必须验证</a></li>
+      </ol>
+    </li>
+    <li><a href="#7-知识点扩展">7. 知识点扩展</a>
+      <ol>
+        <li><a href="#71-tar-速查">7.1 tar 速查</a></li>
+        <li><a href="#72-压缩工具速查">7.2 压缩工具速查</a></li>
+        <li><a href="#73-rsync-速查">7.3 rsync 速查</a></li>
+        <li><a href="#74-其他相关工具">7.4 其他相关工具</a></li>
+      </ol>
+    </li>
+    <li><a href="#8-面试题">8. 面试题</a></li>
+    <li><a href="#小结">小结</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><p>这一篇讲「把一堆文件变成一个文件」和「把文件搬到别处」。看起来是最简单的操作，但 <code>tar</code> 的参数体系和 <code>rsync</code> 的斜杠语义，是运维事故的两个经典来源。</p>
+<p>先看五个问题：</p>
+<ol>
+<li><code>tar</code> 的参数为什么可以不带横杠（<code>tar czvf</code> 而不是 <code>tar -c -z -v -f</code>）？这种风格从哪来？</li>
+<li><code>gzip</code>、<code>bzip2</code>、<code>xz</code>、<code>zstd</code> 该选哪个？</li>
+<li><code>tar</code> 打包时警告 <code>Removing leading '/' from member names</code> 是什么意思？不去掉会怎样？</li>
+<li><code>rsync -a /src /dst</code> 和 <code>rsync -a /src/ /dst</code> 有什么区别？</li>
+<li><code>rsync --delete</code> 什么情况下会把目标目录<strong>清空</strong>？</li>
+</ol>
+<h1 id="1-归档与压缩是两件事">1. 归档与压缩是两件事</h1>
+<p>这是理解整个工具链的前提：<strong>Unix 把「打包」和「压缩」拆成了两个独立的工具</strong>。</p>
+<pre tabindex="0"><code>   多个文件                     一个归档文件                  压缩后的文件
+   +-------+
+   | a.txt |  \                +------------+              +---------------+
+   +-------+   \    tar        |            |    gzip      |               |
+   +-------+    +-----------&gt; | archive.tar | -----------&gt; | archive.tar.gz|
+   | b.txt |    /   （归档）    |            |   （压缩）    |               |
+   +-------+   /                +------------+              +---------------+
+   +-------+  /
+   | c/    | /
+   +-------+
+
+   tar  = 只负责把多个文件拼成一个流（保留路径、权限、属主、时间戳）
+   gzip = 只负责把一个字节流压小（不认识文件的概念）
+</code></pre><p><strong>为什么这样拆？</strong> 这是 Unix 管道哲学的直接体现——每个工具只做一件事，通过管道组合：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">tar -cf - dir <span class="p">|</span> gzip &gt; dir.tar.gz          <span class="c1"># 手动组合（tar 的 -z 就是自动做这个）</span>
+</span></span><span class="line"><span class="cl">tar -cf - dir <span class="p">|</span> zstd &gt; dir.tar.zst         <span class="c1"># 换个压缩算法，tar 完全不用改</span>
+</span></span><span class="line"><span class="cl">tar -cf - dir <span class="p">|</span> ssh host <span class="s1">&#39;tar -xf -&#39;</span>       <span class="c1"># 甚至可以不落盘直接传到另一台机器</span>
+</span></span><span class="line"><span class="cl">tar -cf - dir <span class="p">|</span> gpg -c &gt; dir.tar.gpg       <span class="c1"># 或者接加密</span>
+</span></span></code></pre></div><p>对比 <code>zip</code> 的做法（Windows 世界的主流）：</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th><code>.tar.gz</code>（先归档后压缩）</th>
+<th><code>.zip</code>（每个文件单独压缩）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>压缩比</td>
+<td><strong>更好</strong>（跨文件共享压缩字典）</td>
+<td>较差（每个文件独立压缩）</td>
+</tr>
+<tr>
+<td>随机访问</td>
+<td>❌ <strong>必须解压整个流</strong>才能取出末尾的文件</td>
+<td>✅ 可以直接跳到某个文件</td>
+</tr>
+<tr>
+<td>保留 Unix 元数据</td>
+<td>✅ 权限、属主、软链接、稀疏文件</td>
+<td>⚠️ 支持有限（跨平台妥协）</td>
+</tr>
+<tr>
+<td>损坏影响</td>
+<td>损坏点之后的内容全部丢失</td>
+<td>只影响单个文件</td>
+</tr>
+<tr>
+<td>跨平台</td>
+<td>Linux/macOS 原生</td>
+<td>Windows 原生</td>
+</tr>
+</tbody>
+</table>
+<p><strong>所以选择很清楚</strong>：Linux 内部流转用 <code>.tar.gz</code>/<code>.tar.zst</code>，要发给 Windows 用户用 <code>.zip</code>。</p>
+<h1 id="2-tar">2. tar</h1>
+<h2 id="21-名字与古怪参数的来源">2.1 名字与古怪参数的来源</h2>
+<p><code>tar</code> = <strong>t</strong>ape <strong>ar</strong>chive（磁带归档）。它诞生于 1979 年，设计目标是<strong>把文件写到磁带上</strong>。这解释了它的很多特性：</p>
+<ul>
+<li><strong>参数不带横杠</strong>（<code>tar cvf</code>）—— 那个年代 getopt 还没成为标准，早期 Unix 命令的参数风格各异。<code>tar</code> 保留了这种「第一个参数是操作码」的老式风格</li>
+<li><strong>顺序流式处理</strong> —— 磁带只能顺序读写，不能随机访问，所以 tar 格式是纯流式的</li>
+<li><strong>默认写到 <code>/dev/rmt0</code></strong> —— 早期版本默认输出到磁带设备，所以必须用 <code>-f</code> 显式指定文件</li>
+<li><strong><code>-r</code>（append）不能用于压缩包</strong> —— 追加需要定位到流末尾，压缩流做不到</li>
+</ul>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 三种参数风格都能用（这是历史包袱的直接结果）</span>
+</span></span><span class="line"><span class="cl">tar cvzf backup.tar.gz dir          <span class="c1"># 老式：操作码不带横杠</span>
+</span></span><span class="line"><span class="cl">tar -cvzf backup.tar.gz dir         <span class="c1"># 短选项风格</span>
+</span></span><span class="line"><span class="cl">tar --create --verbose --gzip --file<span class="o">=</span>backup.tar.gz dir    <span class="c1"># 长选项风格</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ⚠️ 老式风格里，f 后面必须紧跟文件名</span>
+</span></span><span class="line"><span class="cl">tar czf backup.tar.gz dir           <span class="c1"># ✅ f 在最后，紧跟文件名</span>
+</span></span><span class="line"><span class="cl">tar cfz backup.tar.gz dir           <span class="c1"># ❌ f 后面跟的是 z，把 &#34;z&#34; 当成了文件名</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 报错：tar: z: Cannot open: No such file or directory</span>
+</span></span></code></pre></div><h2 id="22-操作模式必须选一个">2.2 操作模式：必须选一个</h2>
+<table>
+<thead>
+<tr>
+<th>模式</th>
+<th>长选项</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong><code>-c</code></strong></td>
+<td><code>--create</code></td>
+<td><strong>创建</strong>归档</td>
+</tr>
+<tr>
+<td><strong><code>-x</code></strong></td>
+<td><code>--extract</code></td>
+<td><strong>解开</strong>归档</td>
+</tr>
+<tr>
+<td><strong><code>-t</code></strong></td>
+<td><code>--list</code></td>
+<td><strong>列出</strong>内容（<strong>解压前必做</strong>）</td>
+</tr>
+<tr>
+<td><code>-r</code></td>
+<td><code>--append</code></td>
+<td>追加文件（<strong>不能用于压缩包</strong>）</td>
+</tr>
+<tr>
+<td><code>-u</code></td>
+<td><code>--update</code></td>
+<td>只追加比归档里更新的文件</td>
+</tr>
+<tr>
+<td><code>-d</code></td>
+<td><code>--diff</code> / <code>--compare</code></td>
+<td>比较归档与文件系统的差异</td>
+</tr>
+<tr>
+<td><code>--delete</code></td>
+<td>—</td>
+<td>从归档中删除（<strong>不能用于压缩包</strong>）</td>
+</tr>
+<tr>
+<td><code>-A</code></td>
+<td><code>--concatenate</code></td>
+<td>合并多个 tar 归档</td>
+</tr>
+</tbody>
+</table>
+<h2 id="23-常用修饰参数">2.3 常用修饰参数</h2>
+<table>
+<thead>
+<tr>
+<th>短</th>
+<th>长</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong><code>-f FILE</code></strong></td>
+<td><code>--file</code></td>
+<td><strong>指定归档文件名</strong>（几乎必须；<code>-</code> 表示 stdin/stdout）</td>
+</tr>
+<tr>
+<td><code>-v</code></td>
+<td><code>--verbose</code></td>
+<td>显示处理的文件（<code>-vv</code> 更详细）</td>
+</tr>
+<tr>
+<td><strong><code>-z</code></strong></td>
+<td><code>--gzip</code></td>
+<td>用 gzip 压缩/解压（<code>.tar.gz</code> / <code>.tgz</code>）</td>
+</tr>
+<tr>
+<td><code>-j</code></td>
+<td><code>--bzip2</code></td>
+<td>用 bzip2（<code>.tar.bz2</code>）</td>
+</tr>
+<tr>
+<td><code>-J</code></td>
+<td><code>--xz</code></td>
+<td>用 xz（<code>.tar.xz</code>）</td>
+</tr>
+<tr>
+<td>—</td>
+<td><code>--zstd</code></td>
+<td>用 zstd（<code>.tar.zst</code>）</td>
+</tr>
+<tr>
+<td>—</td>
+<td><code>--lzma</code> / <code>--lzop</code></td>
+<td>其他算法</td>
+</tr>
+<tr>
+<td><strong><code>-a</code></strong></td>
+<td><code>--auto-compress</code></td>
+<td><strong>根据文件名后缀自动选压缩算法</strong>（创建时很方便）</td>
+</tr>
+<tr>
+<td><strong><code>-C DIR</code></strong></td>
+<td><code>--directory</code></td>
+<td><strong>切换到该目录</strong>再操作（<strong>打包解包都常用</strong>）</td>
+</tr>
+<tr>
+<td><strong><code>-p</code></strong></td>
+<td><code>--preserve-permissions</code></td>
+<td>保留权限（解包时 root 默认开启，普通用户要显式加）</td>
+</tr>
+<tr>
+<td>—</td>
+<td><code>--same-owner</code></td>
+<td>保留属主（root 解包时默认）</td>
+</tr>
+<tr>
+<td>—</td>
+<td><code>--no-same-owner</code></td>
+<td>不保留属主（普通用户默认）</td>
+</tr>
+<tr>
+<td>—</td>
+<td><code>--numeric-owner</code></td>
+<td><strong>用 uid/gid 数字而不是名字</strong>（跨机器恢复必用）</td>
+</tr>
+<tr>
+<td><strong><code>--exclude=PAT</code></strong></td>
+<td>—</td>
+<td>排除匹配的路径</td>
+</tr>
+<tr>
+<td><code>--exclude-from=FILE</code></td>
+<td>—</td>
+<td>从文件读排除列表</td>
+</tr>
+<tr>
+<td><code>-X FILE</code></td>
+<td>同上</td>
+<td>简写</td>
+</tr>
+<tr>
+<td><strong><code>--strip-components=N</code></strong></td>
+<td>—</td>
+<td><strong>解压时去掉前 N 层目录</strong></td>
+</tr>
+<tr>
+<td><code>-P</code></td>
+<td><code>--absolute-names</code></td>
+<td><strong>保留绝对路径</strong>（危险，见 2.5）</td>
+</tr>
+<tr>
+<td><code>-h</code></td>
+<td><code>--dereference</code></td>
+<td>跟随软链接（<strong>打包目标内容而不是链接本身</strong>）</td>
+</tr>
+<tr>
+<td><code>-S</code></td>
+<td><code>--sparse</code></td>
+<td>高效处理稀疏文件</td>
+</tr>
+<tr>
+<td><code>-O</code></td>
+<td><code>--to-stdout</code></td>
+<td>解压到标准输出</td>
+</tr>
+<tr>
+<td><code>--to-command=CMD</code></td>
+<td>—</td>
+<td>把每个文件交给命令处理</td>
+</tr>
+<tr>
+<td><code>-g FILE</code></td>
+<td><code>--listed-incremental</code></td>
+<td>增量备份（记录快照状态）</td>
+</tr>
+<tr>
+<td><code>--overwrite</code></td>
+<td>—</td>
+<td>覆盖已有文件（默认行为取决于版本）</td>
+</tr>
+<tr>
+<td><code>-k</code></td>
+<td><code>--keep-old-files</code></td>
+<td><strong>不覆盖</strong>已有文件</td>
+</tr>
+<tr>
+<td><code>--skip-old-files</code></td>
+<td>—</td>
+<td>跳过已存在的（不报错）</td>
+</tr>
+<tr>
+<td><code>-m</code></td>
+<td><code>--touch</code></td>
+<td>不恢复修改时间</td>
+</tr>
+<tr>
+<td><code>--checkpoint=N</code></td>
+<td>—</td>
+<td>每 N 条记录打个点（配合 <code>--checkpoint-action</code> 显示进度）</td>
+</tr>
+<tr>
+<td><code>--totals</code></td>
+<td>—</td>
+<td>结束时显示总字节数与速度</td>
+</tr>
+<tr>
+<td><code>-W</code></td>
+<td><code>--verify</code></td>
+<td>写完后校验</td>
+</tr>
+<tr>
+<td><code>--warning=no-XXX</code></td>
+<td>—</td>
+<td>关闭特定警告</td>
+</tr>
+</tbody>
+</table>
+<h2 id="24-常用配方">2.4 常用配方</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ── 打包 ──</span>
+</span></span><span class="line"><span class="cl">tar -czvf backup.tar.gz /path/to/dir        <span class="c1"># gzip 压缩（最通用）</span>
+</span></span><span class="line"><span class="cl">tar -cJvf backup.tar.xz /path/to/dir        <span class="c1"># xz（压缩比最高，慢）</span>
+</span></span><span class="line"><span class="cl">tar --zstd -cvf backup.tar.zst dir          <span class="c1"># zstd（推荐：快且压缩比接近 xz）</span>
+</span></span><span class="line"><span class="cl">tar -cavf backup.tar.gz dir                 <span class="c1"># -a 根据后缀自动选算法</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 用 -C 避免打包出多余的目录层级（很重要的习惯）</span>
+</span></span><span class="line"><span class="cl">tar -czf app.tar.gz -C /opt/app .           <span class="c1"># 归档内是 ./bin ./conf（干净）</span>
+</span></span><span class="line"><span class="cl">tar -czf app.tar.gz /opt/app                <span class="c1"># 归档内是 opt/app/bin（多两层）</span>
+</span></span><span class="line"><span class="cl">tar -czf app.tar.gz -C /opt app             <span class="c1"># 归档内是 app/bin（一层，也常用）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 查看（解压前必做！）──</span>
+</span></span><span class="line"><span class="cl">tar -tzvf backup.tar.gz                     <span class="c1"># 列出内容与权限</span>
+</span></span><span class="line"><span class="cl">tar -tzvf backup.tar.gz <span class="p">|</span> head -20          <span class="c1"># 只看前几个，确认目录结构</span>
+</span></span><span class="line"><span class="cl">tar -tzvf backup.tar.gz <span class="p">|</span> wc -l             <span class="c1"># 数文件个数</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ⚠️ 不先看就解压的风险：归档里可能是散落的文件（没有顶层目录），</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    会把当前目录搞得一团糟（这叫 &#34;tarbomb&#34;）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 解压 ──</span>
+</span></span><span class="line"><span class="cl">tar -xzvf backup.tar.gz                     <span class="c1"># 解到当前目录</span>
+</span></span><span class="line"><span class="cl">tar -xzvf backup.tar.gz -C /target          <span class="c1"># ✅ 解到指定目录（目录必须已存在）</span>
+</span></span><span class="line"><span class="cl">tar -xzvf backup.tar.gz --strip-components<span class="o">=</span><span class="m">1</span>  <span class="c1"># 去掉最外面一层目录</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                       ^^^^^^^^^^^^^^^^^^^ GitHub 下载的 tarball 常用</span>
+</span></span><span class="line"><span class="cl">tar -xzvf backup.tar.gz path/inside/file    <span class="c1"># 只解压某一个文件</span>
+</span></span><span class="line"><span class="cl">tar -xzvf backup.tar.gz --wildcards <span class="s1">&#39;*.conf&#39;</span>  <span class="c1"># 只解压匹配的</span>
+</span></span><span class="line"><span class="cl">tar -xzOf backup.tar.gz path/to/file        <span class="c1"># 解压某文件到 stdout（不落盘查看）</span>
+</span></span><span class="line"><span class="cl">tar -xzvf backup.tar.gz -k                  <span class="c1"># 不覆盖已存在的文件</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 现代 tar 能自动识别压缩格式，解压时可以省掉 z/j/J</span>
+</span></span><span class="line"><span class="cl">tar -xvf backup.tar.gz                      <span class="c1"># ✅ 自动识别</span>
+</span></span><span class="line"><span class="cl">tar -xvf backup.tar.xz
+</span></span><span class="line"><span class="cl">tar -xvf backup.tar.zst
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 排除 ──</span>
+</span></span><span class="line"><span class="cl">tar -czf app.tar.gz --exclude<span class="o">=</span><span class="s1">&#39;*.log&#39;</span> --exclude<span class="o">=</span><span class="s1">&#39;node_modules&#39;</span> --exclude<span class="o">=</span><span class="s1">&#39;.git&#39;</span> -C /opt/app .
+</span></span><span class="line"><span class="cl">tar -czf app.tar.gz -X exclude.txt -C /opt/app .
+</span></span><span class="line"><span class="cl">cat exclude.txt
+</span></span><span class="line"><span class="cl"><span class="c1"># *.log</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># node_modules</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># .git</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ⚠️ --exclude 必须写在【要打包的路径之前】，否则可能不生效（GNU tar 的老版本）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 追加与合并（只能对未压缩的 .tar）──</span>
+</span></span><span class="line"><span class="cl">tar -rvf archive.tar newfile.txt            <span class="c1"># 追加文件</span>
+</span></span><span class="line"><span class="cl">tar -Avf all.tar part1.tar part2.tar        <span class="c1"># 合并归档</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 压缩包要追加只能：解压 -&gt; 追加 -&gt; 重新压缩</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 权限与属主 ──</span>
+</span></span><span class="line"><span class="cl">sudo tar -xzvpf backup.tar.gz -C /          <span class="c1"># -p 保留权限（恢复系统备份时必须）</span>
+</span></span><span class="line"><span class="cl">sudo tar -xzvf backup.tar.gz --numeric-owner -C /
+</span></span><span class="line"><span class="cl"><span class="c1">#                            ^^^^^^^^^^^^^^^ 用 uid/gid 数字，避免跨机器时用户名映射错乱</span>
+</span></span><span class="line"><span class="cl">tar -czf backup.tar.gz --numeric-owner dir  <span class="c1"># 打包时也建议加</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 进度显示 ──</span>
+</span></span><span class="line"><span class="cl">tar -czf backup.tar.gz --checkpoint<span class="o">=</span><span class="m">1000</span> --checkpoint-action<span class="o">=</span>dot dir
+</span></span><span class="line"><span class="cl">tar -czf backup.tar.gz --totals dir         <span class="c1"># 结束时报总量与速度</span>
+</span></span><span class="line"><span class="cl">tar -cf - dir <span class="p">|</span> pv -s <span class="k">$(</span>du -sb dir <span class="p">|</span> cut -f1<span class="k">)</span> <span class="p">|</span> gzip &gt; backup.tar.gz
+</span></span><span class="line"><span class="cl"><span class="c1">#               ^^ pv 提供进度条（需要安装）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 跨机器传输（不落中间文件）──</span>
+</span></span><span class="line"><span class="cl">tar -czf - /data <span class="p">|</span> ssh user@host <span class="s1">&#39;cat &gt; /backup/data.tar.gz&#39;</span>
+</span></span><span class="line"><span class="cl">tar -cf - /data <span class="p">|</span> ssh user@host <span class="s1">&#39;tar -xf - -C /restore&#39;</span>      <span class="c1"># 直接解到对端</span>
+</span></span><span class="line"><span class="cl">ssh user@host <span class="s1">&#39;tar -czf - /data&#39;</span> <span class="p">|</span> tar -xzf - -C /local      <span class="c1"># 从对端拉取</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 这个用法对内网大目录传输很实用（省掉打包落盘的时间和磁盘）</span>
+</span></span></code></pre></div><h2 id="25-开篇第三问绝对路径陷阱">2.5 开篇第三问：绝对路径陷阱</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">tar -czf backup.tar.gz /etc/nginx
+</span></span><span class="line"><span class="cl"><span class="c1"># tar: Removing leading `/&#39; from member names</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ 这个警告是【好事】</span>
+</span></span></code></pre></div><p><code>tar</code> 默认把归档里的路径改成<strong>相对路径</strong>（<code>etc/nginx/...</code> 而不是 <code>/etc/nginx/...</code>）。原因是安全：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 如果保留绝对路径（-P），解压时会【无视你的当前目录】直接写到那个绝对位置</span>
+</span></span><span class="line"><span class="cl">tar -czPf backup.tar.gz /etc/nginx          <span class="c1"># -P 保留绝对路径</span>
+</span></span><span class="line"><span class="cl"><span class="nb">cd</span> /tmp <span class="o">&amp;&amp;</span> tar -xzPf backup.tar.gz
+</span></span><span class="line"><span class="cl"><span class="c1"># 结果：直接覆盖了 /etc/nginx，而不是解到 /tmp/etc/nginx  💀</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 更危险的是恶意归档</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 攻击者构造一个含 /etc/cron.d/backdoor 或 ../../../../etc/passwd 的归档，</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 你一解压就被覆盖了系统文件</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 所以默认行为（去掉开头的 /）是正确的，解压时会落在当前目录下</span>
+</span></span><span class="line"><span class="cl"><span class="nb">cd</span> /tmp <span class="o">&amp;&amp;</span> tar -xzf backup.tar.gz
+</span></span><span class="line"><span class="cl">ls /tmp/etc/nginx                            <span class="c1"># 解到了这里，安全</span>
+</span></span></code></pre></div><p><strong>推论</strong>：恢复系统备份到原位时，正确做法不是用 <code>-P</code>，而是：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">sudo tar -xzvpf backup.tar.gz -C /           <span class="c1"># ✅ 用 -C / 指定解压根位置</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                              ^^^^ 明确、可控</span>
+</span></span></code></pre></div><p><strong>另外要防 tarbomb 和路径穿越</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 解压前必看内容</span>
+</span></span><span class="line"><span class="cl">tar -tzf unknown.tar.gz <span class="p">|</span> head -20
+</span></span><span class="line"><span class="cl">tar -tzf unknown.tar.gz <span class="p">|</span> grep -E <span class="s1">&#39;^/|\.\./&#39;</span>      <span class="c1"># 检查有没有绝对路径或 ..</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 现代 GNU tar 默认会拒绝 ../ 穿越，但老版本和其他实现不一定</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 安全的解压姿势：解到一个空的临时目录</span>
+</span></span><span class="line"><span class="cl">mkdir -p /tmp/extract <span class="o">&amp;&amp;</span> tar -xzf unknown.tar.gz -C /tmp/extract
+</span></span><span class="line"><span class="cl">ls /tmp/extract                              <span class="c1"># 确认结构后再挪到目标位置</span>
+</span></span></code></pre></div><h2 id="26-其他陷阱">2.6 其他陷阱</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ① 软链接：默认打包链接本身，不是目标内容</span>
+</span></span><span class="line"><span class="cl">tar -czf backup.tar.gz dir                   <span class="c1"># 归档里是软链接</span>
+</span></span><span class="line"><span class="cl">tar -czhf backup.tar.gz dir                  <span class="c1"># -h 跟随链接，打包实际内容（体积变大）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 部署场景常需要 -h（把 current -&gt; releases/v1.2.3 变成实体）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ② 硬链接：tar 能正确识别并只存一份</span>
+</span></span><span class="line"><span class="cl">tar -czf backup.tar.gz dir                   <span class="c1"># 硬链接在归档里被标记，解压后仍是硬链接 ✅</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ③ 稀疏文件：不加 -S 会把空洞展开成真实的 0（体积暴涨）</span>
+</span></span><span class="line"><span class="cl">tar -czSf vm.tar.gz disk.img                 <span class="c1"># -S 高效处理稀疏文件</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ④ 时间戳：默认保留 mtime；想让 tar 包内容可复现（reproducible build）</span>
+</span></span><span class="line"><span class="cl">tar --sort<span class="o">=</span>name --mtime<span class="o">=</span><span class="s1">&#39;2026-01-01 00:00:00&#39;</span> --owner<span class="o">=</span><span class="m">0</span> --group<span class="o">=</span><span class="m">0</span> --numeric-owner <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>    -czf reproducible.tar.gz dir
+</span></span><span class="line"><span class="cl"><span class="c1">#   ^^^^^^^^^^^ 固定顺序 + 固定时间戳 + 固定属主 = 内容相同则 tar 包字节相同</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ⑤ 文件名编码：GBK 文件名的归档在 UTF-8 系统上会乱码</span>
+</span></span><span class="line"><span class="cl">tar -czf backup.tar.gz dir                   <span class="c1"># tar 不做编码转换，原样存字节</span>
+</span></span><span class="line"><span class="cl">convmv -f gbk -t utf8 -r --notest dir/       <span class="c1"># 打包前先转换文件名编码</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ⑥ 大文件与 ARG_MAX：文件太多时命令行会超长</span>
+</span></span><span class="line"><span class="cl">tar -czf backup.tar.gz <span class="k">$(</span>find . -name <span class="s1">&#39;*.log&#39;</span><span class="k">)</span>      <span class="c1"># ❌ 可能 Argument list too long</span>
+</span></span><span class="line"><span class="cl">find . -name <span class="s1">&#39;*.log&#39;</span> -print0 <span class="p">|</span> tar -czf backup.tar.gz --null -T -    <span class="c1"># ✅</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                                                    ^^^^^^ 从 stdin 读文件列表</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ⑦ 校验归档完整性</span>
+</span></span><span class="line"><span class="cl">gzip -t backup.tar.gz                        <span class="c1"># 测试 gzip 流是否完好</span>
+</span></span><span class="line"><span class="cl">tar -tzf backup.tar.gz &gt; /dev/null <span class="o">&amp;&amp;</span> <span class="nb">echo</span> OK   <span class="c1"># 能完整列出说明没坏</span>
+</span></span><span class="line"><span class="cl">sha256sum backup.tar.gz &gt; backup.tar.gz.sha256   <span class="c1"># ✅ 备份时同时存校验和</span>
+</span></span><span class="line"><span class="cl">sha256sum -c backup.tar.gz.sha256               <span class="c1"># 恢复前先校验</span>
+</span></span></code></pre></div><h2 id="27-增量备份">2.7 增量备份</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 用 -g（--listed-incremental）记录状态快照</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 全量（level 0）</span>
+</span></span><span class="line"><span class="cl">sudo tar -czf full.tar.gz -g /var/backups/snapshot.snar -C /data .
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 增量（level 1）：只打包自上次以来变化的文件</span>
+</span></span><span class="line"><span class="cl">sudo tar -czf inc1.tar.gz -g /var/backups/snapshot.snar -C /data .
+</span></span><span class="line"><span class="cl"><span class="c1">#                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^ 同一个 snar 文件会被更新</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 恢复：必须【按顺序】解压全量 + 所有增量</span>
+</span></span><span class="line"><span class="cl">sudo tar -xzf full.tar.gz -g /dev/null -C /restore
+</span></span><span class="line"><span class="cl">sudo tar -xzf inc1.tar.gz -g /dev/null -C /restore
+</span></span><span class="line"><span class="cl"><span class="c1">#                          ^^^^^^^^^^^ 恢复时用 /dev/null（增量恢复要求）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ⚠️ 三个问题让它在实践中不太好用：</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ① snar 文件丢了就无法继续增量</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ② 恢复必须按顺序，任何一个增量包损坏就断链</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ③ 删除的文件需要正确处理（tar 会记录，但容易出错）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 生产上推荐用专门的备份工具（restic/borg/rsync --link-dest，见第 6 章）</span>
+</span></span></code></pre></div><h1 id="3-压缩工具选型">3. 压缩工具选型</h1>
+<h2 id="31-开篇第二问实测对比">3.1 开篇第二问：实测对比</h2>
+<p>以一个 1GB 的混合文本+二进制目录为参考（具体数值因数据而异，<strong>看的是数量级关系</strong>）：</p>
+<table>
+<thead>
+<tr>
+<th>工具</th>
+<th>后缀</th>
+<th>压缩比</th>
+<th>压缩速度</th>
+<th>解压速度</th>
+<th>内存</th>
+<th>多线程</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong><code>gzip</code></strong></td>
+<td><code>.gz</code></td>
+<td>基准（约 3:1）</td>
+<td>快</td>
+<td>很快</td>
+<td>低</td>
+<td><code>pigz</code></td>
+</tr>
+<tr>
+<td><code>bzip2</code></td>
+<td><code>.bz2</code></td>
+<td>比 gzip 好 ~10%</td>
+<td><strong>很慢</strong></td>
+<td>慢</td>
+<td>中</td>
+<td><code>pbzip2</code></td>
+</tr>
+<tr>
+<td><strong><code>xz</code></strong></td>
+<td><code>.xz</code></td>
+<td><strong>最好</strong>（比 gzip 好 ~30%）</td>
+<td><strong>极慢</strong></td>
+<td>中</td>
+<td><strong>高</strong>（可达 GB 级）</td>
+<td><code>-T0</code></td>
+</tr>
+<tr>
+<td><strong><code>zstd</code></strong></td>
+<td><code>.zst</code></td>
+<td>接近 xz</td>
+<td><strong>快</strong>（接近 gzip）</td>
+<td><strong>极快</strong></td>
+<td>中</td>
+<td><code>-T0</code></td>
+</tr>
+<tr>
+<td><code>lz4</code></td>
+<td><code>.lz4</code></td>
+<td>最差</td>
+<td><strong>极快</strong></td>
+<td><strong>极快</strong></td>
+<td>极低</td>
+<td><code>-T0</code></td>
+</tr>
+<tr>
+<td><code>brotli</code></td>
+<td><code>.br</code></td>
+<td>好（Web 场景优化）</td>
+<td>中</td>
+<td>快</td>
+<td>中</td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
+<p><strong>关键结论</strong>：</p>
+<pre tabindex="0"><code>zstd 在「压缩比 × 速度」上全面优于 gzip 和 bzip2，是新项目的默认选择。
+xz 只在「压缩一次、分发很多次」（如发行版镜像、软件包）时值得用。
+lz4 用于「实时压缩」（如内存压缩、日志实时传输）。
+gzip 的唯一优势是【无处不在的兼容性】。
+</code></pre><h2 id="32-决策树">3.2 决策树</h2>
+<pre tabindex="0"><code>需要什么？
+├─ 兼容性最重要（发给别人、老系统）        -&gt; gzip (.tar.gz)
+├─ 日常备份、内部流转                      -&gt; zstd (.tar.zst)   ← 推荐
+├─ 压缩一次分发很多次（镜像、软件包）       -&gt; xz (.tar.xz)
+├─ 实时/流式压缩（日志管道、内存）          -&gt; lz4 或 zstd -1
+├─ 要发给 Windows 用户                     -&gt; zip
+└─ 需要随机访问单个文件                    -&gt; zip 或 squashfs
+</code></pre><h2 id="33-各工具的参数">3.3 各工具的参数</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ── gzip ──</span>
+</span></span><span class="line"><span class="cl">gzip file                       <span class="c1"># 压缩（【删除原文件】，变成 file.gz）</span>
+</span></span><span class="line"><span class="cl">gzip -k file                    <span class="c1"># k = keep，保留原文件</span>
+</span></span><span class="line"><span class="cl">gzip -c file &gt; file.gz          <span class="c1"># 或者用 -c 输出到 stdout</span>
+</span></span><span class="line"><span class="cl">gzip -d file.gz                 <span class="c1"># 解压（等价 gunzip）</span>
+</span></span><span class="line"><span class="cl">gzip -1 file                    <span class="c1"># 最快（压缩比最低）</span>
+</span></span><span class="line"><span class="cl">gzip -9 file                    <span class="c1"># 最慢（压缩比最高），默认是 -6</span>
+</span></span><span class="line"><span class="cl">gzip -t file.gz                 <span class="c1"># 测试完整性</span>
+</span></span><span class="line"><span class="cl">gzip -l file.gz                 <span class="c1"># 查看压缩率</span>
+</span></span><span class="line"><span class="cl">gzip -r dir                     <span class="c1"># 递归压缩目录里【每个文件】（不是打包！）</span>
+</span></span><span class="line"><span class="cl">pigz -p <span class="m">8</span> file                  <span class="c1"># 多线程 gzip（8 线程）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── zstd（推荐）──</span>
+</span></span><span class="line"><span class="cl">zstd file                       <span class="c1"># 压缩（默认保留原文件，与 gzip 相反！）</span>
+</span></span><span class="line"><span class="cl">zstd --rm file                  <span class="c1"># 压缩后删除原文件</span>
+</span></span><span class="line"><span class="cl">zstd -d file.zst                <span class="c1"># 解压</span>
+</span></span><span class="line"><span class="cl">zstd -19 file                   <span class="c1"># 最高压缩比（1~19，默认 3）</span>
+</span></span><span class="line"><span class="cl">zstd --ultra -22 file           <span class="c1"># 超高（需要更多内存）</span>
+</span></span><span class="line"><span class="cl">zstd -T0 file                   <span class="c1"># 用所有 CPU 核心</span>
+</span></span><span class="line"><span class="cl">zstd -1 file                    <span class="c1"># 最快</span>
+</span></span><span class="line"><span class="cl">zstd --long<span class="o">=</span><span class="m">27</span> file             <span class="c1"># 长距离匹配（大文件效果好）</span>
+</span></span><span class="line"><span class="cl">zstd --adapt file               <span class="c1"># 自适应压缩级别（管道场景，根据 IO 速度调整）</span>
+</span></span><span class="line"><span class="cl">zstd -c file <span class="p">|</span> ...              <span class="c1"># 输出到 stdout</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── xz ──</span>
+</span></span><span class="line"><span class="cl">xz file                         <span class="c1"># 压缩（删除原文件）</span>
+</span></span><span class="line"><span class="cl">xz -k file                      <span class="c1"># 保留原文件</span>
+</span></span><span class="line"><span class="cl">xz -d file.xz                   <span class="c1"># 解压（等价 unxz）</span>
+</span></span><span class="line"><span class="cl">xz -9e file                     <span class="c1"># 极限压缩（e = extreme）</span>
+</span></span><span class="line"><span class="cl">xz -T0 file                     <span class="c1"># 多线程</span>
+</span></span><span class="line"><span class="cl">xz -T4 -9 file                  <span class="c1"># 4 线程 + 高压缩</span>
+</span></span><span class="line"><span class="cl">xz --memlimit<span class="o">=</span>2G -d file.xz     <span class="c1"># 限制解压内存（解压高压缩比文件可能需要很多内存）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── bzip2 ──</span>
+</span></span><span class="line"><span class="cl">bzip2 file / bunzip2 file.bz2
+</span></span><span class="line"><span class="cl">pbzip2 -p8 file                 <span class="c1"># 多线程版</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── lz4 ──</span>
+</span></span><span class="line"><span class="cl">lz4 file                        <span class="c1"># 极快</span>
+</span></span><span class="line"><span class="cl">lz4 -9 file                     <span class="c1"># 高压缩（仍然很快）</span>
+</span></span><span class="line"><span class="cl">lz4 -d file.lz4
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 查看压缩文件（不解压）──</span>
+</span></span><span class="line"><span class="cl">zcat / zless / zgrep / zdiff    <span class="c1"># gzip</span>
+</span></span><span class="line"><span class="cl">bzcat / bzless / bzgrep         <span class="c1"># bzip2</span>
+</span></span><span class="line"><span class="cl">xzcat / xzless / xzgrep         <span class="c1"># xz</span>
+</span></span><span class="line"><span class="cl">zstdcat / zstdgrep              <span class="c1"># zstd</span>
+</span></span></code></pre></div><h2 id="34-多线程压缩常被忽略的加速">3.4 多线程压缩：常被忽略的加速</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 单线程 xz 压缩 10GB 可能要一小时，多线程能快 8 倍</span>
+</span></span><span class="line"><span class="cl">tar -cf - /data <span class="p">|</span> xz -T0 &gt; data.tar.xz            <span class="c1"># xz 内置多线程</span>
+</span></span><span class="line"><span class="cl">tar -cf - /data <span class="p">|</span> zstd -T0 -19 &gt; data.tar.zst     <span class="c1"># zstd 内置多线程</span>
+</span></span><span class="line"><span class="cl">tar -cf - /data <span class="p">|</span> pigz -p8 &gt; data.tar.gz          <span class="c1"># gzip 靠 pigz</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># tar 直接指定压缩程序</span>
+</span></span><span class="line"><span class="cl">tar -cf data.tar.gz -I <span class="s1">&#39;pigz -p8&#39;</span> /data
+</span></span><span class="line"><span class="cl">tar -cf data.tar.zst -I <span class="s1">&#39;zstd -T0 -19&#39;</span> /data
+</span></span><span class="line"><span class="cl">tar -cf data.tar.xz -I <span class="s1">&#39;xz -T0 -9&#39;</span> /data
+</span></span><span class="line"><span class="cl"><span class="c1">#                   ^^ -I / --use-compress-program 指定外部压缩命令</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 也可以直接设置环境变量</span>
+</span></span><span class="line"><span class="cl"><span class="nb">export</span> <span class="nv">GZIP</span><span class="o">=</span><span class="s1">&#39;-9&#39;</span>                <span class="c1"># 老式方式（已废弃，会有警告）</span>
+</span></span><span class="line"><span class="cl"><span class="nb">export</span> <span class="nv">ZSTD_CLEVEL</span><span class="o">=</span><span class="m">19</span>
+</span></span><span class="line"><span class="cl"><span class="nb">export</span> <span class="nv">ZSTD_NBTHREADS</span><span class="o">=</span><span class="m">0</span>
+</span></span></code></pre></div><h1 id="4-zip跨平台场景">4. zip：跨平台场景</h1>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">zip -r archive.zip dir                    <span class="c1"># -r 递归（不加只会打包目录本身）</span>
+</span></span><span class="line"><span class="cl">zip -r archive.zip dir -x <span class="s1">&#39;*.log&#39;</span> <span class="s1">&#39;*/node_modules/*&#39;</span>      <span class="c1"># -x 排除</span>
+</span></span><span class="line"><span class="cl">zip -9 -r archive.zip dir                 <span class="c1"># 最高压缩</span>
+</span></span><span class="line"><span class="cl">zip -e archive.zip file                   <span class="c1"># 加密（提示输入密码）</span>
+</span></span><span class="line"><span class="cl">zip -s 100m -r big.zip dir                <span class="c1"># 分卷（每卷 100MB）</span>
+</span></span><span class="line"><span class="cl">zip -j archive.zip dir/*                  <span class="c1"># j = junk paths，不保留目录结构</span>
+</span></span><span class="line"><span class="cl">zip -u archive.zip newfile                <span class="c1"># 更新已有归档</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">unzip archive.zip                         <span class="c1"># 解压</span>
+</span></span><span class="line"><span class="cl">unzip -l archive.zip                      <span class="c1"># 列出内容（解压前必看）</span>
+</span></span><span class="line"><span class="cl">unzip -d /target archive.zip              <span class="c1"># 解到指定目录</span>
+</span></span><span class="line"><span class="cl">unzip -o archive.zip                      <span class="c1"># 覆盖已有文件（不提示）</span>
+</span></span><span class="line"><span class="cl">unzip -n archive.zip                      <span class="c1"># 不覆盖</span>
+</span></span><span class="line"><span class="cl">unzip archive.zip <span class="s1">&#39;path/*&#39;</span>                <span class="c1"># 只解压匹配的</span>
+</span></span><span class="line"><span class="cl">unzip -p archive.zip file &gt; out           <span class="c1"># 解压到 stdout</span>
+</span></span><span class="line"><span class="cl">unzip -t archive.zip                      <span class="c1"># 测试完整性</span>
+</span></span></code></pre></div><p><strong>两个常见问题</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ① 中文文件名乱码（Windows 用 GBK，Linux 用 UTF-8）</span>
+</span></span><span class="line"><span class="cl">unzip archive.zip
+</span></span><span class="line"><span class="cl"><span class="c1"># 文件名变成 ��ĵ�.txt</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">unzip -O GBK archive.zip                  <span class="c1"># ✅ Debian/Ubuntu 的 unzip 支持 -O</span>
+</span></span><span class="line"><span class="cl">unzip -O CP936 archive.zip                <span class="c1"># 同上（CP936 = GBK）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 不支持 -O 时用 7z 或 Python</span>
+</span></span><span class="line"><span class="cl">7z x archive.zip                          <span class="c1"># 7z 通常能正确处理</span>
+</span></span><span class="line"><span class="cl">python3 -c <span class="s2">&#34;
+</span></span></span><span class="line"><span class="cl"><span class="s2">import zipfile, sys, os
+</span></span></span><span class="line"><span class="cl"><span class="s2">z = zipfile.ZipFile(sys.argv[1])
+</span></span></span><span class="line"><span class="cl"><span class="s2">for n in z.namelist():
+</span></span></span><span class="line"><span class="cl"><span class="s2">    fixed = n.encode(&#39;cp437&#39;).decode(&#39;gbk&#39;)
+</span></span></span><span class="line"><span class="cl"><span class="s2">    print(fixed)
+</span></span></span><span class="line"><span class="cl"><span class="s2">    z.extract(n)
+</span></span></span><span class="line"><span class="cl"><span class="s2">    if n != fixed: os.rename(n, fixed)
+</span></span></span><span class="line"><span class="cl"><span class="s2">&#34;</span> archive.zip
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ② zip 的加密不安全</span>
+</span></span><span class="line"><span class="cl">zip -e archive.zip file                   <span class="c1"># 传统 ZipCrypto，早已被破解</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 需要加密用 GPG 或 age</span>
+</span></span><span class="line"><span class="cl">tar -czf - dir <span class="p">|</span> gpg -c &gt; backup.tar.gz.gpg          <span class="c1"># 对称加密</span>
+</span></span><span class="line"><span class="cl">tar -czf - dir <span class="p">|</span> age -r &lt;公钥&gt; &gt; backup.tar.gz.age   <span class="c1"># 现代方案</span>
+</span></span><span class="line"><span class="cl">7z a -p -mhe<span class="o">=</span>on archive.7z dir            <span class="c1"># 7z 的 AES-256（-mhe 连文件名一起加密）</span>
+</span></span></code></pre></div><h1 id="5-rsync">5. rsync</h1>
+<h2 id="51-它凭什么比-cp-好">5.1 它凭什么比 cp 好</h2>
+<p><code>rsync</code> = <strong>r</strong>emote <strong>sync</strong>。三个核心能力：</p>
+<p><strong>① 增量传输（两级判断）</strong></p>
+<pre tabindex="0"><code>第一级：quick check（默认）
+   比较「文件大小 + mtime」，两者都一样就认为文件没变 -&gt; 直接跳过
+   代价：mtime 被改过的相同文件会被重传；内容变了但 size+mtime 恰好一样会被漏掉（极罕见）
+
+第二级：rolling checksum（跨机器传输时对【已变化的文件】）
+   把文件切成固定大小的块，对每块算弱校验（rolling）+ 强校验（MD5）
+   接收端把自己的块校验发给发送端，发送端只传【对不上的块】
+   -&gt; 一个 10GB 文件改了 1MB，只传那 1MB 附近的内容
+</code></pre><p><strong>② 能中断续传、能限速、能显示进度</strong> —— <code>cp</code> 三个都不行</p>
+<p><strong>③ 能镜像删除</strong>（<code>--delete</code>）—— 让目标和源完全一致</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 一个直观的对比</span>
+</span></span><span class="line"><span class="cl">cp -a /data/ /backup/                  <span class="c1"># 每次都全量复制 10GB</span>
+</span></span><span class="line"><span class="cl">rsync -a /data/ /backup/               <span class="c1"># 第一次全量，之后只传变化的部分（可能只有几 MB）</span>
+</span></span></code></pre></div><h2 id="52-开篇第四问末尾斜杠的语义">5.2 开篇第四问：末尾斜杠的语义</h2>
+<p><strong>这是 rsync 最著名的坑，务必记牢：</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">rsync -a /src  /dst/          <span class="c1"># -&gt; /dst/src/...        把 src 这个【目录本身】放进 dst</span>
+</span></span><span class="line"><span class="cl">rsync -a /src/ /dst/          <span class="c1"># -&gt; /dst/...            把 src 的【内容】放进 dst</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#           ^ 就差这一个斜杠</span>
+</span></span></code></pre></div><p>记忆方法：<strong>源路径末尾的 <code>/</code> 表示「里面的东西」</strong>。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 实际演示</span>
+</span></span><span class="line"><span class="cl">mkdir -p /tmp/a/sub <span class="o">&amp;&amp;</span> touch /tmp/a/f1 /tmp/a/sub/f2 <span class="o">&amp;&amp;</span> mkdir -p /tmp/b
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">rsync -a /tmp/a /tmp/b/ <span class="o">&amp;&amp;</span> find /tmp/b
+</span></span><span class="line"><span class="cl"><span class="c1"># /tmp/b</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># /tmp/b/a               &lt;- 多了一层 a</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># /tmp/b/a/f1</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># /tmp/b/a/sub/f2</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">rm -rf /tmp/b/* 
+</span></span><span class="line"><span class="cl">rsync -a /tmp/a/ /tmp/b/ <span class="o">&amp;&amp;</span> find /tmp/b
+</span></span><span class="line"><span class="cl"><span class="c1"># /tmp/b</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># /tmp/b/f1              &lt;- 直接是内容</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># /tmp/b/sub/f2</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 目标路径的斜杠【无关紧要】（rsync 总把它当目录）</span>
+</span></span><span class="line"><span class="cl">rsync -a /tmp/a/ /tmp/b       <span class="c1"># 与 /tmp/b/ 等效</span>
+</span></span></code></pre></div><p><strong>这个坑的危险之处在于它与 <code>--delete</code> 组合时</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 你想同步内容，但漏了源的斜杠</span>
+</span></span><span class="line"><span class="cl">rsync -a --delete /data /backup/
+</span></span><span class="line"><span class="cl"><span class="c1"># 结果：数据被放进 /backup/data/，而 /backup/ 下【原有的其他内容全被删了】</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#      （因为 --delete 认为「源里只有 data 这一个条目」）</span>
+</span></span></code></pre></div><h2 id="53-开篇第五问--delete-什么时候会清空目标">5.3 开篇第五问：&ndash;delete 什么时候会清空目标</h2>
+<p><code>--delete</code> 的语义是「<strong>删除目标端存在但源端不存在的文件</strong>」，让两边完全一致。它在三种情况下会清空目标：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ── 情况一：源路径写错或不存在（最常见）──</span>
+</span></span><span class="line"><span class="cl">rsync -a --delete /dat/ /backup/          <span class="c1"># 源目录名打错了（少了 a）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># rsync: change_dir &#34;/dat&#34; failed: No such file or directory</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 好消息：源【完全不存在】时 rsync 会报错退出，不会删</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 情况二：源目录存在但是空的（真正的杀手）──</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 场景：/data 是数据盘的挂载点，但盘没挂上，/data 是个空目录</span>
+</span></span><span class="line"><span class="cl">mountpoint -q /data <span class="o">||</span> <span class="nb">echo</span> <span class="s2">&#34;盘没挂上！&#34;</span>
+</span></span><span class="line"><span class="cl">rsync -a --delete /data/ /backup/
+</span></span><span class="line"><span class="cl"><span class="c1"># 💀 源是空的 -&gt; rsync 认为「所有文件都该删除」-&gt; /backup 被清空</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 情况三：变量为空 ──</span>
+</span></span><span class="line"><span class="cl"><span class="nv">SRC</span><span class="o">=</span><span class="s2">&#34;&#34;</span>                                     <span class="c1"># 变量赋值失败</span>
+</span></span><span class="line"><span class="cl">rsync -a --delete <span class="s2">&#34;</span><span class="nv">$SRC</span><span class="s2">/&#34;</span> /backup/         <span class="c1"># 展开成 rsync -a --delete / /backup/</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                                             把整个根目录同步过去…</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 情况四：斜杠错位（见 5.2）──</span>
+</span></span><span class="line"><span class="cl">rsync -a --delete /data /backup/           <span class="c1"># /backup 下除了 data/ 之外的都被删</span>
+</span></span></code></pre></div><p><strong>四道安全带，生产脚本至少用前两个</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ① --dry-run 演练（必做）</span>
+</span></span><span class="line"><span class="cl">rsync -a --delete --dry-run /data/ /backup/ <span class="p">|</span> head -50
+</span></span><span class="line"><span class="cl">rsync -avn --delete /data/ /backup/         <span class="c1"># -n 是 --dry-run 的简写</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#      ^^^ 一定要先看它打算删什么</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ② --max-delete 限制删除数量（最实用的兜底）</span>
+</span></span><span class="line"><span class="cl">rsync -a --delete --max-delete<span class="o">=</span><span class="m">100</span> /data/ /backup/
+</span></span><span class="line"><span class="cl"><span class="c1"># 超过 100 个删除操作就中止并报错，避免灾难性清空</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ③ 校验源不为空 + 是挂载点</span>
+</span></span><span class="line"><span class="cl"><span class="o">[[</span> -n <span class="s2">&#34;</span><span class="k">$(</span>ls -A /data<span class="k">)</span><span class="s2">&#34;</span> <span class="o">]]</span> <span class="o">||</span> <span class="o">{</span> <span class="nb">echo</span> <span class="s2">&#34;源目录为空，中止&#34;</span><span class="p">;</span> <span class="nb">exit</span> 1<span class="p">;</span> <span class="o">}</span>
+</span></span><span class="line"><span class="cl">mountpoint -q /data <span class="o">||</span> <span class="o">{</span> <span class="nb">echo</span> <span class="s2">&#34;数据盘未挂载，中止&#34;</span><span class="p">;</span> <span class="nb">exit</span> 1<span class="p">;</span> <span class="o">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ④ 用 --backup 保留被删除/覆盖的文件</span>
+</span></span><span class="line"><span class="cl">rsync -a --delete --backup --backup-dir<span class="o">=</span>/backup/.trash/<span class="k">$(</span>date +%F<span class="k">)</span> /data/ /backup/current/
+</span></span><span class="line"><span class="cl"><span class="c1">#                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ 被删的文件挪到回收站而不是真删</span>
+</span></span></code></pre></div><h2 id="54--a-到底包含什么">5.4 <code>-a</code> 到底包含什么</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">rsync -a src/ dst/
+</span></span><span class="line"><span class="cl"><span class="c1">#      ^^ archive = -rlptgoD</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#         │││││││</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#         ││││││└─ D = --devices --specials  设备文件与特殊文件（需 root）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#         │││││└── o = --owner       保留属主（需 root）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#         ││││└─── g = --group       保留属组</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#         │││└──── t = --times       保留 mtime  ← 【最关键】没有它每次都会重传！</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#         ││└───── p = --perms       保留权限</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#         │└────── l = --links       软链接照抄成软链接</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#         └─────── r = --recursive   递归</span>
+</span></span></code></pre></div><p><strong><code>-a</code> 不包含的三项，需要显式加</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">rsync -aHAX src/ dst/
+</span></span><span class="line"><span class="cl"><span class="c1">#       ^^^</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#       │││</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#       ││└─ X = --xattrs      扩展属性（SELinux 标签、user.* 属性）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#       │└── A = --acls        ACL（10 篇第 6 章）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#       └─── H = --hard-links  【保留硬链接关系】</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#            不加 H 时，同一 inode 的两个名字会被复制成两份独立数据！</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#            备份用了硬链接快照的目录时，不加 -H 会导致体积暴涨</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 完整的&#34;一模一样&#34;备份</span>
+</span></span><span class="line"><span class="cl">rsync -aHAX --numeric-ids /data/ /backup/
+</span></span><span class="line"><span class="cl"><span class="c1">#           ^^^^^^^^^^^^^ 跨机器时用 uid/gid 数字，避免用户名映射错乱</span>
+</span></span></code></pre></div><h2 id="55-完整参数表">5.5 完整参数表</h2>
+<table>
+<thead>
+<tr>
+<th>短</th>
+<th>长</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong><code>-a</code></strong></td>
+<td><code>--archive</code></td>
+<td>= <code>-rlptgoD</code>（最常用的组合）</td>
+</tr>
+<tr>
+<td><code>-r</code></td>
+<td><code>--recursive</code></td>
+<td>递归</td>
+</tr>
+<tr>
+<td><code>-l</code></td>
+<td><code>--links</code></td>
+<td>软链接照抄</td>
+</tr>
+<tr>
+<td><code>-L</code></td>
+<td><code>--copy-links</code></td>
+<td><strong>跟随</strong>软链接，复制目标内容</td>
+</tr>
+<tr>
+<td><code>-p</code> <code>-t</code> <code>-g</code> <code>-o</code></td>
+<td>—</td>
+<td>保留权限/时间/属组/属主</td>
+</tr>
+<tr>
+<td><strong><code>-H</code></strong></td>
+<td><code>--hard-links</code></td>
+<td><strong>保留硬链接</strong>（<code>-a</code> 不含）</td>
+</tr>
+<tr>
+<td><strong><code>-A</code></strong></td>
+<td><code>--acls</code></td>
+<td>保留 ACL（<code>-a</code> 不含）</td>
+</tr>
+<tr>
+<td><strong><code>-X</code></strong></td>
+<td><code>--xattrs</code></td>
+<td>保留扩展属性（<code>-a</code> 不含）</td>
+</tr>
+<tr>
+<td><code>-v</code> / <code>-vv</code></td>
+<td><code>--verbose</code></td>
+<td>显示传输的文件</td>
+</tr>
+<tr>
+<td><strong><code>-n</code></strong></td>
+<td><code>--dry-run</code></td>
+<td><strong>演练</strong>（危险操作前必用）</td>
+</tr>
+<tr>
+<td><code>-z</code></td>
+<td><code>--compress</code></td>
+<td>传输时压缩（<strong>只在跨网络时有意义</strong>，本地是浪费 CPU）</td>
+</tr>
+<tr>
+<td><code>--compress-level=N</code></td>
+<td>—</td>
+<td>压缩级别</td>
+</tr>
+<tr>
+<td><code>-P</code></td>
+<td>= <code>--partial --progress</code></td>
+<td>断点续传 + 每文件进度</td>
+</tr>
+<tr>
+<td><strong><code>--info=progress2</code></strong></td>
+<td>—</td>
+<td><strong>总体进度</strong>（比 <code>-P</code> 更适合大目录）</td>
+</tr>
+<tr>
+<td><code>--partial</code></td>
+<td>—</td>
+<td>保留部分传输的文件（下次续传）</td>
+</tr>
+<tr>
+<td><code>--partial-dir=DIR</code></td>
+<td>—</td>
+<td>断点数据放到指定目录（更安全）</td>
+</tr>
+<tr>
+<td><code>--append</code> / <code>--append-verify</code></td>
+<td>—</td>
+<td>只追加（日志类文件），后者会校验已有部分</td>
+</tr>
+<tr>
+<td><strong><code>--delete</code></strong></td>
+<td>—</td>
+<td><strong>删除目标端多余的文件</strong></td>
+</tr>
+<tr>
+<td><code>--delete-before/during/after/delay</code></td>
+<td>—</td>
+<td>删除的时机（默认 during）</td>
+</tr>
+<tr>
+<td><code>--delete-excluded</code></td>
+<td>—</td>
+<td>连被排除的也删</td>
+</tr>
+<tr>
+<td><strong><code>--max-delete=N</code></strong></td>
+<td>—</td>
+<td><strong>删除超过 N 个就中止</strong>（安全带）</td>
+</tr>
+<tr>
+<td><code>--max-size=SIZE</code></td>
+<td>—</td>
+<td>跳过大于此大小的文件</td>
+</tr>
+<tr>
+<td><code>--min-size=SIZE</code></td>
+<td>—</td>
+<td>跳过小于此大小的</td>
+</tr>
+<tr>
+<td><strong><code>-c</code></strong></td>
+<td><code>--checksum</code></td>
+<td><strong>按内容校验</strong>而不是 size+mtime（慢但能发现静默损坏）</td>
+</tr>
+<tr>
+<td><code>-u</code></td>
+<td><code>--update</code></td>
+<td>跳过目标端更新的文件</td>
+</tr>
+<tr>
+<td><code>--existing</code></td>
+<td>—</td>
+<td>只更新目标已有的文件，不新建</td>
+</tr>
+<tr>
+<td><code>--ignore-existing</code></td>
+<td>—</td>
+<td>只新建，不更新已有的</td>
+</tr>
+<tr>
+<td><code>--exclude=PAT</code></td>
+<td>—</td>
+<td>排除</td>
+</tr>
+<tr>
+<td><code>--include=PAT</code></td>
+<td>—</td>
+<td>包含（<strong>顺序敏感</strong>，要写在 <code>--exclude</code> 之前）</td>
+</tr>
+<tr>
+<td><code>--exclude-from=FILE</code></td>
+<td>—</td>
+<td>从文件读排除规则</td>
+</tr>
+<tr>
+<td><code>--files-from=FILE</code></td>
+<td>—</td>
+<td>只传列表里的文件</td>
+</tr>
+<tr>
+<td><code>--from0</code></td>
+<td>—</td>
+<td>列表用 <code>\0</code> 分隔（配合 <code>find -print0</code>）</td>
+</tr>
+<tr>
+<td><strong><code>--bwlimit=RATE</code></strong></td>
+<td>—</td>
+<td><strong>限速</strong>（<code>--bwlimit=50M</code>）</td>
+</tr>
+<tr>
+<td><code>-e 'ssh -p 2222'</code></td>
+<td><code>--rsh</code></td>
+<td>指定远程 shell 与参数</td>
+</tr>
+<tr>
+<td><code>--rsync-path=PATH</code></td>
+<td>—</td>
+<td>指定对端 rsync 的路径（如需 <code>sudo rsync</code>）</td>
+</tr>
+<tr>
+<td><strong><code>--numeric-ids</code></strong></td>
+<td>—</td>
+<td>用 uid/gid 数字（跨机器必用）</td>
+</tr>
+<tr>
+<td><strong><code>--link-dest=DIR</code></strong></td>
+<td>—</td>
+<td><strong>与 DIR 中未变的文件建硬链接</strong>（增量快照核心）</td>
+</tr>
+<tr>
+<td><code>--copy-dest=DIR</code> / <code>--compare-dest=DIR</code></td>
+<td>—</td>
+<td>类似但用复制/仅比较</td>
+</tr>
+<tr>
+<td><code>--backup</code> / <code>--backup-dir=DIR</code></td>
+<td>—</td>
+<td>覆盖/删除前先备份</td>
+</tr>
+<tr>
+<td><code>--inplace</code></td>
+<td>—</td>
+<td>就地更新（省空间，但中断会留下损坏文件）</td>
+</tr>
+<tr>
+<td><code>--sparse</code></td>
+<td>—</td>
+<td>高效处理稀疏文件</td>
+</tr>
+<tr>
+<td><code>--remove-source-files</code></td>
+<td>—</td>
+<td>传完删源（当「带进度的 mv」用）</td>
+</tr>
+<tr>
+<td><code>--stats</code></td>
+<td>—</td>
+<td>结束时输出详细统计</td>
+</tr>
+<tr>
+<td><code>--itemize-changes</code> / <code>-i</code></td>
+<td>—</td>
+<td>显示每个文件<strong>为什么</strong>被传（调试神器）</td>
+</tr>
+<tr>
+<td><code>--log-file=FILE</code></td>
+<td>—</td>
+<td>写日志</td>
+</tr>
+<tr>
+<td><code>--timeout=N</code></td>
+<td>—</td>
+<td>IO 超时</td>
+</tr>
+<tr>
+<td><code>--contimeout=N</code></td>
+<td>—</td>
+<td>连接超时</td>
+</tr>
+</tbody>
+</table>
+<h2 id="56-常用场景">5.6 常用场景</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ── 本地备份 ──</span>
+</span></span><span class="line"><span class="cl">rsync -aH --info<span class="o">=</span>progress2 /data/ /backup/
+</span></span><span class="line"><span class="cl">rsync -aH --delete --max-delete<span class="o">=</span><span class="m">100</span> -n /data/ /backup/     <span class="c1"># 先演练</span>
+</span></span><span class="line"><span class="cl">rsync -aH --delete --max-delete<span class="o">=</span><span class="m">100</span> /data/ /backup/        <span class="c1"># 确认后执行</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 跨机传输 ──</span>
+</span></span><span class="line"><span class="cl">rsync -avz /app/ user@host:/app/                    <span class="c1"># 推（-z 跨网络值得开）</span>
+</span></span><span class="line"><span class="cl">rsync -avz user@host:/app/ /app/                    <span class="c1"># 拉</span>
+</span></span><span class="line"><span class="cl">rsync -avz -e <span class="s1">&#39;ssh -p 2222 -i ~/.ssh/deploy&#39;</span> /app/ user@host:/app/
+</span></span><span class="line"><span class="cl">rsync -avz --rsync-path<span class="o">=</span><span class="s1">&#39;sudo rsync&#39;</span> /app/ user@host:/opt/app/   <span class="c1"># 对端需要 sudo</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 限速与断点（大文件/生产环境必备）──</span>
+</span></span><span class="line"><span class="cl">rsync -aP --bwlimit<span class="o">=</span>50M /big/ host:/big/            <span class="c1"># 限速 50MB/s + 断点续传</span>
+</span></span><span class="line"><span class="cl">rsync -aP --partial-dir<span class="o">=</span>.rsync-partial /big/ host:/big/
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 只同步特定文件 ──</span>
+</span></span><span class="line"><span class="cl">rsync -av --include<span class="o">=</span><span class="s1">&#39;*/&#39;</span> --include<span class="o">=</span><span class="s1">&#39;*.go&#39;</span> --exclude<span class="o">=</span><span class="s1">&#39;*&#39;</span> src/ dst/
+</span></span><span class="line"><span class="cl"><span class="c1">#          ^^^^^^^^^^^^^ 必须先包含所有目录，否则 rsync 不会进入子目录</span>
+</span></span><span class="line"><span class="cl">rsync -av --exclude-from<span class="o">=</span>.rsyncignore src/ dst/
+</span></span><span class="line"><span class="cl">find . -name <span class="s1">&#39;*.log&#39;</span> -print0 <span class="p">|</span> rsync -av --from0 --files-from<span class="o">=</span>- . /backup/
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 排查「为什么这个文件被重传了」──</span>
+</span></span><span class="line"><span class="cl">rsync -ain --itemize-changes /data/ /backup/ <span class="p">|</span> head
+</span></span><span class="line"><span class="cl"><span class="c1"># &gt;f.st...... path/to/file</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#  ││││││││││</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#  ││└┴┴┴┴┴┴┴ 哪些属性不同：s=size t=time p=perms o=owner g=group a=acl x=xattr</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#  │└──────── 文件类型：f=文件 d=目录 L=软链接</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#  └───────── 操作：&gt; 接收 &lt; 发送 c 创建 h 硬链接 . 无变化</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 当「带进度的 mv」用 ──</span>
+</span></span><span class="line"><span class="cl">rsync -aH --info<span class="o">=</span>progress2 --remove-source-files /old/ /new/
+</span></span><span class="line"><span class="cl">find /old -type d -empty -delete                     <span class="c1"># 源目录需要自己清理</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 校验已有备份的完整性 ──</span>
+</span></span><span class="line"><span class="cl">rsync -avnc /data/ /backup/                          <span class="c1"># -c 按内容校验，-n 只报告</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#         ^^ 有输出说明内容不一致（能发现静默数据损坏）</span>
+</span></span></code></pre></div><h2 id="57-增量快照--link-dest">5.7 增量快照：&ndash;link-dest</h2>
+<p>这是 Time Machine 式备份的核心技巧，也是 04 篇讲的硬链接的最佳应用：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="cp">#!/bin/bash
+</span></span></span><span class="line"><span class="cl"><span class="cp"></span><span class="nb">set</span> -euo pipefail
+</span></span><span class="line"><span class="cl"><span class="nv">SRC</span><span class="o">=</span>/data
+</span></span><span class="line"><span class="cl"><span class="nv">DST</span><span class="o">=</span>/backup
+</span></span><span class="line"><span class="cl"><span class="nv">TODAY</span><span class="o">=</span><span class="k">$(</span>date +%F<span class="k">)</span>
+</span></span><span class="line"><span class="cl"><span class="nv">LATEST</span><span class="o">=</span><span class="s2">&#34;</span><span class="nv">$DST</span><span class="s2">/latest&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 安全检查</span>
+</span></span><span class="line"><span class="cl">mountpoint -q <span class="s2">&#34;</span><span class="nv">$SRC</span><span class="s2">&#34;</span> <span class="o">||</span> <span class="o">{</span> <span class="nb">echo</span> <span class="s2">&#34;源未挂载&#34;</span><span class="p">;</span> <span class="nb">exit</span> 1<span class="p">;</span> <span class="o">}</span>
+</span></span><span class="line"><span class="cl"><span class="o">[[</span> -n <span class="s2">&#34;</span><span class="k">$(</span>ls -A <span class="s2">&#34;</span><span class="nv">$SRC</span><span class="s2">&#34;</span><span class="k">)</span><span class="s2">&#34;</span> <span class="o">]]</span> <span class="o">||</span> <span class="o">{</span> <span class="nb">echo</span> <span class="s2">&#34;源为空&#34;</span><span class="p">;</span> <span class="nb">exit</span> 1<span class="p">;</span> <span class="o">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">rsync -aHAX --delete --max-delete<span class="o">=</span><span class="m">1000</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>      --link-dest<span class="o">=</span><span class="s2">&#34;</span><span class="nv">$LATEST</span><span class="s2">&#34;</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>      <span class="s2">&#34;</span><span class="nv">$SRC</span><span class="s2">/&#34;</span> <span class="s2">&#34;</span><span class="nv">$DST</span><span class="s2">/</span><span class="nv">$TODAY</span><span class="s2">/&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#     ^^^^^^^^^^^^^^^^^^^^^ 与上一次备份中【未变化】的文件建硬链接</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">ln -sfn <span class="s2">&#34;</span><span class="nv">$DST</span><span class="s2">/</span><span class="nv">$TODAY</span><span class="s2">&#34;</span> <span class="s2">&#34;</span><span class="nv">$LATEST</span><span class="s2">&#34;</span>          <span class="c1"># 更新 latest 指针（06 篇讲的原子切换）</span>
+</span></span></code></pre></div><p><strong>效果</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">du -sh /backup/2026-08-10 /backup/2026-08-11 /backup/2026-08-12
+</span></span><span class="line"><span class="cl"><span class="c1"># 100G    /backup/2026-08-10</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 100G    /backup/2026-08-11        &lt;- 每个都&#34;看起来&#34;是完整的 100G</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 100G    /backup/2026-08-12</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">du -sh /backup/                     <span class="c1"># 但总占用远小于 300G</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 104G    /backup/                  &lt;- 未变化的文件是硬链接，只占一份</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 每个快照都是【完整可用】的目录树，恢复时直接 cp 就行，不需要&#34;重放增量&#34;</span>
+</span></span><span class="line"><span class="cl">cp -a /backup/2026-08-10/some/file /data/some/file
+</span></span></code></pre></div><p><strong>与 tar 增量备份对比</strong>：</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th><code>tar -g</code> 增量</th>
+<th><code>rsync --link-dest</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>恢复方式</td>
+<td>必须按顺序解压全量+所有增量</td>
+<td><strong>每个快照直接可用</strong></td>
+</tr>
+<tr>
+<td>单点损坏</td>
+<td>断链，后续全部无法恢复</td>
+<td>只影响那一份</td>
+</tr>
+<tr>
+<td>空间占用</td>
+<td>更省（有压缩）</td>
+<td>稍多（未压缩，但未变文件共享）</td>
+</tr>
+<tr>
+<td>浏览历史</td>
+<td>要解压才能看</td>
+<td><strong>直接 <code>ls</code> 就能看</strong></td>
+</tr>
+<tr>
+<td>依赖</td>
+<td>snar 文件不能丢</td>
+<td>只依赖 latest 软链接（丢了就退化为全量）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>注意</strong>：<code>--link-dest</code> 要求源和目标<strong>在同一个文件系统</strong>（硬链接不能跨文件系统，04 篇 2.1）。</p>
+<h1 id="6-备份策略">6. 备份策略</h1>
+<h2 id="61-快照不是备份">6.1 快照不是备份</h2>
+<pre tabindex="0"><code>LVM 快照、云盘快照、rsync --link-dest 到同一块盘 —— 这些都【不是备份】，
+因为它们和原数据在同一组物理介质上。盘坏了、机器丢了、误删了整个卷，一起完。
+
+备份的定义应该是：数据在【另一个故障域】里存在一份可恢复的副本。
+</code></pre><h2 id="62-3-2-1-原则">6.2 3-2-1 原则</h2>
+<pre tabindex="0"><code>3 份副本（1 份生产 + 2 份备份）
+2 种不同介质/位置（本地盘 + 对象存储 / 异地机房）
+1 份离线或异地（防勒索软件、防区域性故障）
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 一个务实的落地方案</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ① 本地：rsync --link-dest 每日快照（快速恢复单个文件）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ② 异地：restic/borg 加密备份到对象存储（防机房级故障）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ③ 定期验证：每月做一次真实恢复演练</span>
+</span></span></code></pre></div><h2 id="63-现代备份工具">6.3 现代备份工具</h2>
+<p><code>tar</code> + <code>rsync</code> 手搓脚本能解决 80% 的需求，但有三个短板：<strong>去重、加密、和「验证能否恢复」</strong>。这些用专门工具更合适：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ── restic（推荐：Go 写的，单二进制，支持 S3/GCS/本地/SFTP）──</span>
+</span></span><span class="line"><span class="cl"><span class="nb">export</span> <span class="nv">RESTIC_REPOSITORY</span><span class="o">=</span>s3:s3.amazonaws.com/mybucket/backup
+</span></span><span class="line"><span class="cl"><span class="nb">export</span> <span class="nv">RESTIC_PASSWORD_FILE</span><span class="o">=</span>/root/.restic-pass
+</span></span><span class="line"><span class="cl">restic init                              <span class="c1"># 初始化仓库</span>
+</span></span><span class="line"><span class="cl">restic backup /data --exclude-file<span class="o">=</span>/etc/restic-excludes
+</span></span><span class="line"><span class="cl">restic snapshots                         <span class="c1"># 列出所有快照</span>
+</span></span><span class="line"><span class="cl">restic ls latest                         <span class="c1"># 浏览快照内容</span>
+</span></span><span class="line"><span class="cl">restic restore latest --target /restore  <span class="c1"># 恢复</span>
+</span></span><span class="line"><span class="cl">restic restore latest --include /data/important.txt --target /tmp   <span class="c1"># 恢复单个文件</span>
+</span></span><span class="line"><span class="cl">restic check --read-data                 <span class="c1"># ✅ 验证仓库完整性（定期做）</span>
+</span></span><span class="line"><span class="cl">restic forget --keep-daily <span class="m">7</span> --keep-weekly <span class="m">4</span> --keep-monthly <span class="m">12</span> --prune
+</span></span><span class="line"><span class="cl"><span class="c1">#             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ 保留策略 + 清理</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 特点：块级去重（改一行的 10GB 文件只增量存变化的块）、</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#      默认加密、支持并发、快照不可变</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── borg（类似，本地/SSH 场景性能更好）──</span>
+</span></span><span class="line"><span class="cl">borg init --encryption<span class="o">=</span>repokey /backup/repo
+</span></span><span class="line"><span class="cl">borg create /backup/repo::<span class="o">{</span>now:%Y-%m-%d<span class="o">}</span> /data
+</span></span><span class="line"><span class="cl">borg list /backup/repo
+</span></span><span class="line"><span class="cl">borg extract /backup/repo::2026-08-12
+</span></span><span class="line"><span class="cl">borg prune --keep-daily<span class="o">=</span><span class="m">7</span> --keep-weekly<span class="o">=</span><span class="m">4</span> /backup/repo
+</span></span><span class="line"><span class="cl">borg check /backup/repo
+</span></span></code></pre></div><h2 id="64-备份必须验证">6.4 备份必须验证</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 「没验证过的备份等于没有备份」—— 这是运维界的老话</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 三个层次的验证：</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ① 完整性校验（能检测介质损坏）</span>
+</span></span><span class="line"><span class="cl">sha256sum -c backup.tar.gz.sha256
+</span></span><span class="line"><span class="cl">restic check --read-data
+</span></span><span class="line"><span class="cl">tar -tzf backup.tar.gz &gt; /dev/null <span class="o">&amp;&amp;</span> <span class="nb">echo</span> <span class="s2">&#34;归档结构完好&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ② 抽样恢复（能检测备份内容错误）</span>
+</span></span><span class="line"><span class="cl">mkdir /tmp/verify
+</span></span><span class="line"><span class="cl">tar -xzf backup.tar.gz -C /tmp/verify path/to/known/file
+</span></span><span class="line"><span class="cl">diff /tmp/verify/path/to/known/file /data/path/to/known/file
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ③ 完整恢复演练（唯一能真正证明备份可用的方式）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 定期（如每季度）在一台干净机器上做完整恢复，并验证服务能正常启动</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 记录 RTO（恢复需要多久）和 RPO（会丢多少数据）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 常见的「备份失效」原因</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># - 备份脚本静默失败了几个月（没有监控告警）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># - 磁盘满了导致备份被截断</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># - 加密密钥丢了（备份在，但打不开）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># - 备份了数据库文件但没做一致性快照（恢复出来是损坏的）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># - 保留策略配错，需要的那个时间点已经被清理了</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ✅ 备份脚本必须有成功/失败通知</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#!/bin/bash</span>
+</span></span><span class="line"><span class="cl"><span class="nb">set</span> -euo pipefail
+</span></span><span class="line"><span class="cl"><span class="nb">trap</span> <span class="s1">&#39;curl -fsS &#34;https://hc-ping.com/xxx/fail&#34;&#39;</span> ERR
+</span></span><span class="line"><span class="cl"><span class="c1">#     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ 失败时通知（healthchecks.io 之类）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">restic backup /data
+</span></span><span class="line"><span class="cl">restic check
+</span></span><span class="line"><span class="cl">curl -fsS <span class="s2">&#34;https://hc-ping.com/xxx&#34;</span>       <span class="c1"># 成功时打卡</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 这样「脚本静默失败了三个月」就不会发生 —— 没打卡就会告警</span>
+</span></span></code></pre></div><h1 id="7-知识点扩展">7. 知识点扩展</h1>
+<h2 id="71-tar-速查">7.1 tar 速查</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 记忆口诀：c 创建 / x 解开 / t 查看，f 指定文件名，v 显示过程</span>
+</span></span><span class="line"><span class="cl">tar -czvf out.tar.gz -C /src .        <span class="c1"># 打包（zstd 用 --zstd，xz 用 -J）</span>
+</span></span><span class="line"><span class="cl">tar -tzvf out.tar.gz                  <span class="c1"># 【先查看】</span>
+</span></span><span class="line"><span class="cl">tar -xzvf out.tar.gz -C /dst          <span class="c1"># 解包</span>
+</span></span><span class="line"><span class="cl">tar -xzvf out.tar.gz --strip-components<span class="o">=</span><span class="m">1</span> -C /dst    <span class="c1"># 去掉最外层目录</span>
+</span></span><span class="line"><span class="cl">tar -xzOf out.tar.gz path/to/f        <span class="c1"># 只把某文件输出到 stdout</span>
+</span></span><span class="line"><span class="cl">tar -czf - dir <span class="p">|</span> ssh host <span class="s1">&#39;tar -xzf - -C /dst&#39;</span>       <span class="c1"># 跨机传输</span>
+</span></span><span class="line"><span class="cl">tar -cf out.tar.zst -I <span class="s1">&#39;zstd -T0 -19&#39;</span> dir            <span class="c1"># 指定外部压缩程序（多线程）</span>
+</span></span></code></pre></div><h2 id="72-压缩工具速查">7.2 压缩工具速查</h2>
+<table>
+<thead>
+<tr>
+<th>需求</th>
+<th>命令</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>通用兼容</td>
+<td><code>tar -czf x.tar.gz dir</code></td>
+</tr>
+<tr>
+<td><strong>日常推荐</strong></td>
+<td><code>tar --zstd -cf x.tar.zst dir</code></td>
+</tr>
+<tr>
+<td>极限压缩比</td>
+<td><code>tar -cJf x.tar.xz dir</code>（或 <code>xz -9e</code>）</td>
+</tr>
+<tr>
+<td><strong>多线程加速</strong></td>
+<td><code>tar -cf x.tar.zst -I 'zstd -T0' dir</code> / <code>-I 'pigz -p8'</code> / <code>-I 'xz -T0'</code></td>
+</tr>
+<tr>
+<td>发给 Windows</td>
+<td><code>zip -r x.zip dir</code></td>
+</tr>
+<tr>
+<td>加密</td>
+<td><code>tar -czf - dir | gpg -c &gt; x.tar.gz.gpg</code> / <code>age</code> / <code>7z -p -mhe=on</code></td>
+</tr>
+<tr>
+<td>查看不解压</td>
+<td><code>zcat</code> <code>zless</code> <code>zgrep</code>（对应 <code>bz</code>/<code>xz</code>/<code>zstd</code> 前缀）</td>
+</tr>
+<tr>
+<td>校验完整性</td>
+<td><code>gzip -t x.gz</code> / <code>tar -tzf x.tar.gz &gt;/dev/null</code> / <code>zstd -t</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="73-rsync-速查">7.3 rsync 速查</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ── 记住三件事 ──</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ① 源末尾的 / = &#34;里面的内容&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ② --delete 之前必须 --dry-run</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ③ -a 不含 -H -A -X</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">rsync -aH --info<span class="o">=</span>progress2 /src/ /dst/               <span class="c1"># 本地备份</span>
+</span></span><span class="line"><span class="cl">rsync -avz -e <span class="s1">&#39;ssh -p 2222&#39;</span> /src/ host:/dst/         <span class="c1"># 跨机</span>
+</span></span><span class="line"><span class="cl">rsync -avn --delete /src/ /dst/                      <span class="c1"># 【演练】删除操作</span>
+</span></span><span class="line"><span class="cl">rsync -aH --delete --max-delete<span class="o">=</span><span class="m">100</span> /src/ /dst/      <span class="c1"># 带安全带的镜像同步</span>
+</span></span><span class="line"><span class="cl">rsync -aP --bwlimit<span class="o">=</span>50M /big/ host:/big/             <span class="c1"># 限速 + 断点</span>
+</span></span><span class="line"><span class="cl">rsync -aHAX --link-dest<span class="o">=</span>/backup/latest /src/ /backup/<span class="k">$(</span>date +%F<span class="k">)</span>/   <span class="c1"># 增量快照</span>
+</span></span><span class="line"><span class="cl">rsync -ain --itemize-changes /src/ /dst/             <span class="c1"># 排查为什么重传</span>
+</span></span><span class="line"><span class="cl">rsync -avnc /src/ /dst/                              <span class="c1"># 按内容校验备份是否一致</span>
+</span></span></code></pre></div><h2 id="74-其他相关工具">7.4 其他相关工具</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ── scp（简单文件传输，已被 rsync/sftp 取代）──</span>
+</span></span><span class="line"><span class="cl">scp file host:/path/                  <span class="c1"># 单文件</span>
+</span></span><span class="line"><span class="cl">scp -r dir host:/path/                <span class="c1"># 递归</span>
+</span></span><span class="line"><span class="cl">scp -P <span class="m">2222</span> -i ~/.ssh/key file host:/path/
+</span></span><span class="line"><span class="cl">scp -C file host:/path/               <span class="c1"># 压缩传输</span>
+</span></span><span class="line"><span class="cl">scp -l <span class="m">8000</span> file host:/path/          <span class="c1"># 限速（单位 Kbit/s）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ⚠️ OpenSSH 9.0+ 默认改用 SFTP 协议，某些老式通配符行为变了</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 大目录/需要断点续传时一律用 rsync</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── sftp（交互式）──</span>
+</span></span><span class="line"><span class="cl">sftp host
+</span></span><span class="line"><span class="cl"><span class="c1"># get / put / ls / cd / lls / lcd / bye</span>
+</span></span><span class="line"><span class="cl">sftp -b batch.txt host                <span class="c1"># 批处理模式</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── 其他传输工具 ──</span>
+</span></span><span class="line"><span class="cl">rclone sync /data remote:bucket/      <span class="c1"># 同步到 S3/GCS/OneDrive 等 40+ 云存储</span>
+</span></span><span class="line"><span class="cl">croc send file                        <span class="c1"># 点对点传输（自动打洞，适合临时分享）</span>
+</span></span><span class="line"><span class="cl">magic-wormhole                        <span class="c1"># 类似</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── split：分割大文件 ──</span>
+</span></span><span class="line"><span class="cl">split -b 2G big.tar.gz part_          <span class="c1"># 按大小分割成 part_aa part_ab...</span>
+</span></span><span class="line"><span class="cl">split -n <span class="m">4</span> big.tar.gz part_           <span class="c1"># 分成 4 份</span>
+</span></span><span class="line"><span class="cl">split -l <span class="m">100000</span> huge.log part_        <span class="c1"># 按行数分割</span>
+</span></span><span class="line"><span class="cl">cat part_* &gt; restored.tar.gz          <span class="c1"># 合并</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 用途：绕过单文件大小限制（FAT32 的 4GB、某些网盘）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ── dd：块级复制 ──</span>
+</span></span><span class="line"><span class="cl">dd <span class="k">if</span><span class="o">=</span>/dev/sda <span class="nv">of</span><span class="o">=</span>disk.img <span class="nv">bs</span><span class="o">=</span>4M <span class="nv">status</span><span class="o">=</span>progress          <span class="c1"># 整盘镜像</span>
+</span></span><span class="line"><span class="cl">dd <span class="k">if</span><span class="o">=</span>disk.img <span class="nv">of</span><span class="o">=</span>/dev/sdb <span class="nv">bs</span><span class="o">=</span>4M <span class="nv">status</span><span class="o">=</span>progress          <span class="c1"># 写回</span>
+</span></span><span class="line"><span class="cl">dd <span class="k">if</span><span class="o">=</span>/dev/zero <span class="nv">of</span><span class="o">=</span>/swapfile <span class="nv">bs</span><span class="o">=</span>1M <span class="nv">count</span><span class="o">=</span><span class="m">4096</span>             <span class="c1"># 造文件</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ⚠️ dd 的 if/of 写反会直接销毁数据，执行前反复确认</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 整盘克隆更推荐 ddrescue（能跳过坏块并记录进度）</span>
+</span></span><span class="line"><span class="cl">sudo ddrescue /dev/sda /dev/sdb rescue.log
+</span></span></code></pre></div><h1 id="8-面试题">8. 面试题</h1>
+<p><strong>Q：为什么 Linux 把「归档」和「压缩」分成 tar 和 gzip 两个工具？<code>.tar.gz</code> 和 <code>.zip</code> 有什么区别？</strong></p>
+<p>这是 Unix 管道哲学的直接体现：<code>tar</code> 只负责把多个文件拼成一个流（保留路径、权限、属主、软链接），<code>gzip</code> 只负责把一个字节流压小（它根本不认识&quot;文件&quot;这个概念）。拆开的好处是可以自由组合——换压缩算法（<code>zstd</code>/<code>xz</code>）、接加密（<code>gpg</code>）、直接管道到远程（<code>ssh host 'tar -xf -'</code>），<code>tar</code> 一行都不用改。</p>
+<p>与 <code>.zip</code> 的核心区别：<code>.tar.gz</code> 是<strong>先归档再整体压缩</strong>，所以跨文件共享压缩字典、<strong>压缩比更好</strong>，但<strong>必须解压整个流</strong>才能取出末尾的文件；<code>.zip</code> 是<strong>每个文件单独压缩</strong>，所以<strong>能随机访问</strong>单个文件、损坏只影响一个文件，代价是压缩比差、对 Unix 元数据支持有限。</p>
+<p>选择：Linux 内部流转用 <code>.tar.gz</code>/<code>.tar.zst</code>，发给 Windows 用户用 <code>.zip</code>。</p>
+<p><strong>Q：<code>tar</code> 打包时警告 <code>Removing leading '/' from member names</code>，为什么？不去掉会怎样？</strong></p>
+<p><code>tar</code> 默认把归档内的路径转成<strong>相对路径</strong>（<code>etc/nginx/</code> 而不是 <code>/etc/nginx/</code>），这是<strong>安全设计</strong>。</p>
+<p>如果用 <code>-P</code> 保留绝对路径，解压时会<strong>无视当前目录直接写到那个绝对位置</strong>——你在 <code>/tmp</code> 里解压，结果覆盖了真正的 <code>/etc/nginx</code>。更危险的是恶意归档：攻击者构造一个包含 <code>/etc/cron.d/backdoor</code> 或 <code>../../../etc/passwd</code> 的包，你一解压就被植入后门。</p>
+<p>所以恢复系统备份到原位的正确做法<strong>不是 <code>-P</code>，而是 <code>tar -xzvpf backup.tar.gz -C /</code></strong> —— 明确指定解压根位置。</p>
+<p>配套的安全习惯：<strong>解压前先 <code>tar -tzf</code> 看内容</strong>（防 tarbomb：归档里是散落的文件，会把当前目录搞乱），用 <code>grep -E '^/|\.\./'</code> 检查有没有绝对路径或路径穿越，不确定的包解到空的临时目录。</p>
+<p><strong>Q：gzip、bzip2、xz、zstd 该怎么选？</strong></p>
+<p>关键结论是：<strong><code>zstd</code> 在「压缩比 × 速度」上全面优于 gzip 和 bzip2</strong>，压缩比接近 xz 但速度接近 gzip，解压极快 —— 新项目应该默认用它。</p>
+<ul>
+<li><strong><code>gzip</code></strong>：唯一优势是<strong>无处不在的兼容性</strong>，需要发给别人或老系统时用</li>
+<li><strong><code>bzip2</code></strong>：压缩比只比 gzip 好 10% 但慢很多，基本已被 zstd 取代</li>
+<li><strong><code>xz</code></strong>：压缩比最好但<strong>极慢且吃内存</strong>，只在「压缩一次、分发很多次」（发行版镜像、软件包）时值得</li>
+<li><strong><code>lz4</code></strong>：压缩比最差但极快，用于实时/流式场景（内存压缩、日志管道）</li>
+</ul>
+<p>另一个常被忽略的点是<strong>多线程</strong>：<code>zstd -T0</code>、<code>xz -T0</code>、<code>pigz -p8</code> 能快数倍，用 <code>tar -I 'zstd -T0 -19'</code> 指定外部压缩程序。</p>
+<p><strong>Q：<code>rsync -a /src /dst</code> 和 <code>rsync -a /src/ /dst</code> 有什么区别？</strong></p>
+<p><strong>源路径末尾的 <code>/</code> 表示「里面的内容」</strong>：</p>
+<ul>
+<li><code>rsync -a /src /dst/</code> → 结果是 <code>/dst/src/...</code>（把 src 这个<strong>目录本身</strong>放进 dst）</li>
+<li><code>rsync -a /src/ /dst/</code> → 结果是 <code>/dst/...</code>（把 src 的<strong>内容</strong>放进 dst）</li>
+</ul>
+<p>目标路径的斜杠无关紧要（rsync 总把它当目录）。</p>
+<p>这个坑单独出现只是&quot;多一层目录&quot;，但<strong>与 <code>--delete</code> 组合就是事故</strong>：<code>rsync -a --delete /data /backup/</code> 会把数据放进 <code>/backup/data/</code>，同时<strong>删掉 <code>/backup/</code> 下原有的所有其他内容</strong>（因为 rsync 认为源里只有 <code>data</code> 这一个条目）。</p>
+<p><strong>Q：<code>rsync --delete</code> 什么情况下会清空目标目录？怎么防？</strong></p>
+<p>四种情况：</p>
+<ol>
+<li><strong>源目录存在但是空的</strong> —— 最危险。典型场景是数据盘没挂上，<code>/data</code> 是个空目录，rsync 认为「所有文件都该删」</li>
+<li><strong>变量为空</strong> —— <code>rsync -a --delete &quot;$SRC/&quot; /backup/</code> 里 <code>$SRC</code> 未设置，展开成 <code>/</code></li>
+<li><strong>斜杠错位</strong> —— 见上一题</li>
+<li>源<strong>完全不存在</strong>时 rsync 会报错退出，反而是安全的</li>
+</ol>
+<p>四道安全带：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">rsync -avn --delete /data/ /backup/            <span class="c1"># ① --dry-run 必做</span>
+</span></span><span class="line"><span class="cl">rsync -a --delete --max-delete<span class="o">=</span><span class="m">100</span> ...         <span class="c1"># ② 删除超过 100 个就中止（最实用）</span>
+</span></span><span class="line"><span class="cl">mountpoint -q /data <span class="o">&amp;&amp;</span> <span class="o">[[</span> -n <span class="s2">&#34;</span><span class="k">$(</span>ls -A /data<span class="k">)</span><span class="s2">&#34;</span> <span class="o">]]</span> <span class="o">||</span> <span class="nb">exit</span> <span class="m">1</span>   <span class="c1"># ③ 校验源</span>
+</span></span><span class="line"><span class="cl">rsync -a --delete --backup --backup-dir<span class="o">=</span>/backup/.trash/<span class="k">$(</span>date +%F<span class="k">)</span> ...  <span class="c1"># ④ 回收站</span>
+</span></span></code></pre></div><p><strong>Q：<code>rsync -a</code> 包含哪些选项？它漏了什么？</strong></p>
+<p><code>-a</code> = <code>-rlptgoD</code>：递归、软链接照抄、权限、<strong>时间</strong>、属组、属主、设备与特殊文件。其中 <strong><code>-t</code>（保留 mtime）最关键</strong>——没有它，rsync 的 quick check 会认为所有文件都变了，每次都全量重传。</p>
+<p><code>-a</code> <strong>不包含三项</strong>，需要显式加：</p>
+<ul>
+<li><strong><code>-H</code>（硬链接）</strong> —— 不加时同一 inode 的两个名字会被复制成<strong>两份独立数据</strong>，备份硬链接快照目录时体积会暴涨</li>
+<li><strong><code>-A</code>（ACL）</strong></li>
+<li><strong><code>-X</code>（扩展属性）</strong> —— SELinux 标签在这里</li>
+</ul>
+<p>完整的&quot;一模一样&quot;备份是 <strong><code>rsync -aHAX --numeric-ids</code></strong>（最后这个在跨机器时避免用户名映射错乱）。</p>
+<p><strong>Q：rsync 为什么比 cp 快？它的增量判断是怎么做的？</strong></p>
+<p>两级判断：</p>
+<ol>
+<li><strong>quick check（默认）</strong>：只比较「文件大小 + mtime」，都一样就跳过。代价是 mtime 被改过的相同文件会被重传（要按内容判断得用 <code>-c</code>，慢但能发现静默损坏）</li>
+<li><strong>rolling checksum（跨机器传输已变化的文件时）</strong>：把文件切块，用弱校验（滚动哈希）+ 强校验（MD5）比对，<strong>只传对不上的块</strong>。所以一个 10GB 文件改了 1MB，只传那 1MB 附近的内容</li>
+</ol>
+<p>此外 <code>cp</code> 有三个做不到的：<strong>断点续传</strong>（<code>--partial</code>）、<strong>限速</strong>（<code>--bwlimit</code>）、<strong>进度</strong>（<code>--info=progress2</code>），以及镜像删除（<code>--delete</code>）和保留硬链接（<code>-H</code>）。</p>
+<p>排查「为什么这个文件被重传了」用 <code>rsync -ain --itemize-changes</code>，输出的 <code>&gt;f.st......</code> 里每一位表示哪个属性不同（s=size、t=time、p=perms…）。</p>
+<p><strong>Q：怎么用 rsync 实现 Time Machine 式的增量快照？</strong></p>
+<p>用 <strong><code>--link-dest</code></strong>：与上一次备份中<strong>未变化的文件建硬链接</strong>，只有变化的文件才真正占新空间。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">rsync -aHAX --delete --link-dest<span class="o">=</span>/backup/latest /data/ /backup/<span class="k">$(</span>date +%F<span class="k">)</span>/
+</span></span><span class="line"><span class="cl">ln -sfn /backup/<span class="k">$(</span>date +%F<span class="k">)</span> /backup/latest
+</span></span></code></pre></div><p>效果是：<strong>每个快照目录看起来都是完整的 100G，但总占用只比一份多一点</strong>（未变的文件共享同一个 inode）。而且<strong>每个快照都是完整可用的目录树</strong>，恢复时直接 <code>cp</code> 就行，不需要&quot;重放增量&quot;。</p>
+<p>对比 <code>tar -g</code> 增量备份的优势：不需要按顺序解压全量+所有增量、单点损坏不断链、能直接 <code>ls</code> 浏览历史。限制是<strong>源和目标必须在同一个文件系统</strong>（硬链接不能跨文件系统）。</p>
+<p><strong>Q：LVM 快照、云盘快照算备份吗？</strong></p>
+<p><strong>不算。</strong> 它们和原数据在<strong>同一组物理介质/同一个故障域</strong>里——盘坏了、机器丢了、整个卷被误删、区域性故障，一起完蛋。快照解决的是「误删单个文件」和「一致性备份的中间步骤」，不是「灾难恢复」。</p>
+<p>备份的定义应该是：<strong>数据在另一个故障域里存在一份可恢复的副本</strong>。落地就是 <strong>3-2-1 原则</strong>：3 份副本、2 种介质/位置、1 份异地或离线（防勒索软件和区域性故障）。</p>
+<p>更重要的一条是「<strong>没验证过的备份等于没有备份</strong>」。三个层次的验证：完整性校验（<code>sha256sum -c</code>、<code>restic check --read-data</code>）、抽样恢复、<strong>定期完整恢复演练</strong>（唯一能真正证明备份可用的方式，并顺带测出 RTO 和 RPO）。</p>
+<p>常见的备份失效原因：脚本静默失败了几个月（<strong>所以必须有成功/失败通知打卡</strong>）、磁盘满导致备份被截断、加密密钥丢了、数据库没做一致性快照导致恢复出来是损坏的、保留策略把需要的时间点清掉了。</p>
+<hr>
+<h1 id="小结">小结</h1>
+<ul>
+<li><strong>归档与压缩是两件事</strong>：<code>tar</code> 拼流、<code>gzip</code> 压流，拆开才能自由组合（换算法、接加密、直传远程）</li>
+<li><strong><code>tar</code> = tape archive</strong>，磁带出身解释了它的流式设计和古怪参数；<code>-C</code> 控制目录层级、<strong>解压前先 <code>-t</code> 看内容</strong></li>
+<li><strong>绝对路径被去掉是安全设计</strong>，恢复到原位用 <code>-C /</code> 而不是 <code>-P</code></li>
+<li><strong><code>-a</code> 不含 <code>-H -A -X</code></strong>（tar 也一样要注意 <code>--numeric-owner</code>）</li>
+<li><strong>压缩选型：日常用 zstd</strong>（比 gzip 压得多且几乎一样快）、极限压缩比才用 xz、兼容性才用 gzip；别忘了<strong>多线程</strong>（<code>-T0</code>/<code>pigz</code>）</li>
+<li><strong>rsync 三件事</strong>：源末尾 <code>/</code> = 内容、<code>--delete</code> 前必 <code>--dry-run</code>、<code>-a</code> 漏了 <code>-H -A -X</code></li>
+<li><strong><code>--delete</code> 清空目标的头号原因是「源目录存在但为空」</strong>（数据盘没挂上），用 <code>--max-delete</code> + <code>mountpoint -q</code> 兜底</li>
+<li><strong><code>--link-dest</code> 做增量快照</strong>：每个快照都完整可用、总占用只多一点，比 <code>tar -g</code> 好用得多</li>
+<li><strong>快照不是备份</strong>（同一故障域）；<strong>没验证过的备份等于没有备份</strong>，脚本必须有失败告警</li>
+</ul>
+<p>下一篇讲 <strong>进程与作业控制</strong>：<code>ps aux</code> 每一列到底是什么、进程状态 <code>D</code> 为什么杀不掉、<code>kill -9</code> 为什么有时无效、前台后台与 <code>nohup</code>/<code>setsid</code> 的区别、以及 <code>lsof</code> 和 <code>/proc/&lt;pid&gt;/</code> 能告诉你的一切。</p>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2026-08-12</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/linux/">linux</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/linux/linux_13_%E8%BF%9B%E7%A8%8B%E4%B8%8E%E4%BD%9C%E4%B8%9A%E6%8E%A7%E5%88%B6/" class="prev" rel="prev" title="Linux-13 进程与作业控制：ps 每一列、D 状态为什么杀不掉、nohup 与 setsid 的区别"><i class="fas fa-angle-left fa-fw"></i>Linux-13 进程与作业控制：ps 每一列、D 状态为什么杀不掉、nohup 与 setsid 的区别</a>
+            <a href="/posts/linux/linux_11_%E7%A3%81%E7%9B%98%E5%88%86%E5%8C%BA%E4%B8%8E%E6%8C%82%E8%BD%BD/" class="next" rel="next" title="Linux-11 磁盘、分区与挂载：从块设备到 fstab 的完整链路">Linux-11 磁盘、分区与挂载：从块设备到 fstab 的完整链路<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2026-08-12T18:00:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Linux-12 归档、压缩与 rsync：tar 的古怪参数、压缩算法选型与危险的 --delete"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

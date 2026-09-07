@@ -1,0 +1,1057 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>Linux-24 虚拟内存：为什么值得付出这么大代价 - xingliuhua博客</title><meta name="Description" content="虚拟内存最初解决什么问题、分段与分页之争为什么分页赢了、单级页表为什么会吃掉 512GB、四级页表的一次翻译要访问四次内存、TLB 为什么是真正的性能命门、缺页异常如何成为 COW/mmap/swap/栈增长的共同实现机制、以及 THP 为什么被数据库集体关闭。"><meta property="og:title" content="Linux-24 虚拟内存：为什么值得付出这么大代价" />
+<meta property="og:description" content="虚拟内存最初解决什么问题、分段与分页之争为什么分页赢了、单级页表为什么会吃掉 512GB、四级页表的一次翻译要访问四次内存、TLB 为什么是真正的性能命门、缺页异常如何成为 COW/mmap/swap/栈增长的共同实现机制、以及 THP 为什么被数据库集体关闭。" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/linux/linux_24_%E8%99%9A%E6%8B%9F%E5%86%85%E5%AD%98%E4%B8%BA%E4%BB%80%E4%B9%88%E5%80%BC%E5%BE%97%E8%BF%99%E4%B8%AA%E4%BB%A3%E4%BB%B7/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2026-08-12T12:00:00+08:00" />
+<meta property="article:modified_time" content="2026-08-12T12:00:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="Linux-24 虚拟内存：为什么值得付出这么大代价"/>
+<meta name="twitter:description" content="虚拟内存最初解决什么问题、分段与分页之争为什么分页赢了、单级页表为什么会吃掉 512GB、四级页表的一次翻译要访问四次内存、TLB 为什么是真正的性能命门、缺页异常如何成为 COW/mmap/swap/栈增长的共同实现机制、以及 THP 为什么被数据库集体关闭。"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/linux/linux_24_%E8%99%9A%E6%8B%9F%E5%86%85%E5%AD%98%E4%B8%BA%E4%BB%80%E4%B9%88%E5%80%BC%E5%BE%97%E8%BF%99%E4%B8%AA%E4%BB%A3%E4%BB%B7/" /><link rel="prev" href="https://xingliuhua.github.io/posts/linux/linux_25_%E5%86%85%E6%A0%B8%E5%A6%82%E4%BD%95%E7%AE%A1%E7%90%86%E7%89%A9%E7%90%86%E5%86%85%E5%AD%98/" /><link rel="next" href="https://xingliuhua.github.io/posts/linux/linux_23_%E6%9D%83%E9%99%90%E4%B8%8E%E6%8E%88%E6%9D%83%E7%9A%84%E6%BC%94%E8%BF%9B%E5%8F%B2/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Linux-24 虚拟内存：为什么值得付出这么大代价",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_24_%E8%99%9A%E6%8B%9F%E5%86%85%E5%AD%98%E4%B8%BA%E4%BB%80%E4%B9%88%E5%80%BC%E5%BE%97%E8%BF%99%E4%B8%AA%E4%BB%A3%E4%BB%B7\/"
+        },"genre": "posts","keywords": "linux","wordcount":  11951 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_24_%E8%99%9A%E6%8B%9F%E5%86%85%E5%AD%98%E4%B8%BA%E4%BB%80%E4%B9%88%E5%80%BC%E5%BE%97%E8%BF%99%E4%B8%AA%E4%BB%A3%E4%BB%B7\/","datePublished": "2026-08-12T12:00:00+08:00","dateModified": "2026-08-12T12:00:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "虚拟内存最初解决什么问题、分段与分页之争为什么分页赢了、单级页表为什么会吃掉 512GB、四级页表的一次翻译要访问四次内存、TLB 为什么是真正的性能命门、缺页异常如何成为 COW/mmap/swap/栈增长的共同实现机制、以及 THP 为什么被数据库集体关闭。"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">Linux-24 虚拟内存：为什么值得付出这么大代价</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2026-08-12">2026-08-12</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 11951 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 24 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-虚拟内存要解决的问题">1. 虚拟内存要解决的问题</a>
+      <ol>
+        <li><a href="#11-没有虚拟内存的世界">1.1 没有虚拟内存的世界</a></li>
+        <li><a href="#12-虚拟内存的核心思路">1.2 虚拟内存的核心思路</a></li>
+        <li><a href="#13-它顺带解决了更多问题">1.3 它顺带解决了更多问题</a></li>
+        <li><a href="#14-代价">1.4 代价</a></li>
+      </ol>
+    </li>
+    <li><a href="#2-分段-vs-分页">2. 分段 vs 分页</a>
+      <ol>
+        <li><a href="#21-两种切分方式">2.1 两种切分方式</a></li>
+        <li><a href="#22-开篇第二问为什么分页赢了">2.2 开篇第二问：为什么分页赢了</a></li>
+        <li><a href="#23-x86-的历史段页混合到段被废弃">2.3 x86 的历史：段页混合到段被废弃</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-页表从单级到多级">3. 页表：从单级到多级</a>
+      <ol>
+        <li><a href="#31-开篇第三问单级页表的空间灾难">3.1 开篇第三问：单级页表的空间灾难</a></li>
+        <li><a href="#32-多级页表的核心洞察">3.2 多级页表的核心洞察</a></li>
+        <li><a href="#33-一次地址翻译的完整过程">3.3 一次地址翻译的完整过程</a></li>
+        <li><a href="#34-页表项里有什么">3.4 页表项里有什么</a></li>
+        <li><a href="#35-页表的实际开销">3.5 页表的实际开销</a></li>
+        <li><a href="#36-五级页表">3.6 五级页表</a></li>
+      </ol>
+    </li>
+    <li><a href="#4-tlb真正的性能命门">4. TLB：真正的性能命门</a>
+      <ol>
+        <li><a href="#41-开篇第四问为什么它是命门">4.1 开篇第四问：为什么它是命门</a></li>
+        <li><a href="#42-tlb-miss-的代价">4.2 TLB miss 的代价</a></li>
+        <li><a href="#43-上下文切换与-tlb-flush">4.3 上下文切换与 TLB flush</a></li>
+        <li><a href="#44-大页如何拯救-tlb">4.4 大页如何拯救 TLB</a></li>
+      </ol>
+    </li>
+    <li><a href="#5-缺页异常不是-bug是核心机制">5. 缺页异常：不是 bug，是核心机制</a>
+      <ol>
+        <li><a href="#51-开篇第五问三种缺页">5.1 开篇第五问：三种缺页</a></li>
+        <li><a href="#52-缺页处理流程">5.2 缺页处理流程</a></li>
+        <li><a href="#53-用缺页实现的七种功能">5.3 用缺页实现的七种功能</a></li>
+      </ol>
+    </li>
+    <li><a href="#6-地址空间布局">6. 地址空间布局</a>
+      <ol>
+        <li><a href="#61-x86-64-的布局">6.1 x86-64 的布局</a></li>
+        <li><a href="#62-读懂-procpidmaps">6.2 读懂 /proc/pid/maps</a></li>
+        <li><a href="#63-aslr-与空指针">6.3 ASLR 与空指针</a></li>
+      </ol>
+    </li>
+    <li><a href="#7-大页收益与代价">7. 大页：收益与代价</a>
+      <ol>
+        <li><a href="#71-两种大页">7.1 两种大页</a></li>
+        <li><a href="#72-thp-的三个代价">7.2 THP 的三个代价</a></li>
+      </ol>
+    </li>
+    <li><a href="#8-go-视角">8. Go 视角</a>
+      <ol>
+        <li><a href="#81-为什么-go-程序的-vsz-很大">8.1 为什么 Go 程序的 VSZ 很大</a></li>
+        <li><a href="#82-gcmadvise-与-rss-不降">8.2 GC、madvise 与 RSS 不降</a></li>
+        <li><a href="#83-go-与大页">8.3 Go 与大页</a></li>
+      </ol>
+    </li>
+    <li><a href="#9-面试题">9. 面试题</a></li>
+    <li><a href="#小结">小结</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><p>虚拟内存是操作系统最昂贵的抽象：<strong>每一次内存访问都要经过地址翻译</strong>。这一篇讲它为什么值得。</p>
+<p>先看五个问题：</p>
+<ol>
+<li>虚拟内存最初解决的是什么问题？为什么值得付出「每次访存都要翻译地址」的代价？</li>
+<li>分段 vs 分页之争，<strong>为什么分页赢了</strong>？</li>
+<li>为什么必须是<strong>多级</strong>页表？单级不行吗？</li>
+<li>为什么说 <strong>TLB 是真正的性能命门</strong>？</li>
+<li>缺页异常（page fault）是 bug 还是特性？</li>
+</ol>
+<h1 id="1-虚拟内存要解决的问题">1. 虚拟内存要解决的问题</h1>
+<h2 id="11-没有虚拟内存的世界">1.1 没有虚拟内存的世界</h2>
+<p>在早期系统里，程序直接使用<strong>物理地址</strong>。三个致命问题：</p>
+<pre tabindex="0"><code>   问题①：地址冲突
+     程序 A 编译时假定自己从地址 0x1000 开始，程序 B 也是。
+     两个程序无法同时驻留内存。
+     早期的解法是【重定位】：加载时把程序里所有地址加上一个偏移量
+       -&gt; 需要程序携带重定位表，加载慢
+       -&gt; 而且程序一旦加载就不能移动（否则所有指针失效）
+       -&gt; 内存碎片无法整理
+
+   问题②：内存不够
+     物理内存 64KB，但程序想用 1MB。
+     早期解法是【覆盖（overlay）】：程序员手工把程序切成块，
+     手动决定什么时候把哪一块换进内存
+       -&gt; 这是【程序员的负担】，而且极易出错
+
+   问题③：没有隔离
+     任何程序都能读写任何地址 —— 一个程序的 bug 能破坏另一个程序甚至内核。
+     也没有任何安全边界。
+</code></pre><h2 id="12-虚拟内存的核心思路">1.2 虚拟内存的核心思路</h2>
+<p><strong>给每个进程一套独立的、连续的、假的地址空间，由硬件（MMU）在每次访存时翻译成物理地址。</strong></p>
+<pre tabindex="0"><code>   进程 A 的虚拟地址空间          物理内存              进程 B 的虚拟地址空间
+   +------------------+                              +------------------+
+   | 0x400000 代码    | ---&gt; +---------------+ &lt;---- | 0x400000 代码    |
+   +------------------+      | 物理页 帧号 5  |       +------------------+
+   | 0x600000 数据    | ---&gt; +---------------+       | 0x600000 数据    |
+   +------------------+      | 物理页 帧号 9  | &lt;---- +------------------+
+   | ...              |      +---------------+       | ...              |
+   +------------------+      | 物理页 帧号 3  |       +------------------+
+
+   ✅ 两个进程可以用【相同的虚拟地址】而互不干扰（问题① 解决）
+   ✅ 虚拟地址空间可以【大于物理内存】，不够时换出到磁盘（问题② 解决）
+   ✅ 没有映射的地址【无法访问】，映射可以标记只读（问题③ 解决）
+</code></pre><h2 id="13-它顺带解决了更多问题">1.3 它顺带解决了更多问题</h2>
+<p>虚拟内存真正的价值在于：<strong>一旦有了「地址翻译」这个间接层，大量原本困难的事变得可能</strong> —— 这是本篇的主线。</p>
+<table>
+<thead>
+<tr>
+<th>能力</th>
+<th>靠什么实现</th>
+<th>在本系列哪里出现过</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>进程隔离</strong></td>
+<td>各自独立的页表</td>
+<td>—</td>
+</tr>
+<tr>
+<td><strong>共享内存</strong></td>
+<td>两个页表指向同一物理页</td>
+<td>20 篇的 mmap、PSS 统计（13 篇 2.3）</td>
+</tr>
+<tr>
+<td><strong>COW</strong></td>
+<td>页表标记只读 + 缺页时复制</td>
+<td><strong>21 篇 3.2</strong></td>
+</tr>
+<tr>
+<td><strong>mmap 文件</strong></td>
+<td>页表指向 page cache 的页</td>
+<td>20 篇第 3 章</td>
+</tr>
+<tr>
+<td><strong>按需分页</strong></td>
+<td>先只建映射不分配物理页</td>
+<td>13 篇的 VSZ ≫ RSS</td>
+</tr>
+<tr>
+<td><strong>swap</strong></td>
+<td>页表项标记「在磁盘上」</td>
+<td>11 篇第 7 章</td>
+</tr>
+<tr>
+<td><strong>栈自动增长</strong></td>
+<td>访问栈下方触发缺页时扩展</td>
+<td>—</td>
+</tr>
+<tr>
+<td><strong>内存保护（NX）</strong></td>
+<td>页表项的不可执行位</td>
+<td>—</td>
+</tr>
+<tr>
+<td><strong>ASLR</strong></td>
+<td>每次加载用不同的虚拟地址</td>
+<td>第 6 章</td>
+</tr>
+<tr>
+<td><strong>overcommit</strong></td>
+<td>承诺的虚拟内存可以超过物理内存</td>
+<td>21 篇的 Redis fork</td>
+</tr>
+</tbody>
+</table>
+<h2 id="14-代价">1.4 代价</h2>
+<pre tabindex="0"><code>   ① 每次访存都要翻译地址
+      -&gt; 硬件必须做（软件做不起），所以有 MMU 和 TLB
+   ② 页表本身占内存
+      -&gt; 一个进程的页表可能有几 MB 到几百 MB（第 3 章算）
+      -&gt; 这就是 21 篇讲的「fork 的开销与页表规模成正比」
+   ③ TLB miss 的延迟
+      -&gt; 一次四级页表遍历 = 4 次内存访问，每次约 100ns（第 4 章）
+   ④ 缺页异常的开销
+      -&gt; 一次上下文切换到内核 + 可能的磁盘 I/O（第 5 章）
+</code></pre><p><strong>为什么值得？</strong> 因为<strong>问题①③根本没有替代方案</strong>（现代多任务系统必须有隔离），而问题②的替代方案（手工 overlay）会把复杂度全部推给程序员。<strong>虚拟内存是「用可控的硬件开销换取不可替代的能力」。</strong></p>
+<h1 id="2-分段-vs-分页">2. 分段 vs 分页</h1>
+<h2 id="21-两种切分方式">2.1 两种切分方式</h2>
+<pre tabindex="0"><code>   分段（Segmentation）：按【程序的逻辑单位】切
+   +----------------+
+   | 代码段  40KB    |   每段有独立的基址与长度，长度【可变】
+   +----------------+   优点：与程序结构对应，保护粒度自然
+   | 数据段  128KB   |         （代码段只读、数据段不可执行）
+   +----------------+
+   | 栈段    8KB     |
+   +----------------+
+
+   分页（Paging）：按【固定大小】切
+   +------+------+------+------+
+   | 4KB  | 4KB  | 4KB  | 4KB  |   所有页大小相同
+   +------+------+------+------+   优点：管理极其简单
+</code></pre><h2 id="22-开篇第二问为什么分页赢了">2.2 开篇第二问：为什么分页赢了</h2>
+<table>
+<thead>
+<tr>
+<th></th>
+<th><strong>分段</strong></th>
+<th><strong>分页</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>单位大小</td>
+<td><strong>可变</strong></td>
+<td><strong>固定</strong>（4KB）</td>
+</tr>
+<tr>
+<td>外部碎片</td>
+<td>❌ <strong>严重</strong>（变长块的分配必然产生空隙）</td>
+<td>✅ <strong>完全没有</strong>（所有页大小相同，任意页可放任意帧）</td>
+</tr>
+<tr>
+<td>内部碎片</td>
+<td>✅ 几乎没有</td>
+<td>⚠️ 有（最后一页平均浪费 2KB）</td>
+</tr>
+<tr>
+<td>分配算法</td>
+<td>❌ 复杂（首次适配/最佳适配，还要合并空闲块）</td>
+<td>✅ <strong>极简</strong>（一个空闲页链表/位图，随便取一个）</td>
+</tr>
+<tr>
+<td>交换（swap）粒度</td>
+<td>❌ <strong>整段</strong>（换出一个 128KB 的数据段）</td>
+<td>✅ <strong>单页</strong>（只换出真正冷的 4KB）</td>
+</tr>
+<tr>
+<td>硬件实现</td>
+<td>⚠️ 需要比较基址+长度，段表项变长</td>
+<td>✅ <strong>纯粹的位运算</strong>（地址高位查表、低位做偏移）</td>
+</tr>
+<tr>
+<td>与程序结构的对应</td>
+<td>✅ 自然</td>
+<td>❌ 无关（靠 VMA 在软件层补回来）</td>
+</tr>
+<tr>
+<td>地址翻译</td>
+<td>段号 + 段内偏移（<strong>偏移需要越界检查</strong>）</td>
+<td>页号 + 页内偏移（<strong>页内偏移天然不会越界</strong>）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>决定性的三点</strong>：</p>
+<pre tabindex="0"><code>   ① 外部碎片
+      分段的变长分配注定产生碎片：内存里剩下 30KB + 40KB 的空隙，
+      但来了一个 60KB 的段就放不下 —— 除非做内存整理（移动数据，极慢）。
+      分页彻底消灭了这个问题：任何虚拟页都能放进任何物理帧。
+
+   ② 交换粒度
+      「内存不够时换出一部分」是虚拟内存的核心能力。
+      分段只能整段换出（一个 128MB 的数据段要么全在要么全不在），
+      而实际的访问局部性是页级的 —— 分页能只保留真正在用的那几页。
+
+   ③ 硬件实现的简洁性
+      分页的地址翻译是【纯位运算】：
+        虚拟地址 = [页号 | 页内偏移]，页大小是 2 的幂，所以直接切位
+        物理地址 = [帧号 | 同样的页内偏移]
+      而分段要做加法（基址+偏移）和比较（是否越界）—— 更多晶体管、更长的关键路径。
+</code></pre><h2 id="23-x86-的历史段页混合到段被废弃">2.3 x86 的历史：段页混合到段被废弃</h2>
+<pre tabindex="0"><code>   8086（1978）：只有分段（因为要用 16 位寄存器寻址 20 位地址）
+        物理地址 = 段寄存器 &lt;&lt; 4 + 偏移
+        
+   80286：保护模式的分段（有段描述符、特权级）
+   
+   80386（1985）：分段 + 分页【两层】
+        虚拟地址 --分段--&gt; 线性地址 --分页--&gt; 物理地址
+        -&gt; 实际上操作系统几乎都把段设成「覆盖整个地址空间」，
+           等于把分段这一层【旁路掉】，只用分页
+           
+   x86-64 长模式（2003）：✅ 分段【基本被废弃】
+        CS/DS/ES/SS 的基址被强制为 0、长度检查被禁用
+        只保留 FS/GS 的基址（用来做线程本地存储 TLS！）
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 验证 FS/GS 仍在使用（TLS 的实现基础）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Go 的 goroutine 调度、C 的 __thread 变量、glibc 的 errno 都靠它</span>
+</span></span><span class="line"><span class="cl">sudo cat /proc/self/maps <span class="p">|</span> head -3
+</span></span><span class="line"><span class="cl"><span class="c1"># Go 程序里 runtime 用 TLS 存当前 g 的指针（GMP 模型的基础）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 这就是「历史包袱以最小形态留存」的例子：</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   分段作为地址翻译机制被淘汰，但作为「一个额外的基址寄存器」被保留下来做 TLS</span>
+</span></span></code></pre></div><p><strong>结论：分页赢了，但分段没有完全消失</strong> —— 它退化成了 TLS 的实现手段。这是 18 篇讲的「ABI 只能新增不能删除」在硬件层面的对应。</p>
+<h1 id="3-页表从单级到多级">3. 页表：从单级到多级</h1>
+<h2 id="31-开篇第三问单级页表的空间灾难">3.1 开篇第三问：单级页表的空间灾难</h2>
+<pre tabindex="0"><code>   假设用单级页表（一个大数组，虚拟页号做下标）：
+     x86-64 的有效虚拟地址是 48 位
+     页大小 4KB = 2^12
+     -&gt; 虚拟页数 = 2^48 / 2^12 = 2^36 = 687 亿个页
+     -&gt; 每个页表项 8 字节
+     -&gt; 页表大小 = 2^36 × 8 = 512 GB  💀
+
+   而且这是【每个进程】都要一份！
+   一台跑 100 个进程的机器需要 50TB 的页表 —— 完全不可能。
+</code></pre><h2 id="32-多级页表的核心洞察">3.2 多级页表的核心洞察</h2>
+<p><strong>关键事实：地址空间是极度稀疏的。</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 一个真实进程实际用了多少地址空间</span>
+</span></span><span class="line"><span class="cl">awk <span class="s1">&#39;{split($1,a,&#34;-&#34;); sum += strtonum(&#34;0x&#34;a[2]) - strtonum(&#34;0x&#34;a[1])} END {printf &#34;%.2f GB\n&#34;, sum/1024/1024/1024}&#39;</span> /proc/self/maps
+</span></span><span class="line"><span class="cl"><span class="c1"># 通常几 MB 到几 GB —— 而地址空间总量是 256TB（2^48）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 也就是说【绝大部分地址空间是空的】</span>
+</span></span></code></pre></div><p><strong>多级页表利用这个稀疏性：没有映射的区域，对应的中间层页表根本不需要存在。</strong></p>
+<pre tabindex="0"><code>   四级页表（x86-64，48 位地址）
+
+   虚拟地址（48 位有效）
+   +--------+--------+--------+--------+------------+
+   | PGD 9位 | PUD 9位 | PMD 9位 | PTE 9位 | 偏移 12位  |
+   +--------+--------+--------+--------+------------+
+      |         |        |        |          |
+      |         |        |        |          +--&gt; 页内偏移（4KB 内）
+      |         |        |        +--&gt; 页表（Page Table Entry）
+      |         |        +--&gt; 中间目录（Page Middle Directory）
+      |         +--&gt; 上层目录（Page Upper Directory）
+      +--&gt; 全局目录（Page Global Directory）—— CR3 寄存器指向它
+
+   每级 9 位 = 512 项，每项 8 字节 = 恰好【一个 4KB 页】✅
+   这个设计非常精巧：每一级页表本身就是一个标准页
+
+   总空间：如果进程只映射了几 MB，
+     只需要 1 个 PGD + 1 个 PUD + 1 个 PMD + 几个 PTE 页 = 几十 KB
+     而不是 512GB
+</code></pre><h2 id="33-一次地址翻译的完整过程">3.3 一次地址翻译的完整过程</h2>
+<pre tabindex="0"><code>   访问虚拟地址 0x00007f8e_4c3d_2000
+
+   ① CR3 寄存器 -&gt; PGD 的物理地址
+   ② 取虚拟地址的 47:39 位（9 位）作为 PGD 索引 -&gt; 读一次内存 -&gt; 得到 PUD 地址
+   ③ 取 38:30 位作为 PUD 索引               -&gt; 读一次内存 -&gt; 得到 PMD 地址
+   ④ 取 29:21 位作为 PMD 索引               -&gt; 读一次内存 -&gt; 得到 PTE 地址
+   ⑤ 取 20:12 位作为 PTE 索引               -&gt; 读一次内存 -&gt; 得到【物理帧号】
+   ⑥ 物理地址 = 帧号 | 虚拟地址的 11:0 位
+
+   ⚠️ 一次翻译要【4 次内存访问】，而每次内存访问约 100ns
+      -&gt; 如果每条访存指令都这样做，程序会慢 5 倍以上
+      -&gt; 这就是必须有 TLB 的原因（第 4 章）
+</code></pre><h2 id="34-页表项里有什么">3.4 页表项里有什么</h2>
+<pre tabindex="0"><code>   x86-64 的 PTE（64 位）关键位：
+   +----------------------------------------------------------+
+   | bit 0   P     Present      ✅ 是否在物理内存中             |
+   | bit 1   R/W   Read/Write   ✅ 可写？（COW 就靠清掉它！）    |
+   | bit 2   U/S   User/Super   用户态能否访问                  |
+   | bit 3   PWT   写通缓存                                    |
+   | bit 4   PCD   禁用缓存（设备内存用）                       |
+   | bit 5   A     Accessed     ✅ 被访问过（页回收算法用）      |
+   | bit 6   D     Dirty        ✅ 被写过（决定换出时是否要写盘）|
+   | bit 7   PS    Page Size    ✅ 是否是大页（2MB/1GB）        |
+   | bit 8   G     Global       上下文切换时不刷新（内核页用）   |
+   | bit 12-51     物理帧号                                    |
+   | bit 63  NX    No Execute   ✅ 不可执行（防代码注入）        |
+   +----------------------------------------------------------+
+
+   P=0 时，其余位可以被内核【复用】来存别的信息：
+     - swap 条目（在哪个 swap 设备的哪个偏移）—— swap 的实现基础
+     - 文件映射的信息
+     - 「从未分配过」（按需分页）
+</code></pre><p><strong>这张表解释了本系列多个现象</strong>：</p>
+<pre tabindex="0"><code>   R/W 位     -&gt; 21 篇的 COW（fork 时清掉它，写入触发缺页）
+   A 位       -&gt; 25 篇的页回收（LRU 靠它判断冷热）
+   D 位       -&gt; 脏页回写（04 篇讲的 write() 返回不等于落盘）
+   PS 位      -&gt; 大页（第 7 章）
+   NX 位      -&gt; 为什么现代系统上栈溢出难以直接执行注入的代码
+   P=0 复用   -&gt; swap 与按需分页
+</code></pre><h2 id="35-页表的实际开销">3.5 页表的实际开销</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 看一个进程的页表占了多少内存</span>
+</span></span><span class="line"><span class="cl">grep -E <span class="s1">&#39;VmPTE|VmPMD|VmRSS|VmSize&#39;</span> /proc/self/status
+</span></span><span class="line"><span class="cl"><span class="c1"># VmSize:   12345 kB      虚拟地址空间</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># VmRSS:     4567 kB      物理内存</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># VmPTE:       48 kB      ✅ 页表占用</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># VmPMD:       12 kB</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 找出页表最大的进程（大内存进程的页表可能有几百 MB）</span>
+</span></span><span class="line"><span class="cl"><span class="k">for</span> p in /proc/<span class="o">[</span>0-9<span class="o">]</span>*<span class="p">;</span> <span class="k">do</span>
+</span></span><span class="line"><span class="cl">  <span class="nv">pte</span><span class="o">=</span><span class="k">$(</span>awk <span class="s1">&#39;/^VmPTE/{print $2}&#39;</span> <span class="nv">$p</span>/status 2&gt;/dev/null<span class="k">)</span>
+</span></span><span class="line"><span class="cl">  <span class="o">[[</span> -n <span class="nv">$pte</span> <span class="o">]]</span> <span class="o">&amp;&amp;</span> <span class="nb">echo</span> <span class="s2">&#34;</span><span class="nv">$pte</span><span class="s2"> </span><span class="si">${</span><span class="nv">p</span><span class="p">##*/</span><span class="si">}</span><span class="s2"> </span><span class="k">$(</span>cat <span class="nv">$p</span>/comm 2&gt;/dev/null<span class="k">)</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="k">done</span> <span class="p">|</span> sort -rn <span class="p">|</span> head -5
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 系统整体的页表开销</span>
+</span></span><span class="line"><span class="cl">grep PageTables /proc/meminfo
+</span></span><span class="line"><span class="cl"><span class="c1"># PageTables:      123456 kB</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 估算：4KB 页的页表开销约为映射内存的 1/512（0.2%）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   -&gt; 一个 64GB 内存的进程，页表约 128MB</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   -&gt; 21 篇讲的「Redis fork 慢」就是要复制这 128MB（而且要遍历所有 VMA）</span>
+</span></span></code></pre></div><h2 id="36-五级页表">3.6 五级页表</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># Linux 4.14+ 支持五级页表（57 位虚拟地址 = 128PB）</span>
+</span></span><span class="line"><span class="cl">grep -o <span class="s1">&#39;la57&#39;</span> /proc/cpuinfo <span class="p">|</span> head -1        <span class="c1"># CPU 是否支持</span>
+</span></span><span class="line"><span class="cl">dmesg <span class="p">|</span> grep -i <span class="s1">&#39;5-level&#39;</span>                      <span class="c1"># 内核是否启用</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 为什么需要？因为 48 位（256TB）在超大内存机器上开始不够了</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 代价：翻译多一级 = TLB miss 时多一次内存访问</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 所以内核默认只在需要时（内存 &gt; 64TB）才启用</span>
+</span></span></code></pre></div><h1 id="4-tlb真正的性能命门">4. TLB：真正的性能命门</h1>
+<h2 id="41-开篇第四问为什么它是命门">4.1 开篇第四问：为什么它是命门</h2>
+<p><strong>TLB</strong>（Translation Lookaside Buffer）是 CPU 里缓存「虚拟页号 → 物理帧号」的硬件表。</p>
+<pre tabindex="0"><code>   没有 TLB：每次访存 = 4 次页表内存访问 + 1 次真正的数据访问 = 5 倍开销
+   有 TLB：  命中时【零额外开销】（与 CPU 流水线并行完成）
+
+   TLB 命中率通常 &gt; 99%，正是它让虚拟内存的代价变得可接受。
+</code></pre><p><strong>但 TLB 非常小</strong>：</p>
+<pre tabindex="0"><code>   典型的现代 x86 CPU（每核）：
+     L1 dTLB：64 项（4KB 页）
+     L1 iTLB：64~128 项
+     L2 TLB（统一）：1024~2048 项
+
+   -&gt; 用 4KB 页时，L2 TLB 能覆盖 2048 × 4KB = 【8MB】内存
+   -&gt; 一个工作集 1GB 的程序，TLB 完全覆盖不住 -&gt; 频繁 miss
+</code></pre><h2 id="42-tlb-miss-的代价">4.2 TLB miss 的代价</h2>
+<pre tabindex="0"><code>   一次 TLB miss 的开销：
+     ① 遍历四级页表 = 最多 4 次内存访问
+     ② 这些页表项本身可能不在 CPU cache 里 -&gt; 真的要访存（~100ns 每次）
+     ③ 最坏情况约 300~400ns
+     
+   对比：
+     TLB 命中：~0ns（并行完成）
+     L1 cache 命中：~1ns
+     内存访问：~100ns
+     
+   -&gt; 在指针密集、随机访问的负载（数据库、图计算、JVM/Go 的 GC 标记阶段）
+      TLB miss 可能占总时间的 10%~30%
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 实测 TLB miss（需要 perf 与硬件支持）</span>
+</span></span><span class="line"><span class="cl">sudo perf stat -e dTLB-load-misses,dTLB-loads,iTLB-load-misses ./myapp
+</span></span><span class="line"><span class="cl"><span class="c1"># 或者看更详细的 walk 周期</span>
+</span></span><span class="line"><span class="cl">sudo perf stat -e dtlb_load_misses.walk_active,dtlb_load_misses.walk_completed ./myapp
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 一个直观的对比实验：顺序访问 vs 随机访问同一块内存</span>
+</span></span><span class="line"><span class="cl">cat &gt; /tmp/tlb.c <span class="s">&lt;&lt;&#39;EOF&#39;
+</span></span></span><span class="line"><span class="cl"><span class="s">#include &lt;stdio.h&gt;
+</span></span></span><span class="line"><span class="cl"><span class="s">#include &lt;stdlib.h&gt;
+</span></span></span><span class="line"><span class="cl"><span class="s">#include &lt;time.h&gt;
+</span></span></span><span class="line"><span class="cl"><span class="s">#define N (256*1024*1024/8)     // 256MB 的 long 数组
+</span></span></span><span class="line"><span class="cl"><span class="s">int main(int argc, char **argv) {
+</span></span></span><span class="line"><span class="cl"><span class="s">    long *a = malloc(N*8);
+</span></span></span><span class="line"><span class="cl"><span class="s">    for (long i=0;i&lt;N;i++) a[i]=i;
+</span></span></span><span class="line"><span class="cl"><span class="s">    struct timespec t1,t2; long sum=0;
+</span></span></span><span class="line"><span class="cl"><span class="s">    clock_gettime(CLOCK_MONOTONIC,&amp;t1);
+</span></span></span><span class="line"><span class="cl"><span class="s">    if (argv[1][0]==&#39;s&#39;) {                       // 顺序
+</span></span></span><span class="line"><span class="cl"><span class="s">        for (long i=0;i&lt;N;i++) sum += a[i];
+</span></span></span><span class="line"><span class="cl"><span class="s">    } else {                                      // 随机（每次跳一个页）
+</span></span></span><span class="line"><span class="cl"><span class="s">        for (long i=0;i&lt;N;i++) sum += a[(i*4096/8) % N];
+</span></span></span><span class="line"><span class="cl"><span class="s">    }
+</span></span></span><span class="line"><span class="cl"><span class="s">    clock_gettime(CLOCK_MONOTONIC,&amp;t2);
+</span></span></span><span class="line"><span class="cl"><span class="s">    printf(&#34;%s: %.3f s (sum=%ld)\n&#34;, argv[1],
+</span></span></span><span class="line"><span class="cl"><span class="s">           (t2.tv_sec-t1.tv_sec)+(t2.tv_nsec-t1.tv_nsec)/1e9, sum);
+</span></span></span><span class="line"><span class="cl"><span class="s">}
+</span></span></span><span class="line"><span class="cl"><span class="s">EOF</span>
+</span></span><span class="line"><span class="cl">gcc -O2 -o /tmp/tlb /tmp/tlb.c
+</span></span><span class="line"><span class="cl">/tmp/tlb s<span class="p">;</span> /tmp/tlb r          <span class="c1"># 随机访问通常慢 5~20 倍（TLB miss + cache miss 叠加）</span>
+</span></span><span class="line"><span class="cl">sudo perf stat -e dTLB-load-misses /tmp/tlb r 2&gt;<span class="p">&amp;</span><span class="m">1</span> <span class="p">|</span> grep TLB
+</span></span></code></pre></div><h2 id="43-上下文切换与-tlb-flush">4.3 上下文切换与 TLB flush</h2>
+<pre tabindex="0"><code>   问题：进程 A 和进程 B 的虚拟地址 0x400000 指向【不同】的物理页。
+        切换进程时，TLB 里 A 的条目对 B 是【错误】的。
+
+   最简单的解法：切换时把 TLB 全部清空（flush）
+     -&gt; 但那意味着切换后的一段时间里【所有访存都 TLB miss】
+     -&gt; 上下文切换的真实代价里，TLB 重建往往比保存寄存器贵得多
+        （这正是 13 篇讲「上下文切换贵在 cache/TLB 而不是保存寄存器」的依据）
+
+   硬件的改进：给 TLB 条目打上「地址空间标识」
+     - x86：PCID（Process-Context Identifier，12 位）
+     - ARM：ASID
+     -&gt; 切换时不用 flush，只是让不同 PCID 的条目互不匹配
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 检查 CPU 是否支持 PCID / INVPCID</span>
+</span></span><span class="line"><span class="cl">grep -o -E <span class="s1">&#39;pcid|invpcid&#39;</span> /proc/cpuinfo <span class="p">|</span> sort -u
+</span></span><span class="line"><span class="cl"><span class="c1"># pcid</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># invpcid</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ⚠️ Meltdown 缓解措施（KPTI）让这件事变复杂了</span>
+</span></span><span class="line"><span class="cl">dmesg <span class="p">|</span> grep -i <span class="s1">&#39;page table isolation&#39;</span>
+</span></span><span class="line"><span class="cl">cat /sys/devices/system/cpu/vulnerabilities/meltdown
+</span></span><span class="line"><span class="cl"><span class="c1"># Mitigation: PTI</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># KPTI 的机制：给【内核】和【用户态】用两套独立的页表</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   -&gt; 每次系统调用进出都要切换 CR3 = 可能的 TLB 影响</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   -&gt; 有 PCID 时开销小得多（这就是为什么 PCID 突然变得很重要）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   -&gt; 在系统调用密集的负载上，KPTI 的开销可达 5%~30%</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   -&gt; 这也是 18 篇讲「io_uring 想减少系统调用次数」的一个背景原因</span>
+</span></span></code></pre></div><h2 id="44-大页如何拯救-tlb">4.4 大页如何拯救 TLB</h2>
+<pre tabindex="0"><code>   一个 TLB 条目能覆盖多少内存？
+     4KB 页  -&gt; 4KB
+     2MB 页  -&gt; 2MB      （✅ 512 倍）
+     1GB 页  -&gt; 1GB      （✅ 262144 倍）
+
+   2048 项的 L2 TLB：
+     用 4KB 页 -&gt; 覆盖 8MB
+     用 2MB 页 -&gt; 覆盖 4GB       ← 对大内存应用是决定性的差异
+</code></pre><p><strong>这是大页存在的唯一理由</strong>（第 7 章展开它的代价）。</p>
+<h1 id="5-缺页异常不是-bug是核心机制">5. 缺页异常：不是 bug，是核心机制</h1>
+<h2 id="51-开篇第五问三种缺页">5.1 开篇第五问：三种缺页</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">ps -o pid,min_flt,maj_flt,comm -p <span class="nv">$$</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#         ^^^^^^^ 次要缺页    ^^^^^^^ 主要缺页</span>
+</span></span></code></pre></div><table>
+<thead>
+<tr>
+<th>类型</th>
+<th>含义</th>
+<th>代价</th>
+<th>是否正常</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Minor fault</strong>（次要）</td>
+<td>页表项无效，但<strong>不需要读磁盘</strong>（页已在内存里，或只需分配一个新页）</td>
+<td>微秒级</td>
+<td>✅ <strong>完全正常</strong>，数量大也没关系</td>
+</tr>
+<tr>
+<td><strong>Major fault</strong>（主要）</td>
+<td><strong>需要从磁盘读取</strong>（文件映射首次访问、swap 换入）</td>
+<td>毫秒级（SSD 几十微秒）</td>
+<td>⚠️ 持续增长才是问题</td>
+</tr>
+<tr>
+<td><strong>Invalid fault</strong></td>
+<td>访问的地址<strong>根本没有映射</strong></td>
+<td>—</td>
+<td>❌ <strong>这才是 bug</strong> → <code>SIGSEGV</code></td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 观察缺页</span>
+</span></span><span class="line"><span class="cl">ps -eo pid,min_flt,maj_flt,comm --sort<span class="o">=</span>-maj_flt <span class="p">|</span> head -6
+</span></span><span class="line"><span class="cl">sar -B <span class="m">1</span>                          <span class="c1"># 系统级：pgpgin/s pgfault/s majflt/s</span>
+</span></span><span class="line"><span class="cl">pidstat -r <span class="m">1</span>                      <span class="c1"># 每进程的缺页速率</span>
+</span></span><span class="line"><span class="cl">sudo perf stat -e page-faults,major-faults ./myapp
+</span></span><span class="line"><span class="cl">sudo bpftrace -e <span class="s1">&#39;software:major-faults:1 { @[comm] = count(); }&#39;</span>
+</span></span></code></pre></div><h2 id="52-缺页处理流程">5.2 缺页处理流程</h2>
+<pre tabindex="0"><code>   CPU 访问虚拟地址 -&gt; MMU 查页表发现 P=0 或权限不符
+        |
+        v  触发缺页异常（硬件），CPU 切到内核态，跳到 do_page_fault()
+   ① 拿到出错的地址（CR2 寄存器）与错误码（是读还是写、用户态还是内核态）
+        |
+        v
+   ② 在进程的 VMA 树（红黑树/maple tree）里查找这个地址
+        |
+        ├─ 找不到 VMA -&gt; ❌ 非法访问 -&gt; SIGSEGV（段错误）
+        |               （除了一个例外：栈的自动增长，见 5.3）
+        |
+        └─ 找到了 VMA -&gt; 检查权限（VMA 的 flags 允许这次访问吗？）
+                 ├─ 不允许（如往只读段写）-&gt; ❌ SIGSEGV
+                 └─ 允许 -&gt; 继续
+                       |
+                       ├─ 【匿名页首次访问】-&gt; 分配物理页，清零，建映射（minor）
+                       |     若是【读】-&gt; 甚至可以直接映射到全局的零页（省内存）
+                       |
+                       ├─ 【文件映射】-&gt; 查 page cache
+                       |     命中 -&gt; 建映射（minor）
+                       |     未命中 -&gt; 从磁盘读（major）✅ 这就是 20 篇第 3 章的路径
+                       |
+                       ├─ 【COW 页】（P=1 但 R/W=0 且 VMA 可写）
+                       |     -&gt; 分配新页，复制内容，改页表为可写（minor）
+                       |        ✅ 这就是 21 篇 3.2 的实现
+                       |
+                       └─ 【在 swap 里】（P=0，PTE 存着 swap 条目）
+                             -&gt; 从 swap 读回（major）
+        |
+        v
+   ③ 更新页表，刷新 TLB，从异常返回，【重新执行那条指令】
+</code></pre><h2 id="53-用缺页实现的七种功能">5.3 用缺页实现的七种功能</h2>
+<p><strong>这是本篇最重要的一节：缺页不是「错误处理」，而是内核实现各种内存特性的统一机制。</strong></p>
+<pre tabindex="0"><code>   ① 按需分页（demand paging）
+      malloc(1GB) 立即返回，但【一个物理页都没分配】——
+      只是建了一个 VMA。访问时才逐页分配。
+      -&gt; 这就是 13 篇讲的 VSZ ≫ RSS
+
+   ② COW（21 篇）
+      fork 时把双方页表都标记只读，写入时触发缺页才真正复制
+
+   ③ mmap 文件映射（20 篇）
+      映射时只建 VMA，访问时缺页 -&gt; 从 page cache 取页（或读磁盘）
+      -&gt; 这让「把 10GB 文件当数组用」成为可能
+
+   ④ swap 换入（11 篇）
+      PTE 里 P=0，其余位存着「在哪个 swap 设备的哪个槽位」
+
+   ⑤ 栈自动增长
+      栈向下增长，访问栈指针下方的未映射页时，
+      内核【特殊处理】：如果地址接近栈顶且在 RLIMIT_STACK 内，就扩展栈 VMA
+      -&gt; 这是 SIGSEGV 判断里唯一的「合法的越界访问」
+
+   ⑥ 透明大页提升（第 7 章）
+      khugepaged 后台把连续的 4KB 页合并成 2MB 大页
+
+   ⑦ userfaultfd —— 把缺页处理【交给用户态】
+      内核把缺页事件通过一个 fd 通知用户态进程，由它决定怎么填充这一页
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 观察按需分页：malloc 之后 RSS 几乎不涨，写入后才涨</span>
+</span></span><span class="line"><span class="cl">cat &gt; /tmp/demand.c <span class="s">&lt;&lt;&#39;EOF&#39;
+</span></span></span><span class="line"><span class="cl"><span class="s">#include &lt;stdio.h&gt;
+</span></span></span><span class="line"><span class="cl"><span class="s">#include &lt;stdlib.h&gt;
+</span></span></span><span class="line"><span class="cl"><span class="s">#include &lt;string.h&gt;
+</span></span></span><span class="line"><span class="cl"><span class="s">#include &lt;unistd.h&gt;
+</span></span></span><span class="line"><span class="cl"><span class="s">int main(){
+</span></span></span><span class="line"><span class="cl"><span class="s">    size_t sz = 512UL*1024*1024;
+</span></span></span><span class="line"><span class="cl"><span class="s">    char *p = malloc(sz);
+</span></span></span><span class="line"><span class="cl"><span class="s">    printf(&#34;malloc 完成，看 RSS（应该很小）: &#34;); fflush(stdout); getchar();
+</span></span></span><span class="line"><span class="cl"><span class="s">    memset(p, 1, sz);           // ✅ 现在才真正分配物理页
+</span></span></span><span class="line"><span class="cl"><span class="s">    printf(&#34;写入完成，RSS 应该涨到 512MB: &#34;); fflush(stdout); getchar();
+</span></span></span><span class="line"><span class="cl"><span class="s">    free(p);
+</span></span></span><span class="line"><span class="cl"><span class="s">}
+</span></span></span><span class="line"><span class="cl"><span class="s">EOF</span>
+</span></span><span class="line"><span class="cl">gcc -o /tmp/demand /tmp/demand.c <span class="o">&amp;&amp;</span> /tmp/demand <span class="p">&amp;</span>
+</span></span><span class="line"><span class="cl">watch -n1 <span class="s2">&#34;grep -E &#39;VmSize|VmRSS&#39; /proc/</span><span class="k">$(</span>pgrep -n demand<span class="k">)</span><span class="s2">/status&#34;</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># userfaultfd 的实际用途（这是一个很能说明「机制的威力」的例子）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ① 虚拟机的【后拷贝迁移】（post-copy migration）：</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    先把 VM 切到目标机器运行，内存页按需从源机器拉取 —— 靠 userfaultfd 拦截缺页</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ② CRIU 的进程迁移与恢复</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ③ 分布式共享内存、内存快照</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ④ ⚠️ 也被用于漏洞利用（精确控制缺页时机来放大竞态窗口）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    -&gt; 所以内核加了 vm.unprivileged_userfaultfd 开关</span>
+</span></span><span class="line"><span class="cl">sysctl vm.unprivileged_userfaultfd
+</span></span></code></pre></div><h1 id="6-地址空间布局">6. 地址空间布局</h1>
+<h2 id="61-x86-64-的布局">6.1 x86-64 的布局</h2>
+<pre tabindex="0"><code>   0xFFFFFFFFFFFFFFFF  +---------------------------+
+                       |  内核空间（128TB）         |  ← 所有进程共享同一份映射
+   0xFFFF800000000000  +---------------------------+     （但用户态不可访问，U/S=0）
+                       |                           |
+                       |   非法区域（&#34;canonical    |  ← 48 位地址的中间空洞
+                       |   hole&#34;，硬件规定）        |
+                       |                           |
+   0x00007FFFFFFFFFFF  +---------------------------+
+                       |  栈（向下增长）             |  ← ASLR 随机化起始位置
+                       +---------------------------+
+                       |  ↓                        |
+                       |  mmap 区域（向下增长）      |  ← 共享库、匿名 mmap、
+                       |  （libc、堆外内存…）        |     大块 malloc
+                       |  ↑                        |
+                       +---------------------------+
+                       |  堆（brk，向上增长）        |  ← 小块 malloc
+                       +---------------------------+
+                       |  BSS（未初始化数据）        |
+                       |  Data（已初始化数据）       |
+                       |  Text（代码，只读+可执行）   |
+   0x0000000000400000  +---------------------------+
+                       |  【不映射】                |  ← 空指针解引用 = SIGSEGV
+   0x0000000000000000  +---------------------------+     的实现原理
+</code></pre><h2 id="62-读懂-procpidmaps">6.2 读懂 /proc/pid/maps</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">cat /proc/self/maps
+</span></span><span class="line"><span class="cl"><span class="c1"># 55d3e8c00000-55d3e8c22000 r--p 00000000 fd:01 1234567 /usr/bin/cat</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ^^^^^^^^^^^^^^^^^^^^^^^^^ ^^^^ ^^^^^^^^ ^^^^^ ^^^^^^^ ^^^^^^^^^^^^^</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 虚拟地址范围              权限  文件偏移  设备   inode   映射的文件</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                          ^^^^ r/w/x + p(私有)或 s(共享)</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 55d3e8c22000-55d3e8c4a000 r-xp 00022000 fd:01 1234567 /usr/bin/cat   &lt;- 代码段</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 55d3e8c4a000-55d3e8c5c000 r--p 0004a000 fd:01 1234567 /usr/bin/cat   &lt;- 只读数据</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 55d3e8c5d000-55d3e8c5e000 rw-p 0005c000 fd:01 1234567 /usr/bin/cat   &lt;- 可写数据</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 55d3e9a00000-55d3e9a21000 rw-p 00000000 00:00 0       [heap]         &lt;- 堆</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 7f8e4c000000-7f8e4c028000 r--p 00000000 fd:01 2345678 /usr/lib/libc.so.6</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 7ffd8c000000-7ffd8c021000 rw-p 00000000 00:00 0       [stack]        &lt;- 栈</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 7ffd8c1fe000-7ffd8c200000 r-xp 00000000 00:00 0       [vdso]         &lt;- 见下</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ffffffffff600000-ffffffffff601000 --xp 00000000 00:00 0 [vsyscall]</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 更详细的版本（每个区域的 RSS/PSS/脏页）</span>
+</span></span><span class="line"><span class="cl">sudo grep -A <span class="m">12</span> <span class="s1">&#39;\[heap\]&#39;</span> /proc/self/smaps
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># vdso 是什么？—— 内核映射到每个进程的一小段代码</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   用途：让 gettimeofday/clock_gettime 这类调用【不用陷入内核】</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   -&gt; 直接在用户态读取内核维护的时间数据</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   -&gt; 这是「减少系统调用开销」的一个经典优化（Go 的 time.Now() 就走它）</span>
+</span></span><span class="line"><span class="cl">ldd /bin/ls <span class="p">|</span> grep vdso
+</span></span></code></pre></div><h2 id="63-aslr-与空指针">6.3 ASLR 与空指针</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ASLR：每次运行时随机化各区域的起始地址</span>
+</span></span><span class="line"><span class="cl"><span class="k">for</span> i in <span class="m">1</span> <span class="m">2</span> 3<span class="p">;</span> <span class="k">do</span> awk <span class="s1">&#39;NR==1{print $1}&#39;</span> /proc/self/maps<span class="p">;</span> <span class="k">done</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 三次输出不同 -&gt; ASLR 生效</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">sysctl kernel.randomize_va_space
+</span></span><span class="line"><span class="cl"><span class="c1"># 2 = 完全随机化（代码/堆/栈/mmap）  1 = 部分  0 = 关闭</span>
+</span></span><span class="line"><span class="cl">setarch <span class="k">$(</span>uname -m<span class="k">)</span> -R ./myapp        <span class="c1"># 临时关闭 ASLR（调试用）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ⚠️ 空指针为什么是段错误？</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    因为虚拟地址 0 附近【故意不映射】</span>
+</span></span><span class="line"><span class="cl">sysctl vm.mmap_min_addr
+</span></span><span class="line"><span class="cl"><span class="c1"># 65536       &lt;- 低于这个地址【禁止映射】</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 为什么需要这个限制？防御一类内核漏洞利用：</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   如果内核里有「解引用 NULL」的 bug，攻击者可以在用户态 mmap 地址 0</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   放上恶意数据，让内核跳到那里执行 -&gt; mmap_min_addr 封死了这条路</span>
+</span></span></code></pre></div><h1 id="7-大页收益与代价">7. 大页：收益与代价</h1>
+<h2 id="71-两种大页">7.1 两种大页</h2>
+<table>
+<thead>
+<tr>
+<th></th>
+<th><strong>静态大页（HugeTLB）</strong></th>
+<th><strong>透明大页（THP）</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>分配时机</td>
+<td><strong>启动时预留</strong>（<code>vm.nr_hugepages</code>）</td>
+<td>运行时<strong>自动</strong>分配与合并</td>
+</tr>
+<tr>
+<td>应用是否要改</td>
+<td>✅ 要（用 <code>hugetlbfs</code> 或 <code>MAP_HUGETLB</code>）</td>
+<td>❌ 不用，完全透明</td>
+</tr>
+<tr>
+<td>能否被换出</td>
+<td>❌ 不能（永久锁在内存）</td>
+<td>⚠️ 需要先拆分成 4KB</td>
+</tr>
+<tr>
+<td>延迟可预测性</td>
+<td>✅ <strong>好</strong>（预留好了，运行时无分配）</td>
+<td>❌ <strong>差</strong>（见 7.2）</td>
+</tr>
+<tr>
+<td>典型用户</td>
+<td>Oracle、PostgreSQL（<code>huge_pages=on</code>）、DPDK、KVM</td>
+<td>默认对所有应用启用</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 静态大页</span>
+</span></span><span class="line"><span class="cl">grep -i huge /proc/meminfo
+</span></span><span class="line"><span class="cl"><span class="c1"># AnonHugePages:    524288 kB      &lt;- THP 实际使用量</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># HugePages_Total:       0         &lt;- 静态大页预留数</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># HugePages_Free:        0</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># Hugepagesize:       2048 kB</span>
+</span></span><span class="line"><span class="cl">sudo sysctl -w vm.nr_hugepages<span class="o">=</span><span class="m">1024</span>        <span class="c1"># 预留 1024 × 2MB = 2GB</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 持久化：/etc/sysctl.d/ 或内核参数 hugepages=1024</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># THP 状态</span>
+</span></span><span class="line"><span class="cl">cat /sys/kernel/mm/transparent_hugepage/enabled
+</span></span><span class="line"><span class="cl"><span class="c1"># [always] madvise never</span>
+</span></span><span class="line"><span class="cl">cat /sys/kernel/mm/transparent_hugepage/defrag
+</span></span><span class="line"><span class="cl"><span class="c1"># always defer [defer+madvise] madvise never</span>
+</span></span></code></pre></div><h2 id="72-thp-的三个代价">7.2 THP 的三个代价</h2>
+<p><strong>这解释了为什么几乎所有数据库都要求关闭它</strong>（04 篇 10.x 和 21 篇 3.3 提过）：</p>
+<pre tabindex="0"><code>   ① 分配延迟不可预测（最主要的问题）
+      要凑出一个 2MB 的【物理连续】区域，内核可能需要做【内存规整】
+      （compaction）—— 移动大量页来腾出连续空间。
+      这个过程会让触发它的进程【同步阻塞几百毫秒】。
+      -&gt; 表现为「服务偶发的长尾延迟尖刺」，而且极难定位
+         （因为原因藏在内存子系统里，应用侧看不出任何异常）
+
+   ② 内存放大
+      对随机访问的负载：只用到 2MB 里的几 KB，剩下的全浪费。
+      Redis/MongoDB 这类稀疏访问模式尤其明显。
+
+   ③ COW 粒度放大（21 篇 3.3）
+      fork 之后，父进程写一个字节会触发【2MB】的复制，而不是 4KB。
+      -&gt; Redis BGSAVE 期间内存放大 512 倍的风险
+      -&gt; 这是 Redis 官方文档明确要求关闭 THP 的首要原因
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 关闭 THP（数据库/延迟敏感服务的标准操作）</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> never <span class="p">|</span> sudo tee /sys/kernel/mm/transparent_hugepage/enabled
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> never <span class="p">|</span> sudo tee /sys/kernel/mm/transparent_hugepage/defrag
+</span></span><span class="line"><span class="cl"><span class="c1"># 永久：内核参数 transparent_hugepage=never</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 或者用 systemd 服务在启动时设置</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 折中方案：madvise 模式（只对显式请求的应用启用）</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> madvise <span class="p">|</span> sudo tee /sys/kernel/mm/transparent_hugepage/enabled
+</span></span><span class="line"><span class="cl"><span class="c1"># 应用用 madvise(ptr, len, MADV_HUGEPAGE) 主动请求 —— ✅ 机制与策略分离（18 篇）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 观察 THP 造成的规整开销</span>
+</span></span><span class="line"><span class="cl">grep -E <span class="s1">&#39;compact_stall|compact_fail&#39;</span> /proc/vmstat
+</span></span><span class="line"><span class="cl"><span class="c1"># compact_stall 持续增长 = 有进程因为内存规整被阻塞过</span>
+</span></span><span class="line"><span class="cl">sudo bpftrace -e <span class="s1">&#39;kprobe:try_to_compact_pages { @[comm] = count(); }&#39;</span>
+</span></span></code></pre></div><h1 id="8-go-视角">8. Go 视角</h1>
+<h2 id="81-为什么-go-程序的-vsz-很大">8.1 为什么 Go 程序的 VSZ 很大</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">ps -o pid,vsz,rss,comm -C myapp
+</span></span><span class="line"><span class="cl"><span class="c1">#          ^^^^^ 常常 1~2GB，而 RSS 只有几十 MB（13 篇 2.3 讲过这个现象）</span>
+</span></span></code></pre></div><pre tabindex="0"><code>   原因：Go runtime 在启动时【预留】大块虚拟地址空间（arena），
+        用 mmap(PROT_NONE) 只占地址不占物理页。
+        目的是让堆可以连续增长，简化指针运算与 GC 的元数据管理。
+        
+   -&gt; 这正好印证 13 篇的结论：VSZ 几乎没有意义，要看 RSS/PSS
+</code></pre><h2 id="82-gcmadvise-与-rss-不降">8.2 GC、madvise 与 RSS 不降</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// Go 的 GC 释放内存后，为什么 RSS 不立刻下降？
+</span></span></span><span class="line"><span class="cl"><span class="c1">// 因为 runtime 用 madvise 告诉内核「这些页我暂时不用了」，有两种方式：
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl"><span class="c1">// MADV_FREE（Go 1.12~1.15 默认，Linux 4.5+）
+</span></span></span><span class="line"><span class="cl"><span class="c1">//   -&gt; 内核【延迟】回收：页仍在 RSS 里，直到内存压力出现才真正释放
+</span></span></span><span class="line"><span class="cl"><span class="c1">//   -&gt; 优点：如果应用又用到这块内存，无需重新缺页（快）
+</span></span></span><span class="line"><span class="cl"><span class="c1">//   -&gt; 缺点：RSS 看起来不降，容易被误判为内存泄漏，
+</span></span></span><span class="line"><span class="cl"><span class="c1">//            也容易在容器里撞上 memory.max（因为 cgroup 按 RSS 算）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl"><span class="c1">// MADV_DONTNEED（Go 1.16+ 恢复为默认）
+</span></span></span><span class="line"><span class="cl"><span class="c1">//   -&gt; 立即归还，RSS 马上下降
+</span></span></span><span class="line"><span class="cl"><span class="c1">//   -&gt; 代价：下次访问要重新缺页（慢一点）
+</span></span></span><span class="line"><span class="cl"><span class="c1">//   -&gt; ✅ 换回它的主要原因就是【容器环境下的可观测性与 OOM 风险】
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl"><span class="c1">// 手动触发归还
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">debug</span><span class="p">.</span><span class="nf">FreeOSMemory</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// 观察
+</span></span></span><span class="line"><span class="cl"><span class="c1">// GODEBUG=madvdontneed=1 ./myapp     （Go 1.12~1.15 时期的临时开关）
+</span></span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 与 GOMEMLIMIT 的关系（13 篇 10.2 提过）</span>
+</span></span><span class="line"><span class="cl"><span class="nv">GOMEMLIMIT</span><span class="o">=</span>1800MiB ./myapp
+</span></span><span class="line"><span class="cl"><span class="c1"># 它让 GC 感知「内存上限」，在接近时更积极地回收</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 必须设：否则 Go 只按 GOGC 的比例增长，容器里很容易被 OOMKilled</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    因为 Go 不知道 cgroup 的限制（13 篇 10.2 的 nproc 同类问题）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 观察 Go 的内存与缺页</span>
+</span></span><span class="line"><span class="cl">curl -s localhost:6060/debug/pprof/heap &gt; heap.prof
+</span></span><span class="line"><span class="cl"><span class="nv">GODEBUG</span><span class="o">=</span><span class="nv">gctrace</span><span class="o">=</span><span class="m">1</span> ./myapp             <span class="c1"># 每次 GC 打印堆大小</span>
+</span></span><span class="line"><span class="cl">ps -o min_flt,maj_flt,rss -C myapp    <span class="c1"># 缺页与 RSS</span>
+</span></span></code></pre></div><h2 id="83-go-与大页">8.3 Go 与大页</h2>
+<pre tabindex="0"><code>   Go 的堆是通过 mmap 匿名映射得来的，所以【会被 THP 影响】：
+     ✅ 收益：大堆（几 GB）时 TLB 命中率显著改善，GC 标记阶段（指针密集遍历）尤其明显
+     ⚠️ 风险：THP 的分配延迟会造成 GC 停顿的长尾；
+              以及 21 篇讲的 COW 放大（如果程序里有 fork/exec）
+
+   实践：
+     - 延迟敏感的服务：关闭 THP（用 never 或 madvise 模式）
+     - 大内存吞吐型服务：可以测试开启 THP 的收益
+     - 无论如何都要设 GOMEMLIMIT + 关注 gctrace 的停顿时间
+</code></pre><h1 id="9-面试题">9. 面试题</h1>
+<p><strong>Q：虚拟内存解决的最初问题是什么？为什么值得付出每次访存都要翻译地址的代价？</strong></p>
+<p>三个原始问题：<strong>地址冲突</strong>（程序编译时假定固定地址，无法同时驻留；早期靠加载时重定位，程序一旦加载就不能移动，碎片无法整理）、<strong>内存不够</strong>（早期靠程序员手工 overlay，把「什么时候换入哪一块」的负担交给人）、<strong>没有隔离</strong>（任何程序能读写任何地址）。</p>
+<p>值得的理由是：<strong>隔离和保护根本没有替代方案</strong>（现代多任务系统的前提），而 overlay 的替代方案是把复杂度全推给程序员。</p>
+<p>但真正的价值在于「地址翻译」这个<strong>间接层</strong>一旦存在，大量原本困难的事变得几乎免费：<strong>共享内存</strong>（两个页表指向同一物理页）、<strong>COW</strong>、<strong>mmap 文件</strong>、<strong>按需分页</strong>、<strong>swap</strong>、<strong>栈自动增长</strong>、<strong>NX 保护</strong>、<strong>ASLR</strong>、<strong>overcommit</strong> —— 这些全部是同一个机制的衍生品。</p>
+<p>代价是四项：地址翻译开销（所以必须有 MMU 和 TLB）、<strong>页表本身占内存</strong>（这是 21 篇「fork 开销与页表规模成正比」的来源）、TLB miss 延迟、缺页异常开销。</p>
+<p><strong>Q：分段与分页之争，为什么分页赢了？</strong></p>
+<p>三个决定性因素：</p>
+<ol>
+<li><strong>外部碎片</strong> —— 分段是变长分配，必然产生空隙（剩 30KB+40KB 但来了 60KB 的段就放不下，除非做内存整理）。<strong>分页彻底消灭了这个问题：所有页大小相同，任意虚拟页能放进任意物理帧</strong></li>
+<li><strong>交换粒度</strong> —— 「内存不够时换出一部分」是虚拟内存的核心能力。分段只能整段换出（128MB 的数据段要么全在要么全不在），而实际访问局部性是页级的</li>
+<li><strong>硬件实现简洁</strong> —— 分页的翻译是<strong>纯位运算</strong>（页大小是 2 的幂，直接切位，页内偏移天然不越界），而分段要做加法和越界比较</li>
+</ol>
+<p>代价是分页有<strong>内部碎片</strong>（最后一页平均浪费 2KB）和<strong>页表开销</strong>，但这两项都可控。</p>
+<p>有意思的是<strong>分段没有完全消失</strong>：x86-64 长模式下 CS/DS/SS 的基址被强制为 0、长度检查禁用，但<strong>保留了 FS/GS 的基址用来做线程本地存储（TLS）</strong> —— Go 的 goroutine 调度、C 的 <code>__thread</code>、glibc 的 <code>errno</code> 都靠它。这是「历史包袱以最小形态留存」的典型。</p>
+<p><strong>Q：为什么必须是多级页表？单级为什么不行？</strong></p>
+<p><strong>单级页表会吃掉 512GB。</strong> x86-64 有效虚拟地址 48 位、页 4KB，虚拟页数 = 2⁴⁸/2¹² = 2³⁶ ≈ 687 亿，每项 8 字节 → 512GB，而且<strong>每个进程一份</strong>。</p>
+<p>多级页表利用的关键事实是<strong>地址空间极度稀疏</strong>：一个真实进程通常只映射几 MB 到几 GB，而地址空间总量是 256TB。<strong>没有映射的区域，对应的中间层页表根本不需要存在。</strong></p>
+<p>四级页表（PGD/PUD/PMD/PTE）每级 9 位 = 512 项 × 8 字节 = <strong>恰好一个 4KB 页</strong> —— 这个设计非常精巧，每一级页表本身就是一个标准页。只映射几 MB 的进程只需要几十 KB 页表。</p>
+<p>代价是<strong>一次翻译要 4 次内存访问</strong>（每次约 100ns），如果每条访存指令都这样，程序会慢 5 倍以上 —— 所以必须有 TLB。</p>
+<p>实际开销约为映射内存的 <strong>1/512（0.2%）</strong>：64GB 内存的进程页表约 128MB，可以用 <code>grep VmPTE /proc/&lt;pid&gt;/status</code> 看到，也解释了 Redis fork 慢的原因。</p>
+<p><strong>Q：为什么说 TLB 是真正的性能命门？</strong></p>
+<p>因为它是让虚拟内存「代价可接受」的唯一原因：<strong>TLB 命中时零额外开销</strong>（与流水线并行完成），而 miss 时要遍历四级页表、最坏约 300~400ns。命中率通常 &gt;99%。</p>
+<p><strong>但 TLB 非常小</strong>：典型现代 CPU 的 L2 TLB 只有 1024~2048 项，用 4KB 页时<strong>只能覆盖 8MB 内存</strong>。一个工作集 1GB 的程序根本覆盖不住 —— 在指针密集、随机访问的负载（数据库、图计算、GC 标记阶段）TLB miss 可占总时间的 10%~30%。</p>
+<p>三个相关要点：</p>
+<ul>
+<li><strong>上下文切换要 flush TLB</strong>，切换后一段时间内所有访存都 miss —— 这正是 13 篇讲「上下文切换贵在 cache/TLB 而不是保存寄存器」的依据。硬件的改进是 <strong>PCID/ASID</strong>（给 TLB 条目打地址空间标识，切换时不用 flush）</li>
+<li><strong>KPTI（Meltdown 缓解）让内核和用户态用两套页表</strong>，每次系统调用进出都可能影响 TLB —— 有 PCID 时开销小得多，这也是「减少系统调用次数」（io_uring）的一个背景动因</li>
+<li><strong>大页是唯一能根本改善 TLB 覆盖率的手段</strong>：2048 项 TLB 用 4KB 页覆盖 8MB，用 2MB 页覆盖 <strong>4GB</strong></li>
+</ul>
+<p><strong>Q：缺页异常是 bug 还是特性？</strong></p>
+<p><strong>绝大多数缺页是特性</strong>，只有一种是 bug：</p>
+<ul>
+<li><strong>Minor fault</strong>（不需读磁盘，只需分配页或建映射）—— 微秒级，<strong>数量大也完全正常</strong></li>
+<li><strong>Major fault</strong>（需从磁盘读：文件映射首次访问、swap 换入）—— 毫秒级，<strong>持续增长才是问题</strong></li>
+<li><strong>Invalid fault</strong>（地址根本没映射）—— <strong>这才是 bug</strong>，转成 <code>SIGSEGV</code></li>
+</ul>
+<p><strong>缺页是内核实现各种内存特性的统一机制</strong>，七种功能全靠它：<strong>按需分页</strong>（<code>malloc(1GB)</code> 立即返回但零物理页，这就是 VSZ ≫ RSS）、<strong>COW</strong>（fork 时标记只读，写入时才复制）、<strong>mmap 文件</strong>（让「把 10GB 文件当数组用」成为可能）、<strong>swap 换入</strong>（PTE 的 P=0 时其余位复用来存 swap 位置）、<strong>栈自动增长</strong>（SIGSEGV 判断里唯一合法的越界访问）、<strong>THP 提升</strong>、<strong>userfaultfd</strong>（把缺页处理交给用户态 —— 虚拟机的后拷贝迁移、CRIU 靠它）。</p>
+<p><strong>Q：页表项里的哪些位解释了本系列讲过的现象？</strong></p>
+<ul>
+<li><strong>R/W 位</strong> → <strong>COW</strong>：fork 时清掉它，写入触发缺页才复制（21 篇）</li>
+<li><strong>A（Accessed）位</strong> → <strong>页回收的 LRU</strong> 靠它判断冷热</li>
+<li><strong>D（Dirty）位</strong> → 决定换出时是否要写盘，也是「<code>write()</code> 返回不等于落盘」的基础</li>
+<li><strong>PS 位</strong> → 大页</li>
+<li><strong>NX 位</strong> → 为什么现代系统上栈溢出难以直接执行注入的代码</li>
+<li><strong>P=0 时其余位被复用</strong> → swap 条目、按需分页的标记</li>
+</ul>
+<p><strong>Q：THP 为什么被数据库集体要求关闭？</strong></p>
+<p>三个代价：</p>
+<ol>
+<li><strong>分配延迟不可预测（主因）</strong> —— 要凑出 2MB <strong>物理连续</strong>区域，内核可能需要做<strong>内存规整</strong>（compaction），移动大量页，导致触发它的进程<strong>同步阻塞几百毫秒</strong>。表现为服务偶发的长尾延迟尖刺，而且极难定位（原因藏在内存子系统，应用侧看不出异常）</li>
+<li><strong>内存放大</strong> —— 随机稀疏访问只用到 2MB 里的几 KB，其余浪费（Redis/MongoDB 尤其明显）</li>
+<li><strong>COW 粒度放大</strong> —— fork 后写一个字节触发 <strong>2MB</strong> 复制而非 4KB，这是 Redis BGSAVE 内存放大的直接原因，也是官方文档要求关闭它的首要理由</li>
+</ol>
+<p>折中方案是 <strong><code>madvise</code> 模式</strong>：只对用 <code>madvise(MADV_HUGEPAGE)</code> 主动请求的应用启用 —— 又一个「机制与策略分离」的例子（18 篇）。观察规整开销用 <code>grep compact_stall /proc/vmstat</code>。</p>
+<p><strong>Q：Go 程序 GC 之后为什么 RSS 不下降？</strong></p>
+<p>因为 runtime 用 <strong><code>madvise</code></strong> 归还内存，有两种语义：</p>
+<ul>
+<li><strong><code>MADV_FREE</code></strong>（Go 1.12~1.15 默认）：内核<strong>延迟回收</strong>，页仍计入 RSS 直到出现内存压力。优点是应用再次使用时无需重新缺页；<strong>缺点是 RSS 看着不降，容易被误判为泄漏，而且在容器里容易撞上 <code>memory.max</code></strong>（cgroup 按 RSS 算）</li>
+<li><strong><code>MADV_DONTNEED</code></strong>（Go 1.16+ 恢复为默认）：立即归还，RSS 马上下降，代价是下次访问要重新缺页</li>
+</ul>
+<p><strong>换回 <code>MADV_DONTNEED</code> 的主要原因就是容器环境下的可观测性与 OOM 风险。</strong> 手动归还可以用 <code>debug.FreeOSMemory()</code>。</p>
+<p>另外 Go 的 <strong>VSZ 常有 1~2GB</strong> 是因为 runtime 启动时用 <code>mmap(PROT_NONE)</code> <strong>预留</strong>大块地址空间（只占地址不占物理页），让堆能连续增长 —— 再次印证「VSZ 没有意义，要看 RSS/PSS」。容器里必须设 <strong><code>GOMEMLIMIT</code></strong>，否则 GC 不知道 cgroup 上限，很容易被 OOMKilled。</p>
+<hr>
+<h1 id="小结">小结</h1>
+<ul>
+<li><strong>虚拟内存的价值不只是「解决三个原始问题」，而是「地址翻译这个间接层」让 COW/mmap/swap/共享/ASLR/overcommit 几乎免费</strong></li>
+<li><strong>分页赢在三点</strong>：消灭外部碎片、交换粒度细、硬件实现是纯位运算；分段退化成了 TLS 的实现手段</li>
+<li><strong>单级页表要 512GB</strong> → 多级页表利用地址空间的稀疏性；每级 9 位恰好是一个 4KB 页</li>
+<li><strong>页表开销约为映射内存的 0.2%</strong> → 这是 fork 慢的根源</li>
+<li><strong>TLB 是性能命门</strong>：只能覆盖 8MB（4KB 页），miss 要 300~400ns；上下文切换的真实代价在 TLB 重建；PCID 与 KPTI 都围绕它</li>
+<li><strong>缺页是机制不是错误</strong>：按需分页、COW、mmap、swap、栈增长、THP、userfaultfd 全靠它</li>
+<li><strong>页表项的每一位都对应一个我们见过的现象</strong>：R/W→COW、A→LRU、D→脏页回写、NX→防注入</li>
+<li><strong>THP 的三个代价</strong>（规整延迟、内存放大、<strong>COW 粒度放大 512 倍</strong>）解释了数据库为什么集体关闭它</li>
+<li><strong>Go 的 VSZ 大是地址预留，RSS 不降是 <code>MADV_FREE</code></strong>；容器里必须设 <code>GOMEMLIMIT</code></li>
+</ul>
+<p>下一篇讲 <strong>内核如何管理物理内存</strong>：buddy 分配器如何对抗外部碎片、slab/slub 为什么要在 buddy 之上再建一层、页回收的 LRU 双链表与 refault 检测、swap 的哲学、以及 <strong>OOM Killer 的评分函数为什么这么算</strong>。</p>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2026-08-12</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/linux/">linux</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/linux/linux_25_%E5%86%85%E6%A0%B8%E5%A6%82%E4%BD%95%E7%AE%A1%E7%90%86%E7%89%A9%E7%90%86%E5%86%85%E5%AD%98/" class="prev" rel="prev" title="Linux-25 内核如何管理物理内存：buddy、slab、页回收与 OOM"><i class="fas fa-angle-left fa-fw"></i>Linux-25 内核如何管理物理内存：buddy、slab、页回收与 OOM</a>
+            <a href="/posts/linux/linux_23_%E6%9D%83%E9%99%90%E4%B8%8E%E6%8E%88%E6%9D%83%E7%9A%84%E6%BC%94%E8%BF%9B%E5%8F%B2/" class="next" rel="next" title="Linux-23 权限与授权的演进史：从 9 位权限到 MAC">Linux-23 权限与授权的演进史：从 9 位权限到 MAC<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2026-08-12T12:00:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Linux-24 虚拟内存：为什么值得付出这么大代价"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

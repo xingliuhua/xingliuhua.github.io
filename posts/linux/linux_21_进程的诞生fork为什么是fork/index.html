@@ -1,0 +1,964 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>Linux-21 进程的诞生：fork 为什么是 fork - xingliuhua博客</title><meta name="Description" content="为什么 Unix 用 fork&#43;exec 两步而 Windows 用 CreateProcess 一步、fork 与 exec 之间那个窗口才是设计精髓、COW 是原始设计还是补丁、多线程程序 fork 后为什么可能死锁、Go 为什么不暴露 fork、僵尸进程为什么是必然的。附 vfork/posix_spawn/clone3/pidfd 的演进。"><meta property="og:title" content="Linux-21 进程的诞生：fork 为什么是 fork" />
+<meta property="og:description" content="为什么 Unix 用 fork&#43;exec 两步而 Windows 用 CreateProcess 一步、fork 与 exec 之间那个窗口才是设计精髓、COW 是原始设计还是补丁、多线程程序 fork 后为什么可能死锁、Go 为什么不暴露 fork、僵尸进程为什么是必然的。附 vfork/posix_spawn/clone3/pidfd 的演进。" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/linux/linux_21_%E8%BF%9B%E7%A8%8B%E7%9A%84%E8%AF%9E%E7%94%9Ffork%E4%B8%BA%E4%BB%80%E4%B9%88%E6%98%AFfork/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2026-08-12T13:30:00+08:00" />
+<meta property="article:modified_time" content="2026-08-12T13:30:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="Linux-21 进程的诞生：fork 为什么是 fork"/>
+<meta name="twitter:description" content="为什么 Unix 用 fork&#43;exec 两步而 Windows 用 CreateProcess 一步、fork 与 exec 之间那个窗口才是设计精髓、COW 是原始设计还是补丁、多线程程序 fork 后为什么可能死锁、Go 为什么不暴露 fork、僵尸进程为什么是必然的。附 vfork/posix_spawn/clone3/pidfd 的演进。"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/linux/linux_21_%E8%BF%9B%E7%A8%8B%E7%9A%84%E8%AF%9E%E7%94%9Ffork%E4%B8%BA%E4%BB%80%E4%B9%88%E6%98%AFfork/" /><link rel="prev" href="https://xingliuhua.github.io/posts/linux/linux_22_%E5%87%AD%E8%AF%81%E6%A8%A1%E5%9E%8B%E5%86%85%E6%A0%B8%E4%B8%BA%E4%BB%80%E4%B9%88%E5%8F%AA%E8%AE%A4%E6%95%B0%E5%AD%97/" /><link rel="next" href="https://xingliuhua.github.io/posts/linux/linux_20_VFS%E4%B8%80%E5%88%87%E7%9A%86%E6%96%87%E4%BB%B6%E7%9A%84%E5%AE%9E%E7%8E%B0/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Linux-21 进程的诞生：fork 为什么是 fork",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_21_%E8%BF%9B%E7%A8%8B%E7%9A%84%E8%AF%9E%E7%94%9Ffork%E4%B8%BA%E4%BB%80%E4%B9%88%E6%98%AFfork\/"
+        },"genre": "posts","keywords": "linux","wordcount":  12887 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_21_%E8%BF%9B%E7%A8%8B%E7%9A%84%E8%AF%9E%E7%94%9Ffork%E4%B8%BA%E4%BB%80%E4%B9%88%E6%98%AFfork\/","datePublished": "2026-08-12T13:30:00+08:00","dateModified": "2026-08-12T13:30:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "为什么 Unix 用 fork+exec 两步而 Windows 用 CreateProcess 一步、fork 与 exec 之间那个窗口才是设计精髓、COW 是原始设计还是补丁、多线程程序 fork 后为什么可能死锁、Go 为什么不暴露 fork、僵尸进程为什么是必然的。附 vfork/posix_spawn/clone3/pidfd 的演进。"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">Linux-21 进程的诞生：fork 为什么是 fork</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2026-08-12">2026-08-12</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 12887 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 26 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-接口本身一次调用两次返回">1. 接口本身：一次调用两次返回</a></li>
+    <li><a href="#2-对比其他设计">2. 对比其他设计</a>
+      <ol>
+        <li><a href="#21-windows-的-createprocess">2.1 Windows 的 CreateProcess</a></li>
+        <li><a href="#22-fork-与-exec-之间真正的设计精髓">2.2 fork 与 exec 之间：真正的设计精髓</a></li>
+        <li><a href="#23-vfork性能补丁">2.3 vfork：性能补丁</a></li>
+        <li><a href="#24-posix_spawn折中方案">2.4 posix_spawn：折中方案</a></li>
+        <li><a href="#25-clonelinux-的真身">2.5 clone：Linux 的真身</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-cow从性能灾难到看起来免费">3. COW：从性能灾难到「看起来免费」</a>
+      <ol>
+        <li><a href="#31-开篇第二问cow-是补丁">3.1 开篇第二问：COW 是补丁</a></li>
+        <li><a href="#32-cow-的实现">3.2 COW 的实现</a></li>
+        <li><a href="#33-cow-不是免费的">3.3 COW 不是免费的</a></li>
+      </ol>
+    </li>
+    <li><a href="#4-fork-的语义细节继承什么">4. fork 的语义细节：继承什么</a></li>
+    <li><a href="#5-多线程--fork一个地狱">5. 多线程 + fork：一个地狱</a>
+      <ol>
+        <li><a href="#51-开篇第三问为什么只复制一个线程">5.1 开篇第三问：为什么只复制一个线程</a></li>
+        <li><a href="#52-malloc-死锁最经典的案例">5.2 malloc 死锁：最经典的案例</a></li>
+        <li><a href="#53-posix-的规定与-pthread_atfork">5.3 POSIX 的规定与 <code>pthread_atfork</code></a></li>
+      </ol>
+    </li>
+    <li><a href="#6-go-与-fork">6. Go 与 fork</a>
+      <ol>
+        <li><a href="#61-开篇第五问go-为什么不暴露-fork">6.1 开篇第五问：Go 为什么不暴露 fork</a></li>
+        <li><a href="#62-cgo-与-fork-的注意事项">6.2 CGO 与 fork 的注意事项</a></li>
+        <li><a href="#63-一个实用推论pdeathsig">6.3 一个实用推论：<code>Pdeathsig</code></a></li>
+      </ol>
+    </li>
+    <li><a href="#7-僵尸与孤儿的必然性">7. 僵尸与孤儿的必然性</a>
+      <ol>
+        <li><a href="#71-开篇第四问为什么必须有僵尸状态">7.1 开篇第四问：为什么必须有僵尸状态</a></li>
+        <li><a href="#72-wait-家族">7.2 wait 家族</a></li>
+        <li><a href="#73-双-fork-惯用法">7.3 双 fork 惯用法</a></li>
+      </ol>
+    </li>
+    <li><a href="#8-现代形态clone3-与-pidfd">8. 现代形态：clone3 与 pidfd</a>
+      <ol>
+        <li><a href="#81-clone3参数结构体化">8.1 clone3：参数结构体化</a></li>
+        <li><a href="#82-pidfd解决-pid-复用竞态">8.2 pidfd：解决 PID 复用竞态</a></li>
+      </ol>
+    </li>
+    <li><a href="#9-面试题">9. 面试题</a></li>
+    <li><a href="#小结">小结</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><p><code>fork()</code> 是 Unix 最有辨识度的设计：<strong>一次调用，两次返回</strong>。它经常被当作「优雅」的范例，也经常被批评为「过时的错误」。</p>
+<p>这一篇要说清楚：<strong>它为什么长这样、它的优雅之处到底在哪、以及它在多线程时代付出了什么代价。</strong></p>
+<p>先看五个问题：</p>
+<ol>
+<li>为什么 Unix 用 <code>fork</code> + <code>exec</code> <strong>两步</strong>创建进程，而 Windows 用 <code>CreateProcess</code> <strong>一步</strong>？</li>
+<li>COW（写时复制）是 <code>fork</code> 的原始设计，还是后来的补丁？</li>
+<li>为什么 <code>fork()</code> 之后子进程<strong>只有一个线程</strong>？多线程程序调用 <code>fork</code> 有什么风险？</li>
+<li>为什么<strong>必须</strong>有僵尸进程这个状态？</li>
+<li>为什么 Go 程序不能在 <code>fork()</code> 之后的子进程里继续跑 Go 代码？</li>
+</ol>
+<h1 id="1-接口本身一次调用两次返回">1. 接口本身：一次调用两次返回</h1>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="cp">#include</span> <span class="cpf">&lt;unistd.h&gt;</span><span class="cp">
+</span></span></span><span class="line"><span class="cl"><span class="cp"></span><span class="n">pid_t</span> <span class="nf">fork</span><span class="p">(</span><span class="kt">void</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="c1">//    ^^^^^ 没有任何参数！
+</span></span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="n">pid_t</span> <span class="n">pid</span> <span class="o">=</span> <span class="n">fork</span><span class="p">();</span>
+</span></span><span class="line"><span class="cl"><span class="k">if</span> <span class="p">(</span><span class="n">pid</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="n">perror</span><span class="p">(</span><span class="s">&#34;fork&#34;</span><span class="p">);</span>                    <span class="c1">// 失败
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span> <span class="k">else</span> <span class="k">if</span> <span class="p">(</span><span class="n">pid</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// ✅ 这里是【子进程】
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">printf</span><span class="p">(</span><span class="s">&#34;我是子进程，我的 PID=%d，父进程=%d</span><span class="se">\n</span><span class="s">&#34;</span><span class="p">,</span> <span class="n">getpid</span><span class="p">(),</span> <span class="n">getppid</span><span class="p">());</span>
+</span></span><span class="line"><span class="cl">    <span class="n">_exit</span><span class="p">(</span><span class="mi">0</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// ✅ 这里是【父进程】，pid 是子进程的 PID
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">printf</span><span class="p">(</span><span class="s">&#34;我是父进程，创建了子进程 %d</span><span class="se">\n</span><span class="s">&#34;</span><span class="p">,</span> <span class="n">pid</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">    <span class="n">waitpid</span><span class="p">(</span><span class="n">pid</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="mi">0</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><strong>这个接口的奇特之处</strong>：同一行代码在两个不同的进程里各返回一次，靠返回值区分身份。</p>
+<p><strong>它「优雅」在哪？</strong> 三点：</p>
+<pre tabindex="0"><code>① 没有参数 —— 因为「新进程长什么样」的答案是「和我一模一样」
+   对比 CreateProcess 的 10 个参数：可执行文件、命令行、安全属性、
+   是否继承句柄、创建标志、环境变量、工作目录、启动信息、进程信息……
+   fork 一个都不需要，因为全部继承自调用者。
+
+② 概念极简 —— 只有一个动作「复制自己」，正交于「加载新程序」（exec）
+   两个原语可以自由组合：
+     fork 不 exec  -&gt; 多进程并发（nginx 的 worker、PostgreSQL 的连接进程）
+     exec 不 fork  -&gt; 替换自身（09 篇的 exec、容器 entrypoint）
+     fork + exec   -&gt; 启动另一个程序（shell 的默认行为）
+
+③ 中间留出了一个可编程的窗口 —— 这才是真正的精髓，见第 3 章
+</code></pre><h1 id="2-对比其他设计">2. 对比其他设计</h1>
+<h2 id="21-windows-的-createprocess">2.1 Windows 的 CreateProcess</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="c1">// Windows：一步创建，所有配置都是参数
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">BOOL</span> <span class="nf">CreateProcessW</span><span class="p">(</span>
+</span></span><span class="line"><span class="cl">    <span class="n">LPCWSTR</span> <span class="n">lpApplicationName</span><span class="p">,</span>        <span class="c1">// 可执行文件
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">LPWSTR</span>  <span class="n">lpCommandLine</span><span class="p">,</span>            <span class="c1">// 命令行
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">LPSECURITY_ATTRIBUTES</span> <span class="n">lpProcessAttributes</span><span class="p">,</span>   <span class="c1">// 进程安全属性
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">LPSECURITY_ATTRIBUTES</span> <span class="n">lpThreadAttributes</span><span class="p">,</span>    <span class="c1">// 线程安全属性
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">BOOL</span>    <span class="n">bInheritHandles</span><span class="p">,</span>          <span class="c1">// 是否继承句柄（只能全继承或全不继承！）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">DWORD</span>   <span class="n">dwCreationFlags</span><span class="p">,</span>          <span class="c1">// 创建标志（挂起、优先级、控制台…）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">LPVOID</span>  <span class="n">lpEnvironment</span><span class="p">,</span>            <span class="c1">// 环境变量块
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">LPCWSTR</span> <span class="n">lpCurrentDirectory</span><span class="p">,</span>       <span class="c1">// 工作目录
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">LPSTARTUPINFOW</span> <span class="n">lpStartupInfo</span><span class="p">,</span>     <span class="c1">// 启动信息（窗口、标准句柄重定向…）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">LPPROCESS_INFORMATION</span> <span class="n">lpProcessInformation</span>   <span class="c1">// 输出
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">);</span>
+</span></span></code></pre></div><p><strong>这个设计的取舍很清晰</strong>：</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th><code>fork</code> + <code>exec</code></th>
+<th><code>CreateProcess</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>调用次数</td>
+<td>2</td>
+<td>1</td>
+</tr>
+<tr>
+<td>参数数量</td>
+<td>0 + 3</td>
+<td><strong>10 个</strong></td>
+</tr>
+<tr>
+<td>配置子进程的方式</td>
+<td><strong>在子进程里用普通代码做</strong></td>
+<td><strong>必须表达成参数</strong></td>
+</tr>
+<tr>
+<td>灵活性</td>
+<td>✅ <strong>任意操作</strong>（凡是进程能做的都能做）</td>
+<td>❌ 只能做参数支持的事</td>
+</tr>
+<tr>
+<td>性能</td>
+<td>⚠️ 要复制地址空间（COW 缓解）</td>
+<td>✅ 不复制</td>
+</tr>
+<tr>
+<td>概念复杂度</td>
+<td>✅ 两个简单原语</td>
+<td>❌ 一个复杂原语</td>
+</tr>
+<tr>
+<td>出错处理</td>
+<td>子进程里出错要用 <code>_exit</code> + 管道传错误码</td>
+<td>返回值直接告知</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Windows 的方式为什么必须这样？</strong> 因为它没有 fork 这个中间态，<strong>所有定制必须提前声明</strong>。而现实需求是无穷的 —— 想设置资源限制？想加入 cgroup？想改 umask？想只继承部分 fd？CreateProcess 的参数列表只能不断膨胀（后来确实又加了 <code>CreateProcessAsUser</code>、<code>CreateProcessWithLogonW</code>、<code>STARTUPINFOEX</code> 属性列表等一堆变体）。</p>
+<h2 id="22-fork-与-exec-之间真正的设计精髓">2.2 fork 与 exec 之间：真正的设计精髓</h2>
+<p><strong>这个窗口里，进程「已经是新进程，但还没变成新程序」</strong> —— 你可以用<strong>普通代码</strong>做任何配置：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="n">pid_t</span> <span class="n">pid</span> <span class="o">=</span> <span class="n">fork</span><span class="p">();</span>
+</span></span><span class="line"><span class="cl"><span class="k">if</span> <span class="p">(</span><span class="n">pid</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// ── 此时：新的进程，但仍在运行父进程的代码 ──
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="c1">// 可以做任何事，然后才 exec
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// ① 重定向（09 篇 2.1 讲的 shell 重定向就在这里做）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="kt">int</span> <span class="n">fd</span> <span class="o">=</span> <span class="n">open</span><span class="p">(</span><span class="s">&#34;/tmp/out.log&#34;</span><span class="p">,</span> <span class="n">O_WRONLY</span><span class="o">|</span><span class="n">O_CREAT</span><span class="o">|</span><span class="n">O_TRUNC</span><span class="p">,</span> <span class="mo">0644</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">    <span class="n">dup2</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span> <span class="n">STDOUT_FILENO</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">    <span class="n">dup2</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span> <span class="n">STDERR_FILENO</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">    <span class="n">close</span><span class="p">(</span><span class="n">fd</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// ② 改变身份（降权 —— 10 篇的服务账号）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">setgid</span><span class="p">(</span><span class="mi">1000</span><span class="p">);</span> <span class="n">setgroups</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">);</span> <span class="n">setuid</span><span class="p">(</span><span class="mi">1000</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">//    ^^^^^^^ 注意顺序：先 setgid 再 setuid（反了就没权限改组了）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// ③ 改工作目录、umask
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">chdir</span><span class="p">(</span><span class="s">&#34;/var/lib/myapp&#34;</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">    <span class="n">umask</span><span class="p">(</span><span class="mo">0027</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// ④ 资源限制（13 篇的 ulimit）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">struct</span> <span class="n">rlimit</span> <span class="n">rl</span> <span class="o">=</span> <span class="p">{</span> <span class="p">.</span><span class="n">rlim_cur</span> <span class="o">=</span> <span class="mi">65535</span><span class="p">,</span> <span class="p">.</span><span class="n">rlim_max</span> <span class="o">=</span> <span class="mi">65535</span> <span class="p">};</span>
+</span></span><span class="line"><span class="cl">    <span class="n">setrlimit</span><span class="p">(</span><span class="n">RLIMIT_NOFILE</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">rl</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// ⑤ 关闭不该继承的 fd
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">i</span> <span class="o">=</span> <span class="mi">3</span><span class="p">;</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="mi">1024</span><span class="p">;</span> <span class="n">i</span><span class="o">++</span><span class="p">)</span> <span class="n">close</span><span class="p">(</span><span class="n">i</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// ⑥ 恢复信号处理（父进程可能忽略了某些信号）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">signal</span><span class="p">(</span><span class="n">SIGINT</span><span class="p">,</span> <span class="n">SIG_DFL</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">    <span class="n">sigprocmask</span><span class="p">(</span><span class="n">SIG_SETMASK</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">empty_set</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">);</span>   <span class="c1">// 清空信号掩码
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// ⑦ 调整优先级（13 篇的 nice）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">setpriority</span><span class="p">(</span><span class="n">PRIO_PROCESS</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">10</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// ⑧ 加入 cgroup / 换 namespace（容器的做法，36 篇）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">write</span><span class="p">(</span><span class="n">cgroup_procs_fd</span><span class="p">,</span> <span class="s">&#34;0&#34;</span><span class="p">,</span> <span class="mi">1</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">    <span class="n">setns</span><span class="p">(</span><span class="n">netns_fd</span><span class="p">,</span> <span class="n">CLONE_NEWNET</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// ⑨ 设置进程组与会话（13 篇 1.1 的会话模型）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">setsid</span><span class="p">();</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1">// ── 最后才加载新程序 ──
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">execve</span><span class="p">(</span><span class="s">&#34;/usr/local/bin/myapp&#34;</span><span class="p">,</span> <span class="n">argv</span><span class="p">,</span> <span class="n">envp</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">    <span class="n">_exit</span><span class="p">(</span><span class="mi">127</span><span class="p">);</span>            <span class="c1">// exec 失败才会走到这里（01 篇讲的退出码 127）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span></code></pre></div><p><strong>关键洞察：这些操作没有一个需要新的 API。</strong> 它们都是「进程对自己做的事」，本来就存在。fork 只是提供了一个「以子进程身份执行普通代码」的机会。</p>
+<pre tabindex="0"><code>   fork+exec 的哲学：
+      不要设计「创建进程时可以配置什么」的接口，
+      而是让子进程【自己配置自己】——
+      于是「能配置什么」自动等于「进程能对自己做什么」，无需任何额外设计。
+
+   这与 18 篇的「机制与策略分离」是同一个思路：
+      内核提供 fork（机制），配置策略完全交给用户态代码。
+</code></pre><p><strong>这就是开篇第一问的答案。</strong> 而 shell 的实现正是这个模式的直接体现：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 这一行 shell 命令</span>
+</span></span><span class="line"><span class="cl">sudo -u nobody sh -c <span class="s1">&#39;ulimit -n 100; cd /tmp; exec myapp&#39;</span> &gt; out.log 2&gt;<span class="p">&amp;</span><span class="m">1</span> <span class="p">&amp;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 对应的 fork 后操作序列：</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   fork -&gt; dup2(重定向) -&gt; setuid(降权) -&gt; setrlimit -&gt; chdir -&gt; exec</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 每一步都是普通的系统调用，不需要任何「创建进程专用」的参数</span>
+</span></span></code></pre></div><h2 id="23-vfork性能补丁">2.3 vfork：性能补丁</h2>
+<p>早期 <code>fork()</code> <strong>真的会完整拷贝父进程的地址空间</strong>。而最常见的用法是「fork 完立刻 exec」—— 拷贝的内容马上就被丢弃，纯属浪费。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="n">pid_t</span> <span class="nf">vfork</span><span class="p">(</span><span class="kt">void</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="c1">// 语义：
+</span></span></span><span class="line"><span class="cl"><span class="c1">//   ① 【不拷贝】地址空间，子进程直接【借用】父进程的内存
+</span></span></span><span class="line"><span class="cl"><span class="c1">//   ② 父进程被【挂起】，直到子进程 exec 或 _exit
+</span></span></span><span class="line"><span class="cl"><span class="c1">//   ③ 子进程在 exec 之前【不能修改任何内存、不能 return、不能调用除 _exit/exec 外的函数】
+</span></span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="c1">// vfork 的正确用法极其受限
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">pid_t</span> <span class="n">pid</span> <span class="o">=</span> <span class="n">vfork</span><span class="p">();</span>
+</span></span><span class="line"><span class="cl"><span class="k">if</span> <span class="p">(</span><span class="n">pid</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="n">execve</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">argv</span><span class="p">,</span> <span class="n">envp</span><span class="p">);</span>   <span class="c1">// ✅ 只能做这个
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">_exit</span><span class="p">(</span><span class="mi">127</span><span class="p">);</span>                  <span class="c1">// ✅ 或者这个
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="c1">// ❌ 不能改任何变量（那是父进程的内存！）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="c1">// ❌ 不能 return（会破坏父进程的栈）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="c1">// ❌ 不能调用 malloc、printf（它们会修改内存）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span></code></pre></div><p><strong>vfork 是典型的「以正确性换性能」的补丁</strong>：它把「不要碰内存」这个约束交给了程序员，一旦违反就是极难调试的内存破坏。POSIX 后来把它标记为<strong>已废弃</strong>。</p>
+<h2 id="24-posix_spawn折中方案">2.4 posix_spawn：折中方案</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="kt">int</span> <span class="nf">posix_spawn</span><span class="p">(</span><span class="n">pid_t</span> <span class="o">*</span><span class="n">pid</span><span class="p">,</span> <span class="k">const</span> <span class="kt">char</span> <span class="o">*</span><span class="n">path</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">                <span class="k">const</span> <span class="n">posix_spawn_file_actions_t</span> <span class="o">*</span><span class="n">file_actions</span><span class="p">,</span>   <span class="c1">// fd 操作列表
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>                <span class="k">const</span> <span class="n">posix_spawnattr_t</span> <span class="o">*</span><span class="n">attrp</span><span class="p">,</span>                    <span class="c1">// 属性（信号、进程组…）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>                <span class="kt">char</span> <span class="o">*</span><span class="k">const</span> <span class="n">argv</span><span class="p">[],</span> <span class="kt">char</span> <span class="o">*</span><span class="k">const</span> <span class="n">envp</span><span class="p">[]);</span>
+</span></span></code></pre></div><p><strong>它的思路是：把「fork 与 exec 之间的常见操作」编码成一份声明式的「动作列表」</strong>，然后一次性提交给内核/libc：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="n">posix_spawn_file_actions_t</span> <span class="n">fa</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="n">posix_spawn_file_actions_init</span><span class="p">(</span><span class="o">&amp;</span><span class="n">fa</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="n">posix_spawn_file_actions_addopen</span><span class="p">(</span><span class="o">&amp;</span><span class="n">fa</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="s">&#34;/tmp/out.log&#34;</span><span class="p">,</span> <span class="n">O_WRONLY</span><span class="o">|</span><span class="n">O_CREAT</span><span class="p">,</span> <span class="mo">0644</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="n">posix_spawn_file_actions_adddup2</span><span class="p">(</span><span class="o">&amp;</span><span class="n">fa</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="n">posix_spawn_file_actions_addclose</span><span class="p">(</span><span class="o">&amp;</span><span class="n">fa</span><span class="p">,</span> <span class="mi">3</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="n">posix_spawnattr_t</span> <span class="n">attr</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="n">posix_spawnattr_init</span><span class="p">(</span><span class="o">&amp;</span><span class="n">attr</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="n">posix_spawnattr_setflags</span><span class="p">(</span><span class="o">&amp;</span><span class="n">attr</span><span class="p">,</span> <span class="n">POSIX_SPAWN_SETSIGDEF</span> <span class="o">|</span> <span class="n">POSIX_SPAWN_SETPGROUP</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="n">posix_spawn</span><span class="p">(</span><span class="o">&amp;</span><span class="n">pid</span><span class="p">,</span> <span class="s">&#34;/usr/bin/myapp&#34;</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">fa</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">attr</span><span class="p">,</span> <span class="n">argv</span><span class="p">,</span> <span class="n">envp</span><span class="p">);</span>
+</span></span></code></pre></div><table>
+<thead>
+<tr>
+<th></th>
+<th>优点</th>
+<th>缺点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>posix_spawn</code></td>
+<td>不用拷贝地址空间（glibc 内部用 <code>clone(CLONE_VM|CLONE_VFORK)</code>）；<strong>多线程程序里安全</strong>；嵌入式/无 MMU 系统也能用</td>
+<td>❌ <strong>只支持预定义的动作</strong>（想 <code>setns</code>、写 cgroup、改 rlimit 就做不到）—— 退化成了 CreateProcess 那类问题</td>
+</tr>
+</tbody>
+</table>
+<p><strong>所以三种方案是一条光谱</strong>：</p>
+<pre tabindex="0"><code>   fork+exec  ←──────────────────────────────────→  CreateProcess
+   最灵活                                              最直接
+   （任意代码）      posix_spawn（预定义动作）        （固定参数）
+   有拷贝开销        无拷贝，多线程安全              无拷贝
+</code></pre><h2 id="25-clonelinux-的真身">2.5 clone：Linux 的真身</h2>
+<p><strong>Linux 上 <code>fork</code>、<code>vfork</code>、<code>pthread_create</code> 全都是 <code>clone()</code> 的不同参数组合</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="kt">long</span> <span class="nf">clone</span><span class="p">(</span><span class="kt">unsigned</span> <span class="kt">long</span> <span class="n">flags</span><span class="p">,</span> <span class="kt">void</span> <span class="o">*</span><span class="n">stack</span><span class="p">,</span> <span class="p">...);</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// 关键 flag（决定「共享什么」）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">CLONE_VM</span>        <span class="c1">// 共享地址空间     -&gt; 线程
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">CLONE_FS</span>        <span class="c1">// 共享 cwd/umask/root
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">CLONE_FILES</span>     <span class="c1">// 共享 fd 表       -&gt; 20 篇讲的「线程共享 fd」
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">CLONE_SIGHAND</span>   <span class="c1">// 共享信号处理函数
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">CLONE_THREAD</span>    <span class="c1">// 同一个线程组（共享 PID）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">CLONE_VFORK</span>     <span class="c1">// 父进程挂起直到子进程 exec
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">CLONE_NEWNS</span>     <span class="c1">// 新的 mount namespace   ┐
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">CLONE_NEWPID</span>    <span class="c1">// 新的 PID namespace     ├─ 容器（36 篇）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">CLONE_NEWNET</span>    <span class="c1">// 新的 network namespace │
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">CLONE_NEWUSER</span>   <span class="c1">// 新的 user namespace    ┘
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">CLONE_PIDFD</span>     <span class="c1">// 返回一个 pidfd（见 9.2）
+</span></span></span></code></pre></div><pre tabindex="0"><code>   fork()           = clone(SIGCHLD)                      什么都不共享
+   vfork()          = clone(CLONE_VM|CLONE_VFORK|SIGCHLD) 共享内存 + 父进程挂起
+   pthread_create() = clone(CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|...)
+   容器             = clone(CLONE_NEWNS|CLONE_NEWPID|CLONE_NEWNET|...)
+</code></pre><p><strong>这是一个非常 Linux 的设计</strong>：不为「进程」和「线程」提供两套机制，而是提供<strong>一个可以精细控制共享程度的原语</strong>，让「进程」和「线程」变成同一光谱上的两个点。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 验证：线程和进程在内核里是同一种东西（task_struct）</span>
+</span></span><span class="line"><span class="cl">ps -eLf <span class="p">|</span> head -3           <span class="c1"># L = 显示线程</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># UID  PID  PPID   LWP  NLWP  ...</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#            ^^^^  ^^^ 线程有自己的 LWP（就是内核里的 PID），</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#                      但共享同一个 PID（线程组 ID = TGID）</span>
+</span></span><span class="line"><span class="cl">ls /proc/<span class="nv">$$</span>/task/            <span class="c1"># 每个线程一个目录（20 篇提过）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 用 strace 看这些调用的真身</span>
+</span></span><span class="line"><span class="cl">strace -f -e <span class="nv">trace</span><span class="o">=</span>clone,clone3 bash -c <span class="s1">&#39;true&#39;</span> 2&gt;<span class="p">&amp;</span><span class="m">1</span> <span class="p">|</span> head -3
+</span></span><span class="line"><span class="cl">strace -f -e <span class="nv">trace</span><span class="o">=</span>clone,clone3 python3 -c <span class="s1">&#39;import threading; threading.Thread(target=lambda:0).start()&#39;</span> 2&gt;<span class="p">&amp;</span><span class="m">1</span> <span class="p">|</span> grep CLONE_VM
+</span></span></code></pre></div><h1 id="3-cow从性能灾难到看起来免费">3. COW：从性能灾难到「看起来免费」</h1>
+<h2 id="31-开篇第二问cow-是补丁">3.1 开篇第二问：COW 是补丁</h2>
+<p><strong>答案：COW 不是原始设计，是后来的优化。</strong></p>
+<pre tabindex="0"><code>   1970s：早期 Unix（PDP-11）
+      fork() 真的把父进程的全部内存拷一遍。
+      内存只有几十 KB，而且没有 MMU 支持写保护 —— 甚至要把父进程【换出到磁盘】！
+              |
+              v
+   1979：3BSD 引入 vfork
+      作为「不拷贝」的逃生舱，代价是把正确性责任交给程序员（2.3 节）
+              |
+              v
+   1980s：SunOS / 4.4BSD 引入 COW
+      利用 MMU 的写保护能力：fork 时【只拷贝页表】，把双方的页都标记为只读；
+      任何一方写入时触发缺页异常，内核才真正复制那一页。
+              |
+              v
+   今天：COW 让 fork 的开销从 O(内存大小) 降到 O(页表大小)
+        vfork 因此失去了大部分意义（但 posix_spawn 内部仍在用 CLONE_VFORK）
+</code></pre><h2 id="32-cow-的实现">3.2 COW 的实现</h2>
+<pre tabindex="0"><code>   fork() 之前
+   父进程页表                      物理内存
+   [虚拟页 A] --RW--&gt; [物理页 1]
+   [虚拟页 B] --RW--&gt; [物理页 2]
+
+   fork() 之后（只拷贝了页表，物理页没动）
+   父进程页表                      物理内存
+   [虚拟页 A] --RO--&gt; [物理页 1] &lt;--RO-- [虚拟页 A] 子进程页表
+   [虚拟页 B] --RO--&gt; [物理页 2] &lt;--RO-- [虚拟页 B]
+                  ^^ 双方都被标记为【只读】，物理页的引用计数变成 2
+
+   子进程写入虚拟页 A
+   ① CPU 发现页表项是只读 -&gt; 触发【缺页异常】（write protect fault）
+   ② 内核检查：这是 COW 页且引用计数 &gt; 1
+   ③ 分配一个新物理页，把内容拷过去
+   ④ 修改子进程的页表项指向新页，权限改回 RW
+   ⑤ 原物理页引用计数减 1（若变成 1，父进程的页表项也恢复 RW）
+   ⑥ 从异常返回，重新执行那条写指令
+
+   父进程页表                      物理内存
+   [虚拟页 A] --RW--&gt; [物理页 1]        [物理页 3] &lt;--RW-- [虚拟页 A] 子进程
+   [虚拟页 B] --RO--&gt; [物理页 2] &lt;--RO-- [虚拟页 B]
+                                   ^^ 只有被写的那一页真正复制了
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 观察 COW：次要缺页（minor fault）会因为写入 COW 页而增加</span>
+</span></span><span class="line"><span class="cl">ps -o pid,min_flt,maj_flt,rss,comm -p <span class="nv">$$</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#         ^^^^^^^ 次要缺页数（含 COW 触发的）</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 用一个实验直观感受</span>
+</span></span><span class="line"><span class="cl">cat &gt; /tmp/cow.c <span class="s">&lt;&lt;&#39;EOF&#39;
+</span></span></span><span class="line"><span class="cl"><span class="s">#include &lt;stdio.h&gt;
+</span></span></span><span class="line"><span class="cl"><span class="s">#include &lt;stdlib.h&gt;
+</span></span></span><span class="line"><span class="cl"><span class="s">#include &lt;string.h&gt;
+</span></span></span><span class="line"><span class="cl"><span class="s">#include &lt;unistd.h&gt;
+</span></span></span><span class="line"><span class="cl"><span class="s">#include &lt;sys/wait.h&gt;
+</span></span></span><span class="line"><span class="cl"><span class="s">#define SZ (256*1024*1024)   // 256MB
+</span></span></span><span class="line"><span class="cl"><span class="s">int main() {
+</span></span></span><span class="line"><span class="cl"><span class="s">    char *buf = malloc(SZ);
+</span></span></span><span class="line"><span class="cl"><span class="s">    memset(buf, &#39;a&#39;, SZ);              // 真正占用物理内存
+</span></span></span><span class="line"><span class="cl"><span class="s">    printf(&#34;父进程 PID=%d，已分配并写入 256MB，按回车 fork\n&#34;, getpid());
+</span></span></span><span class="line"><span class="cl"><span class="s">    getchar();
+</span></span></span><span class="line"><span class="cl"><span class="s">    pid_t p = fork();                   // ✅ 这里【不会】拷贝 256MB
+</span></span></span><span class="line"><span class="cl"><span class="s">    if (p == 0) {
+</span></span></span><span class="line"><span class="cl"><span class="s">        printf(&#34;子进程 PID=%d 已创建，此时几乎没有额外物理内存消耗\n&#34;, getpid());
+</span></span></span><span class="line"><span class="cl"><span class="s">        sleep(10);
+</span></span></span><span class="line"><span class="cl"><span class="s">        memset(buf, &#39;b&#39;, SZ);           // ✅ 写入 -&gt; 触发 256MB 的 COW 复制
+</span></span></span><span class="line"><span class="cl"><span class="s">        printf(&#34;子进程写完，现在真的占了 256MB\n&#34;);
+</span></span></span><span class="line"><span class="cl"><span class="s">        sleep(30);
+</span></span></span><span class="line"><span class="cl"><span class="s">        _exit(0);
+</span></span></span><span class="line"><span class="cl"><span class="s">    }
+</span></span></span><span class="line"><span class="cl"><span class="s">    wait(NULL);
+</span></span></span><span class="line"><span class="cl"><span class="s">}
+</span></span></span><span class="line"><span class="cl"><span class="s">EOF</span>
+</span></span><span class="line"><span class="cl">gcc -o /tmp/cow /tmp/cow.c <span class="o">&amp;&amp;</span> /tmp/cow <span class="p">&amp;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 在另一个终端观察（13 篇 2.3 的 PSS/USS）</span>
+</span></span><span class="line"><span class="cl">watch -n1 <span class="s1">&#39;ps -o pid,rss,min_flt,comm -C cow; grep -E &#34;^(Pss|Private_Dirty)&#34; /proc/$(pgrep -n cow)/smaps_rollup&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># fork 后：两个进程 RSS 都显示 256MB，但 PSS 各约 128MB（共享）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 子进程写入后：Private_Dirty 涨到 256MB，系统总内存占用真的翻倍</span>
+</span></span></code></pre></div><h2 id="33-cow-不是免费的">3.3 COW 不是免费的</h2>
+<p><strong>这是很多人误解的地方：COW 让 fork「变快」，但没让它「免费」。</strong></p>
+<pre tabindex="0"><code>   fork 的实际开销（即使有 COW）：
+     ① 复制 task_struct、files_struct、signal_struct 等内核结构
+     ② 【复制页表】—— 这是主要开销，与进程的【虚拟内存映射数量】成正比
+        一个 64GB 内存的进程，页表本身可能就有上百 MB
+     ③ 遍历所有 VMA（虚拟内存区域），逐个标记只读并增加引用计数
+     ④ 刷 TLB（因为页表权限变了）
+     ⑤ 之后每次 COW 缺页 = 一次异常 + 一次内存拷贝
+</code></pre><p><strong>Redis 的 BGSAVE 是最经典的案例</strong>：</p>
+<pre tabindex="0"><code>   Redis 用 fork 做 RDB 快照：子进程遍历（COW 保护下的）数据集写盘，
+   父进程继续服务请求。
+   
+   代价一：fork 本身的延迟（页表复制）
+     内存越大越慢 —— 几十 GB 的实例上 fork 可能耗时【几百毫秒到秒级】，
+     这段时间 Redis 主线程完全阻塞（表现为请求延迟尖刺）
+     可以用 INFO 里的 latest_fork_usec 观察
+
+   代价二：写入放大导致内存翻倍风险
+     父进程在快照期间的写入会不断触发 COW，最坏情况内存占用翻倍
+     -&gt; 这就是「Redis 需要预留 50% 内存」这条运维建议的来源
+
+   缓解手段：
+     - 开启透明大页会【加剧】问题（COW 粒度从 4KB 变成 2MB！）
+       -&gt; 这就是 Redis 官方要求关闭 THP 的原因之一
+     - 用 vm.overcommit_memory=1（避免 fork 因为「内存不够」失败）
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 生产上的对应配置（Redis 官方建议）</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> never <span class="p">|</span> sudo tee /sys/kernel/mm/transparent_hugepage/enabled   <span class="c1"># 关 THP</span>
+</span></span><span class="line"><span class="cl">sudo sysctl -w vm.overcommit_memory<span class="o">=</span><span class="m">1</span>
+</span></span><span class="line"><span class="cl">redis-cli info stats <span class="p">|</span> grep latest_fork_usec        <span class="c1"># 观察 fork 耗时</span>
+</span></span></code></pre></div><p><strong>同理，任何「大内存进程频繁 fork」的模式都有这个问题</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ❌ 一个 8GB 的 Java/Go 进程用 fork+exec 调用 shell 命令</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    每次 fork 都要复制庞大的页表 —— 在高频场景下开销显著</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ✅ 解法：</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   ① 用 posix_spawn（内部用 CLONE_VM|CLONE_VFORK，不复制页表）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   ② 启动时 fork 一个小的「执行器」子进程，后续命令都让它去 fork</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#      （这是 Go 里 os/exec 在某些场景的优化思路，也是 zygote 模式的原理）</span>
+</span></span></code></pre></div><h1 id="4-fork-的语义细节继承什么">4. fork 的语义细节：继承什么</h1>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="n">pid_t</span> <span class="n">pid</span> <span class="o">=</span> <span class="n">fork</span><span class="p">();</span>
+</span></span></code></pre></div><table>
+<thead>
+<tr>
+<th>继承（子进程与父进程相同）</th>
+<th>不继承 / 重置</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>内存内容（COW）</td>
+<td><strong>PID、PPID</strong>（子进程 PID 是新的，PPID 是父进程）</td>
+</tr>
+<tr>
+<td><strong>打开的 fd</strong>（**共享 <code>struct file</code>，即共享偏移量！**20 篇 2.1）</td>
+<td><strong>待处理的信号</strong>（<code>pending signals</code> 被清空）</td>
+</tr>
+<tr>
+<td>文件偏移量、fd 标志</td>
+<td><strong>定时器</strong>（<code>alarm</code>/<code>setitimer</code>/<code>timer_create</code> 全部清空）</td>
+</tr>
+<tr>
+<td>cwd、root 目录、umask</td>
+<td><strong>未完成的异步 I/O</strong></td>
+</tr>
+<tr>
+<td>uid/gid/附加组、capabilities</td>
+<td><strong>内存锁</strong>（<code>mlock</code> 不继承）</td>
+</tr>
+<tr>
+<td>信号处理函数、信号掩码</td>
+<td><strong>信号量的 adjust 值</strong></td>
+</tr>
+<tr>
+<td>环境变量、命令行参数</td>
+<td><strong>文件锁</strong>（<code>flock</code>/<code>fcntl</code> 锁不继承，避免死锁）</td>
+</tr>
+<tr>
+<td>nice 值、调度策略与优先级</td>
+<td><strong>其他线程</strong>（只复制调用 <code>fork</code> 的那个线程！）</td>
+</tr>
+<tr>
+<td>资源限制（rlimit）</td>
+<td>进程的 CPU 时间统计（<code>times</code> 归零）</td>
+</tr>
+<tr>
+<td>cgroup 归属、namespace 归属</td>
+<td><code>CLOEXEC</code> 标记的 fd（在 <strong>exec 时</strong>才关闭，fork 时仍继承）</td>
+</tr>
+<tr>
+<td>共享内存映射、mmap 区域</td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
+<p><strong>三个最容易踩的点</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ① fd 共享偏移量（20 篇验证过）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    父子进程写同一个重定向目标不会互相覆盖 —— 因为共享 f_pos</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ② 定时器不继承（很多人以为会）</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#    这是有意的：子进程不该收到「父进程设置的闹钟」</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># ③ 只复制调用 fork 的那个线程 —— 这是第 5 章的全部内容</span>
+</span></span></code></pre></div><h1 id="5-多线程--fork一个地狱">5. 多线程 + fork：一个地狱</h1>
+<h2 id="51-开篇第三问为什么只复制一个线程">5.1 开篇第三问：为什么只复制一个线程</h2>
+<p><strong>因为复制所有线程在语义上无法定义。</strong> 设想 fork 时另一个线程正在：</p>
+<pre tabindex="0"><code>   线程 B 正持有一把 mutex，做到操作的一半
+        -&gt; 如果复制它，子进程里那个线程从「中间状态」继续跑，操作的另一半基于错误假设
+        -&gt; 如果不复制它，那把 mutex 【永远不会被释放】（持有者不存在了）
+   
+   两种选择都是错的。POSIX 选了「只复制调用线程」，
+   于是把问题变成了：【子进程继承了所有锁的状态，但没有继承能解锁它们的线程】
+</code></pre><h2 id="52-malloc-死锁最经典的案例">5.2 malloc 死锁：最经典的案例</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="c1">// 一个真实会死锁的程序
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kt">void</span> <span class="o">*</span><span class="nf">worker</span><span class="p">(</span><span class="kt">void</span> <span class="o">*</span><span class="n">arg</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">while</span> <span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="p">{</span> <span class="kt">void</span> <span class="o">*</span><span class="n">p</span> <span class="o">=</span> <span class="n">malloc</span><span class="p">(</span><span class="mi">1024</span><span class="p">);</span> <span class="n">free</span><span class="p">(</span><span class="n">p</span><span class="p">);</span> <span class="p">}</span>   <span class="c1">// 不断加解 malloc 的锁
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kt">int</span> <span class="nf">main</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="n">pthread_t</span> <span class="n">t</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="n">pthread_create</span><span class="p">(</span><span class="o">&amp;</span><span class="n">t</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="n">worker</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">    <span class="n">sleep</span><span class="p">(</span><span class="mi">1</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="n">pid_t</span> <span class="n">pid</span> <span class="o">=</span> <span class="n">fork</span><span class="p">();</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="p">(</span><span class="n">pid</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="c1">// 💀 如果 fork 发生的瞬间，worker 线程正持有 malloc 的内部锁，
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="c1">//    那么子进程继承的是一把【已锁定且永远不会被解锁】的锁
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="n">printf</span><span class="p">(</span><span class="s">&#34;hello</span><span class="se">\n</span><span class="s">&#34;</span><span class="p">);</span>     <span class="c1">// printf 内部会 malloc -&gt; 死锁，永久挂住
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="n">_exit</span><span class="p">(</span><span class="mi">0</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="n">wait</span><span class="p">(</span><span class="nb">NULL</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><strong>这个坑的范围远超 malloc</strong>：任何在内部使用锁的库都有同样问题 —— <code>printf</code>（stdio 有锁）、<code>syslog</code>、<code>dlopen</code>、<code>getaddrinfo</code>（DNS 解析有缓存锁，15 篇讲过）、以及几乎所有 C++ 标准库容器的分配器。</p>
+<h2 id="53-posix-的规定与-pthread_atfork">5.3 POSIX 的规定与 <code>pthread_atfork</code></h2>
+<p><strong>POSIX 的立场</strong>：多线程程序 <code>fork()</code> 之后，子进程里<strong>只能调用 async-signal-safe 的函数</strong>（一个很短的白名单：<code>_exit</code>、<code>exec</code> 家族、<code>read</code>、<code>write</code>、<code>open</code>、<code>close</code>、<code>dup2</code>、<code>signal</code>、<code>sigaction</code>……<strong>不含 <code>malloc</code>、<code>printf</code>、<code>pthread_*</code></strong>）。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="c1">// pthread_atfork 提供了一个补救机制
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kt">int</span> <span class="nf">pthread_atfork</span><span class="p">(</span><span class="kt">void</span> <span class="p">(</span><span class="o">*</span><span class="n">prepare</span><span class="p">)(</span><span class="kt">void</span><span class="p">),</span>   <span class="c1">// fork 前在父进程执行（加锁）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>                   <span class="kt">void</span> <span class="p">(</span><span class="o">*</span><span class="n">parent</span><span class="p">)(</span><span class="kt">void</span><span class="p">),</span>    <span class="c1">// fork 后在父进程执行（解锁）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>                   <span class="kt">void</span> <span class="p">(</span><span class="o">*</span><span class="n">child</span><span class="p">)(</span><span class="kt">void</span><span class="p">));</span>    <span class="c1">// fork 后在子进程执行（重置锁）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl"><span class="c1">// 库可以注册回调，在 fork 前后把自己的锁处理好
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">pthread_atfork</span><span class="p">(</span><span class="n">my_lock_all</span><span class="p">,</span> <span class="n">my_unlock_all</span><span class="p">,</span> <span class="n">my_reinit_all</span><span class="p">);</span>
+</span></span></code></pre></div><p><strong>但它的局限很致命</strong>：</p>
+<pre tabindex="0"><code>✗ 你无法为【第三方库】注册回调（它们的锁你看不见、拿不到）
+✗ 回调的执行顺序在多个库之间难以协调
+✗ glibc 自己的锁在某些版本里也不完全 atfork-safe
+✗ 现代 C++/Rust 库大量使用锁，几乎无法穷举
+</code></pre><p><strong>所以工程结论只有一条</strong>：</p>
+<pre tabindex="0"><code>   多线程程序里，fork() 之后【只应该做两件事】：
+     ① 极少量 async-signal-safe 的操作（dup2、close、setuid…）
+     ② 立刻 exec
+
+   绝对不要在 fork 后的子进程里「继续运行原程序的逻辑」。
+   需要「多进程并发」的话，应该【在创建任何线程之前】就 fork 好
+   （nginx、PostgreSQL 的做法：master 进程单线程，先 fork 出所有 worker）。
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># nginx 的模式：先 fork 再各自干活（13 篇 2.3 看过它的进程树）</span>
+</span></span><span class="line"><span class="cl">pstree -p <span class="k">$(</span>pgrep -o nginx<span class="k">)</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># nginx(1000)─┬─nginx(1001)</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#             ├─nginx(1002)</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#             └─nginx(1003)</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># master 在 fork 之前不创建线程，从根本上避开了这个问题</span>
+</span></span></code></pre></div><h1 id="6-go-与-fork">6. Go 与 fork</h1>
+<h2 id="61-开篇第五问go-为什么不暴露-fork">6.1 开篇第五问：Go 为什么不暴露 fork</h2>
+<p><strong>Go runtime 天生是多线程的</strong>（GMP 模型里的 M 就是 OS 线程），所以它正好撞在第 5 章那个地狱上：</p>
+<pre tabindex="0"><code>   Go 程序启动后，runtime 至少有几个 OS 线程：
+     - 执行 goroutine 的 M
+     - sysmon（监控线程：抢占、netpoll、GC 触发）
+     - GC 的工作线程
+     - 处理信号的线程
+
+   fork() 之后子进程只有一个线程，但：
+     ✗ runtime 的全局状态（调度器、堆、GC 状态）是【多线程共同维护】的
+     ✗ 那些数据结构可能正处于中间状态（比如 GC 正在标记、有 M 持有调度器锁）
+     ✗ 子进程里没有其他线程来完成它们的工作，也没人释放它们持有的锁
+     -&gt; 子进程里的 Go runtime 处于【不可恢复的损坏状态】
+
+   所以 Go 标准库【根本没有暴露 fork()】
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// ❌ Go 里没有 os.Fork() 这个函数，这是有意的设计
+</span></span></span><span class="line"><span class="cl"><span class="c1">// syscall.ForkExec 存在，但它的实现【fork 之后立刻 exec】，
+</span></span></span><span class="line"><span class="cl"><span class="c1">// 中间只做 async-signal-safe 的操作
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl"><span class="c1">// ✅ Go 创建进程的唯一正确方式
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">cmd</span> <span class="o">:=</span> <span class="nx">exec</span><span class="p">.</span><span class="nf">Command</span><span class="p">(</span><span class="s">&#34;myapp&#34;</span><span class="p">,</span> <span class="s">&#34;--flag&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="nx">cmd</span><span class="p">.</span><span class="nx">Stdout</span> <span class="p">=</span> <span class="nx">os</span><span class="p">.</span><span class="nx">Stdout</span>                    <span class="c1">// 内部会用 dup2
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">cmd</span><span class="p">.</span><span class="nx">Dir</span> <span class="p">=</span> <span class="s">&#34;/var/lib/myapp&#34;</span>                <span class="c1">// 内部会用 chdir
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">cmd</span><span class="p">.</span><span class="nx">Env</span> <span class="p">=</span> <span class="nb">append</span><span class="p">(</span><span class="nx">os</span><span class="p">.</span><span class="nf">Environ</span><span class="p">(),</span> <span class="s">&#34;K=V&#34;</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="nx">cmd</span><span class="p">.</span><span class="nx">SysProcAttr</span> <span class="p">=</span> <span class="o">&amp;</span><span class="nx">syscall</span><span class="p">.</span><span class="nx">SysProcAttr</span><span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">Setpgid</span><span class="p">:</span>    <span class="kc">true</span><span class="p">,</span>                     <span class="c1">// setpgid（13 篇的进程组）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">Credential</span><span class="p">:</span> <span class="o">&amp;</span><span class="nx">syscall</span><span class="p">.</span><span class="nx">Credential</span><span class="p">{</span><span class="nx">Uid</span><span class="p">:</span> <span class="mi">1000</span><span class="p">,</span> <span class="nx">Gid</span><span class="p">:</span> <span class="mi">1000</span><span class="p">},</span>   <span class="c1">// setuid/setgid
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">Cloneflags</span><span class="p">:</span> <span class="nx">syscall</span><span class="p">.</span><span class="nx">CLONE_NEWNS</span> <span class="p">|</span> <span class="nx">syscall</span><span class="p">.</span><span class="nx">CLONE_NEWPID</span><span class="p">,</span>  <span class="c1">// namespace（容器）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="nx">Pdeathsig</span><span class="p">:</span>  <span class="nx">syscall</span><span class="p">.</span><span class="nx">SIGKILL</span><span class="p">,</span>          <span class="c1">// ✅ 父进程死时自动杀掉子进程（很实用）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="k">if</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">cmd</span><span class="p">.</span><span class="nf">Start</span><span class="p">();</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span> <span class="o">...</span> <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="k">defer</span> <span class="nx">cmd</span><span class="p">.</span><span class="nf">Wait</span><span class="p">()</span>                           <span class="c1">// ✅ 必须 Wait（否则僵尸，13 篇 3.2）
+</span></span></span></code></pre></div><p><strong><code>SysProcAttr</code> 本质上就是「fork 与 exec 之间要做的操作」的声明式表达</strong> —— Go 把第 3 章那段 C 代码封装成了结构体字段，思路与 <code>posix_spawn</code> 一致。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// Go runtime 内部的实现（syscall/exec_linux.go 的 forkAndExecInChild）
+</span></span></span><span class="line"><span class="cl"><span class="c1">// 在子进程里【只调用】原始系统调用，绝不碰 Go 的内存分配器和调度器：
+</span></span></span><span class="line"><span class="cl"><span class="c1">//   - 不能有函数调用产生栈增长（会触发 morestack -&gt; 需要 runtime）
+</span></span></span><span class="line"><span class="cl"><span class="c1">//   - 不能分配内存（会触发 GC）
+</span></span></span><span class="line"><span class="cl"><span class="c1">//   - 所以那段代码用 //go:norace、//go:nosplit 标记，并且极其小心地手写
+</span></span></span></code></pre></div><h2 id="62-cgo-与-fork-的注意事项">6.2 CGO 与 fork 的注意事项</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// 如果用了 cgo，情况更复杂：
+</span></span></span><span class="line"><span class="cl"><span class="c1">//   C 库可能有自己的线程和锁，fork 后同样处于损坏状态
+</span></span></span><span class="line"><span class="cl"><span class="c1">//   典型例子：某些数据库客户端库、图像处理库
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl"><span class="c1">// ⚠️ 已知的坑：cgo 程序里通过 C 代码调用 fork 然后继续跑 C 逻辑
+</span></span></span><span class="line"><span class="cl"><span class="c1">//    可能因为 Go runtime 的信号处理器被继承而行为异常
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl"><span class="c1">// ✅ 结论：需要多进程模型时，用 exec.Command 起独立的进程，
+</span></span></span><span class="line"><span class="cl"><span class="c1">//    通过管道/socket/共享文件通信，而不是试图 fork
+</span></span></span></code></pre></div><h2 id="63-一个实用推论pdeathsig">6.3 一个实用推论：<code>Pdeathsig</code></h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// Linux 特有的 PR_SET_PDEATHSIG：父进程死亡时给自己发信号
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">cmd</span><span class="p">.</span><span class="nx">SysProcAttr</span> <span class="p">=</span> <span class="o">&amp;</span><span class="nx">syscall</span><span class="p">.</span><span class="nx">SysProcAttr</span><span class="p">{</span><span class="nx">Pdeathsig</span><span class="p">:</span> <span class="nx">syscall</span><span class="p">.</span><span class="nx">SIGKILL</span><span class="p">}</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 它解决的是 13 篇提过的「孤儿进程继续跑」问题：</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   父进程被 kill -9 后，子进程会被托孤给 PID 1 并【继续运行】</span>
+</span></span><span class="line"><span class="cl"><span class="c1">#   在「父进程是管理者」的场景下这通常不是期望行为</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 用 Pdeathsig 让子进程随父进程一起消失</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 验证</span>
+</span></span><span class="line"><span class="cl">sleep <span class="m">300</span> <span class="p">&amp;</span>                              <span class="c1"># 普通子进程</span>
+</span></span><span class="line"><span class="cl"><span class="nb">kill</span> -9 <span class="nv">$$</span>                                <span class="c1"># 杀掉 shell（父进程）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># sleep 仍然活着，PPID 变成 1</span>
+</span></span></code></pre></div><h1 id="7-僵尸与孤儿的必然性">7. 僵尸与孤儿的必然性</h1>
+<h2 id="71-开篇第四问为什么必须有僵尸状态">7.1 开篇第四问：为什么必须有僵尸状态</h2>
+<p><strong>因为「进程的退出状态」必须有人接收，而接收者只能是父进程。</strong></p>
+<pre tabindex="0"><code>   进程 exit(42) 时，内核需要保存：
+     - 退出码（42）
+     - 是否被信号杀死、哪个信号
+     - 是否产生 core dump
+     - CPU 时间统计（用户态/内核态）
+     
+   这些信息给谁？
+     -&gt; 父进程有权知道「我的子进程是怎么结束的」（这是 fork 的对称性要求）
+     -&gt; 但父进程可能正在忙，不会立刻来取
+     -&gt; 所以内核必须【保留】这条记录，直到父进程 wait() 领取
+     -&gt; 这个「已死但记录还在」的状态就是僵尸（Z）
+</code></pre><p><strong>如果没有僵尸状态会怎样？</strong> 那么「子进程退出码」这个信息就必须<strong>立即推送</strong>给父进程，或者干脆丢弃：</p>
+<pre tabindex="0"><code>   方案 A：立即推送（信号携带数据）
+     -&gt; 信号可能丢失（不可靠信号，29 篇讲）
+     -&gt; 父进程可能没准备好接收
+   方案 B：丢弃退出码
+     -&gt; shell 无法实现 $?，脚本无法判断命令成败（17 篇的错误处理全部失效）
+     -&gt; make/CI/任何编排系统都无法工作
+   
+   所以「保留一条记录等父进程来取」是唯一可行的设计。
+</code></pre><h2 id="72-wait-家族">7.2 wait 家族</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="n">pid_t</span> <span class="nf">wait</span><span class="p">(</span><span class="kt">int</span> <span class="o">*</span><span class="n">wstatus</span><span class="p">);</span>                                    <span class="c1">// 等任意一个子进程
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">pid_t</span> <span class="nf">waitpid</span><span class="p">(</span><span class="n">pid_t</span> <span class="n">pid</span><span class="p">,</span> <span class="kt">int</span> <span class="o">*</span><span class="n">wstatus</span><span class="p">,</span> <span class="kt">int</span> <span class="n">options</span><span class="p">);</span>         <span class="c1">// 等指定的
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kt">int</span>   <span class="nf">waitid</span><span class="p">(</span><span class="n">idtype_t</span> <span class="n">idtype</span><span class="p">,</span> <span class="n">id_t</span> <span class="n">id</span><span class="p">,</span> <span class="n">siginfo_t</span> <span class="o">*</span><span class="n">info</span><span class="p">,</span> <span class="kt">int</span> <span class="n">options</span><span class="p">);</span>  <span class="c1">// 更多信息
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl"><span class="c1">// options
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">WNOHANG</span>       <span class="c1">// ✅ 非阻塞：没有可回收的子进程就立即返回 0
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">WUNTRACED</span>     <span class="c1">// 也报告被停止（T 状态）的子进程
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">WCONTINUED</span>    <span class="c1">// 也报告被 SIGCONT 恢复的
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">__WALL</span><span class="o">/</span><span class="n">__WCLONE</span>  <span class="c1">// 线程相关
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl"><span class="c1">// 解析 wstatus（不要直接看数字）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">WIFEXITED</span><span class="p">(</span><span class="n">s</span><span class="p">)</span>    <span class="o">/</span> <span class="n">WEXITSTATUS</span><span class="p">(</span><span class="n">s</span><span class="p">)</span>    <span class="c1">// 正常退出 / 退出码
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">WIFSIGNALED</span><span class="p">(</span><span class="n">s</span><span class="p">)</span>  <span class="o">/</span> <span class="n">WTERMSIG</span><span class="p">(</span><span class="n">s</span><span class="p">)</span>       <span class="c1">// 被信号杀死 / 哪个信号
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">WCOREDUMP</span><span class="p">(</span><span class="n">s</span><span class="p">)</span>                         <span class="c1">// 是否产生了 core
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">WIFSTOPPED</span><span class="p">(</span><span class="n">s</span><span class="p">)</span>   <span class="o">/</span> <span class="n">WSTOPSIG</span><span class="p">(</span><span class="n">s</span><span class="p">)</span>       <span class="c1">// 被停止 / 哪个信号
+</span></span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="c1">// 典型的信号驱动回收（避免阻塞主逻辑）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kt">void</span> <span class="nf">sigchld_handler</span><span class="p">(</span><span class="kt">int</span> <span class="n">sig</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="c1">// ✅ 循环 + WNOHANG：因为多个子进程可能同时退出，而信号会合并（29 篇）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">while</span> <span class="p">(</span><span class="n">waitpid</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="n">WNOHANG</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span> <span class="p">{</span> <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="n">signal</span><span class="p">(</span><span class="n">SIGCHLD</span><span class="p">,</span> <span class="n">sigchld_handler</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// 或者干脆声明「我不关心退出码」
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">signal</span><span class="p">(</span><span class="n">SIGCHLD</span><span class="p">,</span> <span class="n">SIG_IGN</span><span class="p">);</span>        <span class="c1">// ✅ 内核会自动回收子进程，不产生僵尸
+</span></span></span><span class="line"><span class="cl"><span class="c1">// （这是 POSIX 明确规定的行为，不是 undefined）
+</span></span></span></code></pre></div><h2 id="73-双-fork-惯用法">7.3 双 fork 惯用法</h2>
+<p>传统的「守护进程化」需要 fork 两次，每一步都有明确目的：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="c1">// 第一次 fork：让父进程退出，子进程被 init 收养
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">pid_t</span> <span class="n">pid</span> <span class="o">=</span> <span class="n">fork</span><span class="p">();</span>
+</span></span><span class="line"><span class="cl"><span class="k">if</span> <span class="p">(</span><span class="n">pid</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span> <span class="n">_exit</span><span class="p">(</span><span class="mi">0</span><span class="p">);</span>                 <span class="c1">// 父进程退出
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>                                        <span class="c1">// -&gt; shell 认为命令已结束，返回提示符
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>                                        <span class="c1">// -&gt; 子进程成为孤儿，被 PID 1 收养
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl"><span class="n">setsid</span><span class="p">();</span>                               <span class="c1">// ✅ 创建新会话：脱离控制终端
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>                                        <span class="c1">// -&gt; 不会再收到终端的 SIGHUP（13 篇 6.2）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>                                        <span class="c1">// -&gt; 自己成为会话首进程
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl"><span class="c1">// 第二次 fork：让自己【不再是会话首进程】
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">pid</span> <span class="o">=</span> <span class="n">fork</span><span class="p">();</span>
+</span></span><span class="line"><span class="cl"><span class="k">if</span> <span class="p">(</span><span class="n">pid</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span> <span class="n">_exit</span><span class="p">(</span><span class="mi">0</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="c1">// 为什么？因为【会话首进程可以重新获得控制终端】，
+</span></span></span><span class="line"><span class="cl"><span class="c1">// 而非会话首进程永远不能 —— 这样彻底断绝了意外获得终端的可能
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl"><span class="n">chdir</span><span class="p">(</span><span class="s">&#34;/&#34;</span><span class="p">);</span>                             <span class="c1">// 不占用任何挂载点（否则无法 umount）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">umask</span><span class="p">(</span><span class="mi">0</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="n">close</span><span class="p">(</span><span class="mi">0</span><span class="p">);</span> <span class="n">close</span><span class="p">(</span><span class="mi">1</span><span class="p">);</span> <span class="n">close</span><span class="p">(</span><span class="mi">2</span><span class="p">);</span>           <span class="c1">// 关闭继承的 fd
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">open</span><span class="p">(</span><span class="s">&#34;/dev/null&#34;</span><span class="p">,</span> <span class="n">O_RDWR</span><span class="p">);</span>              <span class="c1">// 重新占位 fd 0/1/2（避免后续 open 拿到 0）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">dup2</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">);</span> <span class="n">dup2</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="p">);</span>
+</span></span></code></pre></div><p><strong>现代做法：不要自己做这些。</strong></p>
+<pre tabindex="0"><code>   systemd 的 Type=simple（14 篇 4.1）：
+     程序【保持前台运行】，systemd 负责：
+       - 脱离终端（服务本来就没有控制终端）
+       - 重定向 stdout/stderr 到 journald
+       - 设置 cwd、umask、资源限制
+       - 用 cgroup 追踪进程（不需要 pid 文件）
+   
+   -&gt; 「双 fork 守护进程化」在 systemd 时代是【反模式】：
+      它让 systemd 追踪不到主进程（这就是 Type=forking 需要 PIDFile= 的原因）
+</code></pre><h1 id="8-现代形态clone3-与-pidfd">8. 现代形态：clone3 与 pidfd</h1>
+<h2 id="81-clone3参数结构体化">8.1 clone3：参数结构体化</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="c1">// 老 clone 的问题：参数是位标志 + 平台相关的参数顺序，已经加不下新特性了
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kt">long</span> <span class="nf">clone3</span><span class="p">(</span><span class="k">struct</span> <span class="n">clone_args</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="n">size_t</span> <span class="n">size</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">struct</span> <span class="n">clone_args</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="n">__u64</span> <span class="n">flags</span><span class="p">;</span>             <span class="c1">// CLONE_* 标志
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">__u64</span> <span class="n">pidfd</span><span class="p">;</span>             <span class="c1">// ✅ 输出：pidfd
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">__u64</span> <span class="n">child_tid</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="n">__u64</span> <span class="n">parent_tid</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="n">__u64</span> <span class="n">exit_signal</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="n">__u64</span> <span class="n">stack</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="n">__u64</span> <span class="n">stack_size</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="n">__u64</span> <span class="n">tls</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="n">__u64</span> <span class="n">set_tid</span><span class="p">;</span>           <span class="c1">// ✅ 指定子进程的 PID（容器迁移/CRIU 需要）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">__u64</span> <span class="n">set_tid_size</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="n">__u64</span> <span class="n">cgroup</span><span class="p">;</span>            <span class="c1">// ✅ 直接在指定 cgroup 里创建（避免「创建后再移入」的竞态）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">};</span>
+</span></span></code></pre></div><p><strong>这体现了 18 篇讲的 ABI 演进规律</strong>：<strong>不能改老接口，只能新增</strong>（<code>clone</code> → <code>clone3</code>），而且新接口用「可扩展的结构体 + size 参数」来避免将来再次撞墙。</p>
+<h2 id="82-pidfd解决-pid-复用竞态">8.2 pidfd：解决 PID 复用竞态</h2>
+<pre tabindex="0"><code>   老问题：PID 会被复用
+     ① 你拿到子进程 PID = 1234
+     ② 子进程退出，被 wait 回收
+     ③ 系统创建了新进程，恰好也分到 PID 1234
+     ④ 你执行 kill(1234, SIGKILL)  -&gt; 💀 杀掉了【无关的进程】
+   
+   这个竞态在进程创建频繁的系统上是真实存在的（PID 空间会绕回）
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="c1">// pidfd：用一个 fd 稳定地引用一个进程
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kt">int</span> <span class="n">pidfd</span> <span class="o">=</span> <span class="n">pidfd_open</span><span class="p">(</span><span class="n">pid</span><span class="p">,</span> <span class="mi">0</span><span class="p">);</span>              <span class="c1">// 或 clone3 直接返回
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">pidfd_send_signal</span><span class="p">(</span><span class="n">pidfd</span><span class="p">,</span> <span class="n">SIGTERM</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="mi">0</span><span class="p">);</span>  <span class="c1">// ✅ 永远不会误杀（fd 绑定到具体进程实例）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl"><span class="c1">// 还能用 epoll 等待进程退出（不需要 SIGCHLD 处理函数！）
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">struct</span> <span class="n">epoll_event</span> <span class="n">ev</span> <span class="o">=</span> <span class="p">{</span> <span class="p">.</span><span class="n">events</span> <span class="o">=</span> <span class="n">EPOLLIN</span><span class="p">,</span> <span class="p">.</span><span class="n">data</span><span class="p">.</span><span class="n">fd</span> <span class="o">=</span> <span class="n">pidfd</span> <span class="p">};</span>
+</span></span><span class="line"><span class="cl"><span class="n">epoll_ctl</span><span class="p">(</span><span class="n">epfd</span><span class="p">,</span> <span class="n">EPOLL_CTL_ADD</span><span class="p">,</span> <span class="n">pidfd</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">ev</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="c1">// pidfd 可读 = 进程已退出 -&gt; 这让「进程管理」融入了事件循环（31 篇）
+</span></span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 观察 pidfd（在 /proc/PID/fd 里显示为 anon_inode:[pidfd]）</span>
+</span></span><span class="line"><span class="cl">sudo ls -l /proc/<span class="k">$(</span>pgrep -o systemd<span class="k">)</span>/fd <span class="p">|</span> grep pidfd <span class="p">|</span> head -3
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># PID 复用的空间有多大</span>
+</span></span><span class="line"><span class="cl">cat /proc/sys/kernel/pid_max          <span class="c1"># 默认 32768（可调到 4194304）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 一个高频创建进程的系统几分钟就能绕回一圈</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// Go 1.23+ 提供了 os.Process 的 pidfd 支持（内部自动使用）
+</span></span></span><span class="line"><span class="cl"><span class="c1">// 更早的版本可以用 x/sys/unix
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">fd</span><span class="p">,</span> <span class="nx">_</span> <span class="o">:=</span> <span class="nx">unix</span><span class="p">.</span><span class="nf">PidfdOpen</span><span class="p">(</span><span class="nx">pid</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="nx">unix</span><span class="p">.</span><span class="nf">PidfdSendSignal</span><span class="p">(</span><span class="nx">fd</span><span class="p">,</span> <span class="nx">unix</span><span class="p">.</span><span class="nx">SIGTERM</span><span class="p">,</span> <span class="kc">nil</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
+</span></span></code></pre></div><h1 id="9-面试题">9. 面试题</h1>
+<p><strong>Q：为什么 Unix 用 <code>fork</code>+<code>exec</code> 两步创建进程，而 Windows 用 <code>CreateProcess</code> 一步？</strong></p>
+<p><strong>关键不在「几步」，而在 fork 与 exec 之间那个可编程的窗口。</strong></p>
+<p>在那个窗口里，进程「已经是新进程，但还在运行父进程的代码」，于是可以用<strong>普通的系统调用</strong>做任何配置：<code>dup2</code> 重定向、<code>setuid</code> 降权、<code>chdir</code>、<code>umask</code>、<code>setrlimit</code>、关闭多余 fd、恢复信号处理、<code>setsid</code>、写 cgroup、<code>setns</code> 换命名空间……</p>
+<p><strong>这些操作没有一个需要新 API</strong> —— 它们本来就是「进程对自己做的事」。于是「创建进程时能配置什么」自动等于「进程能对自己做什么」，<strong>内核完全不需要为此设计任何接口</strong>。这与 18 篇的「机制与策略分离」是同一思路。</p>
+<p><code>CreateProcess</code> 没有中间态，所以<strong>所有定制必须提前表达成参数</strong> —— 它有 10 个参数，而且现实需求无穷（后来不得不加 <code>CreateProcessAsUser</code>、<code>STARTUPINFOEX</code> 属性列表等一堆变体）。而且它的 <code>bInheritHandles</code> 只能「全继承或全不继承」，做不到 fork 那种精细控制。</p>
+<p>代价是 fork 要复制地址空间（COW 缓解但没消除），以及子进程里出错只能靠 <code>_exit</code> + 管道传递错误码。</p>
+<p><strong>Q：COW 是 fork 的原始设计吗？它真的免费吗？</strong></p>
+<p><strong>不是原始设计，是后来的优化。</strong> 1970 年代早期 Unix 的 fork <strong>真的完整拷贝内存</strong>（PDP-11 上甚至要把父进程换出到磁盘）。1979 年 3BSD 引入 <code>vfork</code> 作为「不拷贝」的逃生舱，1980 年代 SunOS/4.4BSD 才引入 COW —— 利用 MMU 的写保护能力，fork 时只拷页表并把双方标记只读，写入时触发缺页才真正复制那一页。</p>
+<p><strong>COW 让开销从 O(内存大小) 降到 O(页表大小)，但不是免费的</strong>：</p>
+<ul>
+<li>仍要复制 <code>task_struct</code>、<code>files_struct</code>、<strong>页表</strong>（64GB 内存的进程页表本身可能上百 MB）</li>
+<li>要遍历所有 VMA 标记只读、刷 TLB</li>
+<li>之后每次 COW 缺页 = 一次异常 + 一次内存拷贝</li>
+</ul>
+<p><strong>Redis 的 BGSAVE 是最典型的受害者</strong>：大内存实例上 fork 可能耗时几百毫秒（主线程阻塞，表现为延迟尖刺，<code>INFO</code> 里的 <code>latest_fork_usec</code> 可观察）；快照期间父进程的写入不断触发 COW，最坏内存翻倍 —— 这就是「Redis 要预留 50% 内存」的来源。而<strong>开启透明大页会加剧问题</strong>（COW 粒度从 4KB 变成 2MB），这是 Redis 官方要求关闭 THP 的原因之一。</p>
+<p><strong>Q：<code>fork</code>、<code>vfork</code>、<code>pthread_create</code>、容器创建，在 Linux 内核里是什么关系？</strong></p>
+<p><strong>它们全都是 <code>clone()</code> 的不同参数组合。</strong> Linux 没有为「进程」和「线程」提供两套机制，而是提供一个可以精细控制<strong>共享程度</strong>的原语：</p>
+<pre tabindex="0"><code>fork()           = clone(SIGCHLD)                          什么都不共享
+vfork()          = clone(CLONE_VM|CLONE_VFORK|SIGCHLD)     共享内存 + 父进程挂起
+pthread_create() = clone(CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|...)
+容器             = clone(CLONE_NEWNS|CLONE_NEWPID|CLONE_NEWNET|CLONE_NEWUSER|...)
+</code></pre><p>于是「进程」和「线程」成了同一光谱上的两个点，内核里都是 <code>task_struct</code>。这解释了 20 篇讲的「<strong>线程共享 fd</strong>」（<code>CLONE_FILES</code> 复用同一个 <code>files_struct</code>），以及 <code>ps -eLf</code> 里线程有自己的 LWP 但共享 TGID。</p>
+<p><code>vfork</code> 是「以正确性换性能」的补丁（子进程在 exec 前不能碰任何内存，违反就是极难调试的内存破坏），已被 POSIX 标记废弃；但 glibc 的 <code>posix_spawn</code> 内部仍用 <code>CLONE_VM|CLONE_VFORK</code> 来避免复制页表。</p>
+<p><strong>Q：为什么 <code>fork()</code> 之后子进程只有一个线程？这带来什么问题？</strong></p>
+<p><strong>因为复制所有线程在语义上无法定义。</strong> 设想 fork 时另一个线程正持有 mutex 做到操作一半：复制它 → 子进程里那个线程从中间状态继续跑；不复制它 → <strong>那把 mutex 永远不会被释放</strong>（持有者不存在了）。两种选择都是错的。</p>
+<p>POSIX 选了「只复制调用线程」，于是问题变成：<strong>子进程继承了所有锁的状态，但没有继承能解锁它们的线程。</strong></p>
+<p><strong>最经典的案例是 malloc 死锁</strong>：如果 fork 的瞬间另一个线程正持有 malloc 的内部锁，子进程里任何调用 <code>malloc</code> 的操作（包括 <code>printf</code>！）都会永久挂住。范围远超 malloc —— <code>stdio</code>、<code>syslog</code>、<code>dlopen</code>、<code>getaddrinfo</code>（DNS 缓存锁）、几乎所有 C++ 容器的分配器都有锁。</p>
+<p>POSIX 的规定是：多线程程序 fork 后<strong>只能调用 async-signal-safe 函数</strong>（<code>_exit</code>、<code>exec</code>、<code>read</code>、<code>write</code>、<code>dup2</code>、<code>close</code>……<strong>不含 <code>malloc</code> 和 <code>printf</code></strong>）。<code>pthread_atfork</code> 提供了补救回调，但<strong>无法为第三方库注册</strong>，实践中不可靠。</p>
+<p><strong>工程结论</strong>：多线程程序 fork 之后只应该做极少量 async-signal-safe 操作然后立刻 <code>exec</code>。需要多进程并发的，应该<strong>在创建任何线程之前就 fork 好</strong> —— nginx、PostgreSQL 就是这么做的（master 单线程，先 fork 出所有 worker）。</p>
+<p><strong>Q：Go 为什么不提供 <code>os.Fork()</code>？</strong></p>
+<p>因为 <strong>Go runtime 天生是多线程的</strong>（GMP 的 M 是 OS 线程，还有 sysmon、GC 工作线程、信号处理线程），正好撞在上一题那个地狱上：fork 后子进程只有一个线程，但 runtime 的全局状态（调度器、堆、GC 状态）是多线程共同维护的，可能正处于中间状态，且<strong>没有其他线程来完成它们的工作或释放它们持有的锁</strong> —— 子进程里的 runtime 处于不可恢复的损坏状态。</p>
+<p>所以 Go <strong>根本没有暴露 fork</strong>。<code>syscall.ForkExec</code> 存在，但它 fork 之后<strong>立刻 exec</strong>，中间那段代码（<code>forkAndExecInChild</code>）只调用原始系统调用，并用 <code>//go:nosplit</code> 等标记确保不触发栈增长和内存分配。</p>
+<p>正确方式是 <code>exec.Command</code> + <strong><code>SysProcAttr</code></strong> —— 它本质上是「fork 与 exec 之间要做的操作」的声明式表达（<code>Setpgid</code>、<code>Credential</code>、<code>Cloneflags</code>、<code>Pdeathsig</code>），思路与 <code>posix_spawn</code> 一致。</p>
+<p>顺带一个很实用的字段：<strong><code>Pdeathsig: syscall.SIGKILL</code></strong>（Linux 的 <code>PR_SET_PDEATHSIG</code>）—— 父进程死亡时子进程自动收到信号，解决「父进程被 <code>kill -9</code> 后子进程被托孤给 PID 1 继续跑」的问题。</p>
+<p><strong>Q：为什么必须有僵尸进程这个状态？</strong></p>
+<p><strong>因为进程的退出状态必须有人接收，而按 fork 的对称性，接收者只能是父进程。</strong></p>
+<p>进程 <code>exit(42)</code> 时内核需要保存：退出码、是否被信号杀死、是哪个信号、是否 core dump、CPU 时间统计。父进程有权知道这些，但<strong>可能正在忙、不会立刻来取</strong>，所以内核必须保留一条记录直到 <code>wait()</code> —— 这个「已死但记录还在」的状态就是僵尸。</p>
+<p><strong>如果没有它</strong>：要么立即用信号推送（信号可能丢失，29 篇会讲不可靠信号），要么丢弃退出码 —— 而丢弃退出码意味着 shell 的 <code>$?</code> 无法实现、脚本无法判断命令成败（17 篇整套错误处理失效）、make/CI/任何编排系统都无法工作。<strong>所以「保留记录等父进程来取」是唯一可行的设计。</strong></p>
+<p>回收方式：<code>waitpid</code> 配 <code>WNOHANG</code> 在 <code>SIGCHLD</code> 处理函数里<strong>循环</strong>回收（因为多个子进程同时退出时信号会合并），或者干脆 <code>signal(SIGCHLD, SIG_IGN)</code> 让内核自动回收（这是 POSIX 明确规定的行为）。Go 里必须 <code>cmd.Wait()</code>。</p>
+<p><strong>Q：传统的「双 fork 守护进程化」每一步在做什么？为什么现在是反模式？</strong></p>
+<p>三步各有明确目的：</p>
+<ol>
+<li><strong>第一次 fork + 父进程退出</strong> → 子进程成为孤儿被 PID 1 收养，同时 shell 认为命令已结束（返回提示符）</li>
+<li><strong><code>setsid()</code></strong> → 创建新会话，脱离控制终端，不再收到终端的 SIGHUP（13 篇 6.2）</li>
+<li><strong>第二次 fork</strong> → 让自己<strong>不再是会话首进程</strong>。因为<strong>会话首进程可以重新获得控制终端</strong>，而非首进程永远不能 —— 彻底断绝意外获得终端的可能</li>
+</ol>
+<p>之后还要 <code>chdir(&quot;/&quot;)</code>（不占用挂载点，否则无法 umount）、<code>umask(0)</code>、关闭并重新占位 fd 0/1/2。</p>
+<p><strong>在 systemd 时代这是反模式</strong>：<code>Type=simple</code> 让程序保持前台运行，systemd 负责脱离终端、重定向到 journald、设 cwd/umask/rlimit、<strong>用 cgroup 追踪进程</strong>（不需要 pid 文件）。自己做双 fork 反而让 systemd 追踪不到主进程 —— 这正是 <code>Type=forking</code> 必须配 <code>PIDFile=</code> 的原因（14 篇 4.1）。</p>
+<p><strong>Q：<code>pidfd</code> 解决了什么问题？</strong></p>
+<p><strong>PID 复用竞态</strong>：你拿到子进程 PID 1234 → 它退出并被回收 → 系统创建新进程恰好也分到 1234 → 你 <code>kill(1234, SIGKILL)</code> <strong>杀掉了无关进程</strong>。这在进程创建频繁的系统上是真实风险（<code>pid_max</code> 默认只有 32768，几分钟就能绕回一圈）。</p>
+<p><code>pidfd</code> 用一个 <strong>fd 稳定地引用一个具体的进程实例</strong>：<code>pidfd_open(pid, 0)</code> 或 <code>clone3</code> 直接返回，然后 <code>pidfd_send_signal()</code> <strong>永远不会误杀</strong>。</p>
+<p>额外的价值是<strong>它能被 epoll 监听</strong> —— pidfd 可读表示进程已退出，于是「进程管理」可以融入事件循环，不再需要 <code>SIGCHLD</code> 信号处理函数（信号与事件循环的混用一直是个麻烦，29 篇会讲）。</p>
+<p>配套的 <code>clone3</code> 则体现了 18 篇的 ABI 演进规律：<strong>老接口不能改，只能新增</strong>（<code>clone</code> → <code>clone3</code>），且新接口改用「可扩展结构体 + size 参数」避免将来再撞墙。它还支持 <code>set_tid</code>（指定子进程 PID，CRIU 迁移需要）和 <code>cgroup</code>（直接在指定 cgroup 里创建，避免「创建后再移入」的竞态）。</p>
+<hr>
+<h1 id="小结">小结</h1>
+<ul>
+<li><strong><code>fork</code> 的精髓不是「一次调用两次返回」，而是 fork 与 exec 之间那个可编程窗口</strong> —— 子进程用普通系统调用配置自己，于是内核不需要为「创建进程的配置项」设计任何接口</li>
+<li><code>CreateProcess</code> 把配置变成参数 → 灵活性受限且参数无限膨胀；<code>posix_spawn</code> 是折中（预定义动作列表，多线程安全但表达力有限）</li>
+<li><strong>COW 是后来的优化不是原始设计</strong>，而且<strong>不免费</strong>：页表复制的开销与虚拟内存规模成正比 → Redis fork 的延迟尖刺、THP 加剧 COW 放大</li>
+<li><strong><code>fork</code>/<code>vfork</code>/<code>pthread_create</code>/容器 全是 <code>clone()</code> 的参数组合</strong> —— 进程与线程是同一光谱上的两点</li>
+<li><strong>fork 只复制调用线程</strong>，因为复制所有线程语义上无法定义；代价是<strong>继承了锁状态但没有解锁者</strong> → malloc 死锁</li>
+<li><strong>多线程 + fork 之后只能 exec</strong>；需要多进程就在创建线程之前 fork（nginx/PostgreSQL 的模式）</li>
+<li><strong>Go 不暴露 fork</strong> 是因为 runtime 多线程；用 <code>exec.Command</code> + <code>SysProcAttr</code>，注意 <code>Pdeathsig</code></li>
+<li><strong>僵尸状态是必然的</strong>：退出码必须有人接收，否则 <code>$?</code> 和一切编排都无法工作</li>
+<li><strong>双 fork 在 systemd 时代是反模式</strong>；<code>pidfd</code> 解决 PID 复用竞态并让进程管理融入事件循环</li>
+</ul>
+<p>下一篇讲 <strong>凭证模型：内核为什么只认数字</strong> —— 10 篇学的 uid/gid 操作，在这里能看到它们为什么长成这样：为什么需要 ruid/euid/suid/fsuid <strong>四套</strong> uid、<code>setuid()</code> 的历史漏洞、capabilities 如何把 root 拆成 40 多个能力却没能取代 SUID。</p>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2026-08-12</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/linux/">linux</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/linux/linux_22_%E5%87%AD%E8%AF%81%E6%A8%A1%E5%9E%8B%E5%86%85%E6%A0%B8%E4%B8%BA%E4%BB%80%E4%B9%88%E5%8F%AA%E8%AE%A4%E6%95%B0%E5%AD%97/" class="prev" rel="prev" title="Linux-22 凭证模型：内核为什么只认数字，四套 uid 从哪来"><i class="fas fa-angle-left fa-fw"></i>Linux-22 凭证模型：内核为什么只认数字，四套 uid 从哪来</a>
+            <a href="/posts/linux/linux_20_VFS%E4%B8%80%E5%88%87%E7%9A%86%E6%96%87%E4%BB%B6%E7%9A%84%E5%AE%9E%E7%8E%B0/" class="next" rel="next" title="Linux-20 VFS：一切皆文件的实现代价，file/dentry/inode 三层对象">Linux-20 VFS：一切皆文件的实现代价，file/dentry/inode 三层对象<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2026-08-12T13:30:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Linux-21 进程的诞生：fork 为什么是 fork"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

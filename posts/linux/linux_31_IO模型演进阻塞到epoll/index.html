@@ -1,0 +1,861 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>Linux-31 IO 模型演进：阻塞 → epoll - xingliuhua博客</title><meta name="Description" content="select 的真正瓶颈为什么是 O(n) 扫描而不是 1024 限制、epoll 的红黑树与就绪链表如何分工、LT/ET 的真实差别、惊群与 EPOLLEXCLUSIVE、accept/read/write 的工程边界，以及 Go netpoller 怎样把 goroutine 阻塞映射到 epoll。"><meta property="og:title" content="Linux-31 IO 模型演进：阻塞 → epoll" />
+<meta property="og:description" content="select 的真正瓶颈为什么是 O(n) 扫描而不是 1024 限制、epoll 的红黑树与就绪链表如何分工、LT/ET 的真实差别、惊群与 EPOLLEXCLUSIVE、accept/read/write 的工程边界，以及 Go netpoller 怎样把 goroutine 阻塞映射到 epoll。" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/linux/linux_31_IO%E6%A8%A1%E5%9E%8B%E6%BC%94%E8%BF%9B%E9%98%BB%E5%A1%9E%E5%88%B0epoll/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2026-08-12T08:30:00+08:00" />
+<meta property="article:modified_time" content="2026-08-12T08:30:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="Linux-31 IO 模型演进：阻塞 → epoll"/>
+<meta name="twitter:description" content="select 的真正瓶颈为什么是 O(n) 扫描而不是 1024 限制、epoll 的红黑树与就绪链表如何分工、LT/ET 的真实差别、惊群与 EPOLLEXCLUSIVE、accept/read/write 的工程边界，以及 Go netpoller 怎样把 goroutine 阻塞映射到 epoll。"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/linux/linux_31_IO%E6%A8%A1%E5%9E%8B%E6%BC%94%E8%BF%9B%E9%98%BB%E5%A1%9E%E5%88%B0epoll/" /><link rel="prev" href="https://xingliuhua.github.io/posts/linux/linux_32_io_uring%E4%B8%8E%E9%9B%B6%E6%8B%B7%E8%B4%9D/" /><link rel="next" href="https://xingliuhua.github.io/posts/linux/linux_30_%E6%96%87%E4%BB%B6%E7%B3%BB%E7%BB%9F%E4%B8%8Einode%E6%8A%BD%E8%B1%A1%E7%9A%84%E5%BF%85%E7%84%B6%E6%80%A7/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Linux-31 IO 模型演进：阻塞 → epoll",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_31_IO%E6%A8%A1%E5%9E%8B%E6%BC%94%E8%BF%9B%E9%98%BB%E5%A1%9E%E5%88%B0epoll\/"
+        },"genre": "posts","keywords": "linux","wordcount":  10017 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_31_IO%E6%A8%A1%E5%9E%8B%E6%BC%94%E8%BF%9B%E9%98%BB%E5%A1%9E%E5%88%B0epoll\/","datePublished": "2026-08-12T08:30:00+08:00","dateModified": "2026-08-12T08:30:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "select 的真正瓶颈为什么是 O(n) 扫描而不是 1024 限制、epoll 的红黑树与就绪链表如何分工、LT/ET 的真实差别、惊群与 EPOLLEXCLUSIVE、accept/read/write 的工程边界，以及 Go netpoller 怎样把 goroutine 阻塞映射到 epoll。"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">Linux-31 IO 模型演进：阻塞 → epoll</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2026-08-12">2026-08-12</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 10017 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 20 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-先把四个-io-概念拆开">1. 先把四个 IO 概念拆开</a>
+      <ol>
+        <li><a href="#11-阻塞与非阻塞一次调用等不等">1.1 阻塞与非阻塞：一次调用等不等</a></li>
+        <li><a href="#12-io-多路复用一个线程等很多-fd">1.2 IO 多路复用：一个线程等很多 fd</a></li>
+        <li><a href="#13-信号驱动-io通知不等于可扩展">1.3 信号驱动 IO：通知不等于可扩展</a></li>
+        <li><a href="#14-异步-io提交与完成分离">1.4 异步 IO：提交与完成分离</a></li>
+      </ol>
+    </li>
+    <li><a href="#2-阻塞线程模型为什么撞墙">2. 阻塞线程模型为什么撞墙</a>
+      <ol>
+        <li><a href="#21-一连接一线程的成本">2.1 一连接一线程的成本</a></li>
+        <li><a href="#22-c10k-的真实约束">2.2 C10K 的真实约束</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-selectapi-限制只是表象">3. select：API 限制只是表象</a>
+      <ol>
+        <li><a href="#31-每次都传全集">3.1 每次都传全集</a></li>
+        <li><a href="#32-1024-是-fd_set-的实现上限">3.2 1024 是 fd_set 的实现上限</a></li>
+        <li><a href="#33-select-还有语义坑">3.3 select 还有语义坑</a></li>
+      </ol>
+    </li>
+    <li><a href="#4-poll绕过-1024保留-on">4. poll：绕过 1024，保留 O(n)</a>
+      <ol>
+        <li><a href="#41-pollfd-数组">4.1 pollfd 数组</a></li>
+        <li><a href="#42-poll-的适用范围">4.2 poll 的适用范围</a></li>
+      </ol>
+    </li>
+    <li><a href="#5-epoll注册一次通知多次">5. epoll：注册一次，通知多次</a>
+      <ol>
+        <li><a href="#51-两个核心数据结构">5.1 两个核心数据结构</a></li>
+        <li><a href="#52-为什么-epoll-不必每次复制全集">5.2 为什么 epoll 不必每次复制全集</a></li>
+        <li><a href="#53-epoll-的复杂度不要神化">5.3 epoll 的复杂度不要神化</a></li>
+      </ol>
+    </li>
+    <li><a href="#6-lt-与-et事件不是数据包">6. LT 与 ET：事件不是数据包</a>
+      <ol>
+        <li><a href="#61-level-triggered条件成立就持续提醒">6.1 Level Triggered：条件成立就持续提醒</a></li>
+        <li><a href="#62-edge-triggered只报告状态变化">6.2 Edge Triggered：只报告状态变化</a></li>
+        <li><a href="#63-et-不保证更快">6.3 ET 不保证更快</a></li>
+        <li><a href="#64-epolloneshot一次交给一个-worker">6.4 EPOLLONESHOT：一次交给一个 worker</a></li>
+      </ol>
+    </li>
+    <li><a href="#7-readwriteaccept-的工程语义">7. read、write、accept 的工程语义</a>
+      <ol>
+        <li><a href="#71-可读不只等于有业务数据">7.1 可读不只等于“有业务数据”</a></li>
+        <li><a href="#72-可写常常一直成立">7.2 可写常常一直成立</a></li>
+        <li><a href="#73-accept-要循环到-eagain">7.3 accept 要循环到 EAGAIN</a></li>
+        <li><a href="#74-emfile满-fd-时别陷入错误风暴">7.4 EMFILE：满 fd 时别陷入错误风暴</a></li>
+      </ol>
+    </li>
+    <li><a href="#8-惊群谁该被唤醒">8. 惊群：谁该被唤醒</a>
+      <ol>
+        <li><a href="#81-经典-accept-惊群">8.1 经典 accept 惊群</a></li>
+        <li><a href="#82-epollexclusiveepoll-等待队列层的限制">8.2 EPOLLEXCLUSIVE：epoll 等待队列层的限制</a></li>
+        <li><a href="#83-so_reuseport把分流提前到监听层">8.3 SO_REUSEPORT：把分流提前到监听层</a></li>
+        <li><a href="#84-三者不是替代关系">8.4 三者不是替代关系</a></li>
+      </ol>
+    </li>
+    <li><a href="#9-go-netpollergoroutine-如何等-epoll">9. Go netpoller：goroutine 如何等 epoll</a>
+      <ol>
+        <li><a href="#91-go-不让每个连接占一个线程">9.1 Go 不让每个连接占一个线程</a></li>
+        <li><a href="#92-netpoller-不只处理网络">9.2 netpoller 不只处理网络</a></li>
+        <li><a href="#93-go-也会受-fd-与-cpu-边界限制">9.3 Go 也会受 fd 与 CPU 边界限制</a></li>
+      </ol>
+    </li>
+    <li><a href="#10-线上排查与命令知识点扩展">10. 线上排查与命令知识点扩展</a>
+      <ol>
+        <li><a href="#101-先定位在哪一层排队">10.1 先定位在哪一层排队</a></li>
+        <li><a href="#102-epoll-事件怎么观察">10.2 epoll 事件怎么观察</a></li>
+        <li><a href="#103-go-服务的排查组合">10.3 Go 服务的排查组合</a></li>
+        <li><a href="#104-常用参数">10.4 常用参数</a></li>
+      </ol>
+    </li>
+    <li><a href="#11-面试题">11. 面试题</a></li>
+    <li><a href="#小结">小结</a></li>
+    <li><a href="#12-epoll-的生命周期陷阱">12. epoll 的生命周期陷阱</a>
+      <ol>
+        <li><a href="#121-epoll-监控的是打开文件不只是整数-fd">12.1 epoll 监控的是打开文件，不只是整数 fd</a></li>
+        <li><a href="#122-close-与并发事件处理">12.2 close 与并发事件处理</a></li>
+        <li><a href="#123-epollhup-与-epollerr-不要漏">12.3 EPOLLHUP 与 EPOLLERR 不要漏</a></li>
+      </ol>
+    </li>
+    <li><a href="#13-公平性与背压事件循环不是越-drain-越好">13. 公平性与背压：事件循环不是越 drain 越好</a>
+      <ol>
+        <li><a href="#131-et-的-drain-与单连接霸占">13.1 ET 的 drain 与单连接霸占</a></li>
+        <li><a href="#132-接收背压">13.2 接收背压</a></li>
+        <li><a href="#133-发送背压">13.3 发送背压</a></li>
+      </ol>
+    </li>
+    <li><a href="#14-触发模式之外的设计选择">14. 触发模式之外的设计选择</a>
+      <ol>
+        <li><a href="#141-单事件循环还是多事件循环">14.1 单事件循环还是多事件循环</a></li>
+        <li><a href="#142-reactor-与-proactor">14.2 Reactor 与 Proactor</a></li>
+      </ol>
+    </li>
+    <li><a href="#15-追加面试题">15. 追加面试题</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><p>上一篇讨论文件数据如何从页缓存到稳定介质。这一篇讨论另一条高频路径：网络连接上的数据什么时候可读、什么时候可写，以及一个进程如何同时管理十万条连接。</p>
+<p>很多文章把 epoll 简化为“突破 <code>select</code> 的 1024 限制”。这几乎抓错了重点。<code>FD_SETSIZE</code> 可以重编译或用 poll 绕开，真正逼出 epoll 的是：<strong>每次等待都要把所有 fd 从用户态搬进内核，再由内核扫描一遍；即使只有一个连接有数据，也要检查十万个。</strong></p>
+<p>先看五个问题：</p>
+<ol>
+<li>阻塞、非阻塞、IO 多路复用、异步 IO 分别解决什么，为什么不能混为一谈？</li>
+<li><code>select</code> 的根问题为何是 O(n)，而不是 1024？<code>poll</code> 改了什么，又没改什么？</li>
+<li>epoll 的红黑树和就绪链表分别干什么？为什么它能避免重复扫描？</li>
+<li>LT 和 ET 到底差在哪里？为什么 ET 必须读到 <code>EAGAIN</code>，却不必迷信它“永远更快”？</li>
+<li>多线程 <code>accept</code> 为什么会惊群？<code>EPOLLEXCLUSIVE</code>、<code>SO_REUSEPORT</code> 和 Go netpoller 分别在哪一层解决它？</li>
+</ol>
+<hr>
+<h1 id="1-先把四个-io-概念拆开">1. 先把四个 IO 概念拆开</h1>
+<h2 id="11-阻塞与非阻塞一次调用等不等">1.1 阻塞与非阻塞：一次调用等不等</h2>
+<p>以 socket <code>read</code> 为例：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">阻塞 socket：
+</span></span><span class="line"><span class="cl">read(fd) -&gt; 没数据时，调用线程睡眠 -&gt; 有数据/EOF/错误后返回
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">非阻塞 socket：
+</span></span><span class="line"><span class="cl">read(fd) -&gt; 没数据时，立即返回 -1/EAGAIN
+</span></span></code></pre></div><p>阻塞解决代码简单，代价是一个慢连接占住一个线程。非阻塞让线程能做其他事，代价是应用必须处理“现在读不到”的状态，不能写成忙轮询：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="k">for</span> <span class="p">(;;)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="n">n</span> <span class="o">=</span> <span class="n">read</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span> <span class="n">buf</span><span class="p">,</span> <span class="k">sizeof</span> <span class="n">buf</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="p">(</span><span class="n">n</span> <span class="o">&lt;</span> <span class="mi">0</span> <span class="o">&amp;&amp;</span> <span class="n">errno</span> <span class="o">==</span> <span class="n">EAGAIN</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="k">continue</span><span class="p">;</span> <span class="c1">// 错误：烧满一个 CPU
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
+</span></span></code></pre></div><p>非阻塞只回答“这一次调用是否等待”，没有告诉你<strong>什么时候再试</strong>。</p>
+<h2 id="12-io-多路复用一个线程等很多-fd">1.2 IO 多路复用：一个线程等很多 fd</h2>
+<p><code>select/poll/epoll</code> 解决的正是“什么时候再试”：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">一个线程
+</span></span><span class="line"><span class="cl">  -&gt; 告诉内核：我关心 fd 3/5/9/... 的读写状态
+</span></span><span class="line"><span class="cl">  -&gt; 睡眠
+</span></span><span class="line"><span class="cl">  -&gt; 任一 fd 就绪时被唤醒
+</span></span><span class="line"><span class="cl">  -&gt; 只处理已就绪的那几个
+</span></span></code></pre></div><p>它仍然是同步模型：<code>epoll_wait()</code> 返回后，应用自己调用 <code>read/write/accept</code> 执行实际 IO。只是等待阶段从“一个 fd 等一次”变成“很多 fd 一起等”。</p>
+<h2 id="13-信号驱动-io通知不等于可扩展">1.3 信号驱动 IO：通知不等于可扩展</h2>
+<p>历史上 <code>SIGIO</code> 可以让内核对 socket 事件发信号。它也是通知模型，但继承了上一篇讲的信号问题：合并、异步 handler 限制、线程路由复杂、难以携带大量事件状态。现代高并发服务器一般不用 SIGIO 做主事件循环。</p>
+<h2 id="14-异步-io提交与完成分离">1.4 异步 IO：提交与完成分离</h2>
+<p>真正异步 IO 的形式是：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">提交 read 请求 -&gt; 立即返回
+</span></span><span class="line"><span class="cl">                 ... 内核/设备完成 IO ...
+</span></span><span class="line"><span class="cl">完成队列通知 -&gt; 取回结果和数据
+</span></span></code></pre></div><p>应用不在完成时再调用 <code>read</code>，而是提前提交操作。Linux 传统 AIO 的语义和文件系统支持较复杂；<code>io_uring</code> 提供提交队列（SQ）和完成队列（CQ），是下一篇的重点。</p>
+<p>所以：</p>
+<table>
+<thead>
+<tr>
+<th>模型</th>
+<th>等待什么</th>
+<th>实际 IO 在哪里发生</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>阻塞 IO</td>
+<td>单次 <code>read/write</code> 内等待</td>
+<td>该系统调用中</td>
+</tr>
+<tr>
+<td>非阻塞 IO</td>
+<td>不等待，立即获知结果</td>
+<td><code>read/write</code> 中尝试</td>
+</tr>
+<tr>
+<td>多路复用</td>
+<td><code>select/poll/epoll_wait</code> 等就绪</td>
+<td>返回后应用再 <code>read/write</code></td>
+</tr>
+<tr>
+<td>异步 IO</td>
+<td>提交后等完成通知</td>
+<td>内核按已提交请求完成</td>
+</tr>
+</tbody>
+</table>
+<p>“epoll 是异步 IO”这个说法不准确；它是<strong>高效的就绪通知（readiness）多路复用</strong>。</p>
+<hr>
+<h1 id="2-阻塞线程模型为什么撞墙">2. 阻塞线程模型为什么撞墙</h1>
+<h2 id="21-一连接一线程的成本">2.1 一连接一线程的成本</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">10 万长连接
+</span></span><span class="line"><span class="cl">  -&gt; 10 万线程
+</span></span><span class="line"><span class="cl">  -&gt; 每个线程至少一段栈、TLS、task_struct、调度状态
+</span></span><span class="line"><span class="cl">  -&gt; 频繁上下文切换、缓存污染、调度器运行队列膨胀
+</span></span></code></pre></div><p>线程池可以限制线程数，却无法让一个阻塞在 <code>read</code> 的线程同时等待别的连接。若 worker 数小于慢连接数，全部 worker 都可能被慢客户端占住，快请求排队。</p>
+<p>这不是“线程不能处理网络”，而是连接多、每条连接大部分时间空闲时，线程作为等待单位太粗。</p>
+<h2 id="22-c10k-的真实约束">2.2 C10K 的真实约束</h2>
+<p>经典 C10K 问题不是一个固定数字，而是旧架构在大量闲置连接下的组合瓶颈：</p>
+<ul>
+<li>每连接线程的内存与调度成本</li>
+<li>每次 <code>select/poll</code> 扫描全部 fd</li>
+<li>fd 集合从用户态复制到内核态</li>
+<li>内核网络栈和设备中断处理能力</li>
+<li>应用协议解析、日志和下游依赖</li>
+</ul>
+<p>epoll 主要解决其中“等待大量 fd 的重复扫描与拷贝”，不会自动让业务 handler、TLS、数据库或 CPU 变快。</p>
+<hr>
+<h1 id="3-selectapi-限制只是表象">3. select：API 限制只是表象</h1>
+<h2 id="31-每次都传全集">3.1 每次都传全集</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="n">fd_set</span> <span class="n">rfds</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="n">FD_ZERO</span><span class="p">(</span><span class="o">&amp;</span><span class="n">rfds</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="nl">fd</span> <span class="p">:</span> <span class="n">all_connections</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="n">FD_SET</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">rfds</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kt">int</span> <span class="n">n</span> <span class="o">=</span> <span class="n">select</span><span class="p">(</span><span class="n">maxfd</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">rfds</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">timeout</span><span class="p">);</span>
+</span></span></code></pre></div><p>每次调用要做三件 O(n) 工作：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">用户态：重建 fd_set
+</span></span><span class="line"><span class="cl">内核：  copy_from_user + 扫描 0..maxfd
+</span></span><span class="line"><span class="cl">返回：  把就绪位图 copy_to_user
+</span></span><span class="line"><span class="cl">用户态：再次扫描 fd_set 找谁被置位
+</span></span></code></pre></div><p>即使只有 fd 7 有一个字节数据，<code>maxfd=100000</code> 也意味着大量位检查。O(n) 不只与活连接数有关，也与<strong>最大 fd 值</strong>有关；若 fd 稀疏，尤其浪费。</p>
+<h2 id="32-1024-是-fd_set-的实现上限">3.2 1024 是 fd_set 的实现上限</h2>
+<p><code>FD_SETSIZE</code> 常见默认值 1024，来自 <code>fd_set</code> 的固定大小位图。它带来两个问题：高编号 fd 不能安全放入宏；重编译/调整宏会影响 ABI，库之间可能不一致。</p>
+<p>但即使把它扩大到百万，扫描复杂度仍是 O(n)。所以“把 <code>FD_SETSIZE</code> 改大”只处理容量表象，没处理可扩展性。</p>
+<h2 id="33-select-还有语义坑">3.3 select 还有语义坑</h2>
+<ul>
+<li><code>fd_set</code> 会被内核修改成“只包含就绪 fd”，每轮都必须重建</li>
+<li>timeout 可能被修改，重试前要重设</li>
+<li>某 fd 被关闭后，另一个线程继续放进 set，可能得到 <code>EBADF</code></li>
+<li>监听、读、写、异常集合分开，状态组合难维护</li>
+</ul>
+<p><code>pselect</code> 增加临时信号掩码接口，主要解决“解除信号阻塞”和“开始等待”之间的竞态，不改变扫描本质。</p>
+<hr>
+<h1 id="4-poll绕过-1024保留-on">4. poll：绕过 1024，保留 O(n)</h1>
+<h2 id="41-pollfd-数组">4.1 pollfd 数组</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="k">struct</span> <span class="n">pollfd</span> <span class="n">fds</span><span class="p">[</span><span class="n">N</span><span class="p">];</span>
+</span></span><span class="line"><span class="cl"><span class="n">fds</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="k">struct</span> <span class="n">pollfd</span><span class="p">){</span> <span class="p">.</span><span class="n">fd</span> <span class="o">=</span> <span class="n">fd</span><span class="p">,</span> <span class="p">.</span><span class="n">events</span> <span class="o">=</span> <span class="n">POLLIN</span> <span class="p">};</span>
+</span></span><span class="line"><span class="cl"><span class="n">poll</span><span class="p">(</span><span class="n">fds</span><span class="p">,</span> <span class="n">N</span><span class="p">,</span> <span class="n">timeout</span><span class="p">);</span>
+</span></span></code></pre></div><p><code>poll</code> 用动态数组，不受固定 <code>FD_SETSIZE</code> 位图限制，也不依赖 <code>maxfd</code>。内核返回时通过每项 <code>revents</code> 标识就绪，用户不需要再扫一遍 0..maxfd 的稀疏位图。</p>
+<p>但每次调用仍然：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">copy pollfd[N] 到内核
+</span></span><span class="line"><span class="cl">遍历 N 个 fd，向每个等待队列临时注册检查
+</span></span><span class="line"><span class="cl">等待
+</span></span><span class="line"><span class="cl">遍历 N 个 fd，收集 revents
+</span></span><span class="line"><span class="cl">copy 回用户态
+</span></span></code></pre></div><p>因此复杂度仍随<strong>监控集合大小 N</strong>线性增长。N 到十万且就绪很少时，大量 CPU 花在“确认没事发生”。</p>
+<h2 id="42-poll-的适用范围">4.2 poll 的适用范围</h2>
+<p>几十到几百个 fd、低频管理任务、跨平台库，poll 简单可靠。无需把所有程序都重写 epoll；选型要看活跃 fd 数、就绪比例、平台和复杂度。</p>
+<hr>
+<h1 id="5-epoll注册一次通知多次">5. epoll：注册一次，通知多次</h1>
+<h2 id="51-两个核心数据结构">5.1 两个核心数据结构</h2>
+<p><code>epoll_create1()</code> 创建一个 epoll instance。随后：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="n">epoll_ctl</span><span class="p">(</span><span class="n">epfd</span><span class="p">,</span> <span class="n">EPOLL_CTL_ADD</span><span class="p">,</span> <span class="n">fd</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">ev</span><span class="p">);</span> <span class="c1">// 注册兴趣
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">epoll_wait</span><span class="p">(</span><span class="n">epfd</span><span class="p">,</span> <span class="n">events</span><span class="p">,</span> <span class="n">maxevents</span><span class="p">,</span> <span class="n">timeout</span><span class="p">);</span> <span class="c1">// 等待就绪
+</span></span></span></code></pre></div><p>概念模型：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">interest list：我关心哪些 fd、哪些事件
+</span></span><span class="line"><span class="cl">  红黑树 / RB-tree
+</span></span><span class="line"><span class="cl">  key: file object + fd 相关身份
+</span></span><span class="line"><span class="cl">  用途：EPOLL_CTL_ADD/MOD/DEL 快速查重和修改
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">ready list：哪些已经发生且尚待用户取走
+</span></span><span class="line"><span class="cl">  就绪链表
+</span></span><span class="line"><span class="cl">  用途：epoll_wait 直接取已就绪项，不扫描全部 interest list
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">应用 epoll_ctl ADD fd=42, EPOLLIN
+</span></span><span class="line"><span class="cl">  -&gt; epoll 将 watcher 挂到目标 file 的等待队列
+</span></span><span class="line"><span class="cl">  -&gt; 同时放入 interest tree
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">网卡数据到达 -&gt; socket receive queue 从空变非空
+</span></span><span class="line"><span class="cl">  -&gt; socket wakeup 回调通知 epoll
+</span></span><span class="line"><span class="cl">  -&gt; epoll 把 fd=42 加入 ready list
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">应用 epoll_wait
+</span></span><span class="line"><span class="cl">  -&gt; 从 ready list 拷贝就绪 events 给用户
+</span></span></code></pre></div><p>真正的关键不是“红黑树 O(log n)”本身，而是<strong>状态变化时由被监控对象主动把事件推入 ready list</strong>。<code>epoll_wait</code> 的工作量接近本轮就绪事件数，而不是总连接数。</p>
+<h2 id="52-为什么-epoll-不必每次复制全集">5.2 为什么 epoll 不必每次复制全集</h2>
+<p>兴趣集合在 <code>epoll_ctl</code> 时注册，内核长期保存 watcher。<code>epoll_wait</code> 只传一个输出数组：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="k">struct</span> <span class="n">epoll_event</span> <span class="n">events</span><span class="p">[</span><span class="mi">256</span><span class="p">];</span>
+</span></span><span class="line"><span class="cl"><span class="kt">int</span> <span class="n">n</span> <span class="o">=</span> <span class="n">epoll_wait</span><span class="p">(</span><span class="n">epfd</span><span class="p">,</span> <span class="n">events</span><span class="p">,</span> <span class="mi">256</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">);</span>
+</span></span></code></pre></div><p>应用每轮只处理 n 个返回事件。注册/删除连接仍有成本，fd 频繁 churn 时 <code>epoll_ctl</code> 不会免费；但典型长连接服务的“连接寿命远长于一次事件”正好匹配这种摊销方式。</p>
+<h2 id="53-epoll-的复杂度不要神化">5.3 epoll 的复杂度不要神化</h2>
+<p>常见简化是“epoll O(1)”。更准确：</p>
+<ul>
+<li>添加/修改/删除兴趣：通常 O(log n)</li>
+<li>就绪事件入队：与发生的状态变化有关</li>
+<li><code>epoll_wait</code>：与返回事件数、拷贝和处理有关</li>
+<li>网络协议处理、锁、用户 handler、缓存 miss 仍可能成为瓶颈</li>
+</ul>
+<p>如果十万个 fd 每轮都可读，epoll 也要返回十万个事件；它不能让真实工作消失。它优化的是<strong>稀疏就绪</strong>场景中重复扫描空闲连接的浪费。</p>
+<hr>
+<h1 id="6-lt-与-et事件不是数据包">6. LT 与 ET：事件不是数据包</h1>
+<h2 id="61-level-triggered条件成立就持续提醒">6.1 Level Triggered：条件成立就持续提醒</h2>
+<p>默认 LT（level-triggered）语义：只要条件仍成立，等待会继续报告。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">socket receive queue 有 100 bytes
+</span></span><span class="line"><span class="cl">-&gt; EPOLLIN
+</span></span><span class="line"><span class="cl">应用只读 20 bytes，仍有 80 bytes
+</span></span><span class="line"><span class="cl">-&gt; 下次 epoll_wait 仍会报告 EPOLLIN
+</span></span></code></pre></div><p>LT 容错好：一次处理不彻底，内核会再次提醒。缺点是若应用每次只读一点，可能反复收到相同 readiness，产生更多事件和系统调用。</p>
+<h2 id="62-edge-triggered只报告状态变化">6.2 Edge Triggered：只报告状态变化</h2>
+<p>ET（<code>EPOLLET</code>）关注“从不就绪到就绪”的边沿：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">receive queue: empty -&gt; data arrives -&gt; nonempty
+</span></span><span class="line"><span class="cl">-&gt; 一次 EPOLLIN edge
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">应用只读 20 bytes，仍有 80 bytes
+</span></span><span class="line"><span class="cl">-&gt; 仍是 nonempty，没有新 edge
+</span></span><span class="line"><span class="cl">-&gt; 若应用回 epoll_wait，可能一直睡眠
+</span></span></code></pre></div><p>所以 ET 的硬要求是：收到可读事件后，<strong>循环读到 <code>EAGAIN</code></strong>；收到可写事件后，尽可能 flush 写队列到 <code>EAGAIN</code> 或队列为空。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="k">for</span> <span class="p">(;;)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="n">ssize_t</span> <span class="n">n</span> <span class="o">=</span> <span class="n">read</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span> <span class="n">buf</span><span class="p">,</span> <span class="k">sizeof</span> <span class="n">buf</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="p">(</span><span class="n">n</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span> <span class="p">{</span> <span class="n">consume</span><span class="p">(</span><span class="n">buf</span><span class="p">,</span> <span class="n">n</span><span class="p">);</span> <span class="k">continue</span><span class="p">;</span> <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="p">(</span><span class="n">n</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span> <span class="p">{</span> <span class="n">close_connection</span><span class="p">(</span><span class="n">fd</span><span class="p">);</span> <span class="k">break</span><span class="p">;</span> <span class="p">}</span> <span class="c1">// EOF
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">if</span> <span class="p">(</span><span class="n">errno</span> <span class="o">==</span> <span class="n">EINTR</span><span class="p">)</span> <span class="k">continue</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="p">(</span><span class="n">errno</span> <span class="o">==</span> <span class="n">EAGAIN</span> <span class="o">||</span> <span class="n">errno</span> <span class="o">==</span> <span class="n">EWOULDBLOCK</span><span class="p">)</span> <span class="k">break</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="n">fail_connection</span><span class="p">(</span><span class="n">fd</span><span class="p">);</span> <span class="k">break</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>这要求 socket 为 nonblocking；否则读空后会把事件循环阻塞住。</p>
+<h2 id="63-et-不保证更快">6.3 ET 不保证更快</h2>
+<p>ET 减少重复通知，理论上可减少系统调用和事件分发；但它增加状态机复杂度：</p>
+<ul>
+<li>必须正确处理 partial read/write</li>
+<li>必须维护用户态发送队列</li>
+<li>忘记读到 <code>EAGAIN</code> 会永久卡连接</li>
+<li>单连接大量数据可能霸占事件循环，损害公平</li>
+</ul>
+<p>LT 更容易正确，常在连接数不极端、handler 已有合理 drain 策略时足够好。ET 是性能/控制工具，不是默认“高级模式”。</p>
+<h2 id="64-epolloneshot一次交给一个-worker">6.4 EPOLLONESHOT：一次交给一个 worker</h2>
+<p><code>EPOLLONESHOT</code> 让一个事件被某个 worker 获取后暂时禁用，worker 处理完成后需 <code>EPOLL_CTL_MOD</code> rearm：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">事件到达 -&gt; 一个 worker 获得 fd
+</span></span><span class="line"><span class="cl">-&gt; fd 不再被其他 worker 取到
+</span></span><span class="line"><span class="cl">-&gt; worker drain / 更新状态
+</span></span><span class="line"><span class="cl">-&gt; MOD 重新 arm
+</span></span></code></pre></div><p>它有助于多线程事件循环避免同一连接被并发处理，但把 rearm 正确性变成应用责任。漏 rearm 的效果与 ET 没读空类似：连接沉默。</p>
+<hr>
+<h1 id="7-readwriteaccept-的工程语义">7. read、write、accept 的工程语义</h1>
+<h2 id="71-可读不只等于有业务数据">7.1 可读不只等于“有业务数据”</h2>
+<p><code>EPOLLIN</code> 通常表示 <code>read</code> 不会阻塞，但结果可能是：</p>
+<ul>
+<li><code>n &gt; 0</code>：读到数据</li>
+<li><code>n == 0</code>：对端半关闭，EOF</li>
+<li><code>n &lt; 0, EINTR</code>：被信号中断，按策略重试</li>
+<li><code>n &lt; 0, EAGAIN</code>：另一个线程/处理路径已读空，或状态变化</li>
+<li>其他错误：连接错误</li>
+</ul>
+<p>不要只在 <code>n&gt;0</code> 时处理，忘了 <code>n==0</code> 会留下死连接。</p>
+<h2 id="72-可写常常一直成立">7.2 可写常常一直成立</h2>
+<p>大多数 TCP socket 的发送缓冲区大部分时间有空间，所以持续订阅 <code>EPOLLOUT</code> 会让 epoll 不停返回，形成 busy loop。</p>
+<p>正确模式：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">默认只关心 EPOLLIN
+</span></span><span class="line"><span class="cl">应用有数据要发送：尝试 write
+</span></span><span class="line"><span class="cl">  全部写完：不订阅 EPOLLOUT
+</span></span><span class="line"><span class="cl">  EAGAIN / partial write：把剩余数据放入用户态队列，订阅 EPOLLOUT
+</span></span><span class="line"><span class="cl">EPOLLOUT 到达：循环 flush 队列
+</span></span><span class="line"><span class="cl">  队列清空：取消 EPOLLOUT
+</span></span></code></pre></div><p><code>EPOLLOUT</code> 是“内核发送缓冲有空间”，不是“对端已收到”也不是“网络没有拥塞”。</p>
+<h2 id="73-accept-要循环到-eagain">7.3 accept 要循环到 EAGAIN</h2>
+<p>监听 socket 在 ET 模式下同样必须 drain：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="k">for</span> <span class="p">(;;)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="kt">int</span> <span class="n">cfd</span> <span class="o">=</span> <span class="n">accept4</span><span class="p">(</span><span class="n">lfd</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="n">SOCK_NONBLOCK</span> <span class="o">|</span> <span class="n">SOCK_CLOEXEC</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="p">(</span><span class="n">cfd</span> <span class="o">&gt;=</span> <span class="mi">0</span><span class="p">)</span> <span class="p">{</span> <span class="n">add_to_epoll</span><span class="p">(</span><span class="n">cfd</span><span class="p">);</span> <span class="k">continue</span><span class="p">;</span> <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="p">(</span><span class="n">errno</span> <span class="o">==</span> <span class="n">EINTR</span><span class="p">)</span> <span class="k">continue</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="p">(</span><span class="n">errno</span> <span class="o">==</span> <span class="n">EAGAIN</span> <span class="o">||</span> <span class="n">errno</span> <span class="o">==</span> <span class="n">EWOULDBLOCK</span><span class="p">)</span> <span class="k">break</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="p">(</span><span class="n">errno</span> <span class="o">==</span> <span class="n">EMFILE</span> <span class="o">||</span> <span class="n">errno</span> <span class="o">==</span> <span class="n">ENFILE</span><span class="p">)</span> <span class="p">{</span> <span class="n">mitigate_fd_exhaustion</span><span class="p">();</span> <span class="k">break</span><span class="p">;</span> <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="n">log_accept_error</span><span class="p">();</span> <span class="k">break</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><code>accept4</code> 原子设置 <code>O_NONBLOCK</code> 和 <code>FD_CLOEXEC</code>，避免 accept 后再 <code>fcntl</code> 的竞态及额外 syscall。</p>
+<h2 id="74-emfile满-fd-时别陷入错误风暴">7.4 EMFILE：满 fd 时别陷入错误风暴</h2>
+<p>进程到达 <code>RLIMIT_NOFILE</code> 时 <code>accept</code> 返回 <code>EMFILE</code>。若事件循环不断收到监听 fd 可读又无法 accept，会形成忙循环。常见“idle fd”缓解：预留一个 <code>/dev/null</code> fd，出现 EMFILE 时关闭预留 fd、accept 并立即 close 一个连接、重新打开 <code>/dev/null</code>，让客户端尽快收到失败而不是一直堆在 backlog。</p>
+<p>根本修复仍是：合理的 fd 限额、连接上限、泄漏排查和过载保护；idle fd 只是止血技术。</p>
+<hr>
+<h1 id="8-惊群谁该被唤醒">8. 惊群：谁该被唤醒</h1>
+<h2 id="81-经典-accept-惊群">8.1 经典 accept 惊群</h2>
+<p>多个进程/线程都在同一监听 socket 上 <code>accept</code> 或等待同一个 epoll 事件：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">新连接到达
+</span></span><span class="line"><span class="cl">-&gt; 唤醒 16 个 worker
+</span></span><span class="line"><span class="cl">-&gt; 1 个 accept 成功
+</span></span><span class="line"><span class="cl">-&gt; 15 个得到 EAGAIN，再睡眠
+</span></span></code></pre></div><p>其余 15 个调度、抢锁、cache miss 全是浪费。早期 Linux 和不同等待模型的惊群程度不同，但“一个资源就绪唤醒过多竞争者”始终是核心问题。</p>
+<h2 id="82-epollexclusiveepoll-等待队列层的限制">8.2 EPOLLEXCLUSIVE：epoll 等待队列层的限制</h2>
+<p>Linux 4.5 引入 <code>EPOLLEXCLUSIVE</code>。把同一监听 fd 注册到多个 epoll instance 时，使用它可让就绪事件唤醒至多一个 exclusive waiter，降低多 epoll worker 的惊群。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="n">ev</span><span class="p">.</span><span class="n">events</span> <span class="o">=</span> <span class="n">EPOLLIN</span> <span class="o">|</span> <span class="n">EPOLLEXCLUSIVE</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="n">epoll_ctl</span><span class="p">(</span><span class="n">epfd</span><span class="p">,</span> <span class="n">EPOLL_CTL_ADD</span><span class="p">,</span> <span class="n">listenfd</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">ev</span><span class="p">);</span>
+</span></span></code></pre></div><p>它有组合限制，且主要针对多个 epoll 等待者，不替代应用并发控制。应查本机 <code>epoll_ctl(2)</code> 文档确认可与哪些 flag 组合。</p>
+<h2 id="83-so_reuseport把分流提前到监听层">8.3 SO_REUSEPORT：把分流提前到监听层</h2>
+<p><code>SO_REUSEPORT</code> 允许多个 socket 绑定同一地址端口，内核把新连接分配到不同监听 socket：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">worker 0 -&gt; listen socket 0 -&gt; epoll 0
+</span></span><span class="line"><span class="cl">worker 1 -&gt; listen socket 1 -&gt; epoll 1
+</span></span><span class="line"><span class="cl">worker 2 -&gt; listen socket 2 -&gt; epoll 2
+</span></span></code></pre></div><p>它减少共享监听队列与锁竞争，也更利于 CPU/cache 亲和性。代价是连接分布、平滑重启和负载策略更复杂；Linux 可以结合 BPF 选择 socket。</p>
+<h2 id="84-三者不是替代关系">8.4 三者不是替代关系</h2>
+<table>
+<thead>
+<tr>
+<th>技术</th>
+<th>所在层</th>
+<th>主要目的</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>accept mutex / 应用协调</td>
+<td>用户态</td>
+<td>控制谁调用 accept</td>
+</tr>
+<tr>
+<td><code>EPOLLEXCLUSIVE</code></td>
+<td>epoll 等待队列</td>
+<td>限制唤醒多个 epoll waiter</td>
+</tr>
+<tr>
+<td><code>SO_REUSEPORT</code></td>
+<td>socket 监听层</td>
+<td>多个监听 socket 分流新连接</td>
+</tr>
+</tbody>
+</table>
+<p>不要把 <code>SO_REUSEPORT</code> 当“任意 socket 都能多进程共享”的万能开关，也不要因为用了它就不需要连接级并发状态保护。</p>
+<hr>
+<h1 id="9-go-netpollergoroutine-如何等-epoll">9. Go netpoller：goroutine 如何等 epoll</h1>
+<h2 id="91-go-不让每个连接占一个线程">9.1 Go 不让每个连接占一个线程</h2>
+<p>Go 的 <code>net.Conn.Read</code> 看起来是阻塞 API，但 runtime 把网络 fd 设为 nonblocking，并维护 poll descriptor：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">goroutine 调 net.Conn.Read
+</span></span><span class="line"><span class="cl">  -&gt; nonblocking read(fd)
+</span></span><span class="line"><span class="cl">  -&gt; EAGAIN
+</span></span><span class="line"><span class="cl">  -&gt; runtime 把当前 G 标记等待读事件
+</span></span><span class="line"><span class="cl">  -&gt; gopark，M/P 去跑其他 G
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">内核 socket 可读
+</span></span><span class="line"><span class="cl">  -&gt; epoll ready
+</span></span><span class="line"><span class="cl">  -&gt; netpoller 从 epoll_wait 返回
+</span></span><span class="line"><span class="cl">  -&gt; goready 等待该 fd 的 G
+</span></span><span class="line"><span class="cl">  -&gt; G 再次 read
+</span></span></code></pre></div><p>因此 Go 对应用提供“同步阻塞式”接口，对内核使用“非阻塞 + 多路复用”。这正是 goroutine 能承载大量闲置连接的原因之一。</p>
+<h2 id="92-netpoller-不只处理网络">9.2 netpoller 不只处理网络</h2>
+<p>在 Linux 上，Go runtime 的 netpoll 后端使用 epoll；deadline 通常通过 runtime 的 timer 机制处理，到期会唤醒对应 G，使 Read/Write 返回 timeout。网络 readiness 和 deadline 不是同一件事：epoll 告诉运行时 fd 当前可能操作，timer 告诉运行时等待已超时。</p>
+<p><code>SetDeadline</code> 不是“给每次 read 单独创建一个内核 timeout”。它是 fd 级 deadline 状态，影响后续/正在进行的读写，使用时必须在协议边界及时更新或清除。</p>
+<h2 id="93-go-也会受-fd-与-cpu-边界限制">9.3 Go 也会受 fd 与 CPU 边界限制</h2>
+<p>netpoll 减少线程阻塞，不会绕过：</p>
+<ul>
+<li><code>ulimit -n</code> / 容器 fd 限额</li>
+<li>单连接读写缓冲与内存占用</li>
+<li>TLS 解密、JSON 编码、压缩等 CPU</li>
+<li>handler 阻塞在数据库、锁或 channel</li>
+<li>cgroup CPU quota 造成的 wakeup 延迟</li>
+</ul>
+<p>上一章的调度与 quota、前一章的锁，仍然决定 epoll 返回后 goroutine 能不能及时运行。</p>
+<hr>
+<h1 id="10-线上排查与命令知识点扩展">10. 线上排查与命令知识点扩展</h1>
+<h2 id="101-先定位在哪一层排队">10.1 先定位在哪一层排队</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">连接慢，不一定是 epoll 慢：
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">① 内核前：SYN backlog / accept queue 满
+</span></span><span class="line"><span class="cl">② epoll 后：事件循环没有及时运行（CPU、quota、GC、锁）
+</span></span><span class="line"><span class="cl">③ read 后：协议解析/handler 慢
+</span></span><span class="line"><span class="cl">④ write 前：用户态发送队列堆积
+</span></span><span class="line"><span class="cl">⑤ write 后：内核发送缓冲、网络拥塞或对端不读
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 监听队列、连接状态与进程 fd 数</span>
+</span></span><span class="line"><span class="cl">ss -ltnp
+</span></span><span class="line"><span class="cl">ss -tan state established <span class="s1">&#39;( sport = :8080 )&#39;</span>
+</span></span><span class="line"><span class="cl">ls /proc/<span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span>/fd <span class="p">|</span> wc -l
+</span></span><span class="line"><span class="cl">cat /proc/<span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span>/limits <span class="p">|</span> grep <span class="s1">&#39;open files&#39;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># TCP 汇总、重传和队列线索</span>
+</span></span><span class="line"><span class="cl">ss -s
+</span></span><span class="line"><span class="cl">netstat -s 2&gt;/dev/null <span class="p">|</span> grep -i -E <span class="s1">&#39;listen|overflow|drop|retrans&#39;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 线程、CPU、上下文切换</span>
+</span></span><span class="line"><span class="cl">pidstat -u -w -t -p <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span> <span class="m">1</span>
+</span></span></code></pre></div><p><code>ss -ltn</code> 的 <code>Recv-Q</code>/<code>Send-Q</code> 对监听 socket 的解释与普通已连接 socket 不同，和 backlog、内核版本有关；应结合 <code>ss -ltnp</code>、应用连接数和内核 TCP 统计判断，不能只按一个数字直接定性。</p>
+<h2 id="102-epoll-事件怎么观察">10.2 epoll 事件怎么观察</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 进程打开了哪些 socket、epoll 实例</span>
+</span></span><span class="line"><span class="cl">lsof -p <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span> <span class="p">|</span> grep -E <span class="s1">&#39;TCP|eventpoll&#39;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 某 fd 指向什么对象</span>
+</span></span><span class="line"><span class="cl">readlink /proc/<span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span>/fd/42
+</span></span><span class="line"><span class="cl">cat /proc/<span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span>/fdinfo/42
+</span></span><span class="line"><span class="cl"><span class="c1"># epoll fdinfo 常可列出它监控的 target fd 和 event mask</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 追踪 epoll/网络 syscall（短时；strace 会扰动时序）</span>
+</span></span><span class="line"><span class="cl">sudo strace -ff -ttT -p <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  -e <span class="nv">trace</span><span class="o">=</span>epoll_wait,epoll_ctl,accept4,read,write,recvfrom,sendto
+</span></span></code></pre></div><p><code>epoll_wait</code> 长时间阻塞通常是健康的空闲表现；频繁 <code>epoll_wait(...)=0</code> 或立刻返回同一个 <code>EPOLLOUT</code> 才可能是 timeout/busy loop/事件订阅错误。</p>
+<h2 id="103-go-服务的排查组合">10.3 Go 服务的排查组合</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># goroutine 是否大量卡在网络、锁或 channel</span>
+</span></span><span class="line"><span class="cl">curl -o goroutines.txt <span class="s1">&#39;http://127.0.0.1:6060/debug/pprof/goroutine?debug=2&#39;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># CPU 与执行时间线</span>
+</span></span><span class="line"><span class="cl">curl -o cpu.pprof <span class="s1">&#39;http://127.0.0.1:6060/debug/pprof/profile?seconds=30&#39;</span>
+</span></span><span class="line"><span class="cl">curl -o trace.out <span class="s1">&#39;http://127.0.0.1:6060/debug/pprof/trace?seconds=5&#39;</span>
+</span></span><span class="line"><span class="cl">go tool pprof -http<span class="o">=</span>:8081 cpu.pprof
+</span></span><span class="line"><span class="cl">go tool trace trace.out
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 容器中补查 quota throttling</span>
+</span></span><span class="line"><span class="cl">cat /sys/fs/cgroup/cpu.stat
+</span></span><span class="line"><span class="cl">cat /sys/fs/cgroup/cpu.max
+</span></span></code></pre></div><p>大量 goroutine 显示在 <code>internal/poll.(*FD).Read</code> 不一定是泄漏，它可能只是健康的闲置连接；关键要看数量是否随连接生命周期回落、fd 数是否同步增长、业务 deadline 是否生效。</p>
+<h2 id="104-常用参数">10.4 常用参数</h2>
+<table>
+<thead>
+<tr>
+<th>短参</th>
+<th>长参</th>
+<th>英文全称</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ss -l</code></td>
+<td><code>ss --listening</code></td>
+<td>listening</td>
+<td>显示监听 socket</td>
+</tr>
+<tr>
+<td><code>ss -t</code></td>
+<td><code>ss --tcp</code></td>
+<td>TCP</td>
+<td>只显示 TCP socket</td>
+</tr>
+<tr>
+<td><code>ss -n</code></td>
+<td><code>ss --numeric</code></td>
+<td>numeric</td>
+<td>不解析服务名/主机名</td>
+</tr>
+<tr>
+<td><code>ss -p</code></td>
+<td><code>ss --processes</code></td>
+<td>processes</td>
+<td>显示关联进程</td>
+</tr>
+<tr>
+<td><code>ss -s</code></td>
+<td><code>ss --summary</code></td>
+<td>summary</td>
+<td>socket 汇总</td>
+</tr>
+<tr>
+<td><code>lsof -p PID</code></td>
+<td>无统一长参</td>
+<td>list open files</td>
+<td>查看进程打开文件/socket</td>
+</tr>
+<tr>
+<td><code>strace -f</code></td>
+<td><code>strace --follow-forks</code></td>
+<td>follow forks</td>
+<td>跟踪线程/子进程</td>
+</tr>
+<tr>
+<td><code>strace -T</code></td>
+<td><code>strace --syscall-times</code></td>
+<td>syscall times</td>
+<td>显示调用耗时</td>
+</tr>
+<tr>
+<td><code>pidstat -w</code></td>
+<td>无统一长参</td>
+<td>task switching</td>
+<td>显示上下文切换</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h1 id="11-面试题">11. 面试题</h1>
+<p><strong>Q：select 的问题为什么不只是 1024 fd？</strong></p>
+<p>1024 是常见 <code>fd_set</code> 固定大小的 API/ABI 限制，扩大它只能容纳更多描述符。真正的扩展性问题是每轮都要用户态重建集合、内核复制并扫描 0 到 maxfd、返回后用户再扫描；即使只有一个 fd 就绪，工作量仍与监控集合或最大编号线性相关。poll 去掉固定位图和 maxfd 依赖，但仍每轮遍历整个 pollfd 数组，所以仍是 O(n)。</p>
+<p><strong>Q：epoll 的红黑树和 ready list 分别做什么？</strong></p>
+<p>interest tree 保存长期注册的 fd 与事件，用于 ADD/MOD/DEL 查找、去重和更新，通常 O(log n)。目标 fd 状态变化时通过等待队列回调把事件加入 ready list；epoll_wait 直接取 ready list，而不是扫描全部兴趣集合。核心优势是注册一次、按就绪状态增量通知，不是“所有操作都是 O(1)”。</p>
+<p><strong>Q：LT 和 ET 的核心差异是什么？</strong></p>
+<p>LT 在条件仍成立时持续报告，例如接收队列还有数据就会继续给 EPOLLIN；ET 只在不就绪到就绪的边沿报告。ET 收到事件后必须在非阻塞 fd 上循环 read/accept/write 到 EAGAIN，否则残留数据不会产生新边沿，连接可能永久卡住。LT 更容错，ET 可能减少重复事件但增加状态机复杂度，不能机械认为 ET 更快。</p>
+<p><strong>Q：为什么 EPOLLOUT 不能一直注册？</strong></p>
+<p>TCP 发送缓冲通常有空间，因此 socket 长时间处于可写状态；持续订阅会让 epoll 不断返回，事件循环空转。应先直接尝试写；仅当部分写或 EAGAIN 时把剩余数据放入用户态队列并订阅 EPOLLOUT，队列清空后立刻取消订阅。EPOLLOUT 只表示内核缓冲有空间，不代表对端收到数据。</p>
+<p><strong>Q：ET 下 accept 为什么也要循环到 EAGAIN？</strong></p>
+<p>监听 socket 的可读表示 accept queue 可能有连接。ET 通知一次后若只 accept 一个，队列仍非空却不会再产生 empty→nonempty 边沿，剩余连接可能一直不被处理。循环 accept 到 EAGAIN 才真正 drain 队列；使用 accept4 同时设置 NONBLOCK/CLOEXEC 可避免额外调用和竞态。</p>
+<p><strong>Q：什么是惊群？EPOLLEXCLUSIVE 与 SO_REUSEPORT 有何区别？</strong></p>
+<p>惊群是一个资源就绪唤醒大量竞争者，最终只有少数做有效工作，其余白白调度和抢锁。EPOLLEXCLUSIVE 在 epoll 等待队列层限制同一事件唤醒多个 exclusive waiter；SO_REUSEPORT 在监听 socket 层建立多个绑定同端口的 socket，让内核把新连接分流到各 worker。两者层次不同，也都不替代应用层连接状态同步。</p>
+<p><strong>Q：epoll 是异步 IO 吗？</strong></p>
+<p>不是。epoll 是 readiness 多路复用：epoll_wait 告诉应用 fd 现在可能读写，应用仍要随后调用 read/write 完成操作。异步 IO 是先提交具体 IO 请求，内核完成后从完成队列取结果。io_uring 是 Linux 上更接近后者的现代接口。</p>
+<p><strong>Q：Go net.Conn.Read 看着阻塞，为什么大量连接不需要大量线程？</strong></p>
+<p>runtime 把网络 fd 设为 nonblocking。read 遇到 EAGAIN 时只 park 当前 goroutine，并把 fd 的读等待登记到 Linux epoll；M/P 继续跑其他 goroutine。socket 就绪后 netpoller 从 epoll_wait 取事件并 goready 对应 G，再重试 read。应用 API 是阻塞式，底层是非阻塞加多路复用。</p>
+<p><strong>Q：epoll 返回很快但服务 P99 仍高，优先查什么？</strong></p>
+<p>先查事件循环是否真正获得 CPU：CPU run queue、cgroup <code>cpu.stat</code> throttling、GC、锁和调度延迟；再查 handler、TLS/编解码和下游；最后查发送队列、网络拥塞和对端读取。epoll 只解决“发现 fd 就绪”，不负责让应用 handler 更快，也不能突破 quota 和 CPU 总量。</p>
+<p><strong>Q：EMFILE 时为什么监听 fd 可能造成 busy loop？</strong></p>
+<p>连接已在 accept queue 中，所以监听 fd 持续可读；进程 fd 已满导致每次 accept 都返回 EMFILE，事件循环立刻再次被唤醒。常用预留 idle fd 技巧让服务临时 accept 并 close 一个连接以清除队首，但根本方案是提高/管理 fd 限额、限制连接和排查泄漏。</p>
+<hr>
+<h1 id="小结">小结</h1>
+<ul>
+<li>阻塞/非阻塞描述一次 IO 调用是否等待；多路复用解决很多 fd 何时再试；异步 IO 则把提交和完成分离</li>
+<li>select 的关键瓶颈是每轮复制与 O(n) 扫描，1024 只是固定 <code>fd_set</code> 的表面限制；poll 去掉容量限制但保留扫描</li>
+<li>epoll 在 <code>epoll_ctl</code> 时长期注册兴趣，在状态变化回调中增量维护 ready list，避免稀疏就绪时扫描全部连接</li>
+<li>epoll 不是魔法 O(1)：连接频繁增删、全部 fd 同时就绪、应用 handler 与网络栈仍然有真实成本</li>
+<li>LT 只要条件成立就持续提醒，容错好；ET 只报告边沿，必须对 nonblocking fd drain 到 <code>EAGAIN</code></li>
+<li><code>EPOLLOUT</code> 只在用户态有积压发送数据时订阅；<code>accept/read/write</code> 都要正确处理 EOF、EINTR、EAGAIN 和资源耗尽</li>
+<li><code>EPOLLEXCLUSIVE</code> 限制 epoll waiter 惊群，<code>SO_REUSEPORT</code> 在监听层分流；它们不是同一个机制</li>
+<li>Go 把同步 <code>net.Conn</code> API 建在 nonblocking fd、epoll、goroutine park/goready 之上，因此闲置连接不占一个内核线程</li>
+<li>排查要从 listen queue、fd 限额、epoll 事件、CPU/quota、goroutine/handler、发送队列到网络链路逐层定位</li>
+</ul>
+<p>下一篇讲 <strong>io_uring 与零拷贝</strong> —— 共享环形队列如何绕开“每次 IO 一次陷入”、<code>sendfile</code>/<code>splice</code> 各省掉哪一次拷贝，以及 Go 的 <code>io.Copy</code> 在什么条件下走到内核零拷贝路径。</p>
+<hr>
+<h1 id="12-epoll-的生命周期陷阱">12. epoll 的生命周期陷阱</h1>
+<h2 id="121-epoll-监控的是打开文件不只是整数-fd">12.1 epoll 监控的是打开文件，不只是整数 fd</h2>
+<p>fd 是进程表下标，可以被关闭后迅速复用：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">fd 42 -&gt; socket A
+</span></span><span class="line"><span class="cl">close(42)
+</span></span><span class="line"><span class="cl">新连接 open -&gt; 又得到 fd 42 -&gt; socket B
+</span></span></code></pre></div><p>应用事件结构里若只保存整数 42，一个延迟处理的旧事件可能被错认为属于 B。成熟事件循环会给连接对象加 generation/version，或让事件携带稳定对象指针，并在关闭时严格控制生命周期。</p>
+<p>内核 epoll 兴趣项与 open file description 关联，<code>dup()</code> 出来的多个 fd 可能引用同一个底层 file。关闭一个 fd 不一定立即删除所有关联语义；应用不应依赖“close 任意副本就自动清理一切”，而要显式 <code>EPOLL_CTL_DEL</code>/统一 owner 并查阅 epoll 文档。</p>
+<h2 id="122-close-与并发事件处理">12.2 close 与并发事件处理</h2>
+<p>一个线程处理 fd，另一个线程 close 同一 fd，会引入：</p>
+<ul>
+<li>旧事件仍在用户态 events 数组</li>
+<li>fd number 被新对象复用</li>
+<li>当前 read/write 返回错误或作用于错误生命周期</li>
+<li>连接对象被 free 后事件仍持有指针</li>
+</ul>
+<p>常见设计是让每条连接归属一个事件循环线程，其他线程通过任务队列请求关闭；或用引用计数/epoch/generation 延迟回收。<code>EPOLLONESHOT</code> 可以避免同一 fd 同时被多个 worker 消费事件，但不能自动解决对象内存生命周期。</p>
+<h2 id="123-epollhup-与-epollerr-不要漏">12.3 EPOLLHUP 与 EPOLLERR 不要漏</h2>
+<p>错误和 hangup 往往即使未显式订阅也会报告。处理事件时不能只看 <code>EPOLLIN</code>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="kt">uint32_t</span> <span class="n">e</span> <span class="o">=</span> <span class="n">events</span><span class="p">[</span><span class="n">i</span><span class="p">].</span><span class="n">events</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="k">if</span> <span class="p">(</span><span class="n">e</span> <span class="o">&amp;</span> <span class="n">EPOLLERR</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="kt">int</span> <span class="n">err</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="n">socklen_t</span> <span class="n">len</span> <span class="o">=</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">err</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">    <span class="n">getsockopt</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span> <span class="n">SOL_SOCKET</span><span class="p">,</span> <span class="n">SO_ERROR</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">err</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">len</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">    <span class="n">close_connection</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span> <span class="n">err</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">    <span class="k">continue</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="k">if</span> <span class="p">(</span><span class="n">e</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">EPOLLIN</span> <span class="o">|</span> <span class="n">EPOLLRDHUP</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl">    <span class="n">drain_read</span><span class="p">(</span><span class="n">fd</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="k">if</span> <span class="p">(</span><span class="n">e</span> <span class="o">&amp;</span> <span class="n">EPOLLOUT</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="n">flush_write</span><span class="p">(</span><span class="n">fd</span><span class="p">);</span>
+</span></span></code></pre></div><p><code>EPOLLRDHUP</code> 对 TCP 半关闭很有用：对端关闭写方向，本端仍可能需要发送剩余响应。最终仍要以 <code>read()==0</code> 确认 EOF，并按协议决定半关闭还是完全关闭。</p>
+<hr>
+<h1 id="13-公平性与背压事件循环不是越-drain-越好">13. 公平性与背压：事件循环不是越 drain 越好</h1>
+<h2 id="131-et-的-drain-与单连接霸占">13.1 ET 的 drain 与单连接霸占</h2>
+<p>ET 要读到 EAGAIN，但如果一个连接持续有数据，理论上可能一直读不到 EAGAIN，让其他 fd 饥饿。工程上常设置单轮预算：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">每个 fd 每轮最多：
+</span></span><span class="line"><span class="cl">  读 64KB，或
+</span></span><span class="line"><span class="cl">  解析 100 条消息，或
+</span></span><span class="line"><span class="cl">  占用 200us CPU
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">达到预算仍有工作：
+</span></span><span class="line"><span class="cl">  把连接加入用户态 runnable queue
+</span></span><span class="line"><span class="cl">  先处理其他 ready fd
+</span></span></code></pre></div><p>这不是违反 ET，而是应用要保证自己会再次处理该连接；可能结合 oneshot/rearm、内部队列或读取上限。低延迟服务要同时考虑吞吐和 event-loop fairness。</p>
+<h2 id="132-接收背压">13.2 接收背压</h2>
+<p>如果应用不断从 socket 读入用户态队列，但业务消费者跟不上，内存会无限增长。背压可分层实施：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">用户队列达到 high watermark
+</span></span><span class="line"><span class="cl">  -&gt; 暂停订阅/处理 EPOLLIN
+</span></span><span class="line"><span class="cl">  -&gt; 让内核 receive buffer 填满
+</span></span><span class="line"><span class="cl">  -&gt; TCP advertised window 缩小
+</span></span><span class="line"><span class="cl">  -&gt; 对端发送被自然限制
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">队列下降到 low watermark
+</span></span><span class="line"><span class="cl">  -&gt; 恢复 EPOLLIN
+</span></span></code></pre></div><p>高/低两个阈值避免在边界反复开关。停止读取并不是丢包，TCP 会通过窗口施加流控；但停太久会增加对端延迟和超时，必须有连接级上限与关闭策略。</p>
+<h2 id="133-发送背压">13.3 发送背压</h2>
+<p><code>write</code> 返回成功只表示字节进入本机发送缓冲，不代表已到对端。若对端读取慢，应用用户态发送队列持续增长：</p>
+<ul>
+<li>设置每连接 pending bytes 上限</li>
+<li>超过上限拒绝新消息、丢弃可丢数据或关闭慢客户端</li>
+<li>仅有 pending 数据时订阅 EPOLLOUT</li>
+<li>对协议设置写 deadline</li>
+</ul>
+<p>WebSocket 推送、日志订阅和消息广播尤其容易被一个慢消费者拖垮。零拷贝也不会消除发送队列背压。</p>
+<hr>
+<h1 id="14-触发模式之外的设计选择">14. 触发模式之外的设计选择</h1>
+<h2 id="141-单事件循环还是多事件循环">14.1 单事件循环还是多事件循环</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">单 loop：
+</span></span><span class="line"><span class="cl">  一个线程管理全部连接
+</span></span><span class="line"><span class="cl">  优点：状态简单、无跨线程锁
+</span></span><span class="line"><span class="cl">  缺点：一个慢 handler 阻塞所有连接，单核 CPU 上限
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">多 loop：
+</span></span><span class="line"><span class="cl">  每个线程一个 epoll，连接分片
+</span></span><span class="line"><span class="cl">  优点：利用多核、局部性好
+</span></span><span class="line"><span class="cl">  缺点：负载均衡、跨 loop 消息和连接迁移复杂
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">acceptor + workers：
+</span></span><span class="line"><span class="cl">  独立线程 accept，再把新 fd 分发到 worker epoll
+</span></span><span class="line"><span class="cl">  优点：职责清晰
+</span></span><span class="line"><span class="cl">  缺点：分发队列和跨 CPU 移交有成本
+</span></span></code></pre></div><p>选择应基于 handler 是否 CPU 重、连接长短、NUMA 和负载均衡。不能用“epoll 单线程能十万连接”推导出“整个服务只需要一个线程”。</p>
+<h2 id="142-reactor-与-proactor">14.2 Reactor 与 Proactor</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">Reactor（epoll）：
+</span></span><span class="line"><span class="cl">  内核通知 readiness
+</span></span><span class="line"><span class="cl">  应用收到事件后执行 read/write
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">Proactor（完成模型）：
+</span></span><span class="line"><span class="cl">  应用提交具体 read/write
+</span></span><span class="line"><span class="cl">  内核完成后通知结果
+</span></span></code></pre></div><p>两种模型的状态机不同。Reactor 要在 EAGAIN、partial IO、兴趣集合间管理状态；Proactor 要管理请求生命周期、completion、取消和 buffer 生命周期。io_uring 支持完成模型，也能做 poll/readiness 操作，因此现实实现可能混合两者。</p>
+<hr>
+<h1 id="15-追加面试题">15. 追加面试题</h1>
+<p><strong>Q：fd 被 close 后复用，epoll 程序可能出现什么 bug？</strong></p>
+<p>用户态 events 数组中的旧事件仍携带原 fd number；该数字可能已指向新 socket，延迟 handler 若只按整数索引查连接，会把旧事件作用到新连接。应统一事件 loop 管理关闭、用 generation/version 校验连接对象并安全延迟回收，不能把 fd number 当永久身份。</p>
+<p><strong>Q：ET 为什么读到 EAGAIN 仍可能需要公平预算？</strong></p>
+<p>若连接持续到数据，drain 循环可能长时间不遇 EAGAIN，从而霸占事件线程。应用应限制单连接每轮字节、消息或 CPU 时间，并确保剩余工作进入自己的 runnable 队列或正确 rearm。ET 规定不遗漏边沿，不代表允许一个连接无限占用事件循环。</p>
+<p><strong>Q：网络服务如何把背压传回客户端？</strong></p>
+<p>业务队列达到 high watermark 后暂停继续读取，让内核 receive buffer 填满，TCP 窗口缩小并限制发送端；队列降至 low watermark 再恢复。发送方向则限制每连接用户态 pending bytes，慢客户端超过阈值时拒绝、丢弃或关闭。背压必须贯穿 socket、应用队列与下游，不能只扩大 buffer。</p>
+<p><strong>Q：EPOLLERR、EPOLLHUP 为什么不能只当成“关闭后忽略”？</strong></p>
+<p>它们可能与可读/可写同时出现，接收缓冲中仍有最后数据，半关闭时本端也可能仍要发送。应用应读取 <code>SO_ERROR</code>、drain 可读数据、用 read=0 判断 EOF，再按协议关闭。直接忽略会产生 busy loop，直接 close 也可能丢最后数据。</p>
+<p><strong>Q：Reactor 与 Proactor 的区别是什么？</strong></p>
+<p>Reactor 通知 fd 已就绪，应用随后调用 read/write；epoll 是典型 readiness reactor。Proactor 由应用先提交 IO，内核完成具体操作后返回 completion 和结果。前者管理 EAGAIN 和兴趣状态，后者管理请求、buffer、取消与完成生命周期。io_uring 更接近 completion 模型，但也支持 poll，现实系统可混用。</p>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2026-08-12</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/linux/">linux</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/linux/linux_32_io_uring%E4%B8%8E%E9%9B%B6%E6%8B%B7%E8%B4%9D/" class="prev" rel="prev" title="Linux-32 io_uring 与零拷贝：少陷入一次，少复制一次"><i class="fas fa-angle-left fa-fw"></i>Linux-32 io_uring 与零拷贝：少陷入一次，少复制一次</a>
+            <a href="/posts/linux/linux_30_%E6%96%87%E4%BB%B6%E7%B3%BB%E7%BB%9F%E4%B8%8Einode%E6%8A%BD%E8%B1%A1%E7%9A%84%E5%BF%85%E7%84%B6%E6%80%A7/" class="next" rel="next" title="Linux-30 文件系统与 inode 抽象的必然性">Linux-30 文件系统与 inode 抽象的必然性<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2026-08-12T08:30:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Linux-31 IO 模型演进：阻塞 → epoll"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

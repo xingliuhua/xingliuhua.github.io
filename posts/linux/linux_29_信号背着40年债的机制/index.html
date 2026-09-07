@@ -1,0 +1,969 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>Linux-29 信号：背着 40 年债的机制 - xingliuhua博客</title><meta name="Description" content="信号为什么天生是异步控制流、早期不可靠信号为什么会丢、进程与多线程下信号到底交给谁、EINTR 与 SA_RESTART 怎样改变系统调用语义、signalfd 如何把信号纳入事件循环，以及 Go signal.Notify 如何把信号转成 channel 事件。"><meta property="og:title" content="Linux-29 信号：背着 40 年债的机制" />
+<meta property="og:description" content="信号为什么天生是异步控制流、早期不可靠信号为什么会丢、进程与多线程下信号到底交给谁、EINTR 与 SA_RESTART 怎样改变系统调用语义、signalfd 如何把信号纳入事件循环，以及 Go signal.Notify 如何把信号转成 channel 事件。" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/linux/linux_29_%E4%BF%A1%E5%8F%B7%E8%83%8C%E7%9D%8040%E5%B9%B4%E5%80%BA%E7%9A%84%E6%9C%BA%E5%88%B6/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2026-08-12T09:30:00+08:00" />
+<meta property="article:modified_time" content="2026-08-12T09:30:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="Linux-29 信号：背着 40 年债的机制"/>
+<meta name="twitter:description" content="信号为什么天生是异步控制流、早期不可靠信号为什么会丢、进程与多线程下信号到底交给谁、EINTR 与 SA_RESTART 怎样改变系统调用语义、signalfd 如何把信号纳入事件循环，以及 Go signal.Notify 如何把信号转成 channel 事件。"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/linux/linux_29_%E4%BF%A1%E5%8F%B7%E8%83%8C%E7%9D%8040%E5%B9%B4%E5%80%BA%E7%9A%84%E6%9C%BA%E5%88%B6/" /><link rel="prev" href="https://xingliuhua.github.io/posts/linux/linux_30_%E6%96%87%E4%BB%B6%E7%B3%BB%E7%BB%9F%E4%B8%8Einode%E6%8A%BD%E8%B1%A1%E7%9A%84%E5%BF%85%E7%84%B6%E6%80%A7/" /><link rel="next" href="https://xingliuhua.github.io/posts/linux/linux_28_%E5%90%8C%E6%AD%A5%E5%8E%9F%E8%AF%ADfutex%E4%B8%BA%E4%BB%80%E4%B9%88%E8%A2%AB%E5%8F%91%E6%98%8E/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Linux-29 信号：背着 40 年债的机制",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_29_%E4%BF%A1%E5%8F%B7%E8%83%8C%E7%9D%8040%E5%B9%B4%E5%80%BA%E7%9A%84%E6%9C%BA%E5%88%B6\/"
+        },"genre": "posts","keywords": "linux","wordcount":  11005 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_29_%E4%BF%A1%E5%8F%B7%E8%83%8C%E7%9D%8040%E5%B9%B4%E5%80%BA%E7%9A%84%E6%9C%BA%E5%88%B6\/","datePublished": "2026-08-12T09:30:00+08:00","dateModified": "2026-08-12T09:30:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "信号为什么天生是异步控制流、早期不可靠信号为什么会丢、进程与多线程下信号到底交给谁、EINTR 与 SA_RESTART 怎样改变系统调用语义、signalfd 如何把信号纳入事件循环，以及 Go signal.Notify 如何把信号转成 channel 事件。"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.png"
+        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
+        data-sizes="auto"
+        alt="/logo.png"
+        title="/logo.png" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">Linux-29 信号：背着 40 年债的机制</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2026-08-12">2026-08-12</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 11005 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 22 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-信号是一种异步控制流">1. 信号是一种异步控制流</a>
+      <ol>
+        <li><a href="#11-不是另起一个回调线程">1.1 不是“另起一个回调线程”</a></li>
+        <li><a href="#12-从产生到处理四个阶段">1.2 从产生到处理：四个阶段</a></li>
+        <li><a href="#13-信号从哪里来">1.3 信号从哪里来</a></li>
+        <li><a href="#14-默认动作有四类">1.4 默认动作有四类</a></li>
+      </ol>
+    </li>
+    <li><a href="#2-40-年债不可靠信号为什么会丢">2. 40 年债：不可靠信号为什么会丢</a>
+      <ol>
+        <li><a href="#21-传统信号是位不是队列">2.1 传统信号是“位”，不是队列</a></li>
+        <li><a href="#22-早期-handler-还有更糟的竞态">2.2 早期 handler 还有更糟的竞态</a></li>
+        <li><a href="#23-实时信号队列化的修补">2.3 实时信号：队列化的修补</a></li>
+        <li><a href="#24-sigchld-是合并语义的典型例子">2.4 <code>SIGCHLD</code> 是合并语义的典型例子</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-信号掩码能延后不能处理掉">3. 信号掩码：能延后，不能处理掉</a>
+      <ol>
+        <li><a href="#31-blockpending-与-ignore-不同">3.1 block、pending 与 ignore 不同</a></li>
+        <li><a href="#32-mask-是线程属性不是进程全局属性">3.2 mask 是线程属性，不是进程全局属性</a></li>
+        <li><a href="#33-sigprocmask-与-pthread_sigmask">3.3 <code>sigprocmask</code> 与 <code>pthread_sigmask</code></a></li>
+      </ol>
+    </li>
+    <li><a href="#4-进程与线程信号究竟交给谁">4. 进程与线程：信号究竟交给谁</a>
+      <ol>
+        <li><a href="#41-两类来源两套选择规则">4.1 两类来源，两套选择规则</a></li>
+        <li><a href="#42-同步异常不能随便挪给别的线程">4.2 同步异常不能随便挪给别的线程</a></li>
+        <li><a href="#43-多线程服务的反模式">4.3 多线程服务的反模式</a></li>
+      </ol>
+    </li>
+    <li><a href="#5-handler-的铁律只做-async-signal-safe-的事">5. handler 的铁律：只做 async-signal-safe 的事</a>
+      <ol>
+        <li><a href="#51-为什么-printf-都不安全">5.1 为什么 <code>printf</code> 都不安全</a></li>
+        <li><a href="#52-最小-handler标志或-self-pipe">5.2 最小 handler：标志或 self-pipe</a></li>
+        <li><a href="#53-handler-还应保存-errno">5.3 handler 还应保存 <code>errno</code></a></li>
+      </ol>
+    </li>
+    <li><a href="#6-eintr-与-sa_restart系统调用为什么会无故失败">6. EINTR 与 SA_RESTART：系统调用为什么会“无故失败”</a>
+      <ol>
+        <li><a href="#61-被打断的阻塞调用">6.1 被打断的阻塞调用</a></li>
+        <li><a href="#62-sa_restart-不是万能修复">6.2 <code>SA_RESTART</code> 不是万能修复</a></li>
+        <li><a href="#63-timeout--eintr-的常见-bug">6.3 timeout + EINTR 的常见 bug</a></li>
+        <li><a href="#64-sigpipe写失败为什么还能杀进程">6.4 <code>SIGPIPE</code>：写失败为什么还能杀进程</a></li>
+      </ol>
+    </li>
+    <li><a href="#7-用同步接口驯服异步信号">7. 用同步接口驯服异步信号</a>
+      <ol>
+        <li><a href="#71-sigwaitinfo推荐的多线程模型">7.1 <code>sigwaitinfo</code>：推荐的多线程模型</a></li>
+        <li><a href="#72-signalfd让信号成为一个-fd">7.2 <code>signalfd</code>：让信号成为一个 fd</a></li>
+        <li><a href="#73-self-pipesigwaitsignalfd-怎么选">7.3 self-pipe、sigwait、signalfd 怎么选</a></li>
+      </ol>
+    </li>
+    <li><a href="#8-gosignalnotify-如何把信号变成-channel">8. Go：signal.Notify 如何把信号变成 channel</a>
+      <ol>
+        <li><a href="#81-ossignal-的接口语义">8.1 <code>os/signal</code> 的接口语义</a></li>
+        <li><a href="#82-channel-缓冲不是可选装饰">8.2 channel 缓冲不是可选装饰</a></li>
+        <li><a href="#83-notifycontext-的第二次-ctrl-c-语义">8.3 <code>NotifyContext</code> 的第二次 Ctrl-C 语义</a></li>
+        <li><a href="#84-runtime-对同步故障信号的特殊处理">8.4 runtime 对同步故障信号的特殊处理</a></li>
+        <li><a href="#85-go-网络服务的优雅退出骨架">8.5 Go 网络服务的优雅退出骨架</a></li>
+      </ol>
+    </li>
+    <li><a href="#9-容器里的-pid-1信号与僵尸进程的双重陷阱">9. 容器里的 PID 1：信号与僵尸进程的双重陷阱</a>
+      <ol>
+        <li><a href="#91-pid-1-的默认信号语义不同">9.1 PID 1 的默认信号语义不同</a></li>
+        <li><a href="#92-shell-作为-entrypoint-会吞错转发信号">9.2 shell 作为 entrypoint 会吞/错转发信号</a></li>
+        <li><a href="#93-pid-1-还必须回收孤儿子进程">9.3 PID 1 还必须回收孤儿子进程</a></li>
+        <li><a href="#94-编排器的终止窗口">9.4 编排器的终止窗口</a></li>
+      </ol>
+    </li>
+    <li><a href="#10-线上排查信号发生了什么">10. 线上排查：信号发生了什么</a>
+      <ol>
+        <li><a href="#101-先确认进程有没有活着有没有收到">10.1 先确认进程有没有活着、有没有收到</a></li>
+        <li><a href="#102-看信号是否打断了系统调用">10.2 看信号是否打断了系统调用</a></li>
+        <li><a href="#103-core-dump-与崩溃信号">10.3 core dump 与崩溃信号</a></li>
+        <li><a href="#104-一套服务信号排查顺序">10.4 一套服务信号排查顺序</a></li>
+      </ol>
+    </li>
+    <li><a href="#11-常用命令知识点扩展">11. 常用命令知识点扩展</a>
+      <ol>
+        <li><a href="#111-信号命令">11.1 信号命令</a></li>
+        <li><a href="#112-信号选择表">11.2 信号选择表</a></li>
+      </ol>
+    </li>
+    <li><a href="#12-面试题">12. 面试题</a></li>
+    <li><a href="#小结">小结</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><p>前一篇的 futex 把「等某个内存值变化」变成了可控的同步协议。这一篇看 Linux 里更古老、也更不规整的一套通知机制：<strong>信号（signal）</strong>。</p>
+<p>信号最初诞生于 Unix 早期，目标是让终端、内核和另一个进程能对正在运行的程序说一句极短的话：停止、继续、退出、子进程结束、定时器到了。它的代价是：这句话可以在<strong>任意指令之间</strong>插进来，而且早年的信号甚至不排队。</p>
+<p>今天几乎每个服务都要处理 <code>SIGTERM</code>，每个 shell 都依赖 <code>SIGINT</code> 和 <code>SIGCHLD</code>，每个网络程序都可能遇到 <code>EINTR</code>。但「捕获一个信号」远不等于调用一次普通回调。</p>
+<p>先看五个问题：</p>
+<ol>
+<li>信号为什么不是函数调用？它在程序执行的哪个时刻真正运行？</li>
+<li>普通信号为什么会丢，而实时信号为什么不会？</li>
+<li>一个多线程进程收到 <code>SIGTERM</code> 后，究竟由哪个线程执行处理函数？</li>
+<li><code>read</code> 被信号打断为什么会返回 <code>EINTR</code>？<code>SA_RESTART</code> 为什么又不能彻底解决问题？</li>
+<li>Go 的 <code>signal.Notify</code> 如何把异步信号变成可 <code>select</code> 的 channel 事件？容器里的 PID 1 又为什么特别容易出坑？</li>
+</ol>
+<hr>
+<h1 id="1-信号是一种异步控制流">1. 信号是一种异步控制流</h1>
+<h2 id="11-不是另起一个回调线程">1.1 不是“另起一个回调线程”</h2>
+<p>普通函数调用有明确的控制流：当前函数执行到 <code>call</code>，压栈，跳转，返回。信号完全不同：</p>
+<pre tabindex="0"><code>正常执行：
+    instruction A -&gt; instruction B -&gt; instruction C -&gt; ...
+
+信号到达后：
+    instruction A -&gt; instruction B -&gt; [内核选择安全返回点]
+                                    -&gt; handler()
+                                    -&gt; 回到原先上下文继续
+</code></pre><p>处理函数通常在<strong>被选中的目标线程上下文中运行</strong>，不创建一个专门线程。内核保存该线程被中断时的寄存器、栈和信号掩码，修改用户态返回现场；线程从内核返回用户态时，先执行用户注册的 handler，handler 返回后再恢复原上下文。</p>
+<p>所以 signal handler 本质上是一次<strong>异步插入的控制流跳转</strong>。它可以打断任何普通代码，这决定了它不能随意调用大多数库函数，也不能假设某个全局状态正好一致。</p>
+<h2 id="12-从产生到处理四个阶段">1.2 从产生到处理：四个阶段</h2>
+<p>把信号分成四个阶段，很多混乱会消失：</p>
+<pre tabindex="0"><code>① generation（产生）
+   kill(2)、终端 Ctrl-C、硬件异常、定时器、子进程退出、内核事件
+
+② pending（挂起）
+   信号已到达目标进程/线程，但暂时不能递送
+
+③ delivery（递送）
+   内核选择一个目标线程，在合适的用户态返回点安排默认动作或 handler
+
+④ disposition（处置）
+   默认终止/忽略/停止/继续，或执行用户安装的 handler
+</code></pre><p>「发送信号成功」通常只意味着 ① 成功，不代表对方已经做完 ④。<code>kill(pid, SIGTERM)</code> 返回 0，表示内核接受了请求；目标进程可能还没获得 CPU、信号可能被阻塞，或 handler 正在排队等待执行。</p>
+<h2 id="13-信号从哪里来">1.3 信号从哪里来</h2>
+<table>
+<thead>
+<tr>
+<th>来源</th>
+<th>例子</th>
+<th>典型信号</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>另一个进程</td>
+<td><code>kill</code>, <code>sigqueue</code>, <code>pkill</code></td>
+<td><code>SIGTERM</code>, <code>SIGUSR1</code></td>
+</tr>
+<tr>
+<td>终端驱动</td>
+<td>Ctrl-C、Ctrl-Z、终端断开</td>
+<td><code>SIGINT</code>, <code>SIGTSTP</code>, <code>SIGHUP</code></td>
+</tr>
+<tr>
+<td>内核异常</td>
+<td>非法地址、除零、非法指令</td>
+<td><code>SIGSEGV</code>, <code>SIGFPE</code>, <code>SIGILL</code></td>
+</tr>
+<tr>
+<td>子进程状态变化</td>
+<td>exit、stop、continue</td>
+<td><code>SIGCHLD</code></td>
+</tr>
+<tr>
+<td>定时器</td>
+<td><code>alarm</code>, POSIX timer</td>
+<td><code>SIGALRM</code>, realtime signal</td>
+</tr>
+<tr>
+<td>资源限制</td>
+<td>CPU 时间、文件大小</td>
+<td><code>SIGXCPU</code>, <code>SIGXFSZ</code></td>
+</tr>
+<tr>
+<td>管道/socket</td>
+<td>向无人读取的一端写</td>
+<td><code>SIGPIPE</code></td>
+</tr>
+</tbody>
+</table>
+<p>同一个 signal number 可以有不同来源。<code>SIGSEGV</code> 既可能来自真实硬件页错误，也可能来自另一个进程的 <code>kill -SEGV</code>；诊断时要结合 <code>siginfo_t</code> 的 <code>si_code</code> 判断。</p>
+<h2 id="14-默认动作有四类">1.4 默认动作有四类</h2>
+<pre tabindex="0"><code>Term：终止进程
+Core：终止并尝试产生 core dump
+Stop：停止进程（不能被捕获或忽略的 SIGSTOP）
+Cont：继续已停止进程（SIGCONT）
+Ign ：默认忽略
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="nb">kill</span> -l
+</span></span><span class="line"><span class="cl"><span class="c1"># 列出当前平台的信号编号和名字</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">man <span class="m">7</span> signal
+</span></span><span class="line"><span class="cl"><span class="c1"># 最重要的完整参考：默认动作、可捕获性、语义差异</span>
+</span></span></code></pre></div><p>信号编号不是跨 Unix 的稳定 ABI；Linux、macOS、BSD 的编号和实时信号范围都可能不同。应用代码应使用 <code>SIGTERM</code> 等符号，不应硬编码数字。</p>
+<hr>
+<h1 id="2-40-年债不可靠信号为什么会丢">2. 40 年债：不可靠信号为什么会丢</h1>
+<h2 id="21-传统信号是位不是队列">2.1 传统信号是“位”，不是队列</h2>
+<p>传统 Unix 信号设计中，每个信号类型在 pending 集合里只占一个 bit：</p>
+<pre tabindex="0"><code>SIGUSR1 pending bit：0 / 1
+
+发送 SIGUSR1 三次：
+0 -&gt; 1 -&gt; 1 -&gt; 1
+
+接收方解除阻塞后：
+只会看到一次 SIGUSR1
+</code></pre><p>这叫 <strong>coalescing（合并）</strong>。它不是内核偶然丢消息，而是传统信号从设计上只表达「这种事情至少发生过一次」，不表达发生了几次。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 示意：连续发很多次，handler 次数通常远少于发送次数</span>
+</span></span><span class="line"><span class="cl"><span class="k">for</span> i in <span class="k">$(</span>seq <span class="m">1</span> 1000<span class="k">)</span><span class="p">;</span> <span class="k">do</span> <span class="nb">kill</span> -USR1 <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span><span class="p">;</span> <span class="k">done</span>
+</span></span></code></pre></div><p>因此绝不能用普通 <code>SIGUSR1</code> 实现「每个任务一条通知」或「准确计数 1000 次事件」。它适合幂等的状态通知：配置需要重载、该退出了、子进程状态可能变化。</p>
+<h2 id="22-早期-handler-还有更糟的竞态">2.2 早期 handler 还有更糟的竞态</h2>
+<p>早期 System V 风格信号递送时会把 handler 重置为默认动作。程序必须在 handler 内重新安装；在「handler 返回」与「重新安装」的窗口中，同类信号可能触发默认动作。这就是历史上所谓“不可靠信号”的重要来源。</p>
+<p>BSD 后来引入了保留 handler、自动阻塞正在处理的信号等更合理语义。POSIX 用 <code>sigaction()</code> 统一了现代接口。今天不要用历史接口 <code>signal()</code> 写严肃程序：不同 libc/标准模式下它可能映射到不同语义。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="c1">// 不推荐：历史语义与可移植性陷阱
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">signal</span><span class="p">(</span><span class="n">SIGTERM</span><span class="p">,</span> <span class="n">handler</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// 推荐：明确 flags、掩码和 handler 形式
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">struct</span> <span class="n">sigaction</span> <span class="n">sa</span> <span class="o">=</span> <span class="p">{</span><span class="mi">0</span><span class="p">};</span>
+</span></span><span class="line"><span class="cl"><span class="n">sa</span><span class="p">.</span><span class="n">sa_handler</span> <span class="o">=</span> <span class="n">handler</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="n">sigemptyset</span><span class="p">(</span><span class="o">&amp;</span><span class="n">sa</span><span class="p">.</span><span class="n">sa_mask</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="n">sa</span><span class="p">.</span><span class="n">sa_flags</span> <span class="o">=</span> <span class="n">SA_RESTART</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="n">sigaction</span><span class="p">(</span><span class="n">SIGTERM</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">sa</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">);</span>
+</span></span></code></pre></div><h2 id="23-实时信号队列化的修补">2.3 实时信号：队列化的修补</h2>
+<p>POSIX realtime signals 通常从 <code>SIGRTMIN</code> 到 <code>SIGRTMAX</code>（Linux 常见 34~64，实际范围受 libc/线程库影响）。它们有两个关键不同：</p>
+<ol>
+<li><strong>每次发送会排队</strong>，不与同号信号合并</li>
+<li>可携带一个整数或指针值（<code>sigqueue()</code> 的 <code>sigval</code>）</li>
+</ol>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="k">union</span> <span class="n">sigval</span> <span class="n">value</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="n">value</span><span class="p">.</span><span class="n">sival_int</span> <span class="o">=</span> <span class="mi">42</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="n">sigqueue</span><span class="p">(</span><span class="n">pid</span><span class="p">,</span> <span class="n">SIGRTMIN</span><span class="p">,</span> <span class="n">value</span><span class="p">);</span>
+</span></span></code></pre></div><p>同类实时信号按发送顺序递送；不同实时信号之间通常按编号优先级递送。排队需要内核资源，因此受 <code>RLIMIT_SIGPENDING</code> 等限制，满了 <code>sigqueue</code> 可失败为 <code>EAGAIN</code>。</p>
+<p>实时信号修复了“不能计数”的问题，却没有修复信号最根本的限制：handler 仍然异步执行，仍然只能调用 async-signal-safe 函数。高吞吐消息传递应使用 socket、pipe、eventfd、共享内存队列或 io_uring，不该把 RT signal 当 RPC 总线。</p>
+<h2 id="24-sigchld-是合并语义的典型例子">2.4 <code>SIGCHLD</code> 是合并语义的典型例子</h2>
+<p>多个子进程可以在同一时间段退出，父进程也许只收到一个 <code>SIGCHLD</code>。正确 handler 不能只 <code>waitpid</code> 一次：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="k">static</span> <span class="kt">void</span> <span class="nf">reap_children</span><span class="p">(</span><span class="kt">int</span> <span class="n">signo</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="kt">int</span> <span class="n">saved_errno</span> <span class="o">=</span> <span class="n">errno</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="k">while</span> <span class="p">(</span><span class="n">waitpid</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="n">WNOHANG</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="c1">// 回收所有已经退出的子进程
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="n">errno</span> <span class="o">=</span> <span class="n">saved_errno</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><code>SIGCHLD</code> 只是“至少有一个子进程状态变了”的提示；<code>waitpid</code> 才是状态的权威来源。这是处理传统信号的通用模型：<strong>把信号当作唤醒，真实状态从可查询的内核对象重新读取。</strong></p>
+<hr>
+<h1 id="3-信号掩码能延后不能处理掉">3. 信号掩码：能延后，不能处理掉</h1>
+<h2 id="31-blockpending-与-ignore-不同">3.1 block、pending 与 ignore 不同</h2>
+<p>每个线程都有一份 signal mask，决定哪些可递送信号暂时被阻塞：</p>
+<pre tabindex="0"><code>未阻塞 + 未忽略：到达后可被递送
+阻塞：            到达后标为 pending，解除阻塞后再递送
+忽略：            通常直接丢弃，不进入可观察的处理路径
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="n">sigset_t</span> <span class="n">set</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="n">sigemptyset</span><span class="p">(</span><span class="o">&amp;</span><span class="n">set</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="n">sigaddset</span><span class="p">(</span><span class="o">&amp;</span><span class="n">set</span><span class="p">,</span> <span class="n">SIGTERM</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="n">pthread_sigmask</span><span class="p">(</span><span class="n">SIG_BLOCK</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">set</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// critical section：SIGTERM 不会在这里运行 handler
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl"><span class="n">pthread_sigmask</span><span class="p">(</span><span class="n">SIG_UNBLOCK</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">set</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">);</span>
+</span></span></code></pre></div><p>不能阻塞、捕获或忽略：<code>SIGKILL</code> 和 <code>SIGSTOP</code>。这是内核留给管理员和作业控制的最后控制权；若进程能屏蔽 <code>SIGKILL</code>，失控进程就无法收拾。</p>
+<h2 id="32-mask-是线程属性不是进程全局属性">3.2 mask 是线程属性，不是进程全局属性</h2>
+<p>单线程时代「进程屏蔽信号」的说法还勉强可用。在线程模型中，<strong>mask 属于线程</strong>：</p>
+<pre tabindex="0"><code>同一进程：
+T1 mask：block SIGTERM
+T2 mask：allow SIGTERM
+
+进程定向 SIGTERM 到达
+-&gt; 内核可以选择 T2 递送
+</code></pre><p>新线程通常继承创建它的线程的 mask。因此常见可靠模式是：主线程在创建 worker 前先 block 相关信号，让所有线程都继承 block；再由一个专门线程用 <code>sigwaitinfo()</code> 同步消费。这会在第 6 章展开。</p>
+<h2 id="33-sigprocmask-与-pthread_sigmask">3.3 <code>sigprocmask</code> 与 <code>pthread_sigmask</code></h2>
+<p>在多线程程序中，用 <code>pthread_sigmask()</code> 明确表达线程语义。Linux 上 <code>sigprocmask()</code> 也会作用于调用线程，但 POSIX 对多线程程序推荐 pthread 版本，避免可移植性和意图不清的问题。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 查看进程状态中的屏蔽/挂起/忽略/捕获信号集合</span>
+</span></span><span class="line"><span class="cl">cat /proc/<span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span>/status <span class="p">|</span> grep <span class="s1">&#39;^Sig&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># SigPnd：线程私有 pending</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># ShdPnd：进程共享 pending</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># SigBlk：调用线程 mask（/proc/PID/status 视图）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># SigIgn：被忽略</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># SigCgt：安装了 handler</span>
+</span></span></code></pre></div><p>这几个字段是位图十六进制表示。要按线程看，用 <code>/proc/$PID/task/$TID/status</code>；不要把一个主线程的 <code>SigBlk</code> 当成整个多线程进程的完整真相。</p>
+<hr>
+<h1 id="4-进程与线程信号究竟交给谁">4. 进程与线程：信号究竟交给谁</h1>
+<h2 id="41-两类来源两套选择规则">4.1 两类来源，两套选择规则</h2>
+<p>Linux 区分：</p>
+<pre tabindex="0"><code>process-directed（进程定向）：
+  kill(pid, sig)、终端 Ctrl-C、PID 1 收到 SIGTERM
+  -&gt; 内核从“未阻塞此信号”的任意线程中选择一个递送
+
+thread-directed（线程定向）：
+  pthread_kill(thread, sig)、硬件同步异常（如某线程除零）
+  -&gt; 必须递送给那个指定/触发异常的线程
+</code></pre><p>所以 <code>kill(getpid(), SIGUSR1)</code> 不保证当前线程处理；<code>pthread_kill(pthread_self(), SIGUSR1)</code> 才是明确线程定向。后者也不是“安全回调”：目标线程仍会异步进入 handler。</p>
+<h2 id="42-同步异常不能随便挪给别的线程">4.2 同步异常不能随便挪给别的线程</h2>
+<p><code>SIGSEGV</code>、<code>SIGFPE</code>、<code>SIGILL</code> 常来自一条具体指令的同步异常。它们必须在触发线程上处理，因为恢复/终止都依赖该线程的寄存器上下文。</p>
+<p>不要把 <code>SIGSEGV</code> 当普通错误恢复机制。C/C++ 程序发生未定义行为后，handler 即使 <code>longjmp</code> 回去也可能带着被破坏的锁、栈和运行时状态继续执行。诊断通常应该让 core dump 留下现场：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="nb">ulimit</span> -c unlimited
+</span></span><span class="line"><span class="cl">cat /proc/sys/kernel/core_pattern
+</span></span></code></pre></div><h2 id="43-多线程服务的反模式">4.3 多线程服务的反模式</h2>
+<pre tabindex="0"><code>worker A、B、C 都未屏蔽 SIGTERM
+主线程安装 handler
+
+SIGTERM 到达
+-&gt; 可能在 A 的任何普通代码中执行 handler
+-&gt; handler 改全局 shutdown 标志、调用复杂库、抢锁
+-&gt; 行为时序不可控，且 handler 可能与 A 已持有的锁冲突
+</code></pre><p>正确方向不是“写更聪明的 handler”，而是减少 handler：<strong>所有线程 block，专用管理线程同步等待，并把真正工作交回正常控制流。</strong></p>
+<hr>
+<h1 id="5-handler-的铁律只做-async-signal-safe-的事">5. handler 的铁律：只做 async-signal-safe 的事</h1>
+<h2 id="51-为什么-printf-都不安全">5.1 为什么 <code>printf</code> 都不安全</h2>
+<p>信号可能刚好打断线程在 <code>malloc</code>、<code>printf</code>、<code>fprintf</code>、<code>pthread_mutex_lock</code> 或 Go runtime 内部执行时。handler 再调用同一函数，可能拿到被自己打断前已持有的内部锁：</p>
+<pre tabindex="0"><code>主程序正在 printf
+-&gt; libc stdio lock 已持有
+-&gt; SIGTERM handler 被异步调用
+-&gt; handler 里再次 printf
+-&gt; 等自己先前持有的锁 -&gt; 死锁
+</code></pre><p><code>malloc/free</code> 同理。信号安全不是函数“线程安全”就够了；线程安全函数可以靠锁保护，handler 的问题是<strong>重入到被中断代码的同一线程</strong>。</p>
+<p>POSIX 定义了一小组 async-signal-safe 函数。常见安全成员包括：</p>
+<ul>
+<li><code>_exit</code></li>
+<li><code>write</code></li>
+<li><code>kill</code></li>
+<li><code>sigaction</code></li>
+<li><code>sigprocmask</code></li>
+<li><code>waitpid</code>（按规范条件）</li>
+</ul>
+<p>完整名单以 <code>man 7 signal-safety</code> 为准。<code>printf</code>、<code>malloc</code>、<code>free</code>、<code>syslog</code>、大多数 pthread API 都不在安全名单里。</p>
+<h2 id="52-最小-handler标志或-self-pipe">5.2 最小 handler：标志或 self-pipe</h2>
+<p>最小策略是设置 <code>volatile sig_atomic_t</code> 标志：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="k">static</span> <span class="k">volatile</span> <span class="n">sig_atomic_t</span> <span class="n">stop</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">static</span> <span class="kt">void</span> <span class="nf">on_term</span><span class="p">(</span><span class="kt">int</span> <span class="n">signo</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="p">(</span><span class="kt">void</span><span class="p">)</span><span class="n">signo</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="n">stop</span> <span class="o">=</span> <span class="mi">1</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kt">int</span> <span class="nf">main</span><span class="p">(</span><span class="kt">void</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="n">install_handler</span><span class="p">();</span>
+</span></span><span class="line"><span class="cl">    <span class="k">while</span> <span class="p">(</span><span class="o">!</span><span class="n">stop</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="c1">// 正常控制流中检查并退出
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><code>sig_atomic_t</code> 保证单次读写不会撕裂；它<strong>不自动解决复杂内存同步和多线程可见性</strong>。在多线程程序中，更可靠的做法是专用 <code>sigwait</code> 线程，或在 handler 里仅向 pipe 写一个字节唤醒事件循环。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="k">static</span> <span class="kt">int</span> <span class="n">signal_pipe</span><span class="p">[</span><span class="mi">2</span><span class="p">];</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">static</span> <span class="kt">void</span> <span class="nf">on_term</span><span class="p">(</span><span class="kt">int</span> <span class="n">signo</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="kt">unsigned</span> <span class="kt">char</span> <span class="n">b</span> <span class="o">=</span> <span class="p">(</span><span class="kt">unsigned</span> <span class="kt">char</span><span class="p">)</span><span class="n">signo</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="n">ssize_t</span> <span class="n">ignored</span> <span class="o">=</span> <span class="n">write</span><span class="p">(</span><span class="n">signal_pipe</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="o">&amp;</span><span class="n">b</span><span class="p">,</span> <span class="mi">1</span><span class="p">);</span> <span class="c1">// write 是 async-signal-safe
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="p">(</span><span class="kt">void</span><span class="p">)</span><span class="n">ignored</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>主循环把 pipe 的读端纳入 <code>poll/epoll</code>。这是 <strong>self-pipe trick</strong>：把不适合在 handler 里做的工作转换为正常事件循环中的可读事件。</p>
+<p>注意 pipe 可能满，handler 不能阻塞；写端要设为 nonblocking，并允许丢弃重复通知。既然传统信号本来就合并，通常只需要知道“有信号来了”。</p>
+<h2 id="53-handler-还应保存-errno">5.3 handler 还应保存 <code>errno</code></h2>
+<p>handler 调用的安全函数也可能修改 <code>errno</code>，覆盖被打断代码的错误状态。简单 handler 通常保存并恢复它：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="k">static</span> <span class="kt">void</span> <span class="nf">on_chld</span><span class="p">(</span><span class="kt">int</span> <span class="n">signo</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="kt">int</span> <span class="n">saved</span> <span class="o">=</span> <span class="n">errno</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="p">(</span><span class="kt">void</span><span class="p">)</span><span class="n">signo</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="k">while</span> <span class="p">(</span><span class="n">waitpid</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="n">WNOHANG</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span> <span class="p">{}</span>
+</span></span><span class="line"><span class="cl">    <span class="n">errno</span> <span class="o">=</span> <span class="n">saved</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>但这依旧不应成为复杂业务逻辑的入口。handler 只应完成不可避免的最小转发或标记。</p>
+<hr>
+<h1 id="6-eintr-与-sa_restart系统调用为什么会无故失败">6. EINTR 与 SA_RESTART：系统调用为什么会“无故失败”</h1>
+<h2 id="61-被打断的阻塞调用">6.1 被打断的阻塞调用</h2>
+<p>线程在 <code>read()</code>、<code>accept()</code>、<code>waitpid()</code>、<code>nanosleep()</code>、<code>poll()</code> 等调用里阻塞时，若收到一个有 handler 的信号，内核要选择：handler 执行后，原调用是否继续等待？</p>
+<p>传统语义是返回 <code>-1</code> 并置 <code>errno=EINTR</code>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="n">ssize_t</span> <span class="n">n</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="k">do</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="n">n</span> <span class="o">=</span> <span class="n">read</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span> <span class="n">buf</span><span class="p">,</span> <span class="k">sizeof</span> <span class="n">buf</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span> <span class="k">while</span> <span class="p">(</span><span class="n">n</span> <span class="o">&lt;</span> <span class="mi">0</span> <span class="o">&amp;&amp;</span> <span class="n">errno</span> <span class="o">==</span> <span class="n">EINTR</span><span class="p">);</span>
+</span></span></code></pre></div><p><code>EINTR</code> 不是 IO 出错；它表示「你等待时发生了异步控制流，调用没有按原语义完成」。调用者必须决定重试、退出、处理取消，还是更新 timeout。</p>
+<h2 id="62-sa_restart-不是万能修复">6.2 <code>SA_RESTART</code> 不是万能修复</h2>
+<p>安装 handler 时指定 <code>SA_RESTART</code>，内核会让<strong>部分</strong>可重启的系统调用在 handler 返回后自动继续，而不是暴露 <code>EINTR</code>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="n">sa</span><span class="p">.</span><span class="n">sa_flags</span> <span class="o">=</span> <span class="n">SA_RESTART</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="n">sigaction</span><span class="p">(</span><span class="n">SIGTERM</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">sa</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">);</span>
+</span></span></code></pre></div><p>但不能得出“以后不用处理 EINTR”。原因：</p>
+<ol>
+<li>不是所有 syscall 都可重启；例如带 timeout 的等待、某些 socket/多路复用调用有特殊规则</li>
+<li>同一调用的可重启性可能依赖文件类型、是否已传输部分数据、内核版本</li>
+<li>即使可重启，应用有时希望信号尽快取消等待，而不是继续卡住</li>
+<li>库和语言运行时可能自行转换、屏蔽或重试信号</li>
+</ol>
+<p>稳妥原则是：<strong>任何可能阻塞的 POSIX 调用都按文档处理 EINTR</strong>，同时明确你的取消语义。不能无脑 <code>while (EINTR) retry</code>，例如 <code>nanosleep</code> 需要用剩余时间重算；带绝对 deadline 的循环通常更不易累积误差。</p>
+<h2 id="63-timeout--eintr-的常见-bug">6.3 timeout + EINTR 的常见 bug</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="c1">// 错误示意：每次 EINTR 都重新给 5 秒，可能永远超时不了
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">for</span> <span class="p">(;;)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">struct</span> <span class="n">timeval</span> <span class="n">tv</span> <span class="o">=</span> <span class="p">{.</span><span class="n">tv_sec</span> <span class="o">=</span> <span class="mi">5</span><span class="p">};</span>
+</span></span><span class="line"><span class="cl">    <span class="kt">int</span> <span class="n">n</span> <span class="o">=</span> <span class="n">select</span><span class="p">(</span><span class="n">nfds</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">rfds</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">tv</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="p">(</span><span class="n">n</span> <span class="o">&lt;</span> <span class="mi">0</span> <span class="o">&amp;&amp;</span> <span class="n">errno</span> <span class="o">==</span> <span class="n">EINTR</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="k">continue</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="k">break</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>正确做法以单调时钟计算绝对 deadline，每次被打断后重新计算剩余时间。<code>select</code> 还会修改 fd_set 和 timeout，重试前必须重新初始化。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">deadline = monotonic_now + 5s
+</span></span><span class="line"><span class="cl">loop:
+</span></span><span class="line"><span class="cl">  remaining = deadline - monotonic_now
+</span></span><span class="line"><span class="cl">  if remaining &lt;= 0: timeout
+</span></span><span class="line"><span class="cl">  rebuild fd_set
+</span></span><span class="line"><span class="cl">  select(..., remaining)
+</span></span><span class="line"><span class="cl">  if EINTR: goto loop
+</span></span></code></pre></div><h2 id="64-sigpipe写失败为什么还能杀进程">6.4 <code>SIGPIPE</code>：写失败为什么还能杀进程</h2>
+<p>向 pipe 或 socket 写数据时，如果所有读端都已关闭，内核通常同时：</p>
+<ol>
+<li>让 <code>write()</code> 返回 <code>EPIPE</code></li>
+<li>产生默认动作为终止的 <code>SIGPIPE</code></li>
+</ol>
+<p>若不处理，进程可能在来得及检查 <code>EPIPE</code> 前被杀掉。网络服务常见做法：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="n">signal</span><span class="p">(</span><span class="n">SIGPIPE</span><span class="p">,</span> <span class="n">SIG_IGN</span><span class="p">);</span> <span class="c1">// 示意；严肃代码用 sigaction
+</span></span></span></code></pre></div><p>或在 socket 上使用 <code>MSG_NOSIGNAL</code>（Linux）/<code>SO_NOSIGPIPE</code>（部分 BSD）避免生成 SIGPIPE。忽略 SIGPIPE 后仍必须处理 <code>write</code> 的 <code>EPIPE</code>，它代表对端连接已断。</p>
+<p>Go runtime 默认会对 <code>SIGPIPE</code> 做符合网络服务预期的处理；但 cgo 或调用外部库时仍应理解底层语义，而不是依赖偶然行为。</p>
+<hr>
+<h1 id="7-用同步接口驯服异步信号">7. 用同步接口驯服异步信号</h1>
+<h2 id="71-sigwaitinfo推荐的多线程模型">7.1 <code>sigwaitinfo</code>：推荐的多线程模型</h2>
+<p>对服务管理类信号（<code>SIGTERM</code>、<code>SIGINT</code>、<code>SIGHUP</code>、<code>SIGUSR1</code>），最干净的 POSIX 模式是：</p>
+<pre tabindex="0"><code>主线程：block 管理信号
+  -&gt; 创建所有 worker，worker 继承 block mask
+  -&gt; 创建 signal thread
+
+signal thread：sigwaitinfo(set)
+  -&gt; 同步返回一个信号编号
+  -&gt; 在正常线程上下文执行 shutdown/reload 工作
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="n">sigset_t</span> <span class="n">set</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="n">sigemptyset</span><span class="p">(</span><span class="o">&amp;</span><span class="n">set</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="n">sigaddset</span><span class="p">(</span><span class="o">&amp;</span><span class="n">set</span><span class="p">,</span> <span class="n">SIGTERM</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="n">sigaddset</span><span class="p">(</span><span class="o">&amp;</span><span class="n">set</span><span class="p">,</span> <span class="n">SIGINT</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="n">sigaddset</span><span class="p">(</span><span class="o">&amp;</span><span class="n">set</span><span class="p">,</span> <span class="n">SIGHUP</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="n">pthread_sigmask</span><span class="p">(</span><span class="n">SIG_BLOCK</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">set</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// 创建 workers 和 signal thread；它们都会继承 block mask
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl"><span class="k">for</span> <span class="p">(;;)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="n">siginfo_t</span> <span class="n">info</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="kt">int</span> <span class="n">sig</span> <span class="o">=</span> <span class="n">sigwaitinfo</span><span class="p">(</span><span class="o">&amp;</span><span class="n">set</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">info</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="p">(</span><span class="n">sig</span> <span class="o">==</span> <span class="n">SIGTERM</span> <span class="o">||</span> <span class="n">sig</span> <span class="o">==</span> <span class="n">SIGINT</span><span class="p">)</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="n">begin_graceful_shutdown</span><span class="p">();</span> <span class="c1">// 正常线程上下文，可加锁、写日志
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="k">break</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="p">(</span><span class="n">sig</span> <span class="o">==</span> <span class="n">SIGHUP</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="n">reload_config</span><span class="p">();</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>这里没有用户 handler，因此也没有 async-signal-safe 限制。信号仍是内核异步产生的，但应用把它<strong>接收</strong>为同步阻塞调用的返回值。</p>
+<p>不要对 <code>SIGSEGV</code>、<code>SIGFPE</code> 这类同步异常用 <code>sigwait</code>：它们属于触发线程，不能按服务管理事件转交。</p>
+<h2 id="72-signalfd让信号成为一个-fd">7.2 <code>signalfd</code>：让信号成为一个 fd</h2>
+<p>Linux 专有的 <code>signalfd()</code> 更适合 epoll 事件循环：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="n">sigset_t</span> <span class="n">set</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="n">sigemptyset</span><span class="p">(</span><span class="o">&amp;</span><span class="n">set</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="n">sigaddset</span><span class="p">(</span><span class="o">&amp;</span><span class="n">set</span><span class="p">,</span> <span class="n">SIGTERM</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="n">sigaddset</span><span class="p">(</span><span class="o">&amp;</span><span class="n">set</span><span class="p">,</span> <span class="n">SIGHUP</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="n">pthread_sigmask</span><span class="p">(</span><span class="n">SIG_BLOCK</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">set</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="kt">int</span> <span class="n">sfd</span> <span class="o">=</span> <span class="n">signalfd</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">set</span><span class="p">,</span> <span class="n">SFD_NONBLOCK</span> <span class="o">|</span> <span class="n">SFD_CLOEXEC</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="c1">// 把 sfd 加进 epoll
+</span></span></span></code></pre></div><p>当被阻塞集合里的信号到达，<code>sfd</code> 变为可读，读取 <code>struct signalfd_siginfo</code> 可得到 sender PID、UID、信号号等信息。</p>
+<pre tabindex="0"><code>epoll 等待：
+  socket 可读    -&gt; 处理请求
+  timerfd 可读   -&gt; 处理定时任务
+  signalfd 可读  -&gt; reload / shutdown
+</code></pre><p>优点是统一事件模型、没有异步 handler、可以读取排队的实时信号元数据。限制是 Linux 专有，并且所有线程仍应阻塞该集合，否则信号可能先被某个未屏蔽线程按普通方式递送。</p>
+<h2 id="73-self-pipesigwaitsignalfd-怎么选">7.3 self-pipe、sigwait、signalfd 怎么选</h2>
+<table>
+<thead>
+<tr>
+<th>方案</th>
+<th>适用</th>
+<th>优点</th>
+<th>限制</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>最小 handler + 标志</td>
+<td>单线程/简单 CLI</td>
+<td>简单</td>
+<td>不易唤醒阻塞事件循环</td>
+</tr>
+<tr>
+<td>self-pipe</td>
+<td>可移植事件循环</td>
+<td>handler 只 <code>write</code>，兼容 poll/epoll</td>
+<td>要处理 pipe 满和通知合并</td>
+</tr>
+<tr>
+<td><code>sigwaitinfo</code></td>
+<td>多线程服务</td>
+<td>完全同步，无 handler 限制</td>
+<td>要在创建线程前统一 block</td>
+</tr>
+<tr>
+<td><code>signalfd</code></td>
+<td>Linux epoll 服务</td>
+<td>信号成为 fd，事件循环统一</td>
+<td>Linux 专有，mask 管理仍关键</td>
+</tr>
+</tbody>
+</table>
+<p>它们共同原则是：<strong>不要在 signal handler 里执行业务逻辑。</strong></p>
+<hr>
+<h1 id="8-gosignalnotify-如何把信号变成-channel">8. Go：signal.Notify 如何把信号变成 channel</h1>
+<h2 id="81-ossignal-的接口语义">8.1 <code>os/signal</code> 的接口语义</h2>
+<p>Go 用 channel 暴露信号：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="nx">ctx</span><span class="p">,</span> <span class="nx">stop</span> <span class="o">:=</span> <span class="nx">signal</span><span class="p">.</span><span class="nf">NotifyContext</span><span class="p">(</span><span class="nx">context</span><span class="p">.</span><span class="nf">Background</span><span class="p">(),</span> <span class="nx">os</span><span class="p">.</span><span class="nx">Interrupt</span><span class="p">,</span> <span class="nx">syscall</span><span class="p">.</span><span class="nx">SIGTERM</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="k">defer</span> <span class="nf">stop</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="o">&lt;-</span><span class="nx">ctx</span><span class="p">.</span><span class="nf">Done</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl"><span class="c1">// 在正常 goroutine 上执行优雅退出
+</span></span></span></code></pre></div><p>或显式 channel：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="nx">sigCh</span> <span class="o">:=</span> <span class="nb">make</span><span class="p">(</span><span class="kd">chan</span> <span class="nx">os</span><span class="p">.</span><span class="nx">Signal</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="nx">signal</span><span class="p">.</span><span class="nf">Notify</span><span class="p">(</span><span class="nx">sigCh</span><span class="p">,</span> <span class="nx">syscall</span><span class="p">.</span><span class="nx">SIGTERM</span><span class="p">,</span> <span class="nx">syscall</span><span class="p">.</span><span class="nx">SIGHUP</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">for</span> <span class="nx">sig</span> <span class="o">:=</span> <span class="k">range</span> <span class="nx">sigCh</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">switch</span> <span class="nx">sig</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="k">case</span> <span class="nx">syscall</span><span class="p">.</span><span class="nx">SIGHUP</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">        <span class="nf">reload</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">    <span class="k">case</span> <span class="nx">syscall</span><span class="p">.</span><span class="nx">SIGTERM</span><span class="p">:</span>
+</span></span><span class="line"><span class="cl">        <span class="nf">shutdown</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">        <span class="k">return</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>这是比 C handler 安全得多的 API：接收 channel 的 goroutine 在正常 Go 调度上下文中运行，可以获取 mutex、写日志、调用网络 API。</p>
+<h2 id="82-channel-缓冲不是可选装饰">8.2 channel 缓冲不是可选装饰</h2>
+<p>文档建议 <code>Notify</code> 用带缓冲 channel，至少容量 1：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="nx">sigCh</span> <span class="o">:=</span> <span class="nb">make</span><span class="p">(</span><span class="kd">chan</span> <span class="nx">os</span><span class="p">.</span><span class="nx">Signal</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+</span></span></code></pre></div><p>信号到达时，Go runtime 不能为了等接收 goroutine 而阻塞在异步信号路径上。如果 channel 满，通知可能被丢弃。普通 Unix 信号本来就合并，因此大多数 shutdown 场景只需要“至少收到一次”；容量 1 正好表达这个语义。</p>
+<p>不要写：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="nx">sigCh</span> <span class="o">:=</span> <span class="nb">make</span><span class="p">(</span><span class="kd">chan</span> <span class="nx">os</span><span class="p">.</span><span class="nx">Signal</span><span class="p">)</span> <span class="c1">// 无缓冲，容易错过通知
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">signal</span><span class="p">.</span><span class="nf">Notify</span><span class="p">(</span><span class="nx">sigCh</span><span class="p">,</span> <span class="nx">syscall</span><span class="p">.</span><span class="nx">SIGTERM</span><span class="p">)</span>
+</span></span></code></pre></div><p>也不要把容量加到很大后假定记录了每一次普通信号。需要精确事件计数时，使用 socket、队列、共享状态或实时信号的专门设计。</p>
+<h2 id="83-notifycontext-的第二次-ctrl-c-语义">8.3 <code>NotifyContext</code> 的第二次 Ctrl-C 语义</h2>
+<p><code>signal.NotifyContext</code> 返回的 <code>stop()</code> 不只是资源清理。调用后，它取消对指定信号的通知并恢复默认/原有行为：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="nx">ctx</span><span class="p">,</span> <span class="nx">stop</span> <span class="o">:=</span> <span class="nx">signal</span><span class="p">.</span><span class="nf">NotifyContext</span><span class="p">(</span><span class="nx">context</span><span class="p">.</span><span class="nf">Background</span><span class="p">(),</span> <span class="nx">os</span><span class="p">.</span><span class="nx">Interrupt</span><span class="p">,</span> <span class="nx">syscall</span><span class="p">.</span><span class="nx">SIGTERM</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="k">defer</span> <span class="nf">stop</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="o">&lt;-</span><span class="nx">ctx</span><span class="p">.</span><span class="nf">Done</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl"><span class="nf">stop</span><span class="p">()</span> <span class="c1">// 优雅退出已开始；再次 Ctrl-C 可走默认强制终止
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nf">runGracefulShutdown</span><span class="p">()</span>
+</span></span></code></pre></div><p>这避免程序在优雅关闭卡住时，用户连续按 Ctrl-C 却永远只能等。具体信号恢复语义仍要结合程序是否有其他 <code>Notify</code> 注册者。</p>
+<h2 id="84-runtime-对同步故障信号的特殊处理">8.4 runtime 对同步故障信号的特殊处理</h2>
+<p>Go runtime 使用 <code>SIGSEGV</code>、<code>SIGBUS</code> 等实现内存访问故障、栈增长和 panic/crash 语义的一部分。应用不应随意用 <code>signal.Notify</code> 处理这些信号来“捕获所有崩溃”；这可能破坏 runtime 的预期行为。</p>
+<p>处理服务生命周期优先选择：<code>os.Interrupt</code>、<code>SIGTERM</code>、<code>SIGHUP</code>、必要时 <code>SIGUSR1/2</code>。对 core dump、panic 和诊断信号，要按 Go 版本与 runtime 文档验证后再做定制。</p>
+<h2 id="85-go-网络服务的优雅退出骨架">8.5 Go 网络服务的优雅退出骨架</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">func</span> <span class="nf">main</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nx">srv</span> <span class="o">:=</span> <span class="o">&amp;</span><span class="nx">http</span><span class="p">.</span><span class="nx">Server</span><span class="p">{</span><span class="nx">Addr</span><span class="p">:</span> <span class="s">&#34;:8080&#34;</span><span class="p">,</span> <span class="nx">Handler</span><span class="p">:</span> <span class="nf">handler</span><span class="p">()}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="nx">ctx</span><span class="p">,</span> <span class="nx">stop</span> <span class="o">:=</span> <span class="nx">signal</span><span class="p">.</span><span class="nf">NotifyContext</span><span class="p">(</span><span class="nx">context</span><span class="p">.</span><span class="nf">Background</span><span class="p">(),</span> <span class="nx">os</span><span class="p">.</span><span class="nx">Interrupt</span><span class="p">,</span> <span class="nx">syscall</span><span class="p">.</span><span class="nx">SIGTERM</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">defer</span> <span class="nf">stop</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="k">go</span> <span class="kd">func</span><span class="p">()</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">srv</span><span class="p">.</span><span class="nf">ListenAndServe</span><span class="p">();</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="o">&amp;&amp;</span> <span class="nx">err</span> <span class="o">!=</span> <span class="nx">http</span><span class="p">.</span><span class="nx">ErrServerClosed</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="nx">log</span><span class="p">.</span><span class="nf">Fatal</span><span class="p">(</span><span class="nx">err</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}()</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="o">&lt;-</span><span class="nx">ctx</span><span class="p">.</span><span class="nf">Done</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">    <span class="nf">stop</span><span class="p">()</span> <span class="c1">// 后续 Ctrl-C / SIGTERM 可恢复默认行为
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
+</span></span><span class="line"><span class="cl">    <span class="nx">shutdownCtx</span><span class="p">,</span> <span class="nx">cancel</span> <span class="o">:=</span> <span class="nx">context</span><span class="p">.</span><span class="nf">WithTimeout</span><span class="p">(</span><span class="nx">context</span><span class="p">.</span><span class="nf">Background</span><span class="p">(),</span> <span class="mi">20</span><span class="o">*</span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="k">defer</span> <span class="nf">cancel</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">srv</span><span class="p">.</span><span class="nf">Shutdown</span><span class="p">(</span><span class="nx">shutdownCtx</span><span class="p">);</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="nx">log</span><span class="p">.</span><span class="nf">Printf</span><span class="p">(</span><span class="s">&#34;graceful shutdown failed: %v&#34;</span><span class="p">,</span> <span class="nx">err</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>这里信号只负责触发 cancellation；HTTP server 的停止、连接 drain 和 deadline 都在正常 goroutine 控制流里完成。<code>Shutdown</code> 超时后的兜底策略要由业务明确：记录错误、强制 <code>Close</code>，或交给编排器最终 <code>SIGKILL</code>。</p>
+<hr>
+<h1 id="9-容器里的-pid-1信号与僵尸进程的双重陷阱">9. 容器里的 PID 1：信号与僵尸进程的双重陷阱</h1>
+<h2 id="91-pid-1-的默认信号语义不同">9.1 PID 1 的默认信号语义不同</h2>
+<p>Linux 对 PID namespace 中 PID 1 有特殊保护：某些默认动作的终止信号若没有显式 handler，可能不会按普通进程的方式终止 init。这是为了避免系统 init 被意外杀死。容器的主进程恰好常常是该 namespace 的 PID 1，于是一个“平时裸跑没问题”的程序进入容器后可能对 <code>SIGTERM</code> 反应异常。</p>
+<p>工程结论不是背具体例外表，而是：<strong>容器主进程必须显式设计 SIGTERM/SIGINT 的生命周期处理，并在目标运行环境验证。</strong> 不要依赖默认动作。</p>
+<h2 id="92-shell-作为-entrypoint-会吞错转发信号">9.2 shell 作为 entrypoint 会吞/错转发信号</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-dockerfile" data-lang="dockerfile"><span class="line"><span class="cl"><span class="c"># 不推荐：shell 是 PID 1，可能不转发信号给 app</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span><span class="k">CMD</span> my-server --config /etc/app.yaml<span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span><span class="c"># 推荐 exec form：应用直接成为 PID 1</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span><span class="k">CMD</span> <span class="p">[</span><span class="s2">&#34;/usr/local/bin/my-server&#34;</span><span class="p">,</span> <span class="s2">&#34;--config&#34;</span><span class="p">,</span> <span class="s2">&#34;/etc/app.yaml&#34;</span><span class="p">]</span><span class="err">
+</span></span></span></code></pre></div><p>如果必须用 shell 做初始化，最后用 <code>exec</code> 替换 shell：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sh" data-lang="sh"><span class="line"><span class="cl"><span class="cp">#!/bin/sh
+</span></span></span><span class="line"><span class="cl"><span class="cp"></span>prepare_runtime
+</span></span><span class="line"><span class="cl"><span class="nb">exec</span> /usr/local/bin/my-server <span class="s2">&#34;</span><span class="nv">$@</span><span class="s2">&#34;</span>
+</span></span></code></pre></div><p>否则 <code>docker stop</code> 发送给 PID 1 的 <code>SIGTERM</code> 可能只到 shell，应用继续运行；编排器超时后发送 <code>SIGKILL</code>，优雅退出完全失效。</p>
+<h2 id="93-pid-1-还必须回收孤儿子进程">9.3 PID 1 还必须回收孤儿子进程</h2>
+<p>子进程退出后，父进程必须 <code>wait</code> 才能释放其进程表项。容器 PID 1 若启动子进程却不回收，孤儿最终会被 PID 1 收养并可能积累 zombie。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">ps -eo pid,ppid,stat,comm <span class="p">|</span> awk <span class="s1">&#39;$3 ~ /^Z/&#39;</span>
+</span></span></code></pre></div><p>应用不适合承担 init 职责时，可使用极小 init（如 Docker <code>--init</code> / <code>tini</code>）负责信号转发和 reaping；但它不能替代应用自己的 shutdown 协议。</p>
+<h2 id="94-编排器的终止窗口">9.4 编排器的终止窗口</h2>
+<p>Kubernetes 通常流程是：从 Service endpoints 摘除/开始终止 → 向容器 PID 1 发 <code>SIGTERM</code> → 等 <code>terminationGracePeriodSeconds</code> → 超时后 <code>SIGKILL</code>。实际时序还受 preStop hook、负载均衡收敛和 sidecar 影响。</p>
+<p>因此服务的 graceful shutdown 至少要：</p>
+<ol>
+<li>收到 SIGTERM 后停止接收新工作或返回 readiness false</li>
+<li>给在途请求、消息 ack、事务提交一个明确 deadline</li>
+<li>在 grace period 内退出</li>
+<li>能承受 SIGKILL 随时发生：持久化操作要有崩溃一致性</li>
+</ol>
+<p>信号只是终止协议的起点，不是完整的优雅关闭方案。</p>
+<hr>
+<h1 id="10-线上排查信号发生了什么">10. 线上排查：信号发生了什么</h1>
+<h2 id="101-先确认进程有没有活着有没有收到">10.1 先确认进程有没有活着、有没有收到</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 进程是否存在；不会真的发送信号</span>
+</span></span><span class="line"><span class="cl"><span class="nb">kill</span> -0 <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 查看状态、信号掩码与 handler 集合</span>
+</span></span><span class="line"><span class="cl">cat /proc/<span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span>/status <span class="p">|</span> grep -E <span class="s1">&#39;^(State|SigPnd|ShdPnd|SigBlk|SigIgn|SigCgt)&#39;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 每个线程的状态与 mask</span>
+</span></span><span class="line"><span class="cl"><span class="k">for</span> f in /proc/<span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span>/task/*/status<span class="p">;</span> <span class="k">do</span>
+</span></span><span class="line"><span class="cl">  <span class="nv">tid</span><span class="o">=</span><span class="si">${</span><span class="nv">f</span><span class="p">%/status</span><span class="si">}</span><span class="p">;</span> <span class="nv">tid</span><span class="o">=</span><span class="si">${</span><span class="nv">tid</span><span class="p">##*/</span><span class="si">}</span>
+</span></span><span class="line"><span class="cl">  <span class="nb">printf</span> <span class="s1">&#39;TID=%s &#39;</span> <span class="s2">&#34;</span><span class="nv">$tid</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl">  grep -E <span class="s1">&#39;^(Name|State|SigBlk)&#39;</span> <span class="s2">&#34;</span><span class="nv">$f</span><span class="s2">&#34;</span> <span class="p">|</span> tr <span class="s1">&#39;\n&#39;</span> <span class="s1">&#39; &#39;</span>
+</span></span><span class="line"><span class="cl">  <span class="nb">printf</span> <span class="s1">&#39;\n&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="k">done</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 某个信号当前 disposition（GNU procps）</span>
+</span></span><span class="line"><span class="cl">ps -o pid,blocked,ignored,caught,comm -p <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span>
+</span></span></code></pre></div><p><code>kill -0</code> 成功不表示进程健康、也不表示信号可递送；它只验证 PID 存在且权限允许。<code>SIGKILL</code> 能杀掉进程也不能证明 <code>SIGTERM</code> handler 正确，只能说明内核最后控制权仍在。</p>
+<h2 id="102-看信号是否打断了系统调用">10.2 看信号是否打断了系统调用</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 短时附着，观察 EINTR、restart_syscall 和正在等待的调用</span>
+</span></span><span class="line"><span class="cl">sudo strace -ff -ttT -p <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  -e <span class="nv">trace</span><span class="o">=</span>read,write,accept,accept4,poll,ppoll,epoll_wait,wait4,restart_syscall
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 在另一终端谨慎发送测试信号</span>
+</span></span><span class="line"><span class="cl"><span class="nb">kill</span> -HUP <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span>
+</span></span></code></pre></div><p>可能看到：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">epoll_wait(... &lt;unfinished ...&gt;
+</span></span><span class="line"><span class="cl">--- SIGHUP {si_signo=SIGHUP, ...} ---
+</span></span><span class="line"><span class="cl">epoll_wait(...) = -1 EINTR (Interrupted system call)
+</span></span></code></pre></div><p>或系统调用在 handler 后被内核重启。<code>strace</code> 会显著改变时序，尤其是多线程高并发服务，只适合低频复现和短时现场确认。</p>
+<h2 id="103-core-dump-与崩溃信号">10.3 core dump 与崩溃信号</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="nb">ulimit</span> -c
+</span></span><span class="line"><span class="cl">cat /proc/sys/kernel/core_pattern
+</span></span><span class="line"><span class="cl">coredumpctl list 2&gt;/dev/null
+</span></span><span class="line"><span class="cl">coredumpctl debug <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span> 2&gt;/dev/null
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># systemd 服务的最近退出原因</span>
+</span></span><span class="line"><span class="cl">systemctl status my-service.service
+</span></span><span class="line"><span class="cl">journalctl -u my-service.service -b
+</span></span></code></pre></div><p>退出码 <code>128 + signal number</code> 常提示被信号终止，例如 shell 中 143 常表示 <code>SIGTERM</code>（128+15），137 常表示 <code>SIGKILL</code>（128+9）。但在容器平台上 137 不等于“内核一定 OOM kill”：也可能是终止窗口到期后编排器发送的 SIGKILL。要结合 cgroup <code>memory.events</code>、Pod events 与日志时间线判断。</p>
+<h2 id="104-一套服务信号排查顺序">10.4 一套服务信号排查顺序</h2>
+<pre tabindex="0"><code>① 确认谁是 PID 1、谁是真正业务进程
+   ps / 容器 entrypoint / 是否 shell 包了一层
+
+② 确认发送给谁、进程是否有权限和存活
+   kill -0；记录 PID namespace 与 sender
+
+③ 看 disposition 与 mask
+   /proc/PID/status；逐 TID 检查 SigBlk
+
+④ 区分“没有处理”与“已开始但卡住”
+   日志、goroutine/thread dump、strace、优雅退出阶段指标
+
+⑤ 检查编排器 deadline
+   SIGTERM 时间、readiness 摘除、grace period、SIGKILL 时间
+
+⑥ 用可重复的本地/预发实验验证
+   不要在生产用 SIGKILL 代替对 shutdown 协议的测试
+</code></pre><hr>
+<h1 id="11-常用命令知识点扩展">11. 常用命令知识点扩展</h1>
+<h2 id="111-信号命令">11.1 信号命令</h2>
+<table>
+<thead>
+<tr>
+<th>短参</th>
+<th>长参</th>
+<th>英文全称</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>kill -s TERM</code></td>
+<td><code>kill --signal TERM</code></td>
+<td>signal</td>
+<td>按名字发送信号</td>
+</tr>
+<tr>
+<td><code>kill -l</code></td>
+<td><code>kill --list</code></td>
+<td>list signals</td>
+<td>列出信号名称和编号</td>
+</tr>
+<tr>
+<td><code>pkill -f PATTERN</code></td>
+<td><code>pkill --full PATTERN</code></td>
+<td>full command line</td>
+<td>按完整命令行匹配进程后发送信号</td>
+</tr>
+<tr>
+<td><code>pgrep -a</code></td>
+<td><code>pgrep --list-full</code></td>
+<td>list full</td>
+<td>显示 PID 和完整命令行</td>
+</tr>
+<tr>
+<td><code>ps -o</code></td>
+<td><code>ps --format</code></td>
+<td>output format</td>
+<td>输出 stat、blocked、caught 等字段</td>
+</tr>
+<tr>
+<td><code>strace -f</code></td>
+<td><code>strace --follow-forks</code></td>
+<td>follow forks</td>
+<td>跟踪线程/子进程</td>
+</tr>
+<tr>
+<td><code>strace -e</code></td>
+<td><code>strace --trace=EXPR</code></td>
+<td>trace expression</td>
+<td>过滤目标系统调用</td>
+</tr>
+</tbody>
+</table>
+<p>场景配方：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 优雅停止，先 TERM，确认超时策略后才考虑 KILL</span>
+</span></span><span class="line"><span class="cl"><span class="nb">kill</span> -TERM <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 给整个进程组发送 Ctrl-C 语义的信号（负号表示 PGID）</span>
+</span></span><span class="line"><span class="cl"><span class="nb">kill</span> -INT -- -<span class="s2">&#34;</span><span class="nv">$PGID</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 先列出再精确匹配，避免 pkill 误杀</span>
+</span></span><span class="line"><span class="cl">pgrep -af <span class="s1">&#39;my-server --config&#39;</span>
+</span></span></code></pre></div><p><code>kill -9</code> 是 <code>SIGKILL</code>，不能被捕获、阻塞、清理资源或执行 finally/defer。它适合无响应进程的最后手段，不是服务停机的正常路径。</p>
+<h2 id="112-信号选择表">11.2 信号选择表</h2>
+<table>
+<thead>
+<tr>
+<th>目标</th>
+<th>常用信号</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>请求优雅退出</td>
+<td><code>SIGTERM</code></td>
+<td>编排器和服务管理器的常用默认</td>
+</tr>
+<tr>
+<td>终端用户中断</td>
+<td><code>SIGINT</code></td>
+<td>Ctrl-C，CLI 通常与 TERM 同样处理</td>
+</tr>
+<tr>
+<td>重新加载配置</td>
+<td><code>SIGHUP</code></td>
+<td>约定俗成，不是内核自动 reload</td>
+</tr>
+<tr>
+<td>用户自定义动作</td>
+<td><code>SIGUSR1/2</code></td>
+<td>必须记录并维护自己定义的语义</td>
+</tr>
+<tr>
+<td>强制终止</td>
+<td><code>SIGKILL</code></td>
+<td>无法处理，最后手段</td>
+</tr>
+<tr>
+<td>停止/继续作业</td>
+<td><code>SIGSTOP</code> / <code>SIGCONT</code></td>
+<td>作业控制与调试</td>
+</tr>
+<tr>
+<td>子进程状态提示</td>
+<td><code>SIGCHLD</code></td>
+<td>必须用 waitpid 循环回收</td>
+</tr>
+</tbody>
+</table>
+<p>不要把信号当版本化 API。它没有 payload schema、确认、重试、流控和审计；服务间控制应优先 HTTP/gRPC/消息队列或管理平面。</p>
+<hr>
+<h1 id="12-面试题">12. 面试题</h1>
+<p><strong>Q：信号为什么不是普通函数回调？</strong></p>
+<p>函数回调由当前控制流在确定位置发起；信号由内核异步产生，通常在目标线程从内核返回用户态的安全点修改执行现场，handler 在被打断线程的上下文和栈上执行。它可能打断任意普通代码，因此不能假设库内部状态一致，也只能调用 async-signal-safe 函数。把 handler 当普通回调会导致重入死锁和内存损坏。</p>
+<p><strong>Q：传统信号为什么会丢？</strong></p>
+<p>传统非实时信号在 pending 集合中通常每种只占一个 bit；同一信号在已挂起时再来多次仍只是 bit=1，解除阻塞后只递送一次。这是 coalescing 的设计语义，表示“至少发生过一次”，不是可靠消息队列。<code>SIGCHLD</code> handler 要循环 <code>waitpid</code>，普通 reload/terminate 必须设计成幂等。</p>
+<p><strong>Q：实时信号解决了什么，为什么不拿它做消息队列？</strong></p>
+<p>实时信号按实例排队，可经 <code>sigqueue</code> 携带小 payload，同号信号保持发送顺序，解决普通信号合并和无 payload 的问题。但它仍是异步信号机制，handler 规则依旧严格，队列受资源上限约束，缺少流控、确认和丰富数据模型。高吞吐事件应用 socket、pipe、eventfd 或共享内存队列。</p>
+<p><strong>Q：多线程进程调用 kill(pid, SIGTERM) 后，哪个线程处理？</strong></p>
+<p>它是进程定向信号，内核从没有阻塞该信号的任意线程中选择一个递送，不保证是主线程或调用 <code>kill</code> 的线程。<code>pthread_kill</code> 才定向到指定线程；同步异常如 SIGSEGV 必须交给触发线程。服务应在创建 worker 前统一 block 管理信号，并用专门线程 <code>sigwaitinfo</code> 或 signalfd 接收。</p>
+<p><strong>Q：SIGKILL 和 SIGSTOP 为什么不能被捕获或屏蔽？</strong></p>
+<p>它们保留给内核和管理员提供不可撤销的控制权：SIGKILL 必须能终止失控进程，SIGSTOP 必须支持作业控制和调试。若目标进程可安装 handler、屏蔽或忽略它们，系统将无法可靠回收资源或停止任务。</p>
+<p><strong>Q：为什么 handler 里不能 printf、malloc 或加 mutex？</strong></p>
+<p>信号可能恰好打断同一线程执行这些库函数，而它们内部可能持有锁或处在中间状态。handler 重入后会等待自己先前持有的锁，或破坏分配器/stdio 状态。线程安全不等于 async-signal-safe。handler 应只做 POSIX 保证安全的最小操作，如 <code>write</code>、设置 <code>sig_atomic_t</code>，或更好地避免 handler，使用 sigwait/signalfd。</p>
+<p><strong>Q：EINTR 是什么？SA_RESTART 能彻底消除它吗？</strong></p>
+<p>阻塞系统调用等待时执行了信号 handler，调用可能返回 <code>-1/EINTR</code> 表示未按原语义完成。SA_RESTART 会自动重启一部分调用，但不是全部；行为依赖 syscall、对象、timeout 和内核语义，应用有时还希望信号取消等待。因此必须按每个 API 的文档处理 EINTR，timeout 重试应基于单调时钟的绝对 deadline，不能每次重置超时。</p>
+<p><strong>Q：为什么 SIGPIPE 会让网络服务意外退出？</strong></p>
+<p>向所有读端关闭的 pipe/socket 写时，内核让 write 返回 EPIPE，同时默认产生终止进程的 SIGPIPE。若未忽略或屏蔽它，进程可能在检查 EPIPE 前被终止。服务可忽略 SIGPIPE 或使用平台提供的 per-send 抑制选项，但仍必须处理 EPIPE，因为它表示对端断开。</p>
+<p><strong>Q：sigwaitinfo 与 signalfd 的共同前提是什么？</strong></p>
+<p>相关信号必须被所有可能运行的线程 block，通常在创建线程前由主线程完成，让 worker 继承 mask。否则某个未屏蔽线程可能先异步收到并执行默认动作/handler，signal thread 或 signalfd 根本收不到。它们的价值都是把异步产生的信号转换到正常同步控制流。</p>
+<p><strong>Q：Go 的 signal.Notify 为什么要使用缓冲 channel？</strong></p>
+<p>Go runtime 在信号到达路径上不能阻塞等待接收者；无缓冲或已满 channel 会导致通知被丢弃。容量至少 1 能可靠表达常见生命周期语义“至少收到一次”，同时符合普通信号本就会合并的事实。它不让普通信号变成精确计数队列；需要精确事件应使用其他 IPC。</p>
+<p><strong>Q：容器里为什么常见 SIGTERM 没传到应用？</strong></p>
+<p>常见原因是 shell form ENTRYPOINT/CMD 成为 PID 1，SIGTERM 到了 shell 但没有转发给子应用；或应用作为 namespace PID 1 却没显式设计处理；也可能优雅退出超过编排器 grace period，最终被 SIGKILL。使用 exec form 或脚本末尾 exec，使应用直接成为 PID 1；需要 init 职责时用 tini，并让应用自身实现带 deadline 的 shutdown。</p>
+<p><strong>Q：137 一定等于 OOMKilled 吗？</strong></p>
+<p>不一定。137 常表示进程因 signal 9 退出，但 SIGKILL 可能来自 OOM killer、Kubernetes grace period 到期、管理员或运行时。要查 cgroup <code>memory.events</code>、容器/Pod events、内核日志和终止时间线，不能只凭 exit code 归因。</p>
+<hr>
+<h1 id="小结">小结</h1>
+<ul>
+<li>信号是<strong>异步控制流</strong>，不是回调线程；handler 在被打断线程上下文中运行，能插进任意普通代码</li>
+<li>信号经历产生、挂起、递送、处置；发送成功不代表目标已经执行处理逻辑</li>
+<li>传统信号是 pending bit，会合并同类通知；它适合幂等唤醒，不适合可靠计数或消息传输</li>
+<li>realtime signal 能排队和携带小 payload，但没有消除异步 handler 的限制，也不应替代 IPC</li>
+<li>signal mask 是<strong>线程属性</strong>；多线程服务应先 block，再用 <code>sigwaitinfo</code> 或 signalfd 由专用控制流接收</li>
+<li><code>SIGKILL</code>/<code>SIGSTOP</code> 不可捕获和屏蔽，保留给系统最后控制权</li>
+<li>handler 只能调用 async-signal-safe 函数；不要 <code>printf</code>、<code>malloc</code>、加锁或运行业务逻辑</li>
+<li><code>EINTR</code> 是信号打断阻塞调用的正常结果；<code>SA_RESTART</code> 有限，timeout 重试要使用绝对 deadline</li>
+<li><code>signalfd</code>、self-pipe 和 <code>sigwaitinfo</code> 的共同目标都是把不可控的异步通知变成可控的事件/同步返回</li>
+<li>Go <code>signal.Notify</code> 把通知交给正常 goroutine；使用容量至少为 1 的 channel，<code>NotifyContext</code> 可组合 cancellation 和第二次强制退出</li>
+<li>容器 PID 1 必须正确接收/转发 TERM 并回收子进程；信号只是优雅退出协议的起点，deadline 与崩溃一致性同样必要</li>
+</ul>
+<p>下一篇讲 <strong>文件系统与 inode 抽象的必然性</strong> —— 路径为什么不是文件、inode 如何把名称和对象拆开、日志文件系统为何必要、ext3→ext4 delayed allocation 的事故教会了什么，以及 <code>fsync</code> 与 <code>O_DIRECT</code> 的真实边界。</p>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2026-08-12</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/linux/">linux</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/linux/linux_30_%E6%96%87%E4%BB%B6%E7%B3%BB%E7%BB%9F%E4%B8%8Einode%E6%8A%BD%E8%B1%A1%E7%9A%84%E5%BF%85%E7%84%B6%E6%80%A7/" class="prev" rel="prev" title="Linux-30 文件系统与 inode 抽象的必然性"><i class="fas fa-angle-left fa-fw"></i>Linux-30 文件系统与 inode 抽象的必然性</a>
+            <a href="/posts/linux/linux_28_%E5%90%8C%E6%AD%A5%E5%8E%9F%E8%AF%ADfutex%E4%B8%BA%E4%BB%80%E4%B9%88%E8%A2%AB%E5%8F%91%E6%98%8E/" class="next" rel="next" title="Linux-28 同步原语：futex 为什么被发明">Linux-28 同步原语：futex 为什么被发明<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2026-08-12T09:30:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Linux-29 信号：背着 40 年债的机制"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

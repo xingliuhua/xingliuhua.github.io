@@ -1,1051 +1,325 @@
-<!DOCTYPE html>
-<html lang="zh-CN">
-    <head>
-        <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <meta name="robots" content="noodp" />
-        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
-        <title>Linux-12 IO 模型与 epoll - xingliuhua博客</title><meta name="Description" content="一次 read 的两个阶段、五种 IO 模型的本质区别、同步异步与阻塞非阻塞的准确定义、select/poll/epoll 的内核数据结构、ET 与 LT 的编程差异、惊群问题、io_uring 与 Go netpoller"><meta property="og:title" content="Linux-12 IO 模型与 epoll" />
-<meta property="og:description" content="一次 read 的两个阶段、五种 IO 模型的本质区别、同步异步与阻塞非阻塞的准确定义、select/poll/epoll 的内核数据结构、ET 与 LT 的编程差异、惊群问题、io_uring 与 Go netpoller" />
-<meta property="og:type" content="article" />
-<meta property="og:url" content="https://xingliuhua.github.io/posts/linux/linux_12_IO%E6%A8%A1%E5%9E%8B%E4%B8%8Eepoll/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
-<meta property="article:published_time" content="2026-08-06T17:30:00+08:00" />
-<meta property="article:modified_time" content="2026-08-06T17:30:00+08:00" />
-
-<meta name="twitter:card" content="summary_large_image"/>
-<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
-
-<meta name="twitter:title" content="Linux-12 IO 模型与 epoll"/>
-<meta name="twitter:description" content="一次 read 的两个阶段、五种 IO 模型的本质区别、同步异步与阻塞非阻塞的准确定义、select/poll/epoll 的内核数据结构、ET 与 LT 的编程差异、惊群问题、io_uring 与 Go netpoller"/>
-<meta name="application-name" content="xingliuhua博客">
-<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
-        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
-        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/linux/linux_12_IO%E6%A8%A1%E5%9E%8B%E4%B8%8Eepoll/" /><link rel="prev" href="https://xingliuhua.github.io/posts/linux/linux_13_%E7%BD%91%E7%BB%9C%E9%85%8D%E7%BD%AE%E4%B8%8E%E6%8E%92%E6%9F%A5/" /><link rel="next" href="https://xingliuhua.github.io/posts/linux/linux_11_%E6%96%87%E4%BB%B6%E7%B3%BB%E7%BB%9F%E4%B8%8E%E7%A3%81%E7%9B%98IO/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
-    {
-        "@context": "http://schema.org",
-        "@type": "BlogPosting",
-        "headline": "Linux-12 IO 模型与 epoll",
-        "inLanguage": "zh-CN",
-        "mainEntityOfPage": {
-            "@type": "WebPage",
-            "@id": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_12_IO%E6%A8%A1%E5%9E%8B%E4%B8%8Eepoll\/"
-        },"genre": "posts","keywords": "linux","wordcount":  10034 ,
-        "url": "https:\/\/xingliuhua.github.io\/posts\/linux\/linux_12_IO%E6%A8%A1%E5%9E%8B%E4%B8%8Eepoll\/","datePublished": "2026-08-06T17:30:00+08:00","dateModified": "2026-08-06T17:30:00+08:00","publisher": {
-            "@type": "Organization",
-            "name": "xingliuhua"},"author": {
-                "@type": "Person",
-                "name": "xingliuhua"
-            },"description": "一次 read 的两个阶段、五种 IO 模型的本质区别、同步异步与阻塞非阻塞的准确定义、select/poll/epoll 的内核数据结构、ET 与 LT 的编程差异、惊群问题、io_uring 与 Go netpoller"
-    }
-    </script></head>
-    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
-
-        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
-    <div class="header-wrapper">
-        <div class="header-title">
-            <a href="/" title="xingliuhua博客"><img
-        class="lazyload logo"
-        src="/svg/loading.min.svg"
-        data-src="/logo.png"
-        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
-        data-sizes="auto"
-        alt="/logo.png"
-        title="/logo.png" />xingliuhua</a>
-        </div>
-        <div class="menu">
-            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
-                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
-                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
-                            <i class="fas fa-search fa-fw"></i>
-                        </a>
-                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
-                            <i class="fas fa-times-circle fa-fw"></i>
-                        </a>
-                        <span class="search-button search-loading" id="search-loading-desktop">
-                            <i class="fas fa-spinner fa-fw fa-spin"></i>
-                        </span>
-                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
-                    <i class="fas fa-adjust fa-fw"></i>
-                </a>
-            </div>
-        </div>
-    </div>
-</header><header class="mobile" id="header-mobile">
-    <div class="header-container">
-        <div class="header-wrapper">
-            <div class="header-title">
-                <a href="/" title="xingliuhua博客"><img
-        class="lazyload logo"
-        src="/svg/loading.min.svg"
-        data-src="/logo.png"
-        data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x"
-        data-sizes="auto"
-        alt="/logo.png"
-        title="/logo.png" />xingliuhua</a>
-            </div>
-            <div class="menu-toggle" id="menu-toggle-mobile">
-                <span></span><span></span><span></span>
-            </div>
-        </div>
-        <div class="menu" id="menu-mobile"><div class="search-wrapper">
-                    <div class="search mobile" id="search-mobile">
-                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
-                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
-                            <i class="fas fa-search fa-fw"></i>
-                        </a>
-                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
-                            <i class="fas fa-times-circle fa-fw"></i>
-                        </a>
-                        <span class="search-button search-loading" id="search-loading-mobile">
-                            <i class="fas fa-spinner fa-fw fa-spin"></i>
-                        </span>
-                    </div>
-                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
-                        取消
-                    </a>
-                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
-                <i class="fas fa-adjust fa-fw"></i>
-            </a></div>
-    </div>
-</header>
-<div class="search-dropdown desktop">
-    <div id="search-dropdown-desktop"></div>
-</div>
-<div class="search-dropdown mobile">
-    <div id="search-dropdown-mobile"></div>
-</div>
-<main class="main">
-                <div class="container"><div class="toc" id="toc-auto">
-            <h2 class="toc-title">目录</h2>
-            <div class="toc-content" id="toc-content-auto"></div>
-        </div><article class="page single"><h1 class="single-title animated flipInX">Linux-12 IO 模型与 epoll</h1><div class="post-meta">
-            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/%E7%AC%94%E8%AE%B0/"><i class="far fa-folder fa-fw"></i>笔记</a></span></div>
-            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2026-08-06">2026-08-06</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 10034 字&nbsp;
-                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 21 分钟&nbsp;</div>
-        </div><div class="details toc" id="toc-static"  kept="">
-                <div class="details-summary toc-title">
-                    <span>目录</span>
-                    <span><i class="details-icon fas fa-angle-right"></i></span>
-                </div>
-                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
-  <ol>
-    <li><a href="#1-一次-read-分成两个阶段">1. 一次 read 分成两个阶段</a></li>
-    <li><a href="#2-五种-io-模型">2. 五种 IO 模型</a>
-      <ol>
-        <li><a href="#21-阻塞-io">2.1 阻塞 IO</a></li>
-        <li><a href="#22-非阻塞-io">2.2 非阻塞 IO</a></li>
-        <li><a href="#23-io-多路复用">2.3 IO 多路复用</a></li>
-        <li><a href="#24-信号驱动-io">2.4 信号驱动 IO</a></li>
-        <li><a href="#25-异步-io">2.5 异步 IO</a></li>
-      </ol>
-    </li>
-    <li><a href="#3-同步异步-与-阻塞非阻塞">3. 同步/异步 与 阻塞/非阻塞</a>
-      <ol>
-        <li><a href="#31-两组概念的正交关系">3.1 两组概念的正交关系</a></li>
-        <li><a href="#32-一个记得住的类比">3.2 一个记得住的类比</a></li>
-      </ol>
-    </li>
-    <li><a href="#4-select--poll--epoll">4. select / poll / epoll</a>
-      <ol>
-        <li><a href="#41-select三个致命限制">4.1 select：三个致命限制</a></li>
-        <li><a href="#42-poll解决了数量限制">4.2 poll：解决了数量限制</a></li>
-        <li><a href="#43-epoll内核维护-fd-集合">4.3 epoll：内核维护 fd 集合</a></li>
-        <li><a href="#44-三者对比">4.4 三者对比</a></li>
-      </ol>
-    </li>
-    <li><a href="#5-et-与-lt编程模型的关键差异">5. ET 与 LT：编程模型的关键差异</a>
-      <ol>
-        <li><a href="#51-具体差异举例">5.1 具体差异举例</a></li>
-        <li><a href="#52-et-必须配合非阻塞-fd">5.2 ET 必须配合非阻塞 fd</a></li>
-        <li><a href="#53-怎么选">5.3 怎么选</a></li>
-      </ol>
-    </li>
-    <li><a href="#6-惊群问题">6. 惊群问题</a>
-      <ol>
-        <li><a href="#61-两种惊群">6.1 两种惊群</a></li>
-        <li><a href="#62-三代解决方案">6.2 三代解决方案</a></li>
-      </ol>
-    </li>
-    <li><a href="#7-现代方案io_uring-与-go-netpoller">7. 现代方案：io_uring 与 Go netpoller</a>
-      <ol>
-        <li><a href="#71-io_uring">7.1 io_uring</a></li>
-        <li><a href="#72-go-netpoller用同步的写法拿异步的性能">7.2 Go netpoller：用同步的写法拿异步的性能</a></li>
-      </ol>
-    </li>
-    <li><a href="#8-实战连接数上不去">8. 实战：连接数上不去</a></li>
-    <li><a href="#9-一些量级感">9. 一些量级感</a></li>
-    <li><a href="#10-面试题">10. 面试题</a></li>
-  </ol>
-</nav></div>
-            </div><div class="content" id="content"><blockquote>
-<p>前置阅读：<a href="../linux_09_%e7%94%a8%e6%88%b7%e6%80%81%e5%86%85%e6%a0%b8%e6%80%81%e4%b8%8e%e7%b3%bb%e7%bb%9f%e8%b0%83%e7%94%a8/" rel="">Linux-09 用户态、内核态与系统调用</a>、<a href="../linux_11_%e6%96%87%e4%bb%b6%e7%b3%bb%e7%bb%9f%e4%b8%8e%e7%a3%81%e7%9b%98IO/" rel="">Linux-11 文件系统与磁盘 IO</a></p>
-</blockquote>
-<p>这是整个系列里最重要的原理篇，也是面试被问得最深的地方。所有高并发网络框架——nginx、Redis、Netty、Go netpoller——的地基都在这一篇。</p>
-<p>本篇的分工：<strong>这里讲的是系统调用层和内核数据结构</strong>，Socket API 的用法和 Go netpoller 的实现细节见 <a href="../../network/network_20_Socket%e7%bc%96%e7%a8%8b%e4%b8%8eIO%e6%a8%a1%e5%9e%8b/" rel="">network-20 Socket 编程与 IO 模型</a>。</p>
-<h1 id="1-一次-read-分成两个阶段">1. 一次 read 分成两个阶段</h1>
-<p><strong>这是理解全部五种 IO 模型的唯一钥匙。</strong></p>
-<p>以从 socket 读数据为例：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">应用调用 read(fd, buf, len)
-</span></span><span class="line"><span class="cl">    |
-</span></span><span class="line"><span class="cl">    | 【阶段一】等待数据就绪
-</span></span><span class="line"><span class="cl">    |   网络数据还在路上，或者只到了半个包，
-</span></span><span class="line"><span class="cl">    |   内核要等到 socket 接收缓冲区里有数据可读
-</span></span><span class="line"><span class="cl">    |   &lt;- 这个阶段可能等几微秒，也可能等几分钟
-</span></span><span class="line"><span class="cl">    v
-</span></span><span class="line"><span class="cl">    | 【阶段二】把数据从内核拷贝到用户空间
-</span></span><span class="line"><span class="cl">    |   数据已经在内核的 socket 缓冲区里了，
-</span></span><span class="line"><span class="cl">    |   copy_to_user() 把它搬到你的 buf
-</span></span><span class="line"><span class="cl">    |   &lt;- 这个阶段很快，纯内存拷贝，微秒级
-</span></span><span class="line"><span class="cl">    v
-</span></span><span class="line"><span class="cl">read 返回
-</span></span></code></pre></div><p><strong>五种 IO 模型的差别，全部在于「这两个阶段分别阻塞不阻塞」。</strong></p>
-<table>
-<thead>
-<tr>
-<th>模型</th>
-<th>阶段一（等数据）</th>
-<th>阶段二（拷贝数据）</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>阻塞 IO</td>
-<td><strong>阻塞</strong></td>
-<td><strong>阻塞</strong></td>
-</tr>
-<tr>
-<td>非阻塞 IO</td>
-<td>不阻塞（轮询）</td>
-<td><strong>阻塞</strong></td>
-</tr>
-<tr>
-<td>IO 多路复用</td>
-<td><strong>阻塞在 select/epoll 上</strong></td>
-<td><strong>阻塞</strong></td>
-</tr>
-<tr>
-<td>信号驱动 IO</td>
-<td>不阻塞（信号通知）</td>
-<td><strong>阻塞</strong></td>
-</tr>
-<tr>
-<td>异步 IO</td>
-<td>不阻塞</td>
-<td><strong>不阻塞</strong></td>
-</tr>
-</tbody>
-</table>
-<p><strong>只有异步 IO 的第二阶段也不阻塞</strong>——这正是 POSIX 定义里「同步」与「异步」的分界线。前四种都是同步 IO。</p>
-<h1 id="2-五种-io-模型">2. 五种 IO 模型</h1>
-<h2 id="21-阻塞-io">2.1 阻塞 IO</h2>
-<p><img
-        class="lazyload"
-        src="/svg/loading.min.svg"
-        data-src="./pic1.png"
-        data-srcset="./pic1.png, ./pic1.png 1.5x, ./pic1.png 2x"
-        data-sizes="auto"
-        alt="./pic1.png"
-        title="阻塞 IO 的两个阶段都被阻塞" /></p>
-<p>进程调用 <code>recvfrom</code>，如果数据没准备好，进程就被挂起（进入 <code>S</code> 状态，不占 CPU），直到数据到达并被拷贝完成才返回。</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="c1">// 最直白的写法
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kt">int</span> <span class="n">n</span> <span class="o">=</span> <span class="n">read</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span> <span class="n">buf</span><span class="p">,</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">buf</span><span class="p">));</span>   <span class="c1">// 一直等，直到有数据
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">process</span><span class="p">(</span><span class="n">buf</span><span class="p">,</span> <span class="n">n</span><span class="p">);</span>
-</span></span></code></pre></div><p><strong>优点是极其简单</strong>，代码就是顺序逻辑。<strong>缺点是一个线程只能处理一个连接</strong>——要支持 1 万个连接就要 1 万个线程。</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">1 万个线程的代价：
-</span></span><span class="line"><span class="cl">  内存：1万 × 8MB 默认栈 = 80GB 虚拟内存（实际 RSS 小得多，但仍可观）
-</span></span><span class="line"><span class="cl">  调度：1万个可运行任务，CFS 调度周期被拉长（第 7 篇）
-</span></span><span class="line"><span class="cl">  切换：上下文切换开销急剧上升，cs 可能到几十万/s
-</span></span></code></pre></div><p><strong>这就是 C10K 问题</strong>——用「一连接一线程」的模型，单机根本扛不住一万个连接。</p>
-<p><strong>但阻塞 IO 并没有过时</strong>：连接数少、逻辑简单的场景（内部工具、脚本、连接池里的单个连接）用它最省事。Go 之所以能用「一 goroutine 一连接」的阻塞式写法，是因为 goroutine 极轻（2KB 起步栈），而且 runtime 在底层偷偷用 epoll 替你做了多路复用。</p>
-<h2 id="22-非阻塞-io">2.2 非阻塞 IO</h2>
-<p><img
-        class="lazyload"
-        src="/svg/loading.min.svg"
-        data-src="./pic2.png"
-        data-srcset="./pic2.png, ./pic2.png 1.5x, ./pic2.png 2x"
-        data-sizes="auto"
-        alt="./pic2.png"
-        title="非阻塞 IO：阶段一立即返回 EAGAIN，需要反复轮询" /></p>
-<p>把 fd 设为非阻塞后，<code>read</code> 在数据没准备好时<strong>立刻返回 <code>-1</code> 并置 <code>errno = EAGAIN</code></strong>，不再挂起进程。</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="c1">// 设为非阻塞
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kt">int</span> <span class="n">flags</span> <span class="o">=</span> <span class="n">fcntl</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span> <span class="n">F_GETFL</span><span class="p">,</span> <span class="mi">0</span><span class="p">);</span>
-</span></span><span class="line"><span class="cl"><span class="n">fcntl</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span> <span class="n">F_SETFL</span><span class="p">,</span> <span class="n">flags</span> <span class="o">|</span> <span class="n">O_NONBLOCK</span><span class="p">);</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1">// 轮询
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">while</span> <span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="p">{</span>
-</span></span><span class="line"><span class="cl">    <span class="kt">int</span> <span class="n">n</span> <span class="o">=</span> <span class="n">read</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span> <span class="n">buf</span><span class="p">,</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">buf</span><span class="p">));</span>
-</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="p">(</span><span class="n">n</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span> <span class="p">{</span>
-</span></span><span class="line"><span class="cl">        <span class="n">process</span><span class="p">(</span><span class="n">buf</span><span class="p">,</span> <span class="n">n</span><span class="p">);</span>
-</span></span><span class="line"><span class="cl">        <span class="k">break</span><span class="p">;</span>
-</span></span><span class="line"><span class="cl">    <span class="p">}</span>
-</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="p">(</span><span class="n">n</span> <span class="o">&lt;</span> <span class="mi">0</span> <span class="o">&amp;&amp;</span> <span class="p">(</span><span class="n">errno</span> <span class="o">==</span> <span class="n">EAGAIN</span> <span class="o">||</span> <span class="n">errno</span> <span class="o">==</span> <span class="n">EWOULDBLOCK</span><span class="p">))</span> <span class="p">{</span>
-</span></span><span class="line"><span class="cl">        <span class="c1">// 数据还没来，可以去干别的事
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="n">do_something_else</span><span class="p">();</span>
-</span></span><span class="line"><span class="cl">        <span class="k">continue</span><span class="p">;</span>          <span class="c1">// &lt;- 但如果什么都不干就是【忙等】，白烧 CPU
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="p">}</span>
-</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="p">(</span><span class="n">n</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">)</span> <span class="p">{</span> <span class="cm">/* 真的出错了 */</span> <span class="k">break</span><span class="p">;</span> <span class="p">}</span>
-</span></span><span class="line"><span class="cl"><span class="p">}</span>
-</span></span></code></pre></div><p><strong>单独使用非阻塞 IO 几乎没有实用价值</strong>——纯轮询会把一个 CPU 核跑满。它的意义在于<strong>作为 IO 多路复用的必要组件</strong>（见 §4.3）。</p>
-<blockquote>
-<p>注意：<strong><code>EAGAIN</code> 和 <code>EWOULDBLOCK</code> 在 Linux 上是同一个值</strong>，但 POSIX 允许它们不同，所以规范的代码要同时判断两者。</p>
-</blockquote>
-<h2 id="23-io-多路复用">2.3 IO 多路复用</h2>
-<p><img
-        class="lazyload"
-        src="/svg/loading.min.svg"
-        data-src="./pic3.png"
-        data-srcset="./pic3.png, ./pic3.png 1.5x, ./pic3.png 2x"
-        data-sizes="auto"
-        alt="./pic3.png"
-        title="IO 多路复用：阻塞在 select 上，一次监听多个 fd" /></p>
-<p><strong>核心思想：用一个系统调用同时监听成千上万个 fd，哪个就绪了就处理哪个。</strong></p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="c1">// 伪代码：经典的事件循环
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">while</span> <span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="p">{</span>
-</span></span><span class="line"><span class="cl">    <span class="kt">int</span> <span class="n">n</span> <span class="o">=</span> <span class="n">epoll_wait</span><span class="p">(</span><span class="n">epfd</span><span class="p">,</span> <span class="n">events</span><span class="p">,</span> <span class="n">MAX_EVENTS</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">);</span>   <span class="c1">// 阻塞在这里
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">n</span><span class="p">;</span> <span class="n">i</span><span class="o">++</span><span class="p">)</span> <span class="p">{</span>
-</span></span><span class="line"><span class="cl">        <span class="kt">int</span> <span class="n">fd</span> <span class="o">=</span> <span class="n">events</span><span class="p">[</span><span class="n">i</span><span class="p">].</span><span class="n">data</span><span class="p">.</span><span class="n">fd</span><span class="p">;</span>
-</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="p">(</span><span class="n">events</span><span class="p">[</span><span class="n">i</span><span class="p">].</span><span class="n">events</span> <span class="o">&amp;</span> <span class="n">EPOLLIN</span><span class="p">)</span> <span class="p">{</span>
-</span></span><span class="line"><span class="cl">            <span class="n">read</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span> <span class="n">buf</span><span class="p">,</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">buf</span><span class="p">));</span>      <span class="c1">// 数据已就绪，读不会阻塞
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span>            <span class="n">process</span><span class="p">(</span><span class="n">buf</span><span class="p">);</span>
-</span></span><span class="line"><span class="cl">        <span class="p">}</span>
-</span></span><span class="line"><span class="cl">    <span class="p">}</span>
-</span></span><span class="line"><span class="cl"><span class="p">}</span>
-</span></span></code></pre></div><p><strong>关键认知：进程仍然是被阻塞的，只是阻塞在 <code>epoll_wait</code> 上，而不是阻塞在某个具体的 socket 上。</strong></p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">阻塞 IO：            1 个线程阻塞在 1 个 fd 上   -&gt; 需要 N 个线程处理 N 个连接
-</span></span><span class="line"><span class="cl">IO 多路复用：        1 个线程阻塞在 N 个 fd 上   -&gt; 1 个线程处理 N 个连接
-</span></span></code></pre></div><p><strong>这是 C10K 问题的标准解法</strong>，nginx、Redis、Netty、Node.js 全部基于它。</p>
-<blockquote>
-<p>注意：多路复用<strong>本质上还是同步 IO</strong>。<code>epoll_wait</code> 只告诉你「fd 可读了」，真正的 <code>read()</code> 还是要你自己调用，数据从内核拷到用户空间的那一步仍然是阻塞的（虽然很快）。这一点是判断同步/异步的关键。</p>
-</blockquote>
-<h2 id="24-信号驱动-io">2.4 信号驱动 IO</h2>
-<p>给 fd 注册 <code>SIGIO</code> 信号，数据就绪时内核发信号通知进程。</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="n">signal</span><span class="p">(</span><span class="n">SIGIO</span><span class="p">,</span> <span class="n">sigio_handler</span><span class="p">);</span>
-</span></span><span class="line"><span class="cl"><span class="n">fcntl</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span> <span class="n">F_SETOWN</span><span class="p">,</span> <span class="n">getpid</span><span class="p">());</span>
-</span></span><span class="line"><span class="cl"><span class="kt">int</span> <span class="n">flags</span> <span class="o">=</span> <span class="n">fcntl</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span> <span class="n">F_GETFL</span><span class="p">);</span>
-</span></span><span class="line"><span class="cl"><span class="n">fcntl</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span> <span class="n">F_SETFL</span><span class="p">,</span> <span class="n">flags</span> <span class="o">|</span> <span class="n">O_ASYNC</span><span class="p">);</span>
-</span></span></code></pre></div><p><strong>实际几乎没人用</strong>，两个原因：</p>
-<ol>
-<li><strong>信号不排队</strong>（第 8 篇讲的「不可靠信号」）——大量 fd 同时就绪时，<code>SIGIO</code> 会被合并，你不知道到底哪些 fd 就绪了</li>
-<li><strong>信号处理函数里能做的事极少</strong>（异步信号安全的限制）</li>
-</ol>
-<p><strong>知道它存在、面试能说清为什么不用就够了。</strong></p>
-<h2 id="25-异步-io">2.5 异步 IO</h2>
-<p><img
-        class="lazyload"
-        src="/svg/loading.min.svg"
-        data-src="./pic4.png"
-        data-srcset="./pic4.png, ./pic4.png 1.5x, ./pic4.png 2x"
-        data-sizes="auto"
-        alt="./pic4.png"
-        title="异步 IO：两个阶段都不阻塞，完成后由内核通知" /></p>
-<p>进程发起 IO 请求后<strong>立刻返回</strong>，内核负责「等数据 + 拷贝数据」两个阶段，全部完成后才通知进程。</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">应用调用 aio_read() -&gt; 立刻返回，进程去做别的事
-</span></span><span class="line"><span class="cl">                      v
-</span></span><span class="line"><span class="cl">                 内核等数据就绪
-</span></span><span class="line"><span class="cl">                      v
-</span></span><span class="line"><span class="cl">                 内核把数据拷贝到用户提供的 buf   &lt;- 关键：内核代劳了
-</span></span><span class="line"><span class="cl">                      v
-</span></span><span class="line"><span class="cl">                 内核发信号 / 调回调，通知「数据已经在你的 buf 里了」
-</span></span></code></pre></div><p><strong>这才是真正的异步 IO</strong>——应用完全不参与数据搬运。</p>
-<p><strong>Linux 上异步 IO 的历史很尴尬</strong>：</p>
-<table>
-<thead>
-<tr>
-<th>方案</th>
-<th>状态</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>POSIX AIO（<code>aio_read</code>）</td>
-<td>glibc 用<strong>用户态线程池</strong>模拟的，不是真异步，性能一般</td>
-</tr>
-<tr>
-<td>Linux 原生 AIO（<code>io_submit</code>）</td>
-<td>真异步但<strong>只支持 <code>O_DIRECT</code> 的文件 IO</strong>，不支持 socket，限制太多</td>
-</tr>
-<tr>
-<td><strong><code>io_uring</code></strong>（5.1+）</td>
-<td><strong>真正通用的异步 IO</strong>，文件和网络都支持，现代方案</td>
-</tr>
-</tbody>
-</table>
-<p><strong>所以「Linux 下异步 IO 用得很少」这个说法在 io_uring 之前是准确的</strong>，现在正在改变——但 <code>io_uring</code> 要求内核 5.10+，普及需要时间。</p>
-<h1 id="3-同步异步-与-阻塞非阻塞">3. 同步/异步 与 阻塞/非阻塞</h1>
-<p>这四个词是面试重灾区，因为很多资料把它们混着用。<strong>用 POSIX 的定义就不会错</strong>：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">POSIX 定义：
-</span></span><span class="line"><span class="cl">  同步 IO：IO 操作会导致请求进程被阻塞，直到该 IO 操作完成
-</span></span><span class="line"><span class="cl">  异步 IO：IO 操作不会导致请求进程被阻塞
-</span></span></code></pre></div><p><strong>关键在于「IO 操作」指的是什么</strong>——指的是<strong>真正搬数据的那一步</strong>（阶段二），不是「发起请求」这个动作。</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">按这个定义：
-</span></span><span class="line"><span class="cl">  阻塞 IO       阶段二阻塞  -&gt; 同步
-</span></span><span class="line"><span class="cl">  非阻塞 IO     阶段二阻塞  -&gt; 同步   &lt;- 名字叫「非阻塞」但它是同步的！
-</span></span><span class="line"><span class="cl">  IO 多路复用   阶段二阻塞  -&gt; 同步
-</span></span><span class="line"><span class="cl">  信号驱动 IO   阶段二阻塞  -&gt; 同步
-</span></span><span class="line"><span class="cl">  异步 IO       阶段二不阻塞 -&gt; 异步
-</span></span></code></pre></div><p><strong>「非阻塞 IO 是同步的」是最反直觉的一条</strong>，但按定义确实如此：<code>read()</code> 在数据没就绪时立即返回不算，一旦数据就绪，<code>read()</code> 把数据从内核拷到用户空间的那段时间，进程仍然是被阻塞的。</p>
-<h2 id="31-两组概念的正交关系">3.1 两组概念的正交关系</h2>
-<p><strong>它们描述的是不同维度</strong>：</p>
-<table>
-<thead>
-<tr>
-<th></th>
-<th>关注点</th>
-<th>谁的视角</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>同步 / 异步</td>
-<td><strong>数据搬运由谁完成</strong></td>
-<td>应用与内核的协作方式</td>
-</tr>
-<tr>
-<td>阻塞 / 非阻塞</td>
-<td><strong>发起调用时进程要不要等</strong></td>
-<td>单个调用的返回时机</td>
-</tr>
-</tbody>
-</table>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">组合：
-</span></span><span class="line"><span class="cl">  同步阻塞     = 阻塞 IO
-</span></span><span class="line"><span class="cl">  同步非阻塞   = 非阻塞 IO、IO 多路复用
-</span></span><span class="line"><span class="cl">  异步非阻塞   = 真正的异步 IO（AIO、io_uring）
-</span></span><span class="line"><span class="cl">  异步阻塞     = 【不存在】异步的前提就是不阻塞
-</span></span></code></pre></div><h2 id="32-一个记得住的类比">3.2 一个记得住的类比</h2>
-<p>用「取快递」来对应：</p>
-<table>
-<thead>
-<tr>
-<th>模型</th>
-<th>类比</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>阻塞 IO</td>
-<td>在快递点门口一直等，快递到了自己拿走</td>
-</tr>
-<tr>
-<td>非阻塞 IO</td>
-<td>每隔一分钟打电话问「到了吗」，到了自己去拿</td>
-</tr>
-<tr>
-<td>IO 多路复用</td>
-<td>委托一个前台（select/epoll）盯着所有快递，他喊你就去拿。<strong>但还是要自己去拿</strong></td>
-</tr>
-<tr>
-<td>信号驱动 IO</td>
-<td>快递到了给你发条短信，你去拿。<strong>短信可能被合并成一条</strong></td>
-</tr>
-<tr>
-<td>异步 IO</td>
-<td>快递直接送到家、拆好包装放桌上，完事给你发个「已完成」通知</td>
-</tr>
-</tbody>
-</table>
-<p><strong>「还是要自己去拿」就是同步的本质</strong>——多路复用只解决了「知道哪个快递到了」，搬运的活还是你自己干。</p>
-<h1 id="4-select--poll--epoll">4. select / poll / epoll</h1>
-<p>三者都实现 IO 多路复用，但内核实现的效率差异巨大。</p>
-<h2 id="41-select三个致命限制">4.1 select：三个致命限制</h2>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="kt">int</span> <span class="nf">select</span><span class="p">(</span><span class="kt">int</span> <span class="n">nfds</span><span class="p">,</span> <span class="n">fd_set</span> <span class="o">*</span><span class="n">readfds</span><span class="p">,</span> <span class="n">fd_set</span> <span class="o">*</span><span class="n">writefds</span><span class="p">,</span>
-</span></span><span class="line"><span class="cl">           <span class="n">fd_set</span> <span class="o">*</span><span class="n">exceptfds</span><span class="p">,</span> <span class="k">struct</span> <span class="n">timeval</span> <span class="o">*</span><span class="n">timeout</span><span class="p">);</span>
-</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="c1">// 典型用法
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">fd_set</span> <span class="n">readfds</span><span class="p">;</span>
-</span></span><span class="line"><span class="cl"><span class="k">while</span> <span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="p">{</span>
-</span></span><span class="line"><span class="cl">    <span class="n">FD_ZERO</span><span class="p">(</span><span class="o">&amp;</span><span class="n">readfds</span><span class="p">);</span>
-</span></span><span class="line"><span class="cl">    <span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">n</span><span class="p">;</span> <span class="n">i</span><span class="o">++</span><span class="p">)</span> <span class="n">FD_SET</span><span class="p">(</span><span class="n">fds</span><span class="p">[</span><span class="n">i</span><span class="p">],</span> <span class="o">&amp;</span><span class="n">readfds</span><span class="p">);</span>   <span class="c1">// ① 每次都要重新填
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    
-</span></span><span class="line"><span class="cl">    <span class="n">select</span><span class="p">(</span><span class="n">maxfd</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">readfds</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">);</span>
-</span></span><span class="line"><span class="cl">    
-</span></span><span class="line"><span class="cl">    <span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">n</span><span class="p">;</span> <span class="n">i</span><span class="o">++</span><span class="p">)</span> <span class="p">{</span>                            <span class="c1">// ② 每次都要全部遍历
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="k">if</span> <span class="p">(</span><span class="n">FD_ISSET</span><span class="p">(</span><span class="n">fds</span><span class="p">[</span><span class="n">i</span><span class="p">],</span> <span class="o">&amp;</span><span class="n">readfds</span><span class="p">))</span> <span class="p">{</span>
-</span></span><span class="line"><span class="cl">            <span class="n">read</span><span class="p">(</span><span class="n">fds</span><span class="p">[</span><span class="n">i</span><span class="p">],</span> <span class="n">buf</span><span class="p">,</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">buf</span><span class="p">));</span>
-</span></span><span class="line"><span class="cl">        <span class="p">}</span>
-</span></span><span class="line"><span class="cl">    <span class="p">}</span>
-</span></span><span class="line"><span class="cl"><span class="p">}</span>
-</span></span></code></pre></div><p><strong>三个问题</strong>：</p>
-<table>
-<thead>
-<tr>
-<th>问题</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><strong>fd 数量上限 1024</strong></td>
-<td><code>FD_SETSIZE</code> 是编译期常量，改了要重编译整个程序</td>
-</tr>
-<tr>
-<td><strong>每次调用都要拷贝整个 fd 集合</strong></td>
-<td>用户态 → 内核态，fd 越多拷贝开销越大</td>
-</tr>
-<tr>
-<td><strong>返回后要遍历所有 fd</strong></td>
-<td>O(n) 找出哪些就绪；而且 fd_set 是入参出参共用，每次都要重填</td>
-</tr>
-</tbody>
-</table>
-<p><strong><code>FD_SETSIZE=1024</code> 是硬伤</strong>。它是位图的大小，不是「建议值」——超过 1024 会造成栈溢出或静默的内存越界。</p>
-<h2 id="42-poll解决了数量限制">4.2 poll：解决了数量限制</h2>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="kt">int</span> <span class="nf">poll</span><span class="p">(</span><span class="k">struct</span> <span class="n">pollfd</span> <span class="o">*</span><span class="n">fds</span><span class="p">,</span> <span class="kt">unsigned</span> <span class="kt">int</span> <span class="n">nfds</span><span class="p">,</span> <span class="kt">int</span> <span class="n">timeout</span><span class="p">);</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="k">struct</span> <span class="n">pollfd</span> <span class="p">{</span>
-</span></span><span class="line"><span class="cl">    <span class="kt">int</span>   <span class="n">fd</span><span class="p">;</span>         <span class="cm">/* 要监听的 fd */</span>
-</span></span><span class="line"><span class="cl">    <span class="kt">short</span> <span class="n">events</span><span class="p">;</span>     <span class="cm">/* 关心的事件（入参） */</span>
-</span></span><span class="line"><span class="cl">    <span class="kt">short</span> <span class="n">revents</span><span class="p">;</span>    <span class="cm">/* 实际发生的事件（出参）&lt;- 与 events 分开了 */</span>
-</span></span><span class="line"><span class="cl"><span class="p">};</span>
-</span></span></code></pre></div><p><strong>改进点</strong>：</p>
-<ul>
-<li>用数组代替位图，<strong>没有 1024 的硬上限</strong></li>
-<li><code>events</code> 和 <code>revents</code> 分离，<strong>不用每次重新填充</strong>入参</li>
-</ul>
-<p><strong>但核心问题没解决</strong>：每次调用仍要把整个数组拷进内核，返回后仍要 O(n) 遍历找就绪的 fd。</p>
-<p><strong>规律：<code>poll</code> 只是 <code>select</code> 的小修小补，量级上没有区别。10 万连接下两者都不可用。</strong></p>
-<h2 id="43-epoll内核维护-fd-集合">4.3 epoll：内核维护 fd 集合</h2>
-<p><strong>epoll 的突破在于把「fd 集合」常驻内核，不再每次传递。</strong></p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="kt">int</span> <span class="nf">epoll_create1</span><span class="p">(</span><span class="kt">int</span> <span class="n">flags</span><span class="p">);</span>                                     <span class="c1">// 创建 epoll 实例
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kt">int</span> <span class="nf">epoll_ctl</span><span class="p">(</span><span class="kt">int</span> <span class="n">epfd</span><span class="p">,</span> <span class="kt">int</span> <span class="n">op</span><span class="p">,</span> <span class="kt">int</span> <span class="n">fd</span><span class="p">,</span> <span class="k">struct</span> <span class="n">epoll_event</span> <span class="o">*</span><span class="n">ev</span><span class="p">);</span>   <span class="c1">// 增删改 fd
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kt">int</span> <span class="nf">epoll_wait</span><span class="p">(</span><span class="kt">int</span> <span class="n">epfd</span><span class="p">,</span> <span class="k">struct</span> <span class="n">epoll_event</span> <span class="o">*</span><span class="n">events</span><span class="p">,</span>
-</span></span><span class="line"><span class="cl">               <span class="kt">int</span> <span class="n">maxevents</span><span class="p">,</span> <span class="kt">int</span> <span class="n">timeout</span><span class="p">);</span>                        <span class="c1">// 等待就绪
-</span></span></span></code></pre></div><p><strong>内核里的两个关键数据结构</strong>：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="c1">// 简化的 eventpoll 结构（内核 fs/eventpoll.c）
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">struct</span> <span class="n">eventpoll</span> <span class="p">{</span>
-</span></span><span class="line"><span class="cl">    <span class="k">struct</span> <span class="n">rb_root_cached</span> <span class="n">rbr</span><span class="p">;</span>      <span class="c1">// 红黑树：存放【所有】被监听的 fd
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="k">struct</span> <span class="n">list_head</span>      <span class="n">rdllist</span><span class="p">;</span>  <span class="c1">// 双向链表：存放【已就绪】的 fd
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="n">wait_queue_head_t</span>     <span class="n">wq</span><span class="p">;</span>       <span class="c1">// 等待队列：阻塞在 epoll_wait 的进程
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">};</span>
-</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">       红黑树 rbr                     就绪链表 rdllist
-</span></span><span class="line"><span class="cl">   （所有监听的 fd，10 万个）        （已就绪的 fd，可能只有几百个）
-</span></span><span class="line"><span class="cl">   
-</span></span><span class="line"><span class="cl">        ●                                 +---+---+---+
-</span></span><span class="line"><span class="cl">      ／   ＼                              |fd3|fd7|fd9|
-</span></span><span class="line"><span class="cl">    ●       ●          网卡数据到达 ------&gt;+---+---+---+
-</span></span><span class="line"><span class="cl">   ／＼     ／＼         回调把 fd 挂进来           ^
-</span></span><span class="line"><span class="cl">  ●  ●    ●   ●                          epoll_wait 只看这个链表
-</span></span></code></pre></div><p><strong>工作流程</strong>：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">① epoll_ctl(EPOLL_CTL_ADD)
-</span></span><span class="line"><span class="cl">   把 fd 插入红黑树（O(log n)），并给这个 fd 注册一个【回调函数】ep_poll_callback
-</span></span><span class="line"><span class="cl">   
-</span></span><span class="line"><span class="cl">② 网卡收到数据 -&gt; 协议栈处理完 -&gt; 唤醒等待队列
-</span></span><span class="line"><span class="cl">   -&gt; 触发 ep_poll_callback
-</span></span><span class="line"><span class="cl">   -&gt; 回调把这个 fd 直接【挂进就绪链表 rdllist】
-</span></span><span class="line"><span class="cl">   
-</span></span><span class="line"><span class="cl">③ epoll_wait 只需要检查 rdllist 空不空
-</span></span><span class="line"><span class="cl">   非空 -&gt; 把就绪的 fd 拷给用户，返回个数
-</span></span><span class="line"><span class="cl">   空   -&gt; 进程睡眠，等回调唤醒
-</span></span></code></pre></div><p><strong>epoll 高效的本质是三点，缺一不可</strong>：</p>
-<table>
-<thead>
-<tr>
-<th>机制</th>
-<th>解决了什么</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><strong>fd 集合常驻内核</strong>（红黑树）</td>
-<td>不用每次拷贝整个集合</td>
-</tr>
-<tr>
-<td><strong>回调机制</strong>（不是轮询）</td>
-<td>内核不需要遍历所有 fd 去检查状态</td>
-</tr>
-<tr>
-<td><strong>就绪链表</strong></td>
-<td><code>epoll_wait</code> 返回的直接就是就绪的 fd，用户不用遍历</td>
-</tr>
-</tbody>
-</table>
-<p><strong>所以 epoll 的开销只和「活跃连接数」有关，与「总连接数」无关。</strong></p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">10 万个长连接，同一时刻只有 500 个在传数据：
-</span></span><span class="line"><span class="cl">  select/poll：每次要检查 10 万个 fd          -&gt; O(100000)
-</span></span><span class="line"><span class="cl">  epoll：      只处理就绪链表里的 500 个       -&gt; O(500)
-</span></span></code></pre></div><p><strong>这恰好契合互联网场景</strong>——大量长连接但同时活跃的只是少数（推送、IM、网关）。</p>
-<h2 id="44-三者对比">4.4 三者对比</h2>
-<table>
-<thead>
-<tr>
-<th>维度</th>
-<th>select</th>
-<th>poll</th>
-<th>epoll</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>fd 上限</td>
-<td><strong>1024</strong>（<code>FD_SETSIZE</code>）</td>
-<td>无硬上限</td>
-<td>无硬上限</td>
-</tr>
-<tr>
-<td>底层结构</td>
-<td>位图</td>
-<td>数组</td>
-<td><strong>红黑树 + 就绪链表</strong></td>
-</tr>
-<tr>
-<td>每次调用的拷贝</td>
-<td>全部 fd</td>
-<td>全部 fd</td>
-<td><strong>只在 <code>epoll_ctl</code> 时一次</strong></td>
-</tr>
-<tr>
-<td>内核查找就绪</td>
-<td>O(n) 遍历</td>
-<td>O(n) 遍历</td>
-<td><strong>O(1)，回调直接挂链表</strong></td>
-</tr>
-<tr>
-<td>用户查找就绪</td>
-<td>O(n) 遍历</td>
-<td>O(n) 遍历</td>
-<td><strong>O(1)，返回的就是就绪的</strong></td>
-</tr>
-<tr>
-<td>触发模式</td>
-<td>只有 LT</td>
-<td>只有 LT</td>
-<td><strong>LT + ET</strong></td>
-</tr>
-<tr>
-<td>跨平台</td>
-<td><strong>几乎所有平台</strong></td>
-<td>大部分 Unix</td>
-<td><strong>仅 Linux</strong></td>
-</tr>
-</tbody>
-</table>
-<p><strong>epoll 不是永远最优</strong>：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">连接数少（&lt; 100）且几乎全部活跃  -&gt; select/poll 可能更快
-</span></span><span class="line"><span class="cl">                                    （epoll 有 epoll_ctl 的额外系统调用开销）
-</span></span><span class="line"><span class="cl">连接数多、活跃比例低              -&gt; epoll 碾压
-</span></span><span class="line"><span class="cl">需要跨平台                        -&gt; 用 libevent/libuv 封装，
-</span></span><span class="line"><span class="cl">                                    它们在 Linux 用 epoll，BSD 用 kqueue，
-</span></span><span class="line"><span class="cl">                                    Windows 用 IOCP
-</span></span></code></pre></div><h1 id="5-et-与-lt编程模型的关键差异">5. ET 与 LT：编程模型的关键差异</h1>
-<p>epoll 独有的两种触发模式，<strong>用错会导致丢事件或空转</strong>。</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">LT（Level Triggered，水平触发）—— 默认模式
-</span></span><span class="line"><span class="cl">  只要 fd 上还有数据可读，【每次】epoll_wait 都会返回它
-</span></span><span class="line"><span class="cl">  
-</span></span><span class="line"><span class="cl">ET（Edge Triggered，边缘触发）
-</span></span><span class="line"><span class="cl">  只在 fd 状态【从不可读变为可读】的那一刻通知一次
-</span></span><span class="line"><span class="cl">  之后即使数据没读完，也不再通知
-</span></span></code></pre></div><h2 id="51-具体差异举例">5.1 具体差异举例</h2>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">场景：socket 缓冲区收到 1000 字节，应用每次只 read 100 字节
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">LT 模式：
-</span></span><span class="line"><span class="cl">  epoll_wait 返回 -&gt; read 100 字节（还剩 900）
-</span></span><span class="line"><span class="cl">  epoll_wait 返回 -&gt; read 100 字节（还剩 800）    &lt;- 继续通知
-</span></span><span class="line"><span class="cl">  ...一直通知到读完
-</span></span><span class="line"><span class="cl">  
-</span></span><span class="line"><span class="cl">ET 模式：
-</span></span><span class="line"><span class="cl">  epoll_wait 返回 -&gt; read 100 字节（还剩 900）
-</span></span><span class="line"><span class="cl">  epoll_wait 阻塞  &lt;- 【不再通知！剩下 900 字节永远读不到】
-</span></span><span class="line"><span class="cl">  除非又有【新数据】到达，状态再次「变化」，才会通知
-</span></span></code></pre></div><p><strong>所以 ET 模式必须一次把数据读干</strong>：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="c1">// ✅ ET 模式的正确写法：循环读到 EAGAIN
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">while</span> <span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="p">{</span>
-</span></span><span class="line"><span class="cl">    <span class="n">ssize_t</span> <span class="n">n</span> <span class="o">=</span> <span class="n">read</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span> <span class="n">buf</span><span class="p">,</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">buf</span><span class="p">));</span>
-</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="p">(</span><span class="n">n</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span> <span class="p">{</span>
-</span></span><span class="line"><span class="cl">        <span class="n">process</span><span class="p">(</span><span class="n">buf</span><span class="p">,</span> <span class="n">n</span><span class="p">);</span>
-</span></span><span class="line"><span class="cl">        <span class="k">continue</span><span class="p">;</span>                       <span class="c1">// 继续读
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="p">}</span>
-</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="p">(</span><span class="n">n</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span> <span class="p">{</span>                       <span class="c1">// 对端关闭
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="n">close</span><span class="p">(</span><span class="n">fd</span><span class="p">);</span>
-</span></span><span class="line"><span class="cl">        <span class="k">break</span><span class="p">;</span>
-</span></span><span class="line"><span class="cl">    <span class="p">}</span>
-</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="p">(</span><span class="n">n</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">)</span> <span class="p">{</span>
-</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="p">(</span><span class="n">errno</span> <span class="o">==</span> <span class="n">EAGAIN</span> <span class="o">||</span> <span class="n">errno</span> <span class="o">==</span> <span class="n">EWOULDBLOCK</span><span class="p">)</span> <span class="p">{</span>
-</span></span><span class="line"><span class="cl">            <span class="k">break</span><span class="p">;</span>                      <span class="c1">// ✅ 读干了，正常退出
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="p">}</span>
-</span></span><span class="line"><span class="cl">        <span class="k">if</span> <span class="p">(</span><span class="n">errno</span> <span class="o">==</span> <span class="n">EINTR</span><span class="p">)</span> <span class="k">continue</span><span class="p">;</span>   <span class="c1">// 被信号打断，重试
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="n">close</span><span class="p">(</span><span class="n">fd</span><span class="p">);</span>                      <span class="c1">// 真的出错
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span>        <span class="k">break</span><span class="p">;</span>
-</span></span><span class="line"><span class="cl">    <span class="p">}</span>
-</span></span><span class="line"><span class="cl"><span class="p">}</span>
-</span></span></code></pre></div><p><strong>关键：<code>EAGAIN</code> 是「读干了」的唯一标志。</strong></p>
-<h2 id="52-et-必须配合非阻塞-fd">5.2 ET 必须配合非阻塞 fd</h2>
-<p><strong>这是个硬性要求，否则会死锁。</strong></p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">如果 ET 模式用了【阻塞】fd：
-</span></span><span class="line"><span class="cl">  循环 read 直到读干 -&gt; 最后一次 read 时缓冲区已空
-</span></span><span class="line"><span class="cl">  -&gt; 阻塞 fd 的 read 会【挂住】，等待新数据
-</span></span><span class="line"><span class="cl">  -&gt; 整个事件循环卡死，其他所有连接都得不到处理
-</span></span><span class="line"><span class="cl">  
-</span></span><span class="line"><span class="cl">用【非阻塞】fd：
-</span></span><span class="line"><span class="cl">  最后一次 read 立即返回 EAGAIN -&gt; 正常退出循环 -&gt; 继续处理其他 fd  ✅
-</span></span></code></pre></div><p><strong>LT 模式则两种 fd 都能用</strong>——因为它不需要循环读到干，读一次就可以返回事件循环，下次还会通知。</p>
-<h2 id="53-怎么选">5.3 怎么选</h2>
-<table>
-<thead>
-<tr>
-<th></th>
-<th>LT</th>
-<th>ET</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>编程难度</td>
-<td><strong>简单</strong>，读一次就行</td>
-<td>复杂，必须循环读到 <code>EAGAIN</code></td>
-</tr>
-<tr>
-<td>是否必须非阻塞 fd</td>
-<td>不必须</td>
-<td><strong>必须</strong></td>
-</tr>
-<tr>
-<td>唤醒次数</td>
-<td>多（数据没读完就一直通知）</td>
-<td><strong>少</strong></td>
-</tr>
-<tr>
-<td>容错性</td>
-<td><strong>高</strong>，漏读了下次还会通知</td>
-<td>低，漏读了数据就永久丢失</td>
-</tr>
-<tr>
-<td>谁在用</td>
-<td><strong>nginx、Redis、大部分应用</strong></td>
-<td>libevent 的部分模式、追求极致性能的场景</td>
-</tr>
-</tbody>
-</table>
-<p><strong>生产建议：默认用 LT。</strong></p>
-<p>理由很实在：LT 的额外唤醒开销在现代硬件上微不足道，而 ET 的编程复杂度带来的 bug 风险很高——「偶尔丢一个请求」这种问题极难排查。nginx 和 Redis 这两个性能标杆都用 LT，说明 LT 完全够用。</p>
-<blockquote>
-<p>坑：<strong>ET 模式下写事件（EPOLLOUT）尤其容易出错</strong>。socket 可写状态几乎总是 true（缓冲区没满就可写），所以 ET 下注册 <code>EPOLLOUT</code> 后可能只触发一次。正确做法是：平时不注册 <code>EPOLLOUT</code>，只在 <code>write</code> 返回 <code>EAGAIN</code>（缓冲区满了）时才临时注册，写完立即注销。</p>
-</blockquote>
-<h1 id="6-惊群问题">6. 惊群问题</h1>
-<p>**多个进程/线程同时等待同一个 fd 时，一个事件到来唤醒了所有人，但只有一个能真正处理——其余全部白白唤醒又睡回去。**这就是惊群（thundering herd）。</p>
-<h2 id="61-两种惊群">6.1 两种惊群</h2>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">① accept 惊群
-</span></span><span class="line"><span class="cl">   多个进程 accept 同一个 listen fd
-</span></span><span class="line"><span class="cl">   -&gt; Linux 2.6 起内核已经解决：只唤醒一个进程
-</span></span><span class="line"><span class="cl">   
-</span></span><span class="line"><span class="cl">② epoll 惊群
-</span></span><span class="line"><span class="cl">   多个进程把【同一个 listen fd】加进各自的 epoll
-</span></span><span class="line"><span class="cl">   -&gt; 新连接到来时，内核会唤醒【所有】阻塞在这个 fd 上的进程
-</span></span><span class="line"><span class="cl">   -&gt; nginx 面对的是这一种
-</span></span></code></pre></div><p><strong>区别在于「谁在等」</strong>：直接 <code>accept</code> 的进程挂在 socket 的等待队列上（内核只唤醒一个）；而通过 epoll 等待的进程挂在 epoll 的等待队列上，内核无法知道其他 epoll 实例也在等同一个 fd，只能全部唤醒。</p>
-<h2 id="62-三代解决方案">6.2 三代解决方案</h2>
-<p><strong>第一代：应用层加锁（nginx 的 <code>accept_mutex</code>）</strong></p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-nginx" data-lang="nginx"><span class="line"><span class="cl"><span class="k">events</span> <span class="p">{</span>
-</span></span><span class="line"><span class="cl">    <span class="kn">accept_mutex</span> <span class="no">on</span><span class="p">;</span>      <span class="c1"># 老版本默认 on，1.11.3+ 默认 off
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
-</span></span></code></pre></div><p>worker 之间抢一把锁，只有拿到锁的 worker 才把 listen fd 加进自己的 epoll。缺点是<strong>引入了锁竞争和延迟</strong>——没抢到锁的 worker 要等下一轮。</p>
-<p><strong>第二代：<code>EPOLLEXCLUSIVE</code>（4.5+）</strong></p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="n">ev</span><span class="p">.</span><span class="n">events</span> <span class="o">=</span> <span class="n">EPOLLIN</span> <span class="o">|</span> <span class="n">EPOLLEXCLUSIVE</span><span class="p">;</span>
-</span></span><span class="line"><span class="cl"><span class="n">epoll_ctl</span><span class="p">(</span><span class="n">epfd</span><span class="p">,</span> <span class="n">EPOLL_CTL_ADD</span><span class="p">,</span> <span class="n">listen_fd</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">ev</span><span class="p">);</span>
-</span></span></code></pre></div><p>告诉内核「这个 fd 上只唤醒一个等待者」。内核层面解决，无锁竞争。</p>
-<p><strong>第三代：<code>SO_REUSEPORT</code>（3.9+）—— 现代最优方案</strong></p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-c" data-lang="c"><span class="line"><span class="cl"><span class="kt">int</span> <span class="n">opt</span> <span class="o">=</span> <span class="mi">1</span><span class="p">;</span>
-</span></span><span class="line"><span class="cl"><span class="n">setsockopt</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span> <span class="n">SOL_SOCKET</span><span class="p">,</span> <span class="n">SO_REUSEPORT</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">opt</span><span class="p">,</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">opt</span><span class="p">));</span>
-</span></span><span class="line"><span class="cl"><span class="n">bind</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span> <span class="p">...);</span>       <span class="c1">// 多个进程可以 bind 同一个端口
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="n">listen</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span> <span class="n">backlog</span><span class="p">);</span>
-</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">不用 SO_REUSEPORT：              用 SO_REUSEPORT：
-</span></span><span class="line"><span class="cl">   一个 listen fd                   worker1 -&gt; listen fd 1 -&gt; 独立队列 1
-</span></span><span class="line"><span class="cl">   v 所有 worker 抢                 worker2 -&gt; listen fd 2 -&gt; 独立队列 2
-</span></span><span class="line"><span class="cl"> w1 w2 w3 都被唤醒                  worker3 -&gt; listen fd 3 -&gt; 独立队列 3
-</span></span><span class="line"><span class="cl">   v                                内核按【四元组 hash】直接投递
-</span></span><span class="line"><span class="cl"> 只有一个 accept 成功                零竞争，零惊群，负载天然均衡
-</span></span></code></pre></div><p><strong><code>SO_REUSEPORT</code> 让每个 worker 有自己独立的 listen fd 和 accept 队列</strong>，内核按连接的四元组哈希决定投给谁。既没有惊群，也不需要锁。</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-nginx" data-lang="nginx"><span class="line"><span class="cl"><span class="c1"># nginx 里开启
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">http</span> <span class="p">{</span>
-</span></span><span class="line"><span class="cl">    <span class="kn">server</span> <span class="p">{</span>
-</span></span><span class="line"><span class="cl">        <span class="kn">listen</span> <span class="mi">80</span> <span class="s">reuseport</span><span class="p">;</span>      <span class="c1"># &lt;- 加这个
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="p">}</span>
-</span></span><span class="line"><span class="cl"><span class="p">}</span>
-</span></span></code></pre></div><p><strong>生产建议：内核 3.9+ 直接用 <code>SO_REUSEPORT</code>，并把 <code>accept_mutex</code> 保持 off。</strong></p>
-<blockquote>
-<p>注意：<code>SO_REUSEPORT</code> 有个副作用——<strong>worker 重启时，它那个队列里已经排队的连接会被丢弃</strong>（因为 fd 关闭了）。所以平滑重启需要额外处理（nginx 的做法是老 worker 处理完存量再退出）。另外它与 <code>SO_REUSEADDR</code> 是两回事：后者只是允许 bind 处于 TIME_WAIT 的地址。</p>
-</blockquote>
-<h1 id="7-现代方案io_uring-与-go-netpoller">7. 现代方案：io_uring 与 Go netpoller</h1>
-<h2 id="71-io_uring">7.1 io_uring</h2>
-<p><code>epoll</code> 的剩余问题是：<strong>每次读写仍然是一个系统调用</strong>。10 万 QPS 就是 20 万次系统调用（读+写），按 150ns 算就是 30ms 的纯开销。</p>
-<p><code>io_uring</code> 用<strong>共享内存的环形队列</strong>解决：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">      用户态                        内核态
-</span></span><span class="line"><span class="cl">  +------------------+        +------------------+
-</span></span><span class="line"><span class="cl">  |  提交队列 SQ     |        |  内核读取并处理  |
-</span></span><span class="line"><span class="cl">  |  （写入请求）    | &lt;----&gt; |                  |
-</span></span><span class="line"><span class="cl">  +------------------+        +------------------+
-</span></span><span class="line"><span class="cl">          ^                            ^
-</span></span><span class="line"><span class="cl">          +--------- 共享内存 ---------+
-</span></span><span class="line"><span class="cl">  +------------------+        +------------------+
-</span></span><span class="line"><span class="cl">  |  完成队列 CQ     |        |  内核写入结果    |
-</span></span><span class="line"><span class="cl">  |  （读取结果）    | &lt;----&gt; |                  |
-</span></span><span class="line"><span class="cl">  +------------------+        +------------------+
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">批量提交：把 N 个请求写进 SQ，一次 io_uring_enter() 全部提交
-</span></span><span class="line"><span class="cl">轮询模式：SQPOLL 下内核线程主动轮询 SQ，【连这一次系统调用都不需要】
-</span></span></code></pre></div><table>
-<thead>
-<tr>
-<th>特性</th>
-<th>epoll</th>
-<th>io_uring</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>通知机制</td>
-<td>就绪通知（还要自己 read）</td>
-<td><strong>完成通知</strong>（数据已经在 buf 里）</td>
-</tr>
-<tr>
-<td>同步/异步</td>
-<td>同步</td>
-<td><strong>真异步</strong></td>
-</tr>
-<tr>
-<td>系统调用数</td>
-<td>每个 IO 一次</td>
-<td><strong>批量提交，可到 0</strong>（SQPOLL）</td>
-</tr>
-<tr>
-<td>支持文件 IO</td>
-<td>不支持（普通文件总是「就绪」）</td>
-<td><strong>支持</strong></td>
-</tr>
-<tr>
-<td>内核要求</td>
-<td>2.6+</td>
-<td><strong>5.1+，5.10+ 才成熟</strong></td>
-</tr>
-</tbody>
-</table>
-<p><strong>io_uring 是 epoll 之后最重要的进展</strong>，但普及需要时间——生产环境大量机器还在 4.x 内核上。目前主要在数据库（ScyllaDB）、存储系统、高性能代理里使用。</p>
-<h2 id="72-go-netpoller用同步的写法拿异步的性能">7.2 Go netpoller：用同步的写法拿异步的性能</h2>
-<p><strong>Go 最巧妙的设计之一：让你写阻塞式代码，底层却是 epoll。</strong></p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// 你写的代码看起来是阻塞的
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kd">func</span> <span class="nf">handle</span><span class="p">(</span><span class="nx">conn</span> <span class="nx">net</span><span class="p">.</span><span class="nx">Conn</span><span class="p">)</span> <span class="p">{</span>
-</span></span><span class="line"><span class="cl">    <span class="nx">buf</span> <span class="o">:=</span> <span class="nb">make</span><span class="p">([]</span><span class="kt">byte</span><span class="p">,</span> <span class="mi">4096</span><span class="p">)</span>
-</span></span><span class="line"><span class="cl">    <span class="nx">n</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">conn</span><span class="p">.</span><span class="nf">Read</span><span class="p">(</span><span class="nx">buf</span><span class="p">)</span>      <span class="c1">// 看起来会阻塞
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="c1">// ...
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1">// 每个连接一个 goroutine，写法极简
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">for</span> <span class="p">{</span>
-</span></span><span class="line"><span class="cl">    <span class="nx">conn</span><span class="p">,</span> <span class="nx">_</span> <span class="o">:=</span> <span class="nx">listener</span><span class="p">.</span><span class="nf">Accept</span><span class="p">()</span>
-</span></span><span class="line"><span class="cl">    <span class="k">go</span> <span class="nf">handle</span><span class="p">(</span><span class="nx">conn</span><span class="p">)</span>
-</span></span><span class="line"><span class="cl"><span class="p">}</span>
-</span></span></code></pre></div><p><strong>底层实际发生的</strong>：</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">conn.Read() 
-</span></span><span class="line"><span class="cl">    v
-</span></span><span class="line"><span class="cl">runtime 把 fd 设为【非阻塞】，调用 read()
-</span></span><span class="line"><span class="cl">    v
-</span></span><span class="line"><span class="cl">返回 EAGAIN（没数据）
-</span></span><span class="line"><span class="cl">    v
-</span></span><span class="line"><span class="cl">runtime 把这个 goroutine 挂到 netpoller 的等待列表，标记为 Gwaiting
-</span></span><span class="line"><span class="cl">    v
-</span></span><span class="line"><span class="cl">【调度器把 M（OS 线程）分配给其他 goroutine】&lt;- 关键：线程没有被阻塞
-</span></span><span class="line"><span class="cl">    v
-</span></span><span class="line"><span class="cl">调度循环中定期调用 netpoll() -&gt; 底层就是 epoll_wait
-</span></span><span class="line"><span class="cl">    v
-</span></span><span class="line"><span class="cl">fd 就绪 -&gt; 找到对应的 goroutine -&gt; 标记为 Grunnable，放回运行队列
-</span></span><span class="line"><span class="cl">    v
-</span></span><span class="line"><span class="cl">goroutine 被调度，conn.Read() 从内核视角「返回」了
-</span></span></code></pre></div><p><strong>所以 Go 同时拿到了两边的好处</strong>：</p>
-<table>
-<thead>
-<tr>
-<th></th>
-<th>收益</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>编程模型</td>
-<td>阻塞式的顺序代码，无回调地狱、无状态机</td>
-</tr>
-<tr>
-<td>性能</td>
-<td>底层是 epoll，一个 OS 线程承载成千上万个 goroutine</td>
-</tr>
-<tr>
-<td>成本</td>
-<td>goroutine 初始栈只有 2KB（vs 线程默认 8MB）</td>
-</tr>
-</tbody>
-</table>
-<p><strong>这解释了为什么 Go 特别适合写网络服务</strong>——它把「一连接一线程」的简洁写法和「epoll 事件循环」的性能统一了。代价是你对 IO 的细节失去了控制（比如无法直接用 ET 模式）。</p>
-<h1 id="8-实战连接数上不去">8. 实战：连接数上不去</h1>
-<p><strong>现象</strong>：一个 Go 网关服务，压测时并发连接到 28000 左右就上不去了，客户端报 <code>connection refused</code>，服务端 CPU 只用了 40%。</p>
-<p><strong>① 先看是不是 fd 限制</strong></p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">cat /proc/<span class="k">$(</span>pgrep gateway<span class="k">)</span>/limits <span class="p">|</span> grep -i <span class="s2">&#34;open files&#34;</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># Max open files            1048576   1048576   files     &lt;- 不是这个问题</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">ls /proc/<span class="k">$(</span>pgrep gateway<span class="k">)</span>/fd <span class="p">|</span> wc -l
-</span></span><span class="line"><span class="cl"><span class="c1"># 28134                                                   &lt;- 卡在这个数</span>
-</span></span></code></pre></div><p><strong>② 看 accept 队列有没有溢出</strong></p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">ss -lnt
-</span></span><span class="line"><span class="cl"><span class="c1"># State  Recv-Q Send-Q Local Address:Port</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># LISTEN  512    511         0.0.0.0:8080</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#         ^^^^^^ Recv-Q = 当前 accept 队列里堆积的连接数</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#                ^^^^^^ Send-Q = 队列容量（backlog）</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#         队列已经满了！</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># 确认溢出计数在增长</span>
-</span></span><span class="line"><span class="cl">nstat -az <span class="p">|</span> grep -iE <span class="s2">&#34;ListenOverflows|ListenDrops&#34;</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># TcpExtListenOverflows           89234      0.0</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># TcpExtListenDrops               89234      0.0</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#                                 ^^^^^ 8.9 万次溢出 -&gt; 大量连接被内核直接丢弃</span>
-</span></span></code></pre></div><p><strong><code>ListenOverflows</code> 就是「客户端 connection refused」的直接原因</strong>：三次握手完成的连接放不进 accept 队列，内核只能丢弃。</p>
-<p><strong>③ 找出 backlog 为什么只有 511</strong></p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">cat /proc/sys/net/core/somaxconn
-</span></span><span class="line"><span class="cl"><span class="c1"># 4096                    &lt;- 系统限制是 4096，不是 511</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># 那 511 是哪来的？是应用自己设的</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># Go 的 net.Listen 默认用 somaxconn，但这个服务显式设了 backlog</span>
-</span></span></code></pre></div><p><strong>关键：实际 backlog = min(应用传的 backlog, <code>net.core.somaxconn</code>)</strong>。两者取小值，所以调内核参数但不改应用代码是没用的，反之亦然。</p>
-<p><strong>④ 修复三处配置</strong></p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># ① 内核：加大 accept 队列上限和半连接队列</span>
-</span></span><span class="line"><span class="cl">sysctl -w net.core.somaxconn<span class="o">=</span><span class="m">65535</span>
-</span></span><span class="line"><span class="cl">sysctl -w net.ipv4.tcp_max_syn_backlog<span class="o">=</span><span class="m">65535</span>
-</span></span><span class="line"><span class="cl">sysctl -w net.core.netdev_max_backlog<span class="o">=</span><span class="m">32768</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># 持久化</span>
-</span></span><span class="line"><span class="cl">cat &gt;&gt; /etc/sysctl.d/99-network.conf <span class="s">&lt;&lt;&#39;EOF&#39;
-</span></span></span><span class="line"><span class="cl"><span class="s">net.core.somaxconn = 65535
-</span></span></span><span class="line"><span class="cl"><span class="s">net.ipv4.tcp_max_syn_backlog = 65535
-</span></span></span><span class="line"><span class="cl"><span class="s">net.core.netdev_max_backlog = 32768
-</span></span></span><span class="line"><span class="cl"><span class="s">EOF</span>
-</span></span><span class="line"><span class="cl">sysctl --system
-</span></span></code></pre></div><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// ② 应用：不要自己设小 backlog，让它用 somaxconn
-</span></span></span><span class="line"><span class="cl"><span class="c1">// ❌ 原来的代码
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">lc</span> <span class="o">:=</span> <span class="nx">net</span><span class="p">.</span><span class="nx">ListenConfig</span><span class="p">{}</span>   <span class="c1">// 某些框架会硬编码 backlog=511
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span>
-</span></span><span class="line"><span class="cl"><span class="c1">// ✅ 用默认值（Go 会读 /proc/sys/net/core/somaxconn）
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="nx">ln</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">net</span><span class="p">.</span><span class="nf">Listen</span><span class="p">(</span><span class="s">&#34;tcp&#34;</span><span class="p">,</span> <span class="s">&#34;:8080&#34;</span><span class="p">)</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1">// ③ 关键：accept 循环里不要做任何耗时操作
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="k">for</span> <span class="p">{</span>
-</span></span><span class="line"><span class="cl">    <span class="nx">conn</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">ln</span><span class="p">.</span><span class="nf">Accept</span><span class="p">()</span>
-</span></span><span class="line"><span class="cl">    <span class="k">if</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
-</span></span><span class="line"><span class="cl">        <span class="k">continue</span>
-</span></span><span class="line"><span class="cl">    <span class="p">}</span>
-</span></span><span class="line"><span class="cl">    <span class="k">go</span> <span class="nf">handle</span><span class="p">(</span><span class="nx">conn</span><span class="p">)</span>        <span class="c1">// ✅ 立刻交给 goroutine，accept 循环保持空转
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span>    <span class="c1">// ❌ 不要在这里做 TLS 握手、鉴权、日志等任何阻塞操作
-</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="p">}</span>
-</span></span></code></pre></div><p><strong>⑤ 验证</strong></p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">ss -lnt
-</span></span><span class="line"><span class="cl"><span class="c1"># State  Recv-Q Send-Q Local Address:Port</span>
-</span></span><span class="line"><span class="cl"><span class="c1"># LISTEN  0      65535       0.0.0.0:8080</span>
-</span></span><span class="line"><span class="cl"><span class="c1">#         ^ 队列不再堆积           ^^^^^ backlog 生效</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl">nstat -az <span class="p">|</span> grep ListenOverflows
-</span></span><span class="line"><span class="cl"><span class="c1"># TcpExtListenOverflows           0          0.0     &lt;- 归零</span>
-</span></span><span class="line"><span class="cl">
-</span></span><span class="line"><span class="cl"><span class="c1"># 连接数</span>
-</span></span><span class="line"><span class="cl">ls /proc/<span class="k">$(</span>pgrep gateway<span class="k">)</span>/fd <span class="p">|</span> wc -l
-</span></span><span class="line"><span class="cl"><span class="c1"># 98234                                              &lt;- 突破了</span>
-</span></span></code></pre></div><p><strong>结果</strong>：并发连接从 28000 提升到 98000，<code>connection refused</code> 归零，CPU 使用率 65%。</p>
-<p><strong>规律：<code>ss -lnt</code> 的 <code>Recv-Q</code> 持续接近 <code>Send-Q</code>、且 <code>nstat</code> 的 <code>ListenOverflows</code> 在增长 = accept 队列溢出。三个地方都要查：<code>somaxconn</code>、应用传的 backlog、accept 循环有没有被拖慢。</strong></p>
-<h1 id="9-一些量级感">9. 一些量级感</h1>
-<table>
-<thead>
-<tr>
-<th>项</th>
-<th>量级</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>epoll_wait</code> 一次调用（有就绪 fd）</td>
-<td>1 ~ 3 μs</td>
-</tr>
-<tr>
-<td><code>read</code> 命中 socket 缓冲区</td>
-<td>1 ~ 3 μs</td>
-</tr>
-<tr>
-<td>单核 epoll 事件循环的处理能力</td>
-<td>5 万 ~ 20 万 事件/s</td>
-</tr>
-<tr>
-<td>单机长连接数（内存充足、8 核）</td>
-<td>50 万 ~ 100 万</td>
-</tr>
-<tr>
-<td>单个 TCP 连接的内核内存开销</td>
-<td>4 ~ 10 KB</td>
-</tr>
-<tr>
-<td>goroutine 初始栈</td>
-<td>2 KB</td>
-</tr>
-<tr>
-<td>OS 线程默认栈</td>
-<td>8 MB（虚拟）</td>
-</tr>
-<tr>
-<td><code>select</code> 的 fd 上限</td>
-<td>1024（硬编码）</td>
-</tr>
-</tbody>
-</table>
-<p><strong>用法举例</strong>：100 万长连接 × 每连接 8KB 内核内存 = 8GB，加上应用层每连接的读写缓冲（假设各 4KB）又是 8GB——所以「单机百万连接」的机器至少要 32GB 内存，这是个绕不开的硬约束。</p>
-<h1 id="10-面试题">10. 面试题</h1>
-<p><strong>Q：五种 IO 模型的区别是什么？</strong></p>
-<p>关键在于<strong>一次 IO 操作分两个阶段</strong>：① 等待数据就绪；② 把数据从内核拷贝到用户空间。五种模型的差别全在于这两个阶段分别阻塞不阻塞。<strong>阻塞 IO</strong>：两个阶段都阻塞。<strong>非阻塞 IO</strong>：阶段一立即返回 <code>EAGAIN</code>（需要轮询），阶段二阻塞。<strong>IO 多路复用</strong>：阻塞在 <code>select</code>/<code>epoll</code> 上而不是某个具体 fd 上，阶段二仍阻塞。<strong>信号驱动 IO</strong>：用 <code>SIGIO</code> 通知，阶段二阻塞。<strong>异步 IO</strong>：两个阶段都不阻塞，内核把数据拷贝完才通知你。所以<strong>只有异步 IO 是真异步</strong>，前四种按 POSIX 定义都是同步 IO。</p>
-<p><strong>Q：为什么说「非阻塞 IO」也是同步 IO？</strong></p>
-<p>因为 POSIX 定义里的「IO 操作」指的是<strong>真正搬运数据的那一步</strong>（阶段二），不是「发起请求」这个动作。非阻塞 IO 在数据未就绪时立即返回 <code>EAGAIN</code>，这一点确实「非阻塞」；但一旦数据就绪，<code>read()</code> 把数据从内核缓冲区拷贝到用户 buf 的这段时间，进程仍然是被阻塞的、必须等它完成。而真正的异步 IO 里，这个拷贝动作由<strong>内核代劳</strong>，应用完全不参与。所以判断同步/异步的标准是「数据搬运由谁完成」，判断阻塞/非阻塞的标准是「发起调用时要不要等」——两组概念是正交的，但<strong>不存在「异步阻塞」</strong>，因为异步的前提就是不阻塞。</p>
-<p><strong>Q：<code>select</code>、<code>poll</code>、<code>epoll</code> 的区别？epoll 为什么高效？</strong></p>
-<p><code>select</code> 有三个问题：fd 上限 1024（<code>FD_SETSIZE</code> 是编译期常量）、每次调用要把整个 fd 集合从用户态拷进内核、返回后要 O(n) 遍历找就绪的 fd。<code>poll</code> 用数组替代位图去掉了数量限制，<code>events</code>/<code>revents</code> 分离免去了重复填充，但<strong>拷贝和遍历两个核心问题没解决</strong>。<code>epoll</code> 高效靠三点：① <strong>fd 集合常驻内核</strong>（红黑树），只在 <code>epoll_ctl</code> 时传一次，不用每次拷贝；② <strong>回调机制</strong>——注册 fd 时挂一个回调，数据到达时协议栈直接把 fd 挂进就绪链表，内核不需要遍历所有 fd 去检查；③ <strong>就绪链表</strong>——<code>epoll_wait</code> 返回的直接就是就绪的 fd，用户不用遍历。所以 <strong>epoll 的开销只与活跃连接数有关，与总连接数无关</strong>，这恰好契合「十万长连接但同时活跃只有几百」的互联网场景。</p>
-<p><strong>Q：epoll 的 ET 和 LT 有什么区别？为什么 ET 必须用非阻塞 fd？</strong></p>
-<p><strong>LT（水平触发，默认）</strong>：只要 fd 上还有数据可读，每次 <code>epoll_wait</code> 都会返回它。<strong>ET（边缘触发）</strong>：只在状态「从不可读变为可读」的那一刻通知一次，之后即使数据没读完也不再通知——所以 ET 下必须<strong>循环 read 直到返回 <code>EAGAIN</code></strong>，否则剩余数据永久丢失。ET 必须配非阻塞 fd 的原因是：循环读到最后一次时缓冲区已空，如果是阻塞 fd，<code>read</code> 会<strong>挂住等新数据</strong>，导致整个事件循环卡死、其他所有连接得不到处理；非阻塞 fd 会立即返回 <code>EAGAIN</code> 让你正常退出循环。<strong>生产建议默认用 LT</strong>——nginx 和 Redis 都用 LT，说明够用，而 ET 的编程复杂度带来的「偶尔丢请求」这类 bug 极难排查。</p>
-<p><strong>Q：什么是惊群问题？怎么解决？</strong></p>
-<p>多个进程/线程同时等待同一个 fd，一个事件到来时唤醒了所有人，但只有一个能真正处理，其余全部白白唤醒又睡回去，浪费大量上下文切换。要区分两种：<strong>accept 惊群</strong>（多进程直接 <code>accept</code> 同一个 listen fd）Linux 2.6 起内核已解决，只唤醒一个；<strong>epoll 惊群</strong>（多进程把同一个 listen fd 加进各自的 epoll）内核无法知道其他 epoll 实例也在等，只能全部唤醒——nginx 面对的是这一种。三代解法：① 应用层加锁（nginx 的 <code>accept_mutex</code>），有锁竞争和延迟；② <code>EPOLLEXCLUSIVE</code>（4.5+），内核层面只唤醒一个；③ <strong><code>SO_REUSEPORT</code>（3.9+，现代最优）</strong>——让每个 worker 拥有独立的 listen fd 和 accept 队列，内核按四元组哈希直接投递，零竞争零惊群且负载天然均衡。生产上直接用 <code>SO_REUSEPORT</code> 并把 <code>accept_mutex</code> 保持 off。</p>
-<p><strong>Q：Go 的 <code>conn.Read()</code> 看起来是阻塞的，为什么 Go 服务能支撑十万连接？</strong></p>
-<p>因为 Go runtime 在底层用 epoll 做了替换。<code>conn.Read()</code> 时 runtime 实际把 fd 设为<strong>非阻塞</strong>并调用 <code>read</code>，返回 <code>EAGAIN</code> 后<strong>不是阻塞 OS 线程</strong>，而是把当前 goroutine 挂到 netpoller 的等待列表、标记为 <code>Gwaiting</code>，然后<strong>调度器立刻把这个 OS 线程（M）分配给其他 goroutine</strong>。调度循环中定期调用 <code>netpoll()</code>（底层就是 <code>epoll_wait</code>），fd 就绪时找到对应的 goroutine 标记为可运行、放回队列。所以阻塞的只是<strong>goroutine</strong>（成本 2KB 栈），OS 线程从未被阻塞。这样 Go 同时拿到了「阻塞式顺序代码」的简洁和「epoll 事件循环」的性能，代价是你对 IO 细节失去控制（比如无法直接用 ET 模式）。</p>
-<p><strong>Q：<code>io_uring</code> 相比 epoll 解决了什么问题？</strong></p>
-<p>epoll 的剩余问题是<strong>每次读写仍然是一个独立的系统调用</strong>——10 万 QPS 就是 20 万次系统调用，按 150ns 算是 30ms 的纯开销；而且 epoll 是<strong>就绪通知</strong>（告诉你可读了，还要自己 <code>read</code>），本质是同步 IO；此外它对普通文件无效（普通文件总是「就绪」）。<code>io_uring</code> 用<strong>共享内存的环形队列</strong>（提交队列 SQ + 完成队列 CQ）解决：批量把 N 个请求写进 SQ，一次 <code>io_uring_enter()</code> 全部提交；开启 SQPOLL 模式后内核线程主动轮询 SQ，<strong>连这一次系统调用都不需要</strong>。而且它是<strong>完成通知</strong>——通知你时数据已经在你的 buf 里了，是真正的异步 IO，文件和网络都支持。代价是要求内核 5.1+（5.10+ 才成熟），生产普及需要时间。</p>
-<p><strong>Q：并发连接数上不去、客户端报 <code>connection refused</code>，怎么排查？</strong></p>
-<p>先用 <code>ss -lnt</code> 看监听 socket 的 <code>Recv-Q</code> 和 <code>Send-Q</code>——<code>Recv-Q</code> 是当前 accept 队列里堆积的连接数，<code>Send-Q</code> 是队列容量。如果 <code>Recv-Q</code> 持续接近 <code>Send-Q</code>，再用 <code>nstat -az | grep ListenOverflows</code> 确认溢出计数在增长，那就是 <strong>accept 队列溢出</strong>：三次握手已完成的连接放不进队列，内核只能丢弃，客户端就看到 <code>connection refused</code>。要查三个地方：① 内核的 <code>net.core.somaxconn</code>；② <strong>应用 <code>listen()</code> 传的 backlog</strong>——实际生效值是 <code>min(应用backlog, somaxconn)</code>，只调内核参数不改应用代码没用；③ <strong>accept 循环有没有被拖慢</strong>——如果在 accept 之后同步做 TLS 握手、鉴权、日志，取连接的速度跟不上入队速度，队列照样会满，正确做法是立刻交给独立的 goroutine/线程处理。</p>
-<hr>
-<p>上一篇：<a href="../linux_11_%e6%96%87%e4%bb%b6%e7%b3%bb%e7%bb%9f%e4%b8%8e%e7%a3%81%e7%9b%98IO/" rel="">Linux-11 文件系统与磁盘 IO</a> ｜ 下一篇：<a href="../linux_13_%e7%bd%91%e7%bb%9c%e9%85%8d%e7%bd%ae%e4%b8%8e%e6%8e%92%e6%9f%a5/" rel="">Linux-13 网络配置与排查</a></p>
-</div><div class="post-footer" id="post-footer">
-    <div class="post-info">
-        <div class="post-info-line">
-            <div class="post-info-mod">
-                <span>更新于 2026-08-06</span>
-            </div>
-            <div class="post-info-license"></div>
-        </div>
-        <div class="post-info-line">
-            <div class="post-info-md"></div>
-            <div class="post-info-share">
-                <span></span>
-            </div>
-        </div>
-    </div>
-
-    <div class="post-info-more">
-        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/linux/">linux</a></section>
-        <section>
-            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
-        </section>
-    </div>
-
-    <div class="post-nav"><a href="/posts/linux/linux_13_%E7%BD%91%E7%BB%9C%E9%85%8D%E7%BD%AE%E4%B8%8E%E6%8E%92%E6%9F%A5/" class="prev" rel="prev" title="Linux-13 网络配置与排查"><i class="fas fa-angle-left fa-fw"></i>Linux-13 网络配置与排查</a>
-            <a href="/posts/linux/linux_11_%E6%96%87%E4%BB%B6%E7%B3%BB%E7%BB%9F%E4%B8%8E%E7%A3%81%E7%9B%98IO/" class="next" rel="next" title="Linux-11 文件系统与磁盘 IO">Linux-11 文件系统与磁盘 IO<i class="fas fa-angle-right fa-fw"></i></a></div>
-</div>
-<div id="comments"><div id="gitalk" class="comment"></div><noscript>
-                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
-            </noscript></div></article></div>
-            </main><footer class="footer">
-        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
-                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
-        </div>
-    </footer></div>
-
-        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
-                <i class="fas fa-arrow-up fa-fw"></i>
-            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
-                <i class="fas fa-comment fa-fw"></i>
-            </a>
-        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><link rel="stylesheet" href="/lib/lightgallery/lightgallery.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lightgallery.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-thumbnail.min.js"></script><script type="text/javascript" src="/lib/lightgallery/lg-zoom.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2026-08-06T17:30:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Linux-12 IO 模型与 epoll"}},"lightGallery":{"actualSize":false,"exThumbImage":"data-thumbnail","hideBarsDelay":2000,"selector":".lightgallery","speed":400,"thumbContHeight":80,"thumbWidth":80,"thumbnail":true},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
-</html>
+<!doctype html><html lang=zh-cn><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><meta name=robots content="noodp"><meta http-equiv=x-ua-compatible content="IE=edge, chrome=1"><title>Linux-12 IO 模型与 epoll - xingliuhua博客</title><meta name=Description content="一次 read 的两个阶段、五种 IO 模型的本质区别、同步异步与阻塞非阻塞的准确定义、select/poll/epoll 的内核数据结构、ET 与 LT 的编程差异、惊群问题、io_uring 与 Go netpoller"><meta property="og:title" content="Linux-12 IO 模型与 epoll"><meta property="og:description" content="一次 read 的两个阶段、五种 IO 模型的本质区别、同步异步与阻塞非阻塞的准确定义、select/poll/epoll 的内核数据结构、ET 与 LT 的编程差异、惊群问题、io_uring 与 Go netpoller"><meta property="og:type" content="article"><meta property="og:url" content="https://xingliuhua.github.io/posts/linux/linux_12_IO%E6%A8%A1%E5%9E%8B%E4%B8%8Eepoll/"><meta property="og:image" content="https://xingliuhua.github.io/logo.png"><meta property="article:section" content="posts"><meta property="article:published_time" content="2026-08-06T17:30:00+08:00"><meta property="article:modified_time" content="2026-08-11T00:00:00+08:00"><meta name=twitter:card content="summary_large_image"><meta name=twitter:image content="https://xingliuhua.github.io/logo.png"><meta name=twitter:title content="Linux-12 IO 模型与 epoll"><meta name=twitter:description content="一次 read 的两个阶段、五种 IO 模型的本质区别、同步异步与阻塞非阻塞的准确定义、select/poll/epoll 的内核数据结构、ET 与 LT 的编程差异、惊群问题、io_uring 与 Go netpoller"><meta name=application-name content="xingliuhua博客"><meta name=apple-mobile-web-app-title content="xingliuhua博客"><link rel="shortcut icon" type=image/x-icon href=/favicon.ico><link rel=icon type=image/png sizes=32x32 href=/favicon-32x32.png><link rel=icon type=image/png sizes=16x16 href=/favicon-16x16.png><link rel=apple-touch-icon sizes=180x180 href=/apple-touch-icon.png><link rel=manifest href=/site.webmanifest><link rel=canonical href=https://xingliuhua.github.io/posts/linux/linux_12_IO%E6%A8%A1%E5%9E%8B%E4%B8%8Eepoll/><link rel=prev href=https://xingliuhua.github.io/posts/linux/linux_13_%E7%BD%91%E7%BB%9C%E9%85%8D%E7%BD%AE%E4%B8%8E%E6%8E%92%E6%9F%A5/><link rel=next href=https://xingliuhua.github.io/posts/linux/linux_11_%E6%96%87%E4%BB%B6%E7%B3%BB%E7%BB%9F%E4%B8%8E%E7%A3%81%E7%9B%98IO/><link rel=stylesheet href=/lib/normalize/normalize.min.css><link rel=stylesheet href=/css/style.min.css><link rel=stylesheet href=/lib/fontawesome-free/all.min.css><link rel=stylesheet href=/lib/animate/animate.min.css><script type=application/ld+json>{"@context":"http://schema.org","@type":"BlogPosting","headline":"Linux-12 IO 模型与 epoll","inLanguage":"zh-CN","mainEntityOfPage":{"@type":"WebPage","@id":"https:\/\/xingliuhua.github.io\/posts\/linux\/linux_12_IO%E6%A8%A1%E5%9E%8B%E4%B8%8Eepoll\/"},"genre":"posts","keywords":"linux","wordcount":10404,"url":"https:\/\/xingliuhua.github.io\/posts\/linux\/linux_12_IO%E6%A8%A1%E5%9E%8B%E4%B8%8Eepoll\/","datePublished":"2026-08-06T17:30:00+08:00","dateModified":"2026-08-11T00:00:00+08:00","publisher":{"@type":"Organization","name":"xingliuhua"},"author":{"@type":"Person","name":"xingliuhua"},"description":"一次 read 的两个阶段、五种 IO 模型的本质区别、同步异步与阻塞非阻塞的准确定义、select/poll/epoll 的内核数据结构、ET 与 LT 的编程差异、惊群问题、io_uring 与 Go netpoller"}</script></head><body header-desktop=fixed header-mobile=auto><script type=text/javascript>(window.localStorage&&localStorage.getItem("theme")?localStorage.getItem("theme")==="dark":"auto"==="auto"?window.matchMedia("(prefers-color-scheme: dark)").matches:"auto"==="dark")&&document.body.setAttribute("theme","dark")</script><div id=mask></div><div class=wrapper><header class=desktop id=header-desktop><div class=header-wrapper><div class=header-title><a href=/ title=xingliuhua博客><img class="lazyload logo" src=/svg/loading.min.svg data-src=/logo.png data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x" data-sizes=auto alt=/logo.png title=/logo.png>xingliuhua</a></div><div class=menu><div class=menu-inner><a class=menu-item href=/posts/>文章 </a><a class=menu-item href=/tags/>标签 </a><a class=menu-item href=/categories/>分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id=search-desktop>
+<input type=text placeholder=搜索文章标题或内容... id=search-input-desktop>
+<a href=javascript:void(0); class="search-button search-toggle" id=search-toggle-desktop title=搜索><i class="fas fa-search fa-fw"></i></a>
+<a href=javascript:void(0); class="search-button search-clear" id=search-clear-desktop title=清空><i class="fas fa-times-circle fa-fw"></i></a>
+<span class="search-button search-loading" id=search-loading-desktop><i class="fas fa-spinner fa-fw fa-spin"></i></span>
+</span><a href=javascript:void(0); class="menu-item theme-switch" title=切换主题><i class="fas fa-adjust fa-fw"></i></a></div></div></div></header><header class=mobile id=header-mobile><div class=header-container><div class=header-wrapper><div class=header-title><a href=/ title=xingliuhua博客><img class="lazyload logo" src=/svg/loading.min.svg data-src=/logo.png data-srcset="/logo.png, /logo.png 1.5x, /logo.png 2x" data-sizes=auto alt=/logo.png title=/logo.png>xingliuhua</a></div><div class=menu-toggle id=menu-toggle-mobile><span></span><span></span><span></span></div></div><div class=menu id=menu-mobile><div class=search-wrapper><div class="search mobile" id=search-mobile><input type=text placeholder=搜索文章标题或内容... id=search-input-mobile>
+<a href=javascript:void(0); class="search-button search-toggle" id=search-toggle-mobile title=搜索><i class="fas fa-search fa-fw"></i></a>
+<a href=javascript:void(0); class="search-button search-clear" id=search-clear-mobile title=清空><i class="fas fa-times-circle fa-fw"></i></a>
+<span class="search-button search-loading" id=search-loading-mobile><i class="fas fa-spinner fa-fw fa-spin"></i></span></div><a href=javascript:void(0); class=search-cancel id=search-cancel-mobile>取消</a></div><a class=menu-item href=/posts/ title>文章</a><a class=menu-item href=/tags/ title>标签</a><a class=menu-item href=/categories/ title>分类</a><a href=javascript:void(0); class="menu-item theme-switch" title=切换主题>
+<i class="fas fa-adjust fa-fw"></i></a></div></div></header><div class="search-dropdown desktop"><div id=search-dropdown-desktop></div></div><div class="search-dropdown mobile"><div id=search-dropdown-mobile></div></div><main class=main><div class=container><div class=toc id=toc-auto><h2 class=toc-title>目录</h2><div class=toc-content id=toc-content-auto></div></div><article class="page single"><h1 class="single-title animated flipInX">Linux-12 IO 模型与 epoll</h1><div class=post-meta><div class=post-meta-line><span class=post-author><a href=https://xingliuhua/github.com.io title=Author target=_blank rel="noopener noreffer author" class=author><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class=post-category>收录于 <a href=/categories/%E7%AC%94%E8%AE%B0/><i class="far fa-folder fa-fw"></i>笔记</a></span></div><div class=post-meta-line><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime=2026-08-06>2026-08-06</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 10404 字&nbsp;
+<i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 21 分钟&nbsp;</div></div><div class="details toc" id=toc-static kept><div class="details-summary toc-title"><span>目录</span>
+<span><i class="details-icon fas fa-angle-right"></i></span></div><div class="details-content toc-content" id=toc-content-static><nav id=TableOfContents><ol><li><a href=#1-一次-read-分成两个阶段>1. 一次 read 分成两个阶段</a></li><li><a href=#2-五种-io-模型>2. 五种 IO 模型</a><ol><li><a href=#21-阻塞-io>2.1 阻塞 IO</a></li><li><a href=#22-非阻塞-io>2.2 非阻塞 IO</a></li><li><a href=#23-io-多路复用>2.3 IO 多路复用</a></li><li><a href=#24-信号驱动-io>2.4 信号驱动 IO</a></li><li><a href=#25-异步-io>2.5 异步 IO</a></li></ol></li><li><a href=#3-同步异步-与-阻塞非阻塞>3. 同步/异步 与 阻塞/非阻塞</a><ol><li><a href=#31-两组概念的正交关系>3.1 两组概念的正交关系</a></li><li><a href=#32-一个记得住的类比>3.2 一个记得住的类比</a></li></ol></li><li><a href=#4-select--poll--epoll>4. select / poll / epoll</a><ol><li><a href=#41-select三个致命限制>4.1 select：三个致命限制</a></li><li><a href=#42-poll解决了数量限制>4.2 poll：解决了数量限制</a></li><li><a href=#43-epoll内核维护-fd-集合>4.3 epoll：内核维护 fd 集合</a></li><li><a href=#44-三者对比>4.4 三者对比</a></li></ol></li><li><a href=#5-et-与-lt编程模型的关键差异>5. ET 与 LT：编程模型的关键差异</a><ol><li><a href=#51-具体差异举例>5.1 具体差异举例</a></li><li><a href=#52-et-必须配合非阻塞-fd>5.2 ET 必须配合非阻塞 fd</a></li><li><a href=#53-怎么选>5.3 怎么选</a></li></ol></li><li><a href=#6-惊群问题>6. 惊群问题</a><ol><li><a href=#61-两种惊群>6.1 两种惊群</a></li><li><a href=#62-三代解决方案>6.2 三代解决方案</a></li></ol></li><li><a href=#7-现代方案io_uring-与-go-netpoller>7. 现代方案：io_uring 与 Go netpoller</a><ol><li><a href=#71-io_uring>7.1 io_uring</a></li><li><a href=#72-go-netpoller用同步的写法拿异步的性能>7.2 Go netpoller：用同步的写法拿异步的性能</a></li></ol></li><li><a href=#8-实战连接数上不去>8. 实战：连接数上不去</a></li><li><a href=#9-一些量级感>9. 一些量级感</a></li><li><a href=#接口附录本篇出现的系统接口>接口附录：本篇出现的系统接口</a><ol><li><a href=#它们不是-shell-命令>它们不是 Shell 命令</a></li><li><a href=#接口名称速查>接口名称速查</a></li></ol></li><li><a href=#10-面试题>10. 面试题</a></li></ol></nav></div></div><div class=content id=content><blockquote><p>前置阅读：<a href=../linux_09_%e7%94%a8%e6%88%b7%e6%80%81%e5%86%85%e6%a0%b8%e6%80%81%e4%b8%8e%e7%b3%bb%e7%bb%9f%e8%b0%83%e7%94%a8/ rel>Linux-09 用户态、内核态与系统调用</a>、<a href=../linux_11_%e6%96%87%e4%bb%b6%e7%b3%bb%e7%bb%9f%e4%b8%8e%e7%a3%81%e7%9b%98IO/ rel>Linux-11 文件系统与磁盘 IO</a></p></blockquote><p>这是整个系列里最重要的原理篇，也是面试被问得最深的地方。所有高并发网络框架——nginx、Redis、Netty、Go netpoller——的地基都在这一篇。</p><p>本篇的分工：<strong>这里讲的是系统调用层和内核数据结构</strong>，Socket API 的用法和 Go netpoller 的实现细节见 <a href=../../network/network_20_Socket%e7%bc%96%e7%a8%8b%e4%b8%8eIO%e6%a8%a1%e5%9e%8b/ rel>network-20 Socket 编程与 IO 模型</a>。</p><h1 id=1-一次-read-分成两个阶段>1. 一次 read 分成两个阶段</h1><p><strong>这是理解全部五种 IO 模型的唯一钥匙。</strong></p><p>以从 socket 读数据为例：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>应用调用 read(fd, buf, len)
+</span></span><span class=line><span class=cl>    |
+</span></span><span class=line><span class=cl>    | 【阶段一】等待数据就绪
+</span></span><span class=line><span class=cl>    |   网络数据还在路上，或者只到了半个包，
+</span></span><span class=line><span class=cl>    |   内核要等到 socket 接收缓冲区里有数据可读
+</span></span><span class=line><span class=cl>    |   &lt;- 这个阶段可能等几微秒，也可能等几分钟
+</span></span><span class=line><span class=cl>    v
+</span></span><span class=line><span class=cl>    | 【阶段二】把数据从内核拷贝到用户空间
+</span></span><span class=line><span class=cl>    |   数据已经在内核的 socket 缓冲区里了，
+</span></span><span class=line><span class=cl>    |   copy_to_user() 把它搬到你的 buf
+</span></span><span class=line><span class=cl>    |   &lt;- 这个阶段很快，纯内存拷贝，微秒级
+</span></span><span class=line><span class=cl>    v
+</span></span><span class=line><span class=cl>read 返回
+</span></span></code></pre></div><p><strong>五种 IO 模型的差别，全部在于「这两个阶段分别阻塞不阻塞」。</strong></p><table><thead><tr><th>模型</th><th>阶段一（等数据）</th><th>阶段二（拷贝数据）</th></tr></thead><tbody><tr><td>阻塞 IO</td><td><strong>阻塞</strong></td><td><strong>阻塞</strong></td></tr><tr><td>非阻塞 IO</td><td>不阻塞（轮询）</td><td><strong>阻塞</strong></td></tr><tr><td>IO 多路复用</td><td><strong>阻塞在 select/epoll 上</strong></td><td><strong>阻塞</strong></td></tr><tr><td>信号驱动 IO</td><td>不阻塞（信号通知）</td><td><strong>阻塞</strong></td></tr><tr><td>异步 IO</td><td>不阻塞</td><td><strong>不阻塞</strong></td></tr></tbody></table><p><strong>只有异步 IO 的第二阶段也不阻塞</strong>——这正是 POSIX 定义里「同步」与「异步」的分界线。前四种都是同步 IO。</p><h1 id=2-五种-io-模型>2. 五种 IO 模型</h1><h2 id=21-阻塞-io>2.1 阻塞 IO</h2><p><img class=lazyload src=/svg/loading.min.svg data-src=./pic1.png data-srcset="./pic1.png, ./pic1.png 1.5x, ./pic1.png 2x" data-sizes=auto alt=./pic1.png title="阻塞 IO 的两个阶段都被阻塞"></p><p>进程调用 <code>recvfrom</code>，如果数据没准备好，进程就被挂起（进入 <code>S</code> 状态，不占 CPU），直到数据到达并被拷贝完成才返回。</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// 最直白的写法
+</span></span></span><span class=line><span class=cl><span class=c1></span><span class=kt>int</span> <span class=n>n</span> <span class=o>=</span> <span class=n>read</span><span class=p>(</span><span class=n>fd</span><span class=p>,</span> <span class=n>buf</span><span class=p>,</span> <span class=k>sizeof</span><span class=p>(</span><span class=n>buf</span><span class=p>));</span>   <span class=c1>// 一直等，直到有数据
+</span></span></span><span class=line><span class=cl><span class=c1></span><span class=n>process</span><span class=p>(</span><span class=n>buf</span><span class=p>,</span> <span class=n>n</span><span class=p>);</span>
+</span></span></code></pre></div><p><strong>优点是极其简单</strong>，代码就是顺序逻辑。<strong>缺点是一个线程只能处理一个连接</strong>——要支持 1 万个连接就要 1 万个线程。</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>1 万个线程的代价：
+</span></span><span class=line><span class=cl>  内存：1万 × 8MB 默认栈 = 80GB 虚拟内存（实际 RSS 小得多，但仍可观）
+</span></span><span class=line><span class=cl>  调度：1万个可运行任务，CFS 调度周期被拉长（第 7 篇）
+</span></span><span class=line><span class=cl>  切换：上下文切换开销急剧上升，cs 可能到几十万/s
+</span></span></code></pre></div><p><strong>这就是 C10K 问题</strong>——用「一连接一线程」的模型，单机根本扛不住一万个连接。</p><p><strong>但阻塞 IO 并没有过时</strong>：连接数少、逻辑简单的场景（内部工具、脚本、连接池里的单个连接）用它最省事。Go 之所以能用「一 goroutine 一连接」的阻塞式写法，是因为 goroutine 极轻（2KB 起步栈），而且 runtime 在底层偷偷用 epoll 替你做了多路复用。</p><h2 id=22-非阻塞-io>2.2 非阻塞 IO</h2><p><img class=lazyload src=/svg/loading.min.svg data-src=./pic2.png data-srcset="./pic2.png, ./pic2.png 1.5x, ./pic2.png 2x" data-sizes=auto alt=./pic2.png title="非阻塞 IO：阶段一立即返回 EAGAIN，需要反复轮询"></p><p>把 fd 设为非阻塞后，<code>read</code> 在数据没准备好时<strong>立刻返回 <code>-1</code> 并置 <code>errno = EAGAIN</code></strong>，不再挂起进程。</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// 设为非阻塞
+</span></span></span><span class=line><span class=cl><span class=c1></span><span class=kt>int</span> <span class=n>flags</span> <span class=o>=</span> <span class=n>fcntl</span><span class=p>(</span><span class=n>fd</span><span class=p>,</span> <span class=n>F_GETFL</span><span class=p>,</span> <span class=mi>0</span><span class=p>);</span>
+</span></span><span class=line><span class=cl><span class=n>fcntl</span><span class=p>(</span><span class=n>fd</span><span class=p>,</span> <span class=n>F_SETFL</span><span class=p>,</span> <span class=n>flags</span> <span class=o>|</span> <span class=n>O_NONBLOCK</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1>// 轮询
+</span></span></span><span class=line><span class=cl><span class=c1></span><span class=k>while</span> <span class=p>(</span><span class=mi>1</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=kt>int</span> <span class=n>n</span> <span class=o>=</span> <span class=n>read</span><span class=p>(</span><span class=n>fd</span><span class=p>,</span> <span class=n>buf</span><span class=p>,</span> <span class=k>sizeof</span><span class=p>(</span><span class=n>buf</span><span class=p>));</span>
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>n</span> <span class=o>&gt;</span> <span class=mi>0</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>process</span><span class=p>(</span><span class=n>buf</span><span class=p>,</span> <span class=n>n</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>        <span class=k>break</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>n</span> <span class=o>&lt;</span> <span class=mi>0</span> <span class=o>&amp;&amp;</span> <span class=p>(</span><span class=n>errno</span> <span class=o>==</span> <span class=n>EAGAIN</span> <span class=o>||</span> <span class=n>errno</span> <span class=o>==</span> <span class=n>EWOULDBLOCK</span><span class=p>))</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=c1>// 数据还没来，可以去干别的事
+</span></span></span><span class=line><span class=cl><span class=c1></span>        <span class=n>do_something_else</span><span class=p>();</span>
+</span></span><span class=line><span class=cl>        <span class=k>continue</span><span class=p>;</span>          <span class=c1>// &lt;- 但如果什么都不干就是【忙等】，白烧 CPU
+</span></span></span><span class=line><span class=cl><span class=c1></span>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>n</span> <span class=o>&lt;</span> <span class=mi>0</span><span class=p>)</span> <span class=p>{</span> <span class=cm>/* 真的出错了 */</span> <span class=k>break</span><span class=p>;</span> <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></div><p><strong>单独使用非阻塞 IO 几乎没有实用价值</strong>——纯轮询会把一个 CPU 核跑满。它的意义在于<strong>作为 IO 多路复用的必要组件</strong>（见 §4.3）。</p><blockquote><p>注意：<strong><code>EAGAIN</code> 和 <code>EWOULDBLOCK</code> 在 Linux 上是同一个值</strong>，但 POSIX 允许它们不同，所以规范的代码要同时判断两者。</p></blockquote><h2 id=23-io-多路复用>2.3 IO 多路复用</h2><p><img class=lazyload src=/svg/loading.min.svg data-src=./pic3.png data-srcset="./pic3.png, ./pic3.png 1.5x, ./pic3.png 2x" data-sizes=auto alt=./pic3.png title="IO 多路复用：阻塞在 select 上，一次监听多个 fd"></p><p><strong>核心思想：用一个系统调用同时监听成千上万个 fd，哪个就绪了就处理哪个。</strong></p><div class=highlight><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// 伪代码：经典的事件循环
+</span></span></span><span class=line><span class=cl><span class=c1></span><span class=k>while</span> <span class=p>(</span><span class=mi>1</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=kt>int</span> <span class=n>n</span> <span class=o>=</span> <span class=n>epoll_wait</span><span class=p>(</span><span class=n>epfd</span><span class=p>,</span> <span class=n>events</span><span class=p>,</span> <span class=n>MAX_EVENTS</span><span class=p>,</span> <span class=o>-</span><span class=mi>1</span><span class=p>);</span>   <span class=c1>// 阻塞在这里
+</span></span></span><span class=line><span class=cl><span class=c1></span>    <span class=k>for</span> <span class=p>(</span><span class=kt>int</span> <span class=n>i</span> <span class=o>=</span> <span class=mi>0</span><span class=p>;</span> <span class=n>i</span> <span class=o>&lt;</span> <span class=n>n</span><span class=p>;</span> <span class=n>i</span><span class=o>++</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=kt>int</span> <span class=n>fd</span> <span class=o>=</span> <span class=n>events</span><span class=p>[</span><span class=n>i</span><span class=p>].</span><span class=n>data</span><span class=p>.</span><span class=n>fd</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>        <span class=k>if</span> <span class=p>(</span><span class=n>events</span><span class=p>[</span><span class=n>i</span><span class=p>].</span><span class=n>events</span> <span class=o>&amp;</span> <span class=n>EPOLLIN</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>            <span class=n>read</span><span class=p>(</span><span class=n>fd</span><span class=p>,</span> <span class=n>buf</span><span class=p>,</span> <span class=k>sizeof</span><span class=p>(</span><span class=n>buf</span><span class=p>));</span>      <span class=c1>// 数据已就绪，读不会阻塞
+</span></span></span><span class=line><span class=cl><span class=c1></span>            <span class=n>process</span><span class=p>(</span><span class=n>buf</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>        <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></div><p><strong>关键认知：进程仍然是被阻塞的，只是阻塞在 <code>epoll_wait</code> 上，而不是阻塞在某个具体的 socket 上。</strong></p><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>阻塞 IO：            1 个线程阻塞在 1 个 fd 上   -&gt; 需要 N 个线程处理 N 个连接
+</span></span><span class=line><span class=cl>IO 多路复用：        1 个线程阻塞在 N 个 fd 上   -&gt; 1 个线程处理 N 个连接
+</span></span></code></pre></div><p><strong>这是 C10K 问题的标准解法</strong>，nginx、Redis、Netty、Node.js 全部基于它。</p><blockquote><p>注意：多路复用<strong>本质上还是同步 IO</strong>。<code>epoll_wait</code> 只告诉你「fd 可读了」，真正的 <code>read()</code> 还是要你自己调用，数据从内核拷到用户空间的那一步仍然是阻塞的（虽然很快）。这一点是判断同步/异步的关键。</p></blockquote><h2 id=24-信号驱动-io>2.4 信号驱动 IO</h2><p>给 fd 注册 <code>SIGIO</code> 信号，数据就绪时内核发信号通知进程。</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=n>signal</span><span class=p>(</span><span class=n>SIGIO</span><span class=p>,</span> <span class=n>sigio_handler</span><span class=p>);</span>
+</span></span><span class=line><span class=cl><span class=n>fcntl</span><span class=p>(</span><span class=n>fd</span><span class=p>,</span> <span class=n>F_SETOWN</span><span class=p>,</span> <span class=n>getpid</span><span class=p>());</span>
+</span></span><span class=line><span class=cl><span class=kt>int</span> <span class=n>flags</span> <span class=o>=</span> <span class=n>fcntl</span><span class=p>(</span><span class=n>fd</span><span class=p>,</span> <span class=n>F_GETFL</span><span class=p>);</span>
+</span></span><span class=line><span class=cl><span class=n>fcntl</span><span class=p>(</span><span class=n>fd</span><span class=p>,</span> <span class=n>F_SETFL</span><span class=p>,</span> <span class=n>flags</span> <span class=o>|</span> <span class=n>O_ASYNC</span><span class=p>);</span>
+</span></span></code></pre></div><p><strong>实际几乎没人用</strong>，两个原因：</p><ol><li><strong>信号不排队</strong>（第 8 篇讲的「不可靠信号」）——大量 fd 同时就绪时，<code>SIGIO</code> 会被合并，你不知道到底哪些 fd 就绪了</li><li><strong>信号处理函数里能做的事极少</strong>（异步信号安全的限制）</li></ol><p><strong>知道它存在、面试能说清为什么不用就够了。</strong></p><h2 id=25-异步-io>2.5 异步 IO</h2><p><img class=lazyload src=/svg/loading.min.svg data-src=./pic4.png data-srcset="./pic4.png, ./pic4.png 1.5x, ./pic4.png 2x" data-sizes=auto alt=./pic4.png title="异步 IO：两个阶段都不阻塞，完成后由内核通知"></p><p>进程发起 IO 请求后<strong>立刻返回</strong>，内核负责「等数据 + 拷贝数据」两个阶段，全部完成后才通知进程。</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>应用调用 aio_read() -&gt; 立刻返回，进程去做别的事
+</span></span><span class=line><span class=cl>                      v
+</span></span><span class=line><span class=cl>                 内核等数据就绪
+</span></span><span class=line><span class=cl>                      v
+</span></span><span class=line><span class=cl>                 内核把数据拷贝到用户提供的 buf   &lt;- 关键：内核代劳了
+</span></span><span class=line><span class=cl>                      v
+</span></span><span class=line><span class=cl>                 内核发信号 / 调回调，通知「数据已经在你的 buf 里了」
+</span></span></code></pre></div><p><strong>这才是真正的异步 IO</strong>——应用完全不参与数据搬运。</p><p><strong>Linux 上异步 IO 的历史很尴尬</strong>：</p><table><thead><tr><th>方案</th><th>状态</th></tr></thead><tbody><tr><td>POSIX AIO（<code>aio_read</code>）</td><td>glibc 用<strong>用户态线程池</strong>模拟的，不是真异步，性能一般</td></tr><tr><td>Linux 原生 AIO（<code>io_submit</code>）</td><td>真异步但<strong>只支持 <code>O_DIRECT</code> 的文件 IO</strong>，不支持 socket，限制太多</td></tr><tr><td><strong><code>io_uring</code></strong>（5.1+）</td><td><strong>真正通用的异步 IO</strong>，文件和网络都支持，现代方案</td></tr></tbody></table><p><strong>所以「Linux 下异步 IO 用得很少」这个说法在 io_uring 之前是准确的</strong>，现在正在改变——但 <code>io_uring</code> 要求内核 5.10+，普及需要时间。</p><h1 id=3-同步异步-与-阻塞非阻塞>3. 同步/异步 与 阻塞/非阻塞</h1><p>这四个词是面试重灾区，因为很多资料把它们混着用。<strong>用 POSIX 的定义就不会错</strong>：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>POSIX 定义：
+</span></span><span class=line><span class=cl>  同步 IO：IO 操作会导致请求进程被阻塞，直到该 IO 操作完成
+</span></span><span class=line><span class=cl>  异步 IO：IO 操作不会导致请求进程被阻塞
+</span></span></code></pre></div><p><strong>关键在于「IO 操作」指的是什么</strong>——指的是<strong>真正搬数据的那一步</strong>（阶段二），不是「发起请求」这个动作。</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>按这个定义：
+</span></span><span class=line><span class=cl>  阻塞 IO       阶段二阻塞  -&gt; 同步
+</span></span><span class=line><span class=cl>  非阻塞 IO     阶段二阻塞  -&gt; 同步   &lt;- 名字叫「非阻塞」但它是同步的！
+</span></span><span class=line><span class=cl>  IO 多路复用   阶段二阻塞  -&gt; 同步
+</span></span><span class=line><span class=cl>  信号驱动 IO   阶段二阻塞  -&gt; 同步
+</span></span><span class=line><span class=cl>  异步 IO       阶段二不阻塞 -&gt; 异步
+</span></span></code></pre></div><p><strong>「非阻塞 IO 是同步的」是最反直觉的一条</strong>，但按定义确实如此：<code>read()</code> 在数据没就绪时立即返回不算，一旦数据就绪，<code>read()</code> 把数据从内核拷到用户空间的那段时间，进程仍然是被阻塞的。</p><h2 id=31-两组概念的正交关系>3.1 两组概念的正交关系</h2><p><strong>它们描述的是不同维度</strong>：</p><table><thead><tr><th></th><th>关注点</th><th>谁的视角</th></tr></thead><tbody><tr><td>同步 / 异步</td><td><strong>数据搬运由谁完成</strong></td><td>应用与内核的协作方式</td></tr><tr><td>阻塞 / 非阻塞</td><td><strong>发起调用时进程要不要等</strong></td><td>单个调用的返回时机</td></tr></tbody></table><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>组合：
+</span></span><span class=line><span class=cl>  同步阻塞     = 阻塞 IO
+</span></span><span class=line><span class=cl>  同步非阻塞   = 非阻塞 IO、IO 多路复用
+</span></span><span class=line><span class=cl>  异步非阻塞   = 真正的异步 IO（AIO、io_uring）
+</span></span><span class=line><span class=cl>  异步阻塞     = 【不存在】异步的前提就是不阻塞
+</span></span></code></pre></div><h2 id=32-一个记得住的类比>3.2 一个记得住的类比</h2><p>用「取快递」来对应：</p><table><thead><tr><th>模型</th><th>类比</th></tr></thead><tbody><tr><td>阻塞 IO</td><td>在快递点门口一直等，快递到了自己拿走</td></tr><tr><td>非阻塞 IO</td><td>每隔一分钟打电话问「到了吗」，到了自己去拿</td></tr><tr><td>IO 多路复用</td><td>委托一个前台（select/epoll）盯着所有快递，他喊你就去拿。<strong>但还是要自己去拿</strong></td></tr><tr><td>信号驱动 IO</td><td>快递到了给你发条短信，你去拿。<strong>短信可能被合并成一条</strong></td></tr><tr><td>异步 IO</td><td>快递直接送到家、拆好包装放桌上，完事给你发个「已完成」通知</td></tr></tbody></table><p><strong>「还是要自己去拿」就是同步的本质</strong>——多路复用只解决了「知道哪个快递到了」，搬运的活还是你自己干。</p><h1 id=4-select--poll--epoll>4. select / poll / epoll</h1><p>三者都实现 IO 多路复用，但内核实现的效率差异巨大。</p><h2 id=41-select三个致命限制>4.1 select：三个致命限制</h2><div class=highlight><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=kt>int</span> <span class=nf>select</span><span class=p>(</span><span class=kt>int</span> <span class=n>nfds</span><span class=p>,</span> <span class=n>fd_set</span> <span class=o>*</span><span class=n>readfds</span><span class=p>,</span> <span class=n>fd_set</span> <span class=o>*</span><span class=n>writefds</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>           <span class=n>fd_set</span> <span class=o>*</span><span class=n>exceptfds</span><span class=p>,</span> <span class=k>struct</span> <span class=n>timeval</span> <span class=o>*</span><span class=n>timeout</span><span class=p>);</span>
+</span></span></code></pre></div><div class=highlight><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// 典型用法
+</span></span></span><span class=line><span class=cl><span class=c1></span><span class=n>fd_set</span> <span class=n>readfds</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=k>while</span> <span class=p>(</span><span class=mi>1</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>FD_ZERO</span><span class=p>(</span><span class=o>&amp;</span><span class=n>readfds</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    <span class=k>for</span> <span class=p>(</span><span class=kt>int</span> <span class=n>i</span> <span class=o>=</span> <span class=mi>0</span><span class=p>;</span> <span class=n>i</span> <span class=o>&lt;</span> <span class=n>n</span><span class=p>;</span> <span class=n>i</span><span class=o>++</span><span class=p>)</span> <span class=n>FD_SET</span><span class=p>(</span><span class=n>fds</span><span class=p>[</span><span class=n>i</span><span class=p>],</span> <span class=o>&amp;</span><span class=n>readfds</span><span class=p>);</span>   <span class=c1>// ① 每次都要重新填
+</span></span></span><span class=line><span class=cl><span class=c1></span>    
+</span></span><span class=line><span class=cl>    <span class=n>select</span><span class=p>(</span><span class=n>maxfd</span> <span class=o>+</span> <span class=mi>1</span><span class=p>,</span> <span class=o>&amp;</span><span class=n>readfds</span><span class=p>,</span> <span class=nb>NULL</span><span class=p>,</span> <span class=nb>NULL</span><span class=p>,</span> <span class=nb>NULL</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>    
+</span></span><span class=line><span class=cl>    <span class=k>for</span> <span class=p>(</span><span class=kt>int</span> <span class=n>i</span> <span class=o>=</span> <span class=mi>0</span><span class=p>;</span> <span class=n>i</span> <span class=o>&lt;</span> <span class=n>n</span><span class=p>;</span> <span class=n>i</span><span class=o>++</span><span class=p>)</span> <span class=p>{</span>                            <span class=c1>// ② 每次都要全部遍历
+</span></span></span><span class=line><span class=cl><span class=c1></span>        <span class=k>if</span> <span class=p>(</span><span class=n>FD_ISSET</span><span class=p>(</span><span class=n>fds</span><span class=p>[</span><span class=n>i</span><span class=p>],</span> <span class=o>&amp;</span><span class=n>readfds</span><span class=p>))</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>            <span class=n>read</span><span class=p>(</span><span class=n>fds</span><span class=p>[</span><span class=n>i</span><span class=p>],</span> <span class=n>buf</span><span class=p>,</span> <span class=k>sizeof</span><span class=p>(</span><span class=n>buf</span><span class=p>));</span>
+</span></span><span class=line><span class=cl>        <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></div><p><strong>三个问题</strong>：</p><table><thead><tr><th>问题</th><th>说明</th></tr></thead><tbody><tr><td><strong>fd 数量上限 1024</strong></td><td><code>FD_SETSIZE</code> 是编译期常量，改了要重编译整个程序</td></tr><tr><td><strong>每次调用都要拷贝整个 fd 集合</strong></td><td>用户态 → 内核态，fd 越多拷贝开销越大</td></tr><tr><td><strong>返回后要遍历所有 fd</strong></td><td>O(n) 找出哪些就绪；而且 fd_set 是入参出参共用，每次都要重填</td></tr></tbody></table><p><strong><code>FD_SETSIZE=1024</code> 是硬伤</strong>。它是位图的大小，不是「建议值」——超过 1024 会造成栈溢出或静默的内存越界。</p><h2 id=42-poll解决了数量限制>4.2 poll：解决了数量限制</h2><div class=highlight><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=kt>int</span> <span class=nf>poll</span><span class=p>(</span><span class=k>struct</span> <span class=n>pollfd</span> <span class=o>*</span><span class=n>fds</span><span class=p>,</span> <span class=kt>unsigned</span> <span class=kt>int</span> <span class=n>nfds</span><span class=p>,</span> <span class=kt>int</span> <span class=n>timeout</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=k>struct</span> <span class=n>pollfd</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=kt>int</span>   <span class=n>fd</span><span class=p>;</span>         <span class=cm>/* 要监听的 fd */</span>
+</span></span><span class=line><span class=cl>    <span class=kt>short</span> <span class=n>events</span><span class=p>;</span>     <span class=cm>/* 关心的事件（入参） */</span>
+</span></span><span class=line><span class=cl>    <span class=kt>short</span> <span class=n>revents</span><span class=p>;</span>    <span class=cm>/* 实际发生的事件（出参）&lt;- 与 events 分开了 */</span>
+</span></span><span class=line><span class=cl><span class=p>};</span>
+</span></span></code></pre></div><p><strong>改进点</strong>：</p><ul><li>用数组代替位图，<strong>没有 1024 的硬上限</strong></li><li><code>events</code> 和 <code>revents</code> 分离，<strong>不用每次重新填充</strong>入参</li></ul><p><strong>但核心问题没解决</strong>：每次调用仍要把整个数组拷进内核，返回后仍要 O(n) 遍历找就绪的 fd。</p><p><strong>规律：<code>poll</code> 只是 <code>select</code> 的小修小补，量级上没有区别。10 万连接下两者都不可用。</strong></p><h2 id=43-epoll内核维护-fd-集合>4.3 epoll：内核维护 fd 集合</h2><p><strong>epoll 的突破在于把「fd 集合」常驻内核，不再每次传递。</strong></p><div class=highlight><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=kt>int</span> <span class=nf>epoll_create1</span><span class=p>(</span><span class=kt>int</span> <span class=n>flags</span><span class=p>);</span>                                     <span class=c1>// 创建 epoll 实例
+</span></span></span><span class=line><span class=cl><span class=c1></span><span class=kt>int</span> <span class=nf>epoll_ctl</span><span class=p>(</span><span class=kt>int</span> <span class=n>epfd</span><span class=p>,</span> <span class=kt>int</span> <span class=n>op</span><span class=p>,</span> <span class=kt>int</span> <span class=n>fd</span><span class=p>,</span> <span class=k>struct</span> <span class=n>epoll_event</span> <span class=o>*</span><span class=n>ev</span><span class=p>);</span>   <span class=c1>// 增删改 fd
+</span></span></span><span class=line><span class=cl><span class=c1></span><span class=kt>int</span> <span class=nf>epoll_wait</span><span class=p>(</span><span class=kt>int</span> <span class=n>epfd</span><span class=p>,</span> <span class=k>struct</span> <span class=n>epoll_event</span> <span class=o>*</span><span class=n>events</span><span class=p>,</span>
+</span></span><span class=line><span class=cl>               <span class=kt>int</span> <span class=n>maxevents</span><span class=p>,</span> <span class=kt>int</span> <span class=n>timeout</span><span class=p>);</span>                        <span class=c1>// 等待就绪
+</span></span></span></code></pre></div><p><strong>内核里的两个关键数据结构</strong>：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// 简化的 eventpoll 结构（内核 fs/eventpoll.c）
+</span></span></span><span class=line><span class=cl><span class=c1></span><span class=k>struct</span> <span class=n>eventpoll</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=k>struct</span> <span class=n>rb_root_cached</span> <span class=n>rbr</span><span class=p>;</span>      <span class=c1>// 红黑树：存放【所有】被监听的 fd
+</span></span></span><span class=line><span class=cl><span class=c1></span>    <span class=k>struct</span> <span class=n>list_head</span>      <span class=n>rdllist</span><span class=p>;</span>  <span class=c1>// 双向链表：存放【已就绪】的 fd
+</span></span></span><span class=line><span class=cl><span class=c1></span>    <span class=n>wait_queue_head_t</span>     <span class=n>wq</span><span class=p>;</span>       <span class=c1>// 等待队列：阻塞在 epoll_wait 的进程
+</span></span></span><span class=line><span class=cl><span class=c1></span><span class=p>};</span>
+</span></span></code></pre></div><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>       红黑树 rbr                     就绪链表 rdllist
+</span></span><span class=line><span class=cl>   （所有监听的 fd，10 万个）        （已就绪的 fd，可能只有几百个）
+</span></span><span class=line><span class=cl>   
+</span></span><span class=line><span class=cl>        ●                                 +---+---+---+
+</span></span><span class=line><span class=cl>      ／   ＼                              |fd3|fd7|fd9|
+</span></span><span class=line><span class=cl>    ●       ●          网卡数据到达 ------&gt;+---+---+---+
+</span></span><span class=line><span class=cl>   ／＼     ／＼         回调把 fd 挂进来           ^
+</span></span><span class=line><span class=cl>  ●  ●    ●   ●                          epoll_wait 只看这个链表
+</span></span></code></pre></div><p><strong>工作流程</strong>：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>① epoll_ctl(EPOLL_CTL_ADD)
+</span></span><span class=line><span class=cl>   把 fd 插入红黑树（O(log n)），并给这个 fd 注册一个【回调函数】ep_poll_callback
+</span></span><span class=line><span class=cl>   
+</span></span><span class=line><span class=cl>② 网卡收到数据 -&gt; 协议栈处理完 -&gt; 唤醒等待队列
+</span></span><span class=line><span class=cl>   -&gt; 触发 ep_poll_callback
+</span></span><span class=line><span class=cl>   -&gt; 回调把这个 fd 直接【挂进就绪链表 rdllist】
+</span></span><span class=line><span class=cl>   
+</span></span><span class=line><span class=cl>③ epoll_wait 只需要检查 rdllist 空不空
+</span></span><span class=line><span class=cl>   非空 -&gt; 把就绪的 fd 拷给用户，返回个数
+</span></span><span class=line><span class=cl>   空   -&gt; 进程睡眠，等回调唤醒
+</span></span></code></pre></div><p><strong>epoll 高效的本质是三点，缺一不可</strong>：</p><table><thead><tr><th>机制</th><th>解决了什么</th></tr></thead><tbody><tr><td><strong>fd 集合常驻内核</strong>（红黑树）</td><td>不用每次拷贝整个集合</td></tr><tr><td><strong>回调机制</strong>（不是轮询）</td><td>内核不需要遍历所有 fd 去检查状态</td></tr><tr><td><strong>就绪链表</strong></td><td><code>epoll_wait</code> 返回的直接就是就绪的 fd，用户不用遍历</td></tr></tbody></table><p><strong>所以 epoll 的开销只和「活跃连接数」有关，与「总连接数」无关。</strong></p><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>10 万个长连接，同一时刻只有 500 个在传数据：
+</span></span><span class=line><span class=cl>  select/poll：每次要检查 10 万个 fd          -&gt; O(100000)
+</span></span><span class=line><span class=cl>  epoll：      只处理就绪链表里的 500 个       -&gt; O(500)
+</span></span></code></pre></div><p><strong>这恰好契合互联网场景</strong>——大量长连接但同时活跃的只是少数（推送、IM、网关）。</p><h2 id=44-三者对比>4.4 三者对比</h2><table><thead><tr><th>维度</th><th>select</th><th>poll</th><th>epoll</th></tr></thead><tbody><tr><td>fd 上限</td><td><strong>1024</strong>（<code>FD_SETSIZE</code>）</td><td>无硬上限</td><td>无硬上限</td></tr><tr><td>底层结构</td><td>位图</td><td>数组</td><td><strong>红黑树 + 就绪链表</strong></td></tr><tr><td>每次调用的拷贝</td><td>全部 fd</td><td>全部 fd</td><td><strong>只在 <code>epoll_ctl</code> 时一次</strong></td></tr><tr><td>内核查找就绪</td><td>O(n) 遍历</td><td>O(n) 遍历</td><td><strong>O(1)，回调直接挂链表</strong></td></tr><tr><td>用户查找就绪</td><td>O(n) 遍历</td><td>O(n) 遍历</td><td><strong>O(1)，返回的就是就绪的</strong></td></tr><tr><td>触发模式</td><td>只有 LT</td><td>只有 LT</td><td><strong>LT + ET</strong></td></tr><tr><td>跨平台</td><td><strong>几乎所有平台</strong></td><td>大部分 Unix</td><td><strong>仅 Linux</strong></td></tr></tbody></table><p><strong>epoll 不是永远最优</strong>：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>连接数少（&lt; 100）且几乎全部活跃  -&gt; select/poll 可能更快
+</span></span><span class=line><span class=cl>                                    （epoll 有 epoll_ctl 的额外系统调用开销）
+</span></span><span class=line><span class=cl>连接数多、活跃比例低              -&gt; epoll 碾压
+</span></span><span class=line><span class=cl>需要跨平台                        -&gt; 用 libevent/libuv 封装，
+</span></span><span class=line><span class=cl>                                    它们在 Linux 用 epoll，BSD 用 kqueue，
+</span></span><span class=line><span class=cl>                                    Windows 用 IOCP
+</span></span></code></pre></div><h1 id=5-et-与-lt编程模型的关键差异>5. ET 与 LT：编程模型的关键差异</h1><p>epoll 独有的两种触发模式，<strong>用错会导致丢事件或空转</strong>。</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>LT（Level Triggered，水平触发）—— 默认模式
+</span></span><span class=line><span class=cl>  只要 fd 上还有数据可读，【每次】epoll_wait 都会返回它
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>ET（Edge Triggered，边缘触发）
+</span></span><span class=line><span class=cl>  只在 fd 状态【从不可读变为可读】的那一刻通知一次
+</span></span><span class=line><span class=cl>  之后即使数据没读完，也不再通知
+</span></span></code></pre></div><h2 id=51-具体差异举例>5.1 具体差异举例</h2><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>场景：socket 缓冲区收到 1000 字节，应用每次只 read 100 字节
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>LT 模式：
+</span></span><span class=line><span class=cl>  epoll_wait 返回 -&gt; read 100 字节（还剩 900）
+</span></span><span class=line><span class=cl>  epoll_wait 返回 -&gt; read 100 字节（还剩 800）    &lt;- 继续通知
+</span></span><span class=line><span class=cl>  ...一直通知到读完
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>ET 模式：
+</span></span><span class=line><span class=cl>  epoll_wait 返回 -&gt; read 100 字节（还剩 900）
+</span></span><span class=line><span class=cl>  epoll_wait 阻塞  &lt;- 【不再通知！剩下 900 字节永远读不到】
+</span></span><span class=line><span class=cl>  除非又有【新数据】到达，状态再次「变化」，才会通知
+</span></span></code></pre></div><p><strong>所以 ET 模式必须一次把数据读干</strong>：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=c1>// ✅ ET 模式的正确写法：循环读到 EAGAIN
+</span></span></span><span class=line><span class=cl><span class=c1></span><span class=k>while</span> <span class=p>(</span><span class=mi>1</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=n>ssize_t</span> <span class=n>n</span> <span class=o>=</span> <span class=n>read</span><span class=p>(</span><span class=n>fd</span><span class=p>,</span> <span class=n>buf</span><span class=p>,</span> <span class=k>sizeof</span><span class=p>(</span><span class=n>buf</span><span class=p>));</span>
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>n</span> <span class=o>&gt;</span> <span class=mi>0</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=n>process</span><span class=p>(</span><span class=n>buf</span><span class=p>,</span> <span class=n>n</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>        <span class=k>continue</span><span class=p>;</span>                       <span class=c1>// 继续读
+</span></span></span><span class=line><span class=cl><span class=c1></span>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>n</span> <span class=o>==</span> <span class=mi>0</span><span class=p>)</span> <span class=p>{</span>                       <span class=c1>// 对端关闭
+</span></span></span><span class=line><span class=cl><span class=c1></span>        <span class=n>close</span><span class=p>(</span><span class=n>fd</span><span class=p>);</span>
+</span></span><span class=line><span class=cl>        <span class=k>break</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=p>(</span><span class=n>n</span> <span class=o>&lt;</span> <span class=mi>0</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=k>if</span> <span class=p>(</span><span class=n>errno</span> <span class=o>==</span> <span class=n>EAGAIN</span> <span class=o>||</span> <span class=n>errno</span> <span class=o>==</span> <span class=n>EWOULDBLOCK</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>            <span class=k>break</span><span class=p>;</span>                      <span class=c1>// ✅ 读干了，正常退出
+</span></span></span><span class=line><span class=cl><span class=c1></span>        <span class=p>}</span>
+</span></span><span class=line><span class=cl>        <span class=k>if</span> <span class=p>(</span><span class=n>errno</span> <span class=o>==</span> <span class=n>EINTR</span><span class=p>)</span> <span class=k>continue</span><span class=p>;</span>   <span class=c1>// 被信号打断，重试
+</span></span></span><span class=line><span class=cl><span class=c1></span>        <span class=n>close</span><span class=p>(</span><span class=n>fd</span><span class=p>);</span>                      <span class=c1>// 真的出错
+</span></span></span><span class=line><span class=cl><span class=c1></span>        <span class=k>break</span><span class=p>;</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></div><p><strong>关键：<code>EAGAIN</code> 是「读干了」的唯一标志。</strong></p><h2 id=52-et-必须配合非阻塞-fd>5.2 ET 必须配合非阻塞 fd</h2><p><strong>这是个硬性要求，否则会死锁。</strong></p><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>如果 ET 模式用了【阻塞】fd：
+</span></span><span class=line><span class=cl>  循环 read 直到读干 -&gt; 最后一次 read 时缓冲区已空
+</span></span><span class=line><span class=cl>  -&gt; 阻塞 fd 的 read 会【挂住】，等待新数据
+</span></span><span class=line><span class=cl>  -&gt; 整个事件循环卡死，其他所有连接都得不到处理
+</span></span><span class=line><span class=cl>  
+</span></span><span class=line><span class=cl>用【非阻塞】fd：
+</span></span><span class=line><span class=cl>  最后一次 read 立即返回 EAGAIN -&gt; 正常退出循环 -&gt; 继续处理其他 fd  ✅
+</span></span></code></pre></div><p><strong>LT 模式则两种 fd 都能用</strong>——因为它不需要循环读到干，读一次就可以返回事件循环，下次还会通知。</p><h2 id=53-怎么选>5.3 怎么选</h2><table><thead><tr><th></th><th>LT</th><th>ET</th></tr></thead><tbody><tr><td>编程难度</td><td><strong>简单</strong>，读一次就行</td><td>复杂，必须循环读到 <code>EAGAIN</code></td></tr><tr><td>是否必须非阻塞 fd</td><td>不必须</td><td><strong>必须</strong></td></tr><tr><td>唤醒次数</td><td>多（数据没读完就一直通知）</td><td><strong>少</strong></td></tr><tr><td>容错性</td><td><strong>高</strong>，漏读了下次还会通知</td><td>低，漏读了数据就永久丢失</td></tr><tr><td>谁在用</td><td><strong>nginx、Redis、大部分应用</strong></td><td>libevent 的部分模式、追求极致性能的场景</td></tr></tbody></table><p><strong>生产建议：默认用 LT。</strong></p><p>理由很实在：LT 的额外唤醒开销在现代硬件上微不足道，而 ET 的编程复杂度带来的 bug 风险很高——「偶尔丢一个请求」这种问题极难排查。nginx 和 Redis 这两个性能标杆都用 LT，说明 LT 完全够用。</p><blockquote><p>坑：<strong>ET 模式下写事件（EPOLLOUT）尤其容易出错</strong>。socket 可写状态几乎总是 true（缓冲区没满就可写），所以 ET 下注册 <code>EPOLLOUT</code> 后可能只触发一次。正确做法是：平时不注册 <code>EPOLLOUT</code>，只在 <code>write</code> 返回 <code>EAGAIN</code>（缓冲区满了）时才临时注册，写完立即注销。</p></blockquote><h1 id=6-惊群问题>6. 惊群问题</h1><p>**多个进程/线程同时等待同一个 fd 时，一个事件到来唤醒了所有人，但只有一个能真正处理——其余全部白白唤醒又睡回去。**这就是惊群（thundering herd）。</p><h2 id=61-两种惊群>6.1 两种惊群</h2><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>① accept 惊群
+</span></span><span class=line><span class=cl>   多个进程 accept 同一个 listen fd
+</span></span><span class=line><span class=cl>   -&gt; Linux 2.6 起内核已经解决：只唤醒一个进程
+</span></span><span class=line><span class=cl>   
+</span></span><span class=line><span class=cl>② epoll 惊群
+</span></span><span class=line><span class=cl>   多个进程把【同一个 listen fd】加进各自的 epoll
+</span></span><span class=line><span class=cl>   -&gt; 新连接到来时，内核会唤醒【所有】阻塞在这个 fd 上的进程
+</span></span><span class=line><span class=cl>   -&gt; nginx 面对的是这一种
+</span></span></code></pre></div><p><strong>区别在于「谁在等」</strong>：直接 <code>accept</code> 的进程挂在 socket 的等待队列上（内核只唤醒一个）；而通过 epoll 等待的进程挂在 epoll 的等待队列上，内核无法知道其他 epoll 实例也在等同一个 fd，只能全部唤醒。</p><h2 id=62-三代解决方案>6.2 三代解决方案</h2><p><strong>第一代：应用层加锁（nginx 的 <code>accept_mutex</code>）</strong></p><div class=highlight><pre tabindex=0 class=chroma><code class=language-nginx data-lang=nginx><span class=line><span class=cl><span class=k>events</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=kn>accept_mutex</span> <span class=no>on</span><span class=p>;</span>      <span class=c1># 老版本默认 on，1.11.3+ 默认 off
+</span></span></span><span class=line><span class=cl><span class=c1></span><span class=p>}</span>
+</span></span></code></pre></div><p>worker 之间抢一把锁，只有拿到锁的 worker 才把 listen fd 加进自己的 epoll。缺点是<strong>引入了锁竞争和延迟</strong>——没抢到锁的 worker 要等下一轮。</p><p><strong>第二代：<code>EPOLLEXCLUSIVE</code>（4.5+）</strong></p><div class=highlight><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=n>ev</span><span class=p>.</span><span class=n>events</span> <span class=o>=</span> <span class=n>EPOLLIN</span> <span class=o>|</span> <span class=n>EPOLLEXCLUSIVE</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=n>epoll_ctl</span><span class=p>(</span><span class=n>epfd</span><span class=p>,</span> <span class=n>EPOLL_CTL_ADD</span><span class=p>,</span> <span class=n>listen_fd</span><span class=p>,</span> <span class=o>&amp;</span><span class=n>ev</span><span class=p>);</span>
+</span></span></code></pre></div><p>告诉内核「这个 fd 上只唤醒一个等待者」。内核层面解决，无锁竞争。</p><p><strong>第三代：<code>SO_REUSEPORT</code>（3.9+）—— 现代最优方案</strong></p><div class=highlight><pre tabindex=0 class=chroma><code class=language-c data-lang=c><span class=line><span class=cl><span class=kt>int</span> <span class=n>opt</span> <span class=o>=</span> <span class=mi>1</span><span class=p>;</span>
+</span></span><span class=line><span class=cl><span class=n>setsockopt</span><span class=p>(</span><span class=n>fd</span><span class=p>,</span> <span class=n>SOL_SOCKET</span><span class=p>,</span> <span class=n>SO_REUSEPORT</span><span class=p>,</span> <span class=o>&amp;</span><span class=n>opt</span><span class=p>,</span> <span class=k>sizeof</span><span class=p>(</span><span class=n>opt</span><span class=p>));</span>
+</span></span><span class=line><span class=cl><span class=n>bind</span><span class=p>(</span><span class=n>fd</span><span class=p>,</span> <span class=p>...);</span>       <span class=c1>// 多个进程可以 bind 同一个端口
+</span></span></span><span class=line><span class=cl><span class=c1></span><span class=n>listen</span><span class=p>(</span><span class=n>fd</span><span class=p>,</span> <span class=n>backlog</span><span class=p>);</span>
+</span></span></code></pre></div><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>不用 SO_REUSEPORT：              用 SO_REUSEPORT：
+</span></span><span class=line><span class=cl>   一个 listen fd                   worker1 -&gt; listen fd 1 -&gt; 独立队列 1
+</span></span><span class=line><span class=cl>   v 所有 worker 抢                 worker2 -&gt; listen fd 2 -&gt; 独立队列 2
+</span></span><span class=line><span class=cl> w1 w2 w3 都被唤醒                  worker3 -&gt; listen fd 3 -&gt; 独立队列 3
+</span></span><span class=line><span class=cl>   v                                内核按【四元组 hash】直接投递
+</span></span><span class=line><span class=cl> 只有一个 accept 成功                零竞争，零惊群，负载天然均衡
+</span></span></code></pre></div><p><strong><code>SO_REUSEPORT</code> 让每个 worker 有自己独立的 listen fd 和 accept 队列</strong>，内核按连接的四元组哈希决定投给谁。既没有惊群，也不需要锁。</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-nginx data-lang=nginx><span class=line><span class=cl><span class=c1># nginx 里开启
+</span></span></span><span class=line><span class=cl><span class=c1></span><span class=k>http</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=kn>server</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=kn>listen</span> <span class=mi>80</span> <span class=s>reuseport</span><span class=p>;</span>      <span class=c1># &lt;- 加这个
+</span></span></span><span class=line><span class=cl><span class=c1></span>    <span class=p>}</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></div><p><strong>生产建议：内核 3.9+ 直接用 <code>SO_REUSEPORT</code>，并把 <code>accept_mutex</code> 保持 off。</strong></p><blockquote><p>注意：<code>SO_REUSEPORT</code> 有个副作用——<strong>worker 重启时，它那个队列里已经排队的连接会被丢弃</strong>（因为 fd 关闭了）。所以平滑重启需要额外处理（nginx 的做法是老 worker 处理完存量再退出）。另外它与 <code>SO_REUSEADDR</code> 是两回事：后者只是允许 bind 处于 TIME_WAIT 的地址。</p></blockquote><h1 id=7-现代方案io_uring-与-go-netpoller>7. 现代方案：io_uring 与 Go netpoller</h1><h2 id=71-io_uring>7.1 io_uring</h2><p><code>epoll</code> 的剩余问题是：<strong>每次读写仍然是一个系统调用</strong>。10 万 QPS 就是 20 万次系统调用（读+写），按 150ns 算就是 30ms 的纯开销。</p><p><code>io_uring</code> 用<strong>共享内存的环形队列</strong>解决：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>      用户态                        内核态
+</span></span><span class=line><span class=cl>  +------------------+        +------------------+
+</span></span><span class=line><span class=cl>  |  提交队列 SQ     |        |  内核读取并处理  |
+</span></span><span class=line><span class=cl>  |  （写入请求）    | &lt;----&gt; |                  |
+</span></span><span class=line><span class=cl>  +------------------+        +------------------+
+</span></span><span class=line><span class=cl>          ^                            ^
+</span></span><span class=line><span class=cl>          +--------- 共享内存 ---------+
+</span></span><span class=line><span class=cl>  +------------------+        +------------------+
+</span></span><span class=line><span class=cl>  |  完成队列 CQ     |        |  内核写入结果    |
+</span></span><span class=line><span class=cl>  |  （读取结果）    | &lt;----&gt; |                  |
+</span></span><span class=line><span class=cl>  +------------------+        +------------------+
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>批量提交：把 N 个请求写进 SQ，一次 io_uring_enter() 全部提交
+</span></span><span class=line><span class=cl>轮询模式：SQPOLL 下内核线程主动轮询 SQ，【连这一次系统调用都不需要】
+</span></span></code></pre></div><table><thead><tr><th>特性</th><th>epoll</th><th>io_uring</th></tr></thead><tbody><tr><td>通知机制</td><td>就绪通知（还要自己 read）</td><td><strong>完成通知</strong>（数据已经在 buf 里）</td></tr><tr><td>同步/异步</td><td>同步</td><td><strong>真异步</strong></td></tr><tr><td>系统调用数</td><td>每个 IO 一次</td><td><strong>批量提交，可到 0</strong>（SQPOLL）</td></tr><tr><td>支持文件 IO</td><td>不支持（普通文件总是「就绪」）</td><td><strong>支持</strong></td></tr><tr><td>内核要求</td><td>2.6+</td><td><strong>5.1+，5.10+ 才成熟</strong></td></tr></tbody></table><p><strong>io_uring 是 epoll 之后最重要的进展</strong>，但普及需要时间——生产环境大量机器还在 4.x 内核上。目前主要在数据库（ScyllaDB）、存储系统、高性能代理里使用。</p><h2 id=72-go-netpoller用同步的写法拿异步的性能>7.2 Go netpoller：用同步的写法拿异步的性能</h2><p><strong>Go 最巧妙的设计之一：让你写阻塞式代码，底层却是 epoll。</strong></p><div class=highlight><pre tabindex=0 class=chroma><code class=language-go data-lang=go><span class=line><span class=cl><span class=c1>// 你写的代码看起来是阻塞的
+</span></span></span><span class=line><span class=cl><span class=c1></span><span class=kd>func</span> <span class=nf>handle</span><span class=p>(</span><span class=nx>conn</span> <span class=nx>net</span><span class=p>.</span><span class=nx>Conn</span><span class=p>)</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=nx>buf</span> <span class=o>:=</span> <span class=nb>make</span><span class=p>([]</span><span class=kt>byte</span><span class=p>,</span> <span class=mi>4096</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>    <span class=nx>n</span><span class=p>,</span> <span class=nx>err</span> <span class=o>:=</span> <span class=nx>conn</span><span class=p>.</span><span class=nf>Read</span><span class=p>(</span><span class=nx>buf</span><span class=p>)</span>      <span class=c1>// 看起来会阻塞
+</span></span></span><span class=line><span class=cl><span class=c1></span>    <span class=c1>// ...
+</span></span></span><span class=line><span class=cl><span class=c1></span><span class=p>}</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1>// 每个连接一个 goroutine，写法极简
+</span></span></span><span class=line><span class=cl><span class=c1></span><span class=k>for</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=nx>conn</span><span class=p>,</span> <span class=nx>_</span> <span class=o>:=</span> <span class=nx>listener</span><span class=p>.</span><span class=nf>Accept</span><span class=p>()</span>
+</span></span><span class=line><span class=cl>    <span class=k>go</span> <span class=nf>handle</span><span class=p>(</span><span class=nx>conn</span><span class=p>)</span>
+</span></span><span class=line><span class=cl><span class=p>}</span>
+</span></span></code></pre></div><p><strong>底层实际发生的</strong>：</p><div class=highlight><pre tabindex=0 class=chroma><code class=language-text data-lang=text><span class=line><span class=cl>conn.Read() 
+</span></span><span class=line><span class=cl>    v
+</span></span><span class=line><span class=cl>runtime 把 fd 设为【非阻塞】，调用 read()
+</span></span><span class=line><span class=cl>    v
+</span></span><span class=line><span class=cl>返回 EAGAIN（没数据）
+</span></span><span class=line><span class=cl>    v
+</span></span><span class=line><span class=cl>runtime 把这个 goroutine 挂到 netpoller 的等待列表，标记为 Gwaiting
+</span></span><span class=line><span class=cl>    v
+</span></span><span class=line><span class=cl>【调度器把 M（OS 线程）分配给其他 goroutine】&lt;- 关键：线程没有被阻塞
+</span></span><span class=line><span class=cl>    v
+</span></span><span class=line><span class=cl>调度循环中定期调用 netpoll() -&gt; 底层就是 epoll_wait
+</span></span><span class=line><span class=cl>    v
+</span></span><span class=line><span class=cl>fd 就绪 -&gt; 找到对应的 goroutine -&gt; 标记为 Grunnable，放回运行队列
+</span></span><span class=line><span class=cl>    v
+</span></span><span class=line><span class=cl>goroutine 被调度，conn.Read() 从内核视角「返回」了
+</span></span></code></pre></div><p><strong>所以 Go 同时拿到了两边的好处</strong>：</p><table><thead><tr><th></th><th>收益</th></tr></thead><tbody><tr><td>编程模型</td><td>阻塞式的顺序代码，无回调地狱、无状态机</td></tr><tr><td>性能</td><td>底层是 epoll，一个 OS 线程承载成千上万个 goroutine</td></tr><tr><td>成本</td><td>goroutine 初始栈只有 2KB（vs 线程默认 8MB）</td></tr></tbody></table><p><strong>这解释了为什么 Go 特别适合写网络服务</strong>——它把「一连接一线程」的简洁写法和「epoll 事件循环」的性能统一了。代价是你对 IO 的细节失去了控制（比如无法直接用 ET 模式）。</p><h1 id=8-实战连接数上不去>8. 实战：连接数上不去</h1><p><strong>现象</strong>：一个 Go 网关服务，压测时并发连接到 28000 左右就上不去了，客户端报 <code>connection refused</code>，服务端 CPU 只用了 40%。</p><p><strong>① 先看是不是 fd 限制</strong></p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>cat /proc/<span class=k>$(</span>pgrep gateway<span class=k>)</span>/limits <span class=p>|</span> grep -i <span class=s2>&#34;open files&#34;</span>
+</span></span><span class=line><span class=cl><span class=c1># Max open files            1048576   1048576   files     &lt;- 不是这个问题</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>ls /proc/<span class=k>$(</span>pgrep gateway<span class=k>)</span>/fd <span class=p>|</span> wc -l
+</span></span><span class=line><span class=cl><span class=c1># 28134                                                   &lt;- 卡在这个数</span>
+</span></span></code></pre></div><p><strong>② 看 accept 队列有没有溢出</strong></p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>ss -lnt
+</span></span><span class=line><span class=cl><span class=c1># State  Recv-Q Send-Q Local Address:Port</span>
+</span></span><span class=line><span class=cl><span class=c1># LISTEN  512    511         0.0.0.0:8080</span>
+</span></span><span class=line><span class=cl><span class=c1>#         ^^^^^^ Recv-Q = 当前 accept 队列里堆积的连接数</span>
+</span></span><span class=line><span class=cl><span class=c1>#                ^^^^^^ Send-Q = 队列容量（backlog）</span>
+</span></span><span class=line><span class=cl><span class=c1>#         队列已经满了！</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 确认溢出计数在增长</span>
+</span></span><span class=line><span class=cl>nstat -az <span class=p>|</span> grep -iE <span class=s2>&#34;ListenOverflows|ListenDrops&#34;</span>
+</span></span><span class=line><span class=cl><span class=c1># TcpExtListenOverflows           89234      0.0</span>
+</span></span><span class=line><span class=cl><span class=c1># TcpExtListenDrops               89234      0.0</span>
+</span></span><span class=line><span class=cl><span class=c1>#                                 ^^^^^ 8.9 万次溢出 -&gt; 大量连接被内核直接丢弃</span>
+</span></span></code></pre></div><p><strong><code>ListenOverflows</code> 就是「客户端 connection refused」的直接原因</strong>：三次握手完成的连接放不进 accept 队列，内核只能丢弃。</p><p><strong>③ 找出 backlog 为什么只有 511</strong></p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>cat /proc/sys/net/core/somaxconn
+</span></span><span class=line><span class=cl><span class=c1># 4096                    &lt;- 系统限制是 4096，不是 511</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 那 511 是哪来的？是应用自己设的</span>
+</span></span><span class=line><span class=cl><span class=c1># Go 的 net.Listen 默认用 somaxconn，但这个服务显式设了 backlog</span>
+</span></span></code></pre></div><p><strong>关键：实际 backlog = min(应用传的 backlog, <code>net.core.somaxconn</code>)</strong>。两者取小值，所以调内核参数但不改应用代码是没用的，反之亦然。</p><p><strong>④ 修复三处配置</strong></p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl><span class=c1># ① 内核：加大 accept 队列上限和半连接队列</span>
+</span></span><span class=line><span class=cl>sysctl -w net.core.somaxconn<span class=o>=</span><span class=m>65535</span>
+</span></span><span class=line><span class=cl>sysctl -w net.ipv4.tcp_max_syn_backlog<span class=o>=</span><span class=m>65535</span>
+</span></span><span class=line><span class=cl>sysctl -w net.core.netdev_max_backlog<span class=o>=</span><span class=m>32768</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 持久化</span>
+</span></span><span class=line><span class=cl>cat &gt;&gt; /etc/sysctl.d/99-network.conf <span class=s>&lt;&lt;&#39;EOF&#39;
+</span></span></span><span class=line><span class=cl><span class=s>net.core.somaxconn = 65535
+</span></span></span><span class=line><span class=cl><span class=s>net.ipv4.tcp_max_syn_backlog = 65535
+</span></span></span><span class=line><span class=cl><span class=s>net.core.netdev_max_backlog = 32768
+</span></span></span><span class=line><span class=cl><span class=s>EOF</span>
+</span></span><span class=line><span class=cl>sysctl --system
+</span></span></code></pre></div><div class=highlight><pre tabindex=0 class=chroma><code class=language-go data-lang=go><span class=line><span class=cl><span class=c1>// ② 应用：不要自己设小 backlog，让它用 somaxconn
+</span></span></span><span class=line><span class=cl><span class=c1>// ❌ 原来的代码
+</span></span></span><span class=line><span class=cl><span class=c1></span><span class=nx>lc</span> <span class=o>:=</span> <span class=nx>net</span><span class=p>.</span><span class=nx>ListenConfig</span><span class=p>{}</span>   <span class=c1>// 某些框架会硬编码 backlog=511
+</span></span></span><span class=line><span class=cl><span class=c1></span>
+</span></span><span class=line><span class=cl><span class=c1>// ✅ 用默认值（Go 会读 /proc/sys/net/core/somaxconn）
+</span></span></span><span class=line><span class=cl><span class=c1></span><span class=nx>ln</span><span class=p>,</span> <span class=nx>err</span> <span class=o>:=</span> <span class=nx>net</span><span class=p>.</span><span class=nf>Listen</span><span class=p>(</span><span class=s>&#34;tcp&#34;</span><span class=p>,</span> <span class=s>&#34;:8080&#34;</span><span class=p>)</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1>// ③ 关键：accept 循环里不要做任何耗时操作
+</span></span></span><span class=line><span class=cl><span class=c1></span><span class=k>for</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>    <span class=nx>conn</span><span class=p>,</span> <span class=nx>err</span> <span class=o>:=</span> <span class=nx>ln</span><span class=p>.</span><span class=nf>Accept</span><span class=p>()</span>
+</span></span><span class=line><span class=cl>    <span class=k>if</span> <span class=nx>err</span> <span class=o>!=</span> <span class=kc>nil</span> <span class=p>{</span>
+</span></span><span class=line><span class=cl>        <span class=k>continue</span>
+</span></span><span class=line><span class=cl>    <span class=p>}</span>
+</span></span><span class=line><span class=cl>    <span class=k>go</span> <span class=nf>handle</span><span class=p>(</span><span class=nx>conn</span><span class=p>)</span>        <span class=c1>// ✅ 立刻交给 goroutine，accept 循环保持空转
+</span></span></span><span class=line><span class=cl><span class=c1></span>    <span class=c1>// ❌ 不要在这里做 TLS 握手、鉴权、日志等任何阻塞操作
+</span></span></span><span class=line><span class=cl><span class=c1></span><span class=p>}</span>
+</span></span></code></pre></div><p><strong>⑤ 验证</strong></p><div class=highlight><pre tabindex=0 class=chroma><code class=language-bash data-lang=bash><span class=line><span class=cl>ss -lnt
+</span></span><span class=line><span class=cl><span class=c1># State  Recv-Q Send-Q Local Address:Port</span>
+</span></span><span class=line><span class=cl><span class=c1># LISTEN  0      65535       0.0.0.0:8080</span>
+</span></span><span class=line><span class=cl><span class=c1>#         ^ 队列不再堆积           ^^^^^ backlog 生效</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl>nstat -az <span class=p>|</span> grep ListenOverflows
+</span></span><span class=line><span class=cl><span class=c1># TcpExtListenOverflows           0          0.0     &lt;- 归零</span>
+</span></span><span class=line><span class=cl>
+</span></span><span class=line><span class=cl><span class=c1># 连接数</span>
+</span></span><span class=line><span class=cl>ls /proc/<span class=k>$(</span>pgrep gateway<span class=k>)</span>/fd <span class=p>|</span> wc -l
+</span></span><span class=line><span class=cl><span class=c1># 98234                                              &lt;- 突破了</span>
+</span></span></code></pre></div><p><strong>结果</strong>：并发连接从 28000 提升到 98000，<code>connection refused</code> 归零，CPU 使用率 65%。</p><p><strong>规律：<code>ss -lnt</code> 的 <code>Recv-Q</code> 持续接近 <code>Send-Q</code>、且 <code>nstat</code> 的 <code>ListenOverflows</code> 在增长 = accept 队列溢出。三个地方都要查：<code>somaxconn</code>、应用传的 backlog、accept 循环有没有被拖慢。</strong></p><h1 id=9-一些量级感>9. 一些量级感</h1><table><thead><tr><th>项</th><th>量级</th></tr></thead><tbody><tr><td><code>epoll_wait</code> 一次调用（有就绪 fd）</td><td>1 ~ 3 μs</td></tr><tr><td><code>read</code> 命中 socket 缓冲区</td><td>1 ~ 3 μs</td></tr><tr><td>单核 epoll 事件循环的处理能力</td><td>5 万 ~ 20 万 事件/s</td></tr><tr><td>单机长连接数（内存充足、8 核）</td><td>50 万 ~ 100 万</td></tr><tr><td>单个 TCP 连接的内核内存开销</td><td>4 ~ 10 KB</td></tr><tr><td>goroutine 初始栈</td><td>2 KB</td></tr><tr><td>OS 线程默认栈</td><td>8 MB（虚拟）</td></tr><tr><td><code>select</code> 的 fd 上限</td><td>1024（硬编码）</td></tr></tbody></table><p><strong>用法举例</strong>：100 万长连接 × 每连接 8KB 内核内存 = 8GB，加上应用层每连接的读写缓冲（假设各 4KB）又是 8GB——所以「单机百万连接」的机器至少要 32GB 内存，这是个绕不开的硬约束。</p><h1 id=接口附录本篇出现的系统接口>接口附录：本篇出现的系统接口</h1><h2 id=它们不是-shell-命令>它们不是 Shell 命令</h2><p><code>read()</code>、<code>select()</code>、<code>poll()</code>、<code>epoll_wait()</code> 后面带括号，表示程序调用的 API / 系统调用，不是让你在终端直接输入的命令。可用 <code>man 2 read</code> 查看第 2 节系统调用手册，而 <code>man 1 read</code>（若存在）查的是第 1 节用户命令。</p><h2 id=接口名称速查>接口名称速查</h2><table><thead><tr><th>接口</th><th>名字怎么记</th><th>作用</th></tr></thead><tbody><tr><td><code>read()</code></td><td>read（读取）</td><td>从 fd 读取字节；返回实际字节数、0（EOF）或 -1（错误）</td></tr><tr><td><code>select()</code></td><td>select ready descriptors</td><td>从集合中选出就绪 fd</td></tr><tr><td><code>poll()</code></td><td>poll（轮询状态）</td><td>通过 <code>pollfd</code> 数组等待 fd 事件</td></tr><tr><td><code>epoll</code></td><td><strong>event poll</strong></td><td>Linux 事件通知机制；<code>epoll_create</code> 创建、<code>epoll_ctl</code> 控制、<code>epoll_wait</code> 等待</td></tr><tr><td><code>io_uring</code></td><td><strong>I/O + ring</strong></td><td>通过提交环 SQ 和完成环 CQ 批量交换异步 IO 请求</td></tr></tbody></table><p><code>epoll_ctl</code> 的 <code>ctl</code> 是 <strong>control</strong>；<code>EPOLL_CTL_ADD/MOD/DEL</code> 分别是 add、modify、delete。把接口名按“对象 + 动作”拆开，比背整串字符更容易。</p><h1 id=10-面试题>10. 面试题</h1><p><strong>Q：五种 IO 模型的区别是什么？</strong></p><p>关键在于<strong>一次 IO 操作分两个阶段</strong>：① 等待数据就绪；② 把数据从内核拷贝到用户空间。五种模型的差别全在于这两个阶段分别阻塞不阻塞。<strong>阻塞 IO</strong>：两个阶段都阻塞。<strong>非阻塞 IO</strong>：阶段一立即返回 <code>EAGAIN</code>（需要轮询），阶段二阻塞。<strong>IO 多路复用</strong>：阻塞在 <code>select</code>/<code>epoll</code> 上而不是某个具体 fd 上，阶段二仍阻塞。<strong>信号驱动 IO</strong>：用 <code>SIGIO</code> 通知，阶段二阻塞。<strong>异步 IO</strong>：两个阶段都不阻塞，内核把数据拷贝完才通知你。所以<strong>只有异步 IO 是真异步</strong>，前四种按 POSIX 定义都是同步 IO。</p><p><strong>Q：为什么说「非阻塞 IO」也是同步 IO？</strong></p><p>因为 POSIX 定义里的「IO 操作」指的是<strong>真正搬运数据的那一步</strong>（阶段二），不是「发起请求」这个动作。非阻塞 IO 在数据未就绪时立即返回 <code>EAGAIN</code>，这一点确实「非阻塞」；但一旦数据就绪，<code>read()</code> 把数据从内核缓冲区拷贝到用户 buf 的这段时间，进程仍然是被阻塞的、必须等它完成。而真正的异步 IO 里，这个拷贝动作由<strong>内核代劳</strong>，应用完全不参与。所以判断同步/异步的标准是「数据搬运由谁完成」，判断阻塞/非阻塞的标准是「发起调用时要不要等」——两组概念是正交的，但<strong>不存在「异步阻塞」</strong>，因为异步的前提就是不阻塞。</p><p><strong>Q：<code>select</code>、<code>poll</code>、<code>epoll</code> 的区别？epoll 为什么高效？</strong></p><p><code>select</code> 有三个问题：fd 上限 1024（<code>FD_SETSIZE</code> 是编译期常量）、每次调用要把整个 fd 集合从用户态拷进内核、返回后要 O(n) 遍历找就绪的 fd。<code>poll</code> 用数组替代位图去掉了数量限制，<code>events</code>/<code>revents</code> 分离免去了重复填充，但<strong>拷贝和遍历两个核心问题没解决</strong>。<code>epoll</code> 高效靠三点：① <strong>fd 集合常驻内核</strong>（红黑树），只在 <code>epoll_ctl</code> 时传一次，不用每次拷贝；② <strong>回调机制</strong>——注册 fd 时挂一个回调，数据到达时协议栈直接把 fd 挂进就绪链表，内核不需要遍历所有 fd 去检查；③ <strong>就绪链表</strong>——<code>epoll_wait</code> 返回的直接就是就绪的 fd，用户不用遍历。所以 <strong>epoll 的开销只与活跃连接数有关，与总连接数无关</strong>，这恰好契合「十万长连接但同时活跃只有几百」的互联网场景。</p><p><strong>Q：epoll 的 ET 和 LT 有什么区别？为什么 ET 必须用非阻塞 fd？</strong></p><p><strong>LT（水平触发，默认）</strong>：只要 fd 上还有数据可读，每次 <code>epoll_wait</code> 都会返回它。<strong>ET（边缘触发）</strong>：只在状态「从不可读变为可读」的那一刻通知一次，之后即使数据没读完也不再通知——所以 ET 下必须<strong>循环 read 直到返回 <code>EAGAIN</code></strong>，否则剩余数据永久丢失。ET 必须配非阻塞 fd 的原因是：循环读到最后一次时缓冲区已空，如果是阻塞 fd，<code>read</code> 会<strong>挂住等新数据</strong>，导致整个事件循环卡死、其他所有连接得不到处理；非阻塞 fd 会立即返回 <code>EAGAIN</code> 让你正常退出循环。<strong>生产建议默认用 LT</strong>——nginx 和 Redis 都用 LT，说明够用，而 ET 的编程复杂度带来的「偶尔丢请求」这类 bug 极难排查。</p><p><strong>Q：什么是惊群问题？怎么解决？</strong></p><p>多个进程/线程同时等待同一个 fd，一个事件到来时唤醒了所有人，但只有一个能真正处理，其余全部白白唤醒又睡回去，浪费大量上下文切换。要区分两种：<strong>accept 惊群</strong>（多进程直接 <code>accept</code> 同一个 listen fd）Linux 2.6 起内核已解决，只唤醒一个；<strong>epoll 惊群</strong>（多进程把同一个 listen fd 加进各自的 epoll）内核无法知道其他 epoll 实例也在等，只能全部唤醒——nginx 面对的是这一种。三代解法：① 应用层加锁（nginx 的 <code>accept_mutex</code>），有锁竞争和延迟；② <code>EPOLLEXCLUSIVE</code>（4.5+），内核层面只唤醒一个；③ <strong><code>SO_REUSEPORT</code>（3.9+，现代最优）</strong>——让每个 worker 拥有独立的 listen fd 和 accept 队列，内核按四元组哈希直接投递，零竞争零惊群且负载天然均衡。生产上直接用 <code>SO_REUSEPORT</code> 并把 <code>accept_mutex</code> 保持 off。</p><p><strong>Q：Go 的 <code>conn.Read()</code> 看起来是阻塞的，为什么 Go 服务能支撑十万连接？</strong></p><p>因为 Go runtime 在底层用 epoll 做了替换。<code>conn.Read()</code> 时 runtime 实际把 fd 设为<strong>非阻塞</strong>并调用 <code>read</code>，返回 <code>EAGAIN</code> 后<strong>不是阻塞 OS 线程</strong>，而是把当前 goroutine 挂到 netpoller 的等待列表、标记为 <code>Gwaiting</code>，然后<strong>调度器立刻把这个 OS 线程（M）分配给其他 goroutine</strong>。调度循环中定期调用 <code>netpoll()</code>（底层就是 <code>epoll_wait</code>），fd 就绪时找到对应的 goroutine 标记为可运行、放回队列。所以阻塞的只是<strong>goroutine</strong>（成本 2KB 栈），OS 线程从未被阻塞。这样 Go 同时拿到了「阻塞式顺序代码」的简洁和「epoll 事件循环」的性能，代价是你对 IO 细节失去控制（比如无法直接用 ET 模式）。</p><p><strong>Q：<code>io_uring</code> 相比 epoll 解决了什么问题？</strong></p><p>epoll 的剩余问题是<strong>每次读写仍然是一个独立的系统调用</strong>——10 万 QPS 就是 20 万次系统调用，按 150ns 算是 30ms 的纯开销；而且 epoll 是<strong>就绪通知</strong>（告诉你可读了，还要自己 <code>read</code>），本质是同步 IO；此外它对普通文件无效（普通文件总是「就绪」）。<code>io_uring</code> 用<strong>共享内存的环形队列</strong>（提交队列 SQ + 完成队列 CQ）解决：批量把 N 个请求写进 SQ，一次 <code>io_uring_enter()</code> 全部提交；开启 SQPOLL 模式后内核线程主动轮询 SQ，<strong>连这一次系统调用都不需要</strong>。而且它是<strong>完成通知</strong>——通知你时数据已经在你的 buf 里了，是真正的异步 IO，文件和网络都支持。代价是要求内核 5.1+（5.10+ 才成熟），生产普及需要时间。</p><p><strong>Q：并发连接数上不去、客户端报 <code>connection refused</code>，怎么排查？</strong></p><p>先用 <code>ss -lnt</code> 看监听 socket 的 <code>Recv-Q</code> 和 <code>Send-Q</code>——<code>Recv-Q</code> 是当前 accept 队列里堆积的连接数，<code>Send-Q</code> 是队列容量。如果 <code>Recv-Q</code> 持续接近 <code>Send-Q</code>，再用 <code>nstat -az | grep ListenOverflows</code> 确认溢出计数在增长，那就是 <strong>accept 队列溢出</strong>：三次握手已完成的连接放不进队列，内核只能丢弃，客户端就看到 <code>connection refused</code>。要查三个地方：① 内核的 <code>net.core.somaxconn</code>；② <strong>应用 <code>listen()</code> 传的 backlog</strong>——实际生效值是 <code>min(应用backlog, somaxconn)</code>，只调内核参数不改应用代码没用；③ <strong>accept 循环有没有被拖慢</strong>——如果在 accept 之后同步做 TLS 握手、鉴权、日志，取连接的速度跟不上入队速度，队列照样会满，正确做法是立刻交给独立的 goroutine/线程处理。</p><hr><p>上一篇：<a href=../linux_11_%e6%96%87%e4%bb%b6%e7%b3%bb%e7%bb%9f%e4%b8%8e%e7%a3%81%e7%9b%98IO/ rel>Linux-11 文件系统与磁盘 IO</a> ｜ 下一篇：<a href=../linux_13_%e7%bd%91%e7%bb%9c%e9%85%8d%e7%bd%ae%e4%b8%8e%e6%8e%92%e6%9f%a5/ rel>Linux-13 网络配置与排查</a></p></div><div class=post-footer id=post-footer><div class=post-info><div class=post-info-line><div class=post-info-mod><span>更新于 2026-08-11</span></div><div class=post-info-license></div></div><div class=post-info-line><div class=post-info-md></div><div class=post-info-share><span></span></div></div></div><div class=post-info-more><section class=post-tags><i class="fas fa-tags fa-fw"></i>&nbsp;<a href=/tags/linux/>linux</a></section><section><span><a href=javascript:void(0); onclick=window.history.back()>返回</a></span>&nbsp;|&nbsp;<span><a href=/>主页</a></span></section></div><div class=post-nav><a href=/posts/linux/linux_13_%E7%BD%91%E7%BB%9C%E9%85%8D%E7%BD%AE%E4%B8%8E%E6%8E%92%E6%9F%A5/ class=prev rel=prev title="Linux-13 网络配置与排查"><i class="fas fa-angle-left fa-fw"></i>Linux-13 网络配置与排查</a>
+<a href=/posts/linux/linux_11_%E6%96%87%E4%BB%B6%E7%B3%BB%E7%BB%9F%E4%B8%8E%E7%A3%81%E7%9B%98IO/ class=next rel=next title="Linux-11 文件系统与磁盘 IO">Linux-11 文件系统与磁盘 IO<i class="fas fa-angle-right fa-fw"></i></a></div></div><div id=comments><div id=gitalk class=comment></div><noscript>Please enable JavaScript to view the comments powered by <a href=https://github.com/gitalk/gitalk></a>Gitalk</a>.</noscript></div></article></div></main><footer class=footer><div class=footer-container><div class=footer-line>由 <a href=https://gohugo.io/ target=_blank rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href=https://github.com/dillonzq/LoveIt target=_blank rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a></div><div class=footer-line><i class="far fa-copyright fa-fw"></i><span itemprop=copyrightYear>2026</span><span class=author itemprop=copyrightHolder>&nbsp;<a href=https://xingliuhua/github.com.io target=_blank>xingliuhua</a></span></div></div></footer></div><div id=fixed-buttons><a href=# id=back-to-top class=fixed-button title=回到顶部><i class="fas fa-arrow-up fa-fw"></i>
+</a><a href=# id=view-comments class=fixed-button title=查看评论><i class="fas fa-comment fa-fw"></i></a></div><link rel=stylesheet href=/lib/gitalk/gitalk.min.css><link rel=stylesheet href=/lib/lightgallery/lightgallery.min.css><script type=text/javascript src=/lib/gitalk/gitalk.min.js></script><script type=text/javascript src=/lib/smooth-scroll/smooth-scroll.min.js></script><script type=text/javascript src=/lib/autocomplete/autocomplete.min.js></script><script type=text/javascript src=/lib/lunr/lunr.min.js></script><script type=text/javascript src=/lib/lunr/lunr.stemmer.support.min.js></script><script type=text/javascript src=/lib/lunr/lunr.zh.min.js></script><script type=text/javascript src=/lib/lazysizes/lazysizes.min.js></script><script type=text/javascript src=/lib/lightgallery/lightgallery.min.js></script><script type=text/javascript src=/lib/lightgallery/lg-thumbnail.min.js></script><script type=text/javascript src=/lib/lightgallery/lg-zoom.min.js></script><script type=text/javascript src=/lib/clipboard/clipboard.min.js></script><script type=text/javascript>window.config={code:{copyTitle:"复制到剪贴板",maxShownLines:15},comment:{gitalk:{admin:["xingliuhua"],clientID:"c0161bf1d93ccdd5f765",clientSecret:"3782f9a39ee0849148faa2ec75bb19d9964dda16",id:"2026-08-06T17:30:00+08:00",owner:"xingliuhua",repo:"xingliuhua.github.io",title:"Linux-12 IO 模型与 epoll"}},lightGallery:{actualSize:!1,exThumbImage:"data-thumbnail",hideBarsDelay:2e3,selector:".lightgallery",speed:400,thumbContHeight:80,thumbWidth:80,thumbnail:!0},search:{highlightTag:"em",lunrIndexURL:"/index.json",lunrLanguageCode:"zh",lunrSegmentitURL:"/lib/lunr/lunr.segmentit.js",maxResultLength:10,noResultsFound:"没有找到结果",snippetLength:50,type:"lunr"}}</script><script type=text/javascript src=/js/theme.min.js></script><script type=text/javascript src=/js/toc-collapse.min.js></script></body></html>
