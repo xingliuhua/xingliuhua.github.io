@@ -1,0 +1,850 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>Docker-05 资源管理与 docker update：在线调整 CPU、内存与进程限制 - xingliuhua博客</title><meta name="Description" content="docker update 动态调整 CPU/内存/PIDs/IO/restart policy，cgroup v2 资源映射，容器内 CPU 和内存视图不准确的原因，docker stats 指标详解。"><meta property="og:title" content="Docker-05 资源管理与 docker update：在线调整 CPU、内存与进程限制" />
+<meta property="og:description" content="docker update 动态调整 CPU/内存/PIDs/IO/restart policy，cgroup v2 资源映射，容器内 CPU 和内存视图不准确的原因，docker stats 指标详解。" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/docker/docker_05_%E8%B5%84%E6%BA%90%E7%AE%A1%E7%90%86%E4%B8%8Edocker_update/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2026-09-11T09:50:00+08:00" />
+<meta property="article:modified_time" content="2026-09-11T09:50:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="Docker-05 资源管理与 docker update：在线调整 CPU、内存与进程限制"/>
+<meta name="twitter:description" content="docker update 动态调整 CPU/内存/PIDs/IO/restart policy，cgroup v2 资源映射，容器内 CPU 和内存视图不准确的原因，docker stats 指标详解。"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><meta name="theme-color" content="#101A2B"><link rel="icon" href="/favicon.svg"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="mask-icon" href="/safari-pinned-tab.svg" color="#55D6BE"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/docker/docker_05_%E8%B5%84%E6%BA%90%E7%AE%A1%E7%90%86%E4%B8%8Edocker_update/" /><link rel="prev" href="https://xingliuhua.github.io/posts/docker/docker_04_%E9%87%8D%E5%90%AF%E7%AD%96%E7%95%A5%E4%B8%8E%E5%81%A5%E5%BA%B7%E6%A3%80%E6%9F%A5/" /><link rel="next" href="https://xingliuhua.github.io/posts/docker/docker_06_Dockerfile%E4%B8%8E%E9%95%9C%E5%83%8F%E6%9E%84%E5%BB%BA/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Docker-05 资源管理与 docker update：在线调整 CPU、内存与进程限制",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/docker\/docker_05_%E8%B5%84%E6%BA%90%E7%AE%A1%E7%90%86%E4%B8%8Edocker_update\/"
+        },"genre": "posts","keywords": "docker, 资源管理, cgroup","wordcount":  6660 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/docker\/docker_05_%E8%B5%84%E6%BA%90%E7%AE%A1%E7%90%86%E4%B8%8Edocker_update\/","datePublished": "2026-09-11T09:50:00+08:00","dateModified": "2026-09-11T09:50:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "docker update 动态调整 CPU/内存/PIDs/IO/restart policy，cgroup v2 资源映射，容器内 CPU 和内存视图不准确的原因，docker stats 指标详解。"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.svg"
+        data-srcset="/logo.svg, /logo.svg 1.5x, /logo.svg 2x"
+        data-sizes="auto"
+        alt="/logo.svg"
+        title="/logo.svg" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.svg"
+        data-srcset="/logo.svg, /logo.svg 1.5x, /logo.svg 2x"
+        data-sizes="auto"
+        alt="/logo.svg"
+        title="/logo.svg" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">Docker-05 资源管理与 docker update：在线调整 CPU、内存与进程限制</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/Docker/"><i class="far fa-folder fa-fw"></i>Docker</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2026-09-11">2026-09-11</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 6660 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 14 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-docker-update动态修改已有容器的运行配置">1. <code>docker update</code>：动态修改已有容器的运行配置</a></li>
+    <li><a href="#2-它不是更新镜像">2. 它不是&quot;更新镜像&quot;</a></li>
+    <li><a href="#3-查看更新前的基线">3. 查看更新前的基线</a></li>
+    <li><a href="#4-动态调整-cpu">4. 动态调整 CPU</a>
+      <ol>
+        <li><a href="#41---cpus设置-cpu-带宽上限">4.1 <code>--cpus</code>：设置 CPU 带宽上限</a></li>
+        <li><a href="#42---cpu-shares设置竞争时的相对权重">4.2 <code>--cpu-shares</code>：设置竞争时的相对权重</a></li>
+        <li><a href="#43---cpuset-cpus限制可运行的-cpu-集合">4.3 <code>--cpuset-cpus</code>：限制可运行的 CPU 集合</a></li>
+      </ol>
+    </li>
+    <li><a href="#5-动态调整内存">5. 动态调整内存</a>
+      <ol>
+        <li><a href="#51---memory硬上限">5.1 <code>--memory</code>：硬上限</a></li>
+        <li><a href="#52---memory-reservation软约束">5.2 <code>--memory-reservation</code>：软约束</a></li>
+        <li><a href="#53---memory-swap内存加-swap-总量">5.3 <code>--memory-swap</code>：内存加 swap 总量</a></li>
+      </ol>
+    </li>
+    <li><a href="#6-限制进程和线程数量">6. 限制进程和线程数量</a></li>
+    <li><a href="#7-块-io-权重">7. 块 I/O 权重</a></li>
+    <li><a href="#8-修改-restart-policy">8. 修改 restart policy</a></li>
+    <li><a href="#9-一次更新多个容器">9. 一次更新多个容器</a></li>
+    <li><a href="#10-在线更新为什么通常不重启进程">10. 在线更新为什么通常不重启进程</a></li>
+    <li><a href="#11-已停止容器也能更新">11. 已停止容器也能更新</a></li>
+    <li><a href="#12-回滚-docker-update">12. 回滚 <code>docker update</code></a></li>
+    <li><a href="#13-compose-管理下的配置漂移">13. Compose 管理下的配置漂移</a></li>
+    <li><a href="#14-cgroup-v2-对资源限制的影响">14. cgroup v2 对资源限制的影响</a>
+      <ol>
+        <li><a href="#141-v1-和-v2-的区别">14.1 v1 和 v2 的区别</a></li>
+        <li><a href="#142-v2-的关键控制文件">14.2 v2 的关键控制文件</a></li>
+        <li><a href="#143-memoryhigh-的实际意义">14.3 <code>memory.high</code> 的实际意义</a></li>
+        <li><a href="#144-memoryevents内存事件统计">14.4 <code>memory.events</code>：内存事件统计</a></li>
+        <li><a href="#145-cpustatcpu-限流统计">14.5 <code>cpu.stat</code>：CPU 限流统计</a></li>
+      </ol>
+    </li>
+    <li><a href="#15-容器内的-cpu-和内存视图为什么-nproc-和-free-不准确">15. 容器内的 CPU 和内存视图：为什么 <code>nproc</code> 和 <code>free</code> 不准确</a>
+      <ol>
+        <li><a href="#151-问题现象">15.1 问题现象</a></li>
+        <li><a href="#152-原因">15.2 原因</a></li>
+        <li><a href="#153-影响运行时的错误资源计算">15.3 影响：运行时的错误资源计算</a></li>
+        <li><a href="#154-解决方案">15.4 解决方案</a></li>
+      </ol>
+    </li>
+    <li><a href="#16-docker-stats-深入每列含义与-cgroup-指标的关系">16. <code>docker stats</code> 深入：每列含义与 cgroup 指标的关系</a>
+      <ol>
+        <li><a href="#161-基本用法">16.1 基本用法</a></li>
+        <li><a href="#162-各列含义">16.2 各列含义</a></li>
+        <li><a href="#163-mem-usage-包含-page-cache">16.3 MEM USAGE 包含 page cache</a></li>
+        <li><a href="#164-与-cgroup-指标对照">16.4 与 cgroup 指标对照</a></li>
+        <li><a href="#165-cpu--的计算和误解">16.5 CPU % 的计算和误解</a></li>
+      </ol>
+    </li>
+    <li><a href="#17-可复现实验">17. 可复现实验</a></li>
+    <li><a href="#18-docker-update-排障清单">18. <code>docker update</code> 排障清单</a></li>
+    <li><a href="#19-本篇小结">19. 本篇小结</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><blockquote>
+<p><strong>本篇较长，按需跳转：</strong>
+<a href="#1-docker-update%e5%8a%a8%e6%80%81%e4%bf%ae%e6%94%b9%e5%b7%b2%e6%9c%89%e5%ae%b9%e5%99%a8%e7%9a%84%e8%bf%90%e8%a1%8c%e9%85%8d%e7%bd%ae" rel="">docker update 概述</a> · <a href="#2-%e5%ae%83%e4%b8%8d%e6%98%af%e6%9b%b4%e6%96%b0%e9%95%9c%e5%83%8f" rel="">不是更新镜像</a> · <a href="#4-%e5%8a%a8%e6%80%81%e8%b0%83%e6%95%b4-cpu" rel="">CPU</a> · <a href="#5-%e5%8a%a8%e6%80%81%e8%b0%83%e6%95%b4%e5%86%85%e5%ad%98" rel="">内存</a> · <a href="#6-%e9%99%90%e5%88%b6%e8%bf%9b%e7%a8%8b%e5%92%8c%e7%ba%bf%e7%a8%8b%e6%95%b0%e9%87%8f" rel="">PIDs</a> · <a href="#10-%e5%9c%a8%e7%ba%bf%e6%9b%b4%e6%96%b0%e4%b8%ba%e4%bb%80%e4%b9%88%e9%80%9a%e5%b8%b8%e4%b8%8d%e9%87%8d%e5%90%af%e8%bf%9b%e7%a8%8b" rel="">在线更新原理</a> · <a href="#13-compose-%e7%ae%a1%e7%90%86%e4%b8%8b%e7%9a%84%e9%85%8d%e7%bd%ae%e6%bc%82%e7%a7%bb" rel="">Compose 漂移</a> · <a href="#14-cgroup-v2-%e5%af%b9%e8%b5%84%e6%ba%90%e9%99%90%e5%88%b6%e7%9a%84%e5%bd%b1%e5%93%8d" rel="">cgroup v2</a> · <a href="#15-%e5%ae%b9%e5%99%a8%e5%86%85%e7%9a%84-cpu-%e5%92%8c%e5%86%85%e5%ad%98%e8%a7%86%e5%9b%be%e4%b8%ba%e4%bb%80%e4%b9%88-nproc-%e5%92%8c-free-%e4%b8%8d%e5%87%86%e7%a1%ae" rel="">容器内视图</a> · <a href="#16-docker-stats-%e6%b7%b1%e5%85%a5%e6%af%8f%e5%88%97%e5%90%ab%e4%b9%89%e4%b8%8e-cgroup-%e6%8c%87%e6%a0%87%e7%9a%84%e5%85%b3%e7%b3%bb" rel="">docker stats</a> · <a href="#18-docker-update-%e6%8e%92%e9%9a%9c%e6%b8%85%e5%8d%95" rel="">排障清单</a></p>
+</blockquote>
+<h1 id="1-docker-update动态修改已有容器的运行配置">1. <code>docker update</code>：动态修改已有容器的运行配置</h1>
+<p><code>docker update</code> 用于修改一个或多个<strong>已经创建的容器</strong>的部分运行配置。最常见的用途有两类：</p>
+<ol>
+<li>在线调整 CPU、内存、进程数和块 I/O 等资源约束。</li>
+<li>修改容器的 restart policy。</li>
+</ol>
+<p>基本语法：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker update <span class="o">[</span>OPTIONS<span class="o">]</span> CONTAINER <span class="o">[</span>CONTAINER...<span class="o">]</span>
+</span></span><span class="line"><span class="cl">docker container update <span class="o">[</span>OPTIONS<span class="o">]</span> CONTAINER <span class="o">[</span>CONTAINER...<span class="o">]</span>
+</span></span></code></pre></div><p><code>docker update</code> 和 <code>docker container update</code> 是同一组命令。它既能更新运行中的容器，也能更新已停止的容器：运行中的资源约束通常立即生效；已停止容器会在下次启动时采用新配置。</p>
+<p>先用当前客户端确认本机版本支持的参数：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker update --help
+</span></span><span class="line"><span class="cl">docker version
+</span></span><span class="line"><span class="cl">docker info
+</span></span></code></pre></div><p>不同 Engine、操作系统、cgroup 版本和内核启用的 controller 不同，可用选项和实际效果也可能不同。下面重点讨论 Linux 上最常见的能力。</p>
+<h1 id="2-它不是更新镜像">2. 它不是&quot;更新镜像&quot;</h1>
+<p><code>docker update</code> 名称很容易让人误以为它会拉取新镜像或更新容器内应用。实际上它不会修改：</p>
+<ul>
+<li>镜像和镜像 tag/digest。</li>
+<li><code>ENTRYPOINT</code>、<code>CMD</code>、工作目录和运行用户。</li>
+<li>环境变量、secret 和配置文件来源。</li>
+<li>端口发布、network mode 和容器 hostname。</li>
+<li>bind mount、volume 和 tmpfs 挂载定义。</li>
+<li>logging driver、healthcheck 和大多数安全配置。</li>
+</ul>
+<p>下面这类变更需要根据新配置<strong>重建容器</strong>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker pull example/api:1.1.0
+</span></span><span class="line"><span class="cl">docker rm -f api
+</span></span><span class="line"><span class="cl">docker run -d --name api ... example/api:1.1.0
+</span></span></code></pre></div><p>实际项目应使用 Compose 或编排平台声明完整配置，让平台替换容器，而不是手工拼接旧参数：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker compose pull api
+</span></span><span class="line"><span class="cl">docker compose up -d --no-deps api
+</span></span></code></pre></div><p>因此要区分三个动作：</p>
+<table>
+<thead>
+<tr>
+<th>命令</th>
+<th>修改对象</th>
+<th>是否替换容器</th>
+<th>是否更新应用镜像</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>docker update</code></td>
+<td>已有容器的部分 HostConfig</td>
+<td>否</td>
+<td>否</td>
+</tr>
+<tr>
+<td><code>docker restart</code></td>
+<td>已有容器的运行状态</td>
+<td>否</td>
+<td>否</td>
+</tr>
+<tr>
+<td><code>docker compose up</code></td>
+<td>按声明配置协调服务</td>
+<td>配置/镜像变化时通常会</td>
+<td>可以</td>
+</tr>
+</tbody>
+</table>
+<h1 id="3-查看更新前的基线">3. 查看更新前的基线</h1>
+<p>不要在没有基线的情况下直接修改生产容器。先保存容器配置和运行状态：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker inspect api &gt; api.inspect.before.json
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">docker inspect api <span class="p">|</span> jq <span class="s1">&#39;.[0] | {
+</span></span></span><span class="line"><span class="cl"><span class="s1">  status: .State.Status,
+</span></span></span><span class="line"><span class="cl"><span class="s1">  pid: .State.Pid,
+</span></span></span><span class="line"><span class="cl"><span class="s1">  memory: .HostConfig.Memory,
+</span></span></span><span class="line"><span class="cl"><span class="s1">  memory_reservation: .HostConfig.MemoryReservation,
+</span></span></span><span class="line"><span class="cl"><span class="s1">  memory_swap: .HostConfig.MemorySwap,
+</span></span></span><span class="line"><span class="cl"><span class="s1">  nano_cpus: .HostConfig.NanoCpus,
+</span></span></span><span class="line"><span class="cl"><span class="s1">  cpu_shares: .HostConfig.CpuShares,
+</span></span></span><span class="line"><span class="cl"><span class="s1">  cpuset_cpus: .HostConfig.CpusetCpus,
+</span></span></span><span class="line"><span class="cl"><span class="s1">  pids_limit: .HostConfig.PidsLimit,
+</span></span></span><span class="line"><span class="cl"><span class="s1">  restart: .HostConfig.RestartPolicy
+</span></span></span><span class="line"><span class="cl"><span class="s1">}&#39;</span>
+</span></span></code></pre></div><p>还要记录应用指标。资源配置更新成功，只说明 daemon 接受了新配置，不代表业务延迟、吞吐量和错误率符合预期。</p>
+<h1 id="4-动态调整-cpu">4. 动态调整 CPU</h1>
+<h2 id="41---cpus设置-cpu-带宽上限">4.1 <code>--cpus</code>：设置 CPU 带宽上限</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker update --cpus 1.5 api
+</span></span></code></pre></div><p><code>--cpus 1.5</code> 表示容器在一个调度周期内最多获得约 1.5 个 CPU 的运行时间。它通常映射为 cgroup 的 quota/period，不代表绑定到某一个半物理核心，也不保证容器一定能获得这些 CPU。</p>
+<p>在常见配置中，<code>--cpus 1.5</code> 大致相当于：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker update --cpu-period <span class="m">100000</span> --cpu-quota <span class="m">150000</span> api
+</span></span></code></pre></div><p>一般优先用更容易理解的 <code>--cpus</code>；只有需要直接控制调度周期和配额时才使用 <code>--cpu-period</code>、<code>--cpu-quota</code>。</p>
+<p>验证 HostConfig 和 cgroup v2：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker inspect api --format <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  <span class="s1">&#39;NanoCpus={{.HostConfig.NanoCpus}} Period={{.HostConfig.CpuPeriod}} Quota={{.HostConfig.CpuQuota}}&#39;</span>
+</span></span><span class="line"><span class="cl">docker <span class="nb">exec</span> api cat /sys/fs/cgroup/cpu.max
+</span></span><span class="line"><span class="cl">docker <span class="nb">exec</span> api cat /sys/fs/cgroup/cpu.stat
+</span></span></code></pre></div><p><code>cpu.stat</code> 中持续增长的 throttling 指标说明进程经常用完配额。提高限额前要同时检查应用 CPU profile，避免用加资源掩盖忙循环、锁竞争或无效重试。</p>
+<h2 id="42---cpu-shares设置竞争时的相对权重">4.2 <code>--cpu-shares</code>：设置竞争时的相对权重</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker update --cpu-shares <span class="m">512</span> api
+</span></span></code></pre></div><p><code>--cpu-shares</code> 是相对权重，不是硬上限：宿主 CPU 空闲时，容器仍可使用更多 CPU；多个 cgroup 竞争时，调度器才按权重分配。它不能代替 <code>--cpus</code>。</p>
+<h2 id="43---cpuset-cpus限制可运行的-cpu-集合">4.3 <code>--cpuset-cpus</code>：限制可运行的 CPU 集合</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker update --cpuset-cpus <span class="s1">&#39;0-3&#39;</span> api
+</span></span><span class="line"><span class="cl">docker inspect api --format <span class="s1">&#39;{{.HostConfig.CpusetCpus}}&#39;</span>
+</span></span></code></pre></div><p>这会限制容器进程在哪些逻辑 CPU 上运行，适合 NUMA、缓存局部性或噪声隔离场景。更新前要确认目标 CPU 在线且属于父 cgroup 允许的集合；不要把所有关键服务都绑到相同核心。</p>
+<p>在 NUMA 主机上还可能使用 <code>--cpuset-mems</code> 限制内存节点，但错误的 CPU/内存节点组合会导致远端内存访问或更新失败，需要结合 <code>lscpu</code>、<code>numactl --hardware</code> 和父 cgroup 配置验证。</p>
+<h1 id="5-动态调整内存">5. 动态调整内存</h1>
+<h2 id="51---memory硬上限">5.1 <code>--memory</code>：硬上限</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker update --memory 768m api
+</span></span></code></pre></div><p><code>--memory</code> 设置容器内存硬上限。减小上限时要特别谨慎：如果当前使用量高于新上限，内核会回收内存，仍无法满足时可能触发 cgroup OOM，杀死容器进程。</p>
+<p>更新前后观察：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker stats --no-stream api
+</span></span><span class="line"><span class="cl">docker <span class="nb">exec</span> api sh -c <span class="s1">&#39;
+</span></span></span><span class="line"><span class="cl"><span class="s1">  cat /sys/fs/cgroup/memory.current
+</span></span></span><span class="line"><span class="cl"><span class="s1">  cat /sys/fs/cgroup/memory.max
+</span></span></span><span class="line"><span class="cl"><span class="s1">  cat /sys/fs/cgroup/memory.events
+</span></span></span><span class="line"><span class="cl"><span class="s1">&#39;</span>
+</span></span><span class="line"><span class="cl">docker inspect api --format <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  <span class="s1">&#39;Memory={{.HostConfig.Memory}} Swap={{.HostConfig.MemorySwap}} Reservation={{.HostConfig.MemoryReservation}}&#39;</span>
+</span></span></code></pre></div><p>运行时语言的 heap 只是容器内存的一部分。Go/C/Java 服务还会使用线程栈、mmap、共享库、socket buffer、page cache 和其他堆外内存；limit 必须保留余量。</p>
+<h2 id="52---memory-reservation软约束">5.2 <code>--memory-reservation</code>：软约束</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker update --memory-reservation 512m --memory 768m api
+</span></span></code></pre></div><p>reservation 用于表达内存压力下的软目标，必须低于硬上限才有意义。它不是预留 512 MB 物理内存，也不能保证进程永远获得这部分容量。</p>
+<h2 id="53---memory-swap内存加-swap-总量">5.3 <code>--memory-swap</code>：内存加 swap 总量</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker update --memory 768m --memory-swap 1g api
+</span></span></code></pre></div><p>当 <code>--memory</code> 与 <code>--memory-swap</code> 同时设置时，后者通常表示<strong>内存 + swap 的总上限</strong>，所以上例最多可使用约 768 MB 内存和额外 256 MB swap。<code>--memory-swap</code> 与 <code>--memory</code> 的关系、<code>-1</code> 语义以及宿主是否启用 swap 会影响结果。</p>
+<p>已有容器设置过 <code>MemorySwap</code> 时，调整 memory 可能需要在同一命令中提供兼容的 swap 总量，否则 daemon 会拒绝不合法组合。生产变更前先 inspect 当前两个值，并在相同 Engine/cgroup 版本的测试机验证。</p>
+<p>swap 能缓解瞬时压力，但可能把内存故障变成长尾延迟。数据库和延迟敏感服务不能只靠扩大 swap 解决泄漏或错误容量规划。</p>
+<h1 id="6-限制进程和线程数量">6. 限制进程和线程数量</h1>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker update --pids-limit <span class="m">512</span> api
+</span></span><span class="line"><span class="cl">docker inspect api --format <span class="s1">&#39;{{.HostConfig.PidsLimit}}&#39;</span>
+</span></span><span class="line"><span class="cl">docker <span class="nb">exec</span> api sh -c <span class="s1">&#39;
+</span></span></span><span class="line"><span class="cl"><span class="s1">  cat /sys/fs/cgroup/pids.current
+</span></span></span><span class="line"><span class="cl"><span class="s1">  cat /sys/fs/cgroup/pids.max
+</span></span></span><span class="line"><span class="cl"><span class="s1">&#39;</span>
+</span></span></code></pre></div><p>PIDs controller 统计的是内核 task，通常包括进程和线程。限制过低时，应用可能出现：</p>
+<ul>
+<li><code>fork: Resource temporarily unavailable</code>。</li>
+<li>无法创建新线程。</li>
+<li>Go runtime、JVM、Nginx worker 或调试命令启动失败。</li>
+<li>健康检查命令因不能 fork 而失败。</li>
+</ul>
+<p>设置上限前要观察峰值线程/进程数并留余量。不同版本对 <code>0</code>、<code>-1</code> 或未设置的表示可能不同，以 <code>docker update --help</code>、inspect 和 <code>pids.max</code> 实际值为准。</p>
+<h1 id="7-块-io-权重">7. 块 I/O 权重</h1>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker update --blkio-weight <span class="m">500</span> api
+</span></span><span class="line"><span class="cl">docker inspect api --format <span class="s1">&#39;{{.HostConfig.BlkioWeight}}&#39;</span>
+</span></span></code></pre></div><p>块 I/O 权重通常在多个容器竞争同一块设备时才体现相对优先级。它的效果受存储驱动、I/O scheduler、cgroup 版本、direct/buffered I/O、设备映射和云盘后端影响，不能看到参数成功就断言磁盘吞吐会按比例变化。</p>
+<p>数据库 I/O 治理需要结合 <code>iostat</code>、cgroup <code>io.stat</code>、应用 fsync 延迟和真实压测。对具体设备的吞吐/IOPS 限制也受 Engine 与平台支持，应先查看本机 <code>docker update --help</code>。</p>
+<h1 id="8-修改-restart-policy">8. 修改 restart policy</h1>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker update --restart unless-stopped api
+</span></span><span class="line"><span class="cl">docker update --restart on-failure:5 worker
+</span></span><span class="line"><span class="cl">docker update --restart no migration
+</span></span></code></pre></div><p>这只修改后续退出时的处理策略，不会立即重启容器，也不会改变当前 PID。四种策略、手动停止、daemon 重启、OOM 和 healthcheck 的完整行为见第 04 篇。</p>
+<p>注意 shell 中的 <code>no</code> 直接写通常没有问题；在 Compose YAML 中建议写成字符串 <code>restart: &quot;no&quot;</code>，避免被某些 YAML 解析器当作布尔值。</p>
+<h1 id="9-一次更新多个容器">9. 一次更新多个容器</h1>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker update --cpus <span class="m">1</span> --memory 512m api-1 api-2 api-3
+</span></span></code></pre></div><p>多个容器可以放在一个命令中，但不要把它理解成数据库事务：如果某个容器不存在、某个约束不合法或内核不支持，可能出现部分目标已经更新、部分目标失败。批量更新后逐个核验：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="k">for</span> name in api-1 api-2 api-3<span class="p">;</span> <span class="k">do</span>
+</span></span><span class="line"><span class="cl">  docker inspect <span class="s2">&#34;</span><span class="nv">$name</span><span class="s2">&#34;</span> --format <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>    <span class="s1">&#39;{{.Name}} memory={{.HostConfig.Memory}} nano_cpus={{.HostConfig.NanoCpus}} restart={{.HostConfig.RestartPolicy.Name}}&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="k">done</span>
+</span></span></code></pre></div><p>关键服务应逐批修改、观察错误率/延迟/OOM/throttling，再继续下一批；这不是跨节点滚动发布机制。</p>
+<h1 id="10-在线更新为什么通常不重启进程">10. 在线更新为什么通常不重启进程</h1>
+<p>对运行中的 Linux 容器，资源更新大致沿下面的路径发生：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">docker CLI
+</span></span><span class="line"><span class="cl">   ↓ Engine API
+</span></span><span class="line"><span class="cl">dockerd / containerd
+</span></span><span class="line"><span class="cl">   ↓ 更新容器运行配置
+</span></span><span class="line"><span class="cl">cgroup controller 文件
+</span></span><span class="line"><span class="cl">   ├── cpu.max / cpu.weight
+</span></span><span class="line"><span class="cl">   ├── memory.max / memory.low 等映射
+</span></span><span class="line"><span class="cl">   └── pids.max / io.*
+</span></span></code></pre></div><p>内核调度器和内存控制器随即使用新值，容器的 namespace、rootfs 和 PID 1 通常不变。验证 PID：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="nv">before</span><span class="o">=</span><span class="k">$(</span>docker inspect -f <span class="s1">&#39;{{.State.Pid}}&#39;</span> api<span class="k">)</span>
+</span></span><span class="line"><span class="cl">docker update --cpus 1.25 api
+</span></span><span class="line"><span class="cl"><span class="nv">after</span><span class="o">=</span><span class="k">$(</span>docker inspect -f <span class="s1">&#39;{{.State.Pid}}&#39;</span> api<span class="k">)</span>
+</span></span><span class="line"><span class="cl"><span class="nb">printf</span> <span class="s1">&#39;before=%s after=%s\n&#39;</span> <span class="s2">&#34;</span><span class="nv">$before</span><span class="s2">&#34;</span> <span class="s2">&#34;</span><span class="nv">$after</span><span class="s2">&#34;</span>
+</span></span></code></pre></div><p>&ldquo;不重启&quot;不等于&quot;无影响&rdquo;：收紧 CPU 会立即产生 throttling，收紧内存可能触发回收/OOM，收紧 PIDs 可能让新线程失败。在线变更也需要变更窗口、指标、回滚值和审计记录。</p>
+<h1 id="11-已停止容器也能更新">11. 已停止容器也能更新</h1>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker stop api
+</span></span><span class="line"><span class="cl">docker update --memory 1g --cpus <span class="m">2</span> --restart unless-stopped api
+</span></span><span class="line"><span class="cl">docker inspect api --format <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  <span class="s1">&#39;status={{.State.Status}} memory={{.HostConfig.Memory}} nano_cpus={{.HostConfig.NanoCpus}}&#39;</span>
+</span></span><span class="line"><span class="cl">docker start api
+</span></span></code></pre></div><p>更新已停止容器不会自动启动它。这样可以在启动前修正过低资源限制或 restart policy；但不能借此修改环境变量、端口和挂载，这些仍需要重建。</p>
+<h1 id="12-回滚-docker-update">12. 回滚 <code>docker update</code></h1>
+<p><code>docker update</code> 没有通用的 <code>undo</code> 子命令。回滚依赖更新前保存的具体值：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 示例：按变更前记录恢复，不要照抄示例值</span>
+</span></span><span class="line"><span class="cl">docker update <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --cpus <span class="m">2</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --memory 1g <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --memory-reservation 768m <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --memory-swap 1536m <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --pids-limit <span class="m">1024</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --restart unless-stopped <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  api
+</span></span></code></pre></div><p>某些&quot;取消限制&quot;的值因选项、cgroup 和 Engine 版本而异，不能假设全部写 <code>0</code> 就表示无限。先查 <code>docker update --help</code>，并用一个临时容器验证再改生产。</p>
+<p>回滚后同时验证 HostConfig、cgroup 和应用指标；仅比较 <code>docker inspect</code> JSON 仍不能证明性能已恢复。</p>
+<h1 id="13-compose-管理下的配置漂移">13. Compose 管理下的配置漂移</h1>
+<p>如果容器由 Compose 创建，手工执行：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker update --memory 1g demo-api-1
+</span></span></code></pre></div><p>只改变当前容器，<code>compose.yaml</code> 并没有变化。这会造成两份事实：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">声明状态：compose.yaml 中的资源配置
+</span></span><span class="line"><span class="cl">实际状态：当前容器 HostConfig / cgroup
+</span></span></code></pre></div><p>手工值可能持续到容器被重建；一旦 Compose 因镜像或配置变化重建容器，手工修改会丢失。正确流程是：</p>
+<ol>
+<li>紧急止损时可先 <code>docker update</code>，记录原值、命令、操作者和时间。</li>
+<li>立即把最终值回写到 Compose/部署配置并走代码审查。</li>
+<li>用 <code>docker compose config</code> 查看最终声明。</li>
+<li>在维护窗口 <code>docker compose up -d</code>；必要时 <code>--force-recreate</code> 消除漂移。</li>
+<li>inspect 新容器并验证业务指标。</li>
+</ol>
+<p>Compose 示例：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-yaml" data-lang="yaml"><span class="line"><span class="cl"><span class="nt">services</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="nt">api</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">image</span><span class="p">:</span><span class="w"> </span><span class="l">example/api:1.0.0</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">cpus</span><span class="p">:</span><span class="w"> </span><span class="m">1.5</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">mem_limit</span><span class="p">:</span><span class="w"> </span><span class="l">768m</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">mem_reservation</span><span class="p">:</span><span class="w"> </span><span class="l">512m</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">pids_limit</span><span class="p">:</span><span class="w"> </span><span class="m">512</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">restart</span><span class="p">:</span><span class="w"> </span><span class="l">unless-stopped</span><span class="w">
+</span></span></span></code></pre></div><p>Compose 字段的支持和映射受版本/部署目标影响，以 <code>docker compose config</code> 和生成容器的 HostConfig 为准。</p>
+<h1 id="14-cgroup-v2-对资源限制的影响">14. cgroup v2 对资源限制的影响</h1>
+<p>Docker 的资源限制最终映射到 Linux cgroup。现代发行版（Ubuntu 22.04+、RHEL 9+、Debian 12+）默认使用 cgroup v2，而早期系统使用 v1。两者的核心区别影响你对资源限制的理解和排障方式。</p>
+<h2 id="141-v1-和-v2-的区别">14.1 v1 和 v2 的区别</h2>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>cgroup v1</th>
+<th>cgroup v2</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>层级结构</td>
+<td>每个 controller（cpu、memory、pids）独立层级</td>
+<td>所有 controller 统一层级</td>
+</tr>
+<tr>
+<td>文件命名</td>
+<td><code>memory.limit_in_bytes</code>、<code>cpu.cfs_quota_us</code></td>
+<td><code>memory.max</code>、<code>cpu.max</code></td>
+</tr>
+<tr>
+<td>内存压力信号</td>
+<td><code>memory.soft_limit_in_bytes</code>（效果有限）</td>
+<td><code>memory.high</code>（内核主动回收）</td>
+</tr>
+<tr>
+<td>PSI 压力指标</td>
+<td>不支持</td>
+<td><code>/proc/pressure/{cpu,memory,io}</code></td>
+</tr>
+<tr>
+<td>线程级控制</td>
+<td>部分支持</td>
+<td><code>threaded</code> 类型 cgroup</td>
+</tr>
+</tbody>
+</table>
+<p>判断当前系统版本：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">stat -fc %T /sys/fs/cgroup
+</span></span><span class="line"><span class="cl"><span class="c1"># tmpfs     → cgroup v1（或 hybrid）</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># cgroup2fs → cgroup v2</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># Docker 也会显示</span>
+</span></span><span class="line"><span class="cl">docker info --format <span class="s1">&#39;{{.CgroupVersion}}&#39;</span>
+</span></span></code></pre></div><h2 id="142-v2-的关键控制文件">14.2 v2 的关键控制文件</h2>
+<p>容器内可以直接查看 cgroup v2 控制文件：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker <span class="nb">exec</span> api sh -c <span class="s1">&#39;
+</span></span></span><span class="line"><span class="cl"><span class="s1">  echo &#34;=== 内存 ===&#34;
+</span></span></span><span class="line"><span class="cl"><span class="s1">  echo &#34;memory.max=$(cat /sys/fs/cgroup/memory.max)&#34;
+</span></span></span><span class="line"><span class="cl"><span class="s1">  echo &#34;memory.current=$(cat /sys/fs/cgroup/memory.current)&#34;
+</span></span></span><span class="line"><span class="cl"><span class="s1">  echo &#34;memory.high=$(cat /sys/fs/cgroup/memory.high)&#34;
+</span></span></span><span class="line"><span class="cl"><span class="s1">  echo &#34;&#34;
+</span></span></span><span class="line"><span class="cl"><span class="s1">  echo &#34;=== CPU ===&#34;
+</span></span></span><span class="line"><span class="cl"><span class="s1">  cat /sys/fs/cgroup/cpu.max
+</span></span></span><span class="line"><span class="cl"><span class="s1">  echo &#34;&#34;
+</span></span></span><span class="line"><span class="cl"><span class="s1">  echo &#34;=== PIDs ===&#34;
+</span></span></span><span class="line"><span class="cl"><span class="s1">  echo &#34;pids.max=$(cat /sys/fs/cgroup/pids.max)&#34;
+</span></span></span><span class="line"><span class="cl"><span class="s1">  echo &#34;pids.current=$(cat /sys/fs/cgroup/pids.current)&#34;
+</span></span></span><span class="line"><span class="cl"><span class="s1">&#39;</span>
+</span></span></code></pre></div><p>关键文件含义：</p>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>含义</th>
+<th>Docker 参数</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>memory.max</code></td>
+<td>硬上限，超出触发 OOM</td>
+<td><code>--memory</code></td>
+</tr>
+<tr>
+<td><code>memory.high</code></td>
+<td>高水位线，超出后内核加大回收压力</td>
+<td>无直接 CLI 参数</td>
+</tr>
+<tr>
+<td><code>memory.current</code></td>
+<td>当前使用量（含 page cache）</td>
+<td><code>docker stats</code> MEM USAGE</td>
+</tr>
+<tr>
+<td><code>cpu.max</code></td>
+<td><code>quota period</code> 格式，如 <code>150000 100000</code> 表示 1.5 CPU</td>
+<td><code>--cpus</code></td>
+</tr>
+<tr>
+<td><code>pids.max</code></td>
+<td>进程/线程数上限</td>
+<td><code>--pids-limit</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="143-memoryhigh-的实际意义">14.3 <code>memory.high</code> 的实际意义</h2>
+<p><code>memory.high</code> 是 cgroup v2 引入的重要机制。它不是硬上限，而是&quot;高水位线&quot;：</p>
+<ul>
+<li>使用量超过 <code>memory.high</code> 时，内核会对该 cgroup 施加更强的内存回收压力。</li>
+<li>进程不会被杀死，但可能因为频繁回收而出现<strong>延迟抖动</strong>。</li>
+<li>只有使用量超过 <code>memory.max</code> 时，才触发 cgroup OOM kill。</li>
+</ul>
+<p>很多生产中的&quot;容器变慢但没有 OOM&quot;问题，其实是 <code>memory.high</code> 触发了持续回收。Docker CLI 目前没有直接设置 <code>memory.high</code> 的参数，但编排平台或手工写 cgroup 文件可以使用它。</p>
+<h2 id="144-memoryevents内存事件统计">14.4 <code>memory.events</code>：内存事件统计</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker <span class="nb">exec</span> api cat /sys/fs/cgroup/memory.events
+</span></span></code></pre></div><p>输出示例：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">low 0
+</span></span><span class="line"><span class="cl">high 42
+</span></span><span class="line"><span class="cl">max 3
+</span></span><span class="line"><span class="cl">oom 1
+</span></span><span class="line"><span class="cl">oom_kill 1
+</span></span><span class="line"><span class="cl">oom_group_kill 0
+</span></span></code></pre></div><table>
+<thead>
+<tr>
+<th>字段</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>low</code></td>
+<td>使用量降到 <code>memory.low</code> 以下的次数</td>
+</tr>
+<tr>
+<td><code>high</code></td>
+<td>使用量超过 <code>memory.high</code> 的次数（频繁说明回收压力大）</td>
+</tr>
+<tr>
+<td><code>max</code></td>
+<td>使用量触及 <code>memory.max</code> 的次数</td>
+</tr>
+<tr>
+<td><code>oom</code></td>
+<td>OOM 事件次数</td>
+</tr>
+<tr>
+<td><code>oom_kill</code></td>
+<td>因 OOM 被杀死的进程次数</td>
+</tr>
+</tbody>
+</table>
+<p>排障时 <code>high</code> 计数持续增长但 <code>oom_kill</code> 为 0，说明容器处于&quot;没死但在挣扎&quot;的状态，应考虑增大内存或优化应用。</p>
+<h2 id="145-cpustatcpu-限流统计">14.5 <code>cpu.stat</code>：CPU 限流统计</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker <span class="nb">exec</span> api cat /sys/fs/cgroup/cpu.stat
+</span></span></code></pre></div><p>输出示例：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">usage_usec 1523456
+</span></span><span class="line"><span class="cl">user_usec 1234567
+</span></span><span class="line"><span class="cl">system_usec 288889
+</span></span><span class="line"><span class="cl">nr_periods 15234
+</span></span><span class="line"><span class="cl">nr_throttled 423
+</span></span><span class="line"><span class="cl">throttled_usec 8765432
+</span></span></code></pre></div><table>
+<thead>
+<tr>
+<th>字段</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>nr_periods</code></td>
+<td>经过的调度周期总数</td>
+</tr>
+<tr>
+<td><code>nr_throttled</code></td>
+<td>被限流的周期数</td>
+</tr>
+<tr>
+<td><code>throttled_usec</code></td>
+<td>累计被限流的微秒数</td>
+</tr>
+</tbody>
+</table>
+<p>限流比例 = <code>nr_throttled / nr_periods</code>。超过 10-20% 通常说明 CPU 配额不足或应用存在 CPU 密集型热点。</p>
+<h1 id="15-容器内的-cpu-和内存视图为什么-nproc-和-free-不准确">15. 容器内的 CPU 和内存视图：为什么 <code>nproc</code> 和 <code>free</code> 不准确</h1>
+<h2 id="151-问题现象">15.1 问题现象</h2>
+<p>在一个限制了 2 CPU 和 512 MB 内存的容器内：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker run --rm --cpus <span class="m">2</span> --memory 512m ubuntu bash -c <span class="s1">&#39;
+</span></span></span><span class="line"><span class="cl"><span class="s1">  echo &#34;nproc: $(nproc)&#34;
+</span></span></span><span class="line"><span class="cl"><span class="s1">  echo &#34;free:&#34;
+</span></span></span><span class="line"><span class="cl"><span class="s1">  free -m
+</span></span></span><span class="line"><span class="cl"><span class="s1">&#39;</span>
+</span></span></code></pre></div><p>你会发现 <code>nproc</code> 返回的是宿主机全部 CPU 核数（比如 16），<code>free</code> 返回的是宿主机全部内存（比如 64 GB）。这不是 Bug，而是设计如此。</p>
+<h2 id="152-原因">15.2 原因</h2>
+<p><code>nproc</code>、<code>free</code>、<code>top</code>、<code>htop</code> 等工具读取的是 <code>/proc/cpuinfo</code> 和 <code>/proc/meminfo</code>。Linux 的 <code>/proc</code> 文件系统反映的是<strong>宿主机内核视图</strong>，不会自动根据 cgroup 限制调整数据。cgroup 是资源限制机制，而 <code>/proc</code> 是内核信息接口，两者不联动。</p>
+<p>验证：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker run --rm --cpus <span class="m">2</span> --memory 512m alpine sh -c <span class="s1">&#39;
+</span></span></span><span class="line"><span class="cl"><span class="s1">  echo &#34;--- /proc 视图（宿主机数据）---&#34;
+</span></span></span><span class="line"><span class="cl"><span class="s1">  echo &#34;nproc: $(nproc)&#34;
+</span></span></span><span class="line"><span class="cl"><span class="s1">  grep MemTotal /proc/meminfo
+</span></span></span><span class="line"><span class="cl"><span class="s1">
+</span></span></span><span class="line"><span class="cl"><span class="s1">  echo &#34;&#34;
+</span></span></span><span class="line"><span class="cl"><span class="s1">  echo &#34;--- cgroup 视图（真实限制）---&#34;
+</span></span></span><span class="line"><span class="cl"><span class="s1">  echo &#34;cpu.max: $(cat /sys/fs/cgroup/cpu.max)&#34;
+</span></span></span><span class="line"><span class="cl"><span class="s1">  echo &#34;memory.max: $(cat /sys/fs/cgroup/memory.max)&#34;
+</span></span></span><span class="line"><span class="cl"><span class="s1">&#39;</span>
+</span></span></code></pre></div><h2 id="153-影响运行时的错误资源计算">15.3 影响：运行时的错误资源计算</h2>
+<p>这个问题最常见的后果是应用运行时按宿主机资源初始化，实际被 cgroup 限制后性能异常或 OOM：</p>
+<p><strong>Java</strong>（8u191 之前）：JVM 默认按 <code>/proc/meminfo</code> 计算最大 heap。一台 64 GB 宿主机上的 512 MB 容器，JVM 可能尝试分配 16 GB heap，随即被 cgroup OOM kill。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># Java 8u191+ / 11+ 默认开启容器感知</span>
+</span></span><span class="line"><span class="cl">java -XX:+PrintFlagsFinal 2&gt;<span class="p">&amp;</span><span class="m">1</span> <span class="p">|</span> grep UseContainerSupport
+</span></span><span class="line"><span class="cl"><span class="c1"># 建议显式设置</span>
+</span></span><span class="line"><span class="cl">java -XX:MaxRAMPercentage<span class="o">=</span>75.0 -jar app.jar
+</span></span></code></pre></div><p><strong>Go</strong>：<code>runtime.NumCPU()</code> 返回宿主机核数，<code>GOMAXPROCS</code> 默认等于该值。16 核宿主上限制 2 CPU 的容器，Go 会启动 16 个 OS 线程竞争 2 CPU 配额，产生不必要的上下文切换和 throttling。</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// 使用 uber-go/automaxprocs 自动适配 cgroup
+</span></span></span><span class="line"><span class="cl"><span class="c1"></span><span class="kn">import</span> <span class="nx">_</span> <span class="s">&#34;go.uber.org/automaxprocs&#34;</span>
+</span></span></code></pre></div><p>或者手动设置环境变量：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker run --cpus <span class="m">2</span> -e <span class="nv">GOMAXPROCS</span><span class="o">=</span><span class="m">2</span> example/api:1.0.0
+</span></span></code></pre></div><p><strong>Node.js</strong>：<code>os.cpus().length</code> 同样返回宿主机核数。cluster 模式按此 fork worker，会在有限 CPU 配额上创建过多进程。</p>
+<h2 id="154-解决方案">15.4 解决方案</h2>
+<table>
+<thead>
+<tr>
+<th>方案</th>
+<th>适用场景</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>运行时容器感知</td>
+<td>Java 8u191+、Go automaxprocs</td>
+<td>运行时直接读取 cgroup 限制</td>
+</tr>
+<tr>
+<td>环境变量</td>
+<td><code>GOMAXPROCS</code>、<code>UV_THREADPOOL_SIZE</code></td>
+<td>在 Compose 或 docker run 中显式设置</td>
+</tr>
+<tr>
+<td>手动读 cgroup</td>
+<td>通用</td>
+<td><code>cat /sys/fs/cgroup/cpu.max</code> 解析 quota/period</td>
+</tr>
+<tr>
+<td>LXCFS</td>
+<td>需要 <code>/proc</code> 兼容的遗留应用</td>
+<td>挂载模拟的 <code>/proc/cpuinfo</code>、<code>/proc/meminfo</code></td>
+</tr>
+</tbody>
+</table>
+<p>LXCFS 通过 FUSE 文件系统重写 <code>/proc</code> 中的资源信息，让遗留应用无需修改即可看到&quot;正确&quot;的数值。但它增加了运维复杂度，现代应用优先使用运行时原生的容器感知能力。</p>
+<h1 id="16-docker-stats-深入每列含义与-cgroup-指标的关系">16. <code>docker stats</code> 深入：每列含义与 cgroup 指标的关系</h1>
+<h2 id="161-基本用法">16.1 基本用法</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker stats                    <span class="c1"># 持续刷新</span>
+</span></span><span class="line"><span class="cl">docker stats --no-stream        <span class="c1"># 只打印一帧</span>
+</span></span><span class="line"><span class="cl">docker stats --no-stream api db redis
+</span></span><span class="line"><span class="cl">docker stats --format <span class="s1">&#39;table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.PIDs}}&#39;</span>
+</span></span></code></pre></div><h2 id="162-各列含义">16.2 各列含义</h2>
+<table>
+<thead>
+<tr>
+<th>列</th>
+<th>含义</th>
+<th>注意事项</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>CPU %</td>
+<td>相对于<strong>宿主机全部 CPU</strong> 的百分比</td>
+<td>4 核宿主上 <code>--cpus 2</code> 的容器满载时显示约 200%，不是 100%</td>
+</tr>
+<tr>
+<td>MEM USAGE / LIMIT</td>
+<td>容器当前内存使用 / cgroup <code>memory.max</code></td>
+<td>USAGE 包含 page cache</td>
+</tr>
+<tr>
+<td>MEM %</td>
+<td><code>USAGE / LIMIT</code> 的百分比</td>
+<td>未设 limit 时显示相对于宿主总内存</td>
+</tr>
+<tr>
+<td>NET I/O</td>
+<td>容器网络接口的<strong>累计</strong>收发字节</td>
+<td>从容器启动开始累计，不是速率</td>
+</tr>
+<tr>
+<td>BLOCK I/O</td>
+<td>块设备<strong>累计</strong>读写字节</td>
+<td>受存储驱动和 direct/buffered I/O 影响</td>
+</tr>
+<tr>
+<td>PIDS</td>
+<td>当前进程/线程数</td>
+<td>对应 cgroup <code>pids.current</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="163-mem-usage-包含-page-cache">16.3 MEM USAGE 包含 page cache</h2>
+<p><code>docker stats</code> 显示的内存使用量来自 cgroup <code>memory.current</code>，它包含了 page cache（文件系统缓存）。这意味着：</p>
+<ul>
+<li>一个读取大量文件的容器，MEM USAGE 可能远高于应用实际 RSS。</li>
+<li>内存压力下 page cache 会被回收，不一定意味着应用内存不足。</li>
+</ul>
+<p>要区分实际 RSS 和 cache：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker <span class="nb">exec</span> api cat /sys/fs/cgroup/memory.stat <span class="p">|</span> grep -E <span class="s1">&#39;^(anon|file|shmem) &#39;</span>
+</span></span></code></pre></div><p>其中 <code>anon</code> 大致对应应用实际使用的匿名内存（heap、stack、mmap 匿名页），<code>file</code> 是文件映射和 page cache。</p>
+<h2 id="164-与-cgroup-指标对照">16.4 与 cgroup 指标对照</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker <span class="nb">exec</span> api sh -c <span class="s1">&#39;
+</span></span></span><span class="line"><span class="cl"><span class="s1">  echo &#34;=== 内存 ===&#34;
+</span></span></span><span class="line"><span class="cl"><span class="s1">  echo &#34;memory.current=$(cat /sys/fs/cgroup/memory.current)&#34;
+</span></span></span><span class="line"><span class="cl"><span class="s1">  echo &#34;memory.max=$(cat /sys/fs/cgroup/memory.max)&#34;
+</span></span></span><span class="line"><span class="cl"><span class="s1">  echo &#34;&#34;
+</span></span></span><span class="line"><span class="cl"><span class="s1">  echo &#34;=== CPU ===&#34;
+</span></span></span><span class="line"><span class="cl"><span class="s1">  cat /sys/fs/cgroup/cpu.stat
+</span></span></span><span class="line"><span class="cl"><span class="s1">  echo &#34;&#34;
+</span></span></span><span class="line"><span class="cl"><span class="s1">  echo &#34;=== PIDs ===&#34;
+</span></span></span><span class="line"><span class="cl"><span class="s1">  echo &#34;pids.current=$(cat /sys/fs/cgroup/pids.current)&#34;
+</span></span></span><span class="line"><span class="cl"><span class="s1">  echo &#34;pids.max=$(cat /sys/fs/cgroup/pids.max)&#34;
+</span></span></span><span class="line"><span class="cl"><span class="s1">&#39;</span>
+</span></span></code></pre></div><p><code>docker stats</code> 是快照工具，适合临时查看。生产环境应使用 Prometheus + cAdvisor、Datadog 或类似的时序监控方案，才能看到资源使用的趋势、峰值和关联告警。</p>
+<h2 id="165-cpu--的计算和误解">16.5 CPU % 的计算和误解</h2>
+<p><code>docker stats</code> 的 CPU % 是相对于宿主机全部 CPU 核数的百分比。在一台 8 核宿主上：</p>
+<ul>
+<li>容器 <code>--cpus 2</code>，满载时 CPU % 约 200%（不是 100%）。</li>
+<li>要计算&quot;相对于限制的使用率&quot;，需要自己换算：<code>200% / (2 * 100%) = 100%</code>。</li>
+</ul>
+<p>或者直接用 cgroup 数据：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker <span class="nb">exec</span> api cat /sys/fs/cgroup/cpu.stat
+</span></span><span class="line"><span class="cl"><span class="c1"># nr_throttled &gt; 0 且持续增长 → 说明在碰 CPU 天花板</span>
+</span></span></code></pre></div><h1 id="17-可复现实验">17. 可复现实验</h1>
+<p>启动一个有初始限制的容器：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker run -d --name update-lab <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --cpus 0.5 <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --memory 256m <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --pids-limit <span class="m">128</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --restart no <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  alpine:3.20 sleep 1d
+</span></span></code></pre></div><p>记录 PID 和限制：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker inspect update-lab <span class="p">|</span> jq <span class="s1">&#39;.[0] | {
+</span></span></span><span class="line"><span class="cl"><span class="s1">  pid: .State.Pid,
+</span></span></span><span class="line"><span class="cl"><span class="s1">  memory: .HostConfig.Memory,
+</span></span></span><span class="line"><span class="cl"><span class="s1">  nano_cpus: .HostConfig.NanoCpus,
+</span></span></span><span class="line"><span class="cl"><span class="s1">  pids: .HostConfig.PidsLimit,
+</span></span></span><span class="line"><span class="cl"><span class="s1">  restart: .HostConfig.RestartPolicy
+</span></span></span><span class="line"><span class="cl"><span class="s1">}&#39;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">docker <span class="nb">exec</span> update-lab sh -c <span class="s1">&#39;
+</span></span></span><span class="line"><span class="cl"><span class="s1">  echo memory.max=$(cat /sys/fs/cgroup/memory.max)
+</span></span></span><span class="line"><span class="cl"><span class="s1">  echo cpu.max=$(cat /sys/fs/cgroup/cpu.max)
+</span></span></span><span class="line"><span class="cl"><span class="s1">  echo pids.max=$(cat /sys/fs/cgroup/pids.max)
+</span></span></span><span class="line"><span class="cl"><span class="s1">&#39;</span>
+</span></span></code></pre></div><p>在线更新：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="nv">pid_before</span><span class="o">=</span><span class="k">$(</span>docker inspect -f <span class="s1">&#39;{{.State.Pid}}&#39;</span> update-lab<span class="k">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">docker update <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --cpus 1.25 <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --memory 384m <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --pids-limit <span class="m">256</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --restart on-failure:3 <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  update-lab
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="nv">pid_after</span><span class="o">=</span><span class="k">$(</span>docker inspect -f <span class="s1">&#39;{{.State.Pid}}&#39;</span> update-lab<span class="k">)</span>
+</span></span><span class="line"><span class="cl"><span class="nb">printf</span> <span class="s1">&#39;pid_before=%s pid_after=%s\n&#39;</span> <span class="s2">&#34;</span><span class="nv">$pid_before</span><span class="s2">&#34;</span> <span class="s2">&#34;</span><span class="nv">$pid_after</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">docker <span class="nb">exec</span> update-lab sh -c <span class="s1">&#39;
+</span></span></span><span class="line"><span class="cl"><span class="s1">  echo memory.max=$(cat /sys/fs/cgroup/memory.max)
+</span></span></span><span class="line"><span class="cl"><span class="s1">  echo cpu.max=$(cat /sys/fs/cgroup/cpu.max)
+</span></span></span><span class="line"><span class="cl"><span class="s1">  echo pids.max=$(cat /sys/fs/cgroup/pids.max)
+</span></span></span><span class="line"><span class="cl"><span class="s1">&#39;</span>
+</span></span><span class="line"><span class="cl">docker inspect update-lab --format <span class="s1">&#39;{{json .HostConfig.RestartPolicy}}&#39;</span>
+</span></span></code></pre></div><p>预期 PID 不变，cgroup 文件和 restart policy 变成新值。实验结束：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker rm -f update-lab
+</span></span></code></pre></div><p>不要在远程生产 context 上做资源压力实验；执行前先运行 <code>docker context show</code>。</p>
+<h1 id="18-docker-update-排障清单">18. <code>docker update</code> 排障清单</h1>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">命令被拒绝
+</span></span><span class="line"><span class="cl">├── 参数是否受当前 OS/Engine 支持？       docker update --help
+</span></span><span class="line"><span class="cl">├── 宿主是否启用对应 cgroup controller？  docker info + /sys/fs/cgroup
+</span></span><span class="line"><span class="cl">├── memory、reservation、swap 是否冲突？ inspect 当前值
+</span></span><span class="line"><span class="cl">├── cpuset 是否属于允许且在线的 CPU？     lscpu + cgroup cpuset
+</span></span><span class="line"><span class="cl">└── 是否连到了错误 Docker context？       docker context show
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">命令成功但业务异常
+</span></span><span class="line"><span class="cl">├── 是否收紧 CPU 导致 throttling？         cpu.stat + 应用延迟
+</span></span><span class="line"><span class="cl">├── 是否收紧内存触发回收/OOM？            memory.events + dmesg
+</span></span><span class="line"><span class="cl">├── PIDs 是否导致线程/fork 失败？          pids.current/max + 日志
+</span></span><span class="line"><span class="cl">├── I/O 权重是否被存储后端支持？           io.stat + iostat
+</span></span><span class="line"><span class="cl">└── 是否产生 Compose 配置漂移？            compose config + inspect
+</span></span></code></pre></div><h1 id="19-本篇小结">19. 本篇小结</h1>
+<p><code>docker update</code> 是单机容器资源管理的核心工具：它通过修改 cgroup 控制文件实现 CPU、内存、PIDs 和 I/O 的在线调整，不重启进程、不重建容器。但它不能修改镜像、端口、挂载和环境变量，也不是跨节点的编排能力。</p>
+<p>使用资源限制时要记住三件事：cgroup 限制的是内核视角的资源消耗（包含 page cache），<code>/proc</code> 中的信息不反映 cgroup 限制，而 <code>docker stats</code> 的百分比是相对于宿主机全部资源。生产环境必须在限制前后对照应用指标，而不是只看 <code>docker inspect</code> 的配置变化。</p>
+<hr>
+<table>
+<thead>
+<tr>
+<th style="text-align:left">上一篇</th>
+<th style="text-align:right">下一篇</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:left"><a href="../docker_04_%e9%87%8d%e5%90%af%e7%ad%96%e7%95%a5%e4%b8%8e%e5%81%a5%e5%ba%b7%e6%a3%80%e6%9f%a5/" rel="">04-重启策略与健康检查</a></td>
+<td style="text-align:right"><a href="../docker_06_Dockerfile%e4%b8%8e%e9%95%9c%e5%83%8f%e6%9e%84%e5%bb%ba/" rel="">06-Dockerfile 与镜像构建</a></td>
+</tr>
+</tbody>
+</table>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2026-09-11</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/docker/">docker</a>,&nbsp;<a href="/tags/%E8%B5%84%E6%BA%90%E7%AE%A1%E7%90%86/">资源管理</a>,&nbsp;<a href="/tags/cgroup/">cgroup</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/docker/docker_04_%E9%87%8D%E5%90%AF%E7%AD%96%E7%95%A5%E4%B8%8E%E5%81%A5%E5%BA%B7%E6%A3%80%E6%9F%A5/" class="prev" rel="prev" title="Docker-04 重启策略与健康检查：让服务在正确的时候自动恢复"><i class="fas fa-angle-left fa-fw"></i>Docker-04 重启策略与健康检查：让服务在正确的时候自动恢复</a>
+            <a href="/posts/docker/docker_06_Dockerfile%E4%B8%8E%E9%95%9C%E5%83%8F%E6%9E%84%E5%BB%BA/" class="next" rel="next" title="Docker-06 Dockerfile 与镜像构建：缓存、最小化和多阶段构建">Docker-06 Dockerfile 与镜像构建：缓存、最小化和多阶段构建<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2026-09-11T09:50:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Docker-05 资源管理与 docker update：在线调整 CPU、内存与进程限制"}},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

@@ -1,0 +1,865 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>Docker-04 重启策略与健康检查：让服务在正确的时候自动恢复 - xingliuhua博客</title><meta name="Description" content="深入四种 restart policy 的行为边界、Compose restart 语义、Dockerfile 与 Compose 健康检查参数调优、depends_on 启动顺序、信号传递与优雅退出。"><meta property="og:title" content="Docker-04 重启策略与健康检查：让服务在正确的时候自动恢复" />
+<meta property="og:description" content="深入四种 restart policy 的行为边界、Compose restart 语义、Dockerfile 与 Compose 健康检查参数调优、depends_on 启动顺序、信号传递与优雅退出。" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/docker/docker_04_%E9%87%8D%E5%90%AF%E7%AD%96%E7%95%A5%E4%B8%8E%E5%81%A5%E5%BA%B7%E6%A3%80%E6%9F%A5/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2026-09-11T09:40:00+08:00" />
+<meta property="article:modified_time" content="2026-09-11T09:40:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="Docker-04 重启策略与健康检查：让服务在正确的时候自动恢复"/>
+<meta name="twitter:description" content="深入四种 restart policy 的行为边界、Compose restart 语义、Dockerfile 与 Compose 健康检查参数调优、depends_on 启动顺序、信号传递与优雅退出。"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><meta name="theme-color" content="#101A2B"><link rel="icon" href="/favicon.svg"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="mask-icon" href="/safari-pinned-tab.svg" color="#55D6BE"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/docker/docker_04_%E9%87%8D%E5%90%AF%E7%AD%96%E7%95%A5%E4%B8%8E%E5%81%A5%E5%BA%B7%E6%A3%80%E6%9F%A5/" /><link rel="prev" href="https://xingliuhua.github.io/posts/docker/docker_03_%E9%95%9C%E5%83%8F%E5%AE%B9%E5%99%A8%E4%B8%8E%E5%B8%B8%E7%94%A8%E5%91%BD%E4%BB%A4/" /><link rel="next" href="https://xingliuhua.github.io/posts/docker/docker_05_%E8%B5%84%E6%BA%90%E7%AE%A1%E7%90%86%E4%B8%8Edocker_update/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Docker-04 重启策略与健康检查：让服务在正确的时候自动恢复",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/docker\/docker_04_%E9%87%8D%E5%90%AF%E7%AD%96%E7%95%A5%E4%B8%8E%E5%81%A5%E5%BA%B7%E6%A3%80%E6%9F%A5\/"
+        },"genre": "posts","keywords": "docker, 重启策略, 健康检查","wordcount":  5802 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/docker\/docker_04_%E9%87%8D%E5%90%AF%E7%AD%96%E7%95%A5%E4%B8%8E%E5%81%A5%E5%BA%B7%E6%A3%80%E6%9F%A5\/","datePublished": "2026-09-11T09:40:00+08:00","dateModified": "2026-09-11T09:40:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "深入四种 restart policy 的行为边界、Compose restart 语义、Dockerfile 与 Compose 健康检查参数调优、depends_on 启动顺序、信号传递与优雅退出。"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.svg"
+        data-srcset="/logo.svg, /logo.svg 1.5x, /logo.svg 2x"
+        data-sizes="auto"
+        alt="/logo.svg"
+        title="/logo.svg" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.svg"
+        data-srcset="/logo.svg, /logo.svg 1.5x, /logo.svg 2x"
+        data-sizes="auto"
+        alt="/logo.svg"
+        title="/logo.svg" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">Docker-04 重启策略与健康检查：让服务在正确的时候自动恢复</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/Docker/"><i class="far fa-folder fa-fw"></i>Docker</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2026-09-11">2026-09-11</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 5802 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 12 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-重启策略容器退出后到底会发生什么">1. 重启策略：容器退出后到底会发生什么</a>
+      <ol>
+        <li><a href="#11-四种-restart-policy">1.1 四种 restart policy</a></li>
+      </ol>
+    </li>
+    <li><a href="#2-按事件比较策略">2. 按事件比较策略</a></li>
+    <li><a href="#3-on-failure-如何判断失败">3. <code>on-failure</code> 如何判断失败</a></li>
+    <li><a href="#4-restart-policy-只关注-pid-1">4. restart policy 只关注 PID 1</a></li>
+    <li><a href="#5-docker-restart-命令不是-restart-policy">5. <code>docker restart</code> 命令不是 restart policy</a></li>
+    <li><a href="#6-compose-中的三种restart不要混淆">6. Compose 中的三种&quot;restart&quot;不要混淆</a>
+      <ol>
+        <li><a href="#容器-restart-policy">容器 restart policy</a></li>
+        <li><a href="#depends_onrestart"><code>depends_on.restart</code></a></li>
+        <li><a href="#deployrestart_policy"><code>deploy.restart_policy</code></a></li>
+      </ol>
+    </li>
+    <li><a href="#7-restart-policy-与健康检查">7. restart policy 与健康检查</a></li>
+    <li><a href="#8-healthcheck-深入dockerfile-vs-compose">8. HEALTHCHECK 深入：Dockerfile vs Compose</a>
+      <ol>
+        <li><a href="#81-dockerfile-healthcheck">8.1 Dockerfile HEALTHCHECK</a></li>
+        <li><a href="#82-compose-healthcheck">8.2 Compose healthcheck</a></li>
+        <li><a href="#83-健康状态转换">8.3 健康状态转换</a></li>
+        <li><a href="#84-参数调优建议">8.4 参数调优建议</a></li>
+        <li><a href="#85-探针设计原则">8.5 探针设计原则</a></li>
+        <li><a href="#86-实际示例">8.6 实际示例</a></li>
+      </ol>
+    </li>
+    <li><a href="#9-depends_on-与-service_healthy完整启动顺序控制">9. <code>depends_on</code> 与 <code>service_healthy</code>：完整启动顺序控制</a>
+      <ol>
+        <li><a href="#91-三种-condition">9.1 三种 condition</a></li>
+        <li><a href="#92-典型用法api-等数据库就绪后再启动">9.2 典型用法：API 等数据库就绪后再启动</a></li>
+        <li><a href="#93-depends_onrestart-true-的含义">9.3 <code>depends_on.restart: true</code> 的含义</a></li>
+        <li><a href="#94-depends_on-的边界">9.4 depends_on 的边界</a></li>
+      </ol>
+    </li>
+    <li><a href="#10-信号传递与优雅退出">10. 信号传递与优雅退出</a>
+      <ol>
+        <li><a href="#101-docker-stop-的流程">10.1 <code>docker stop</code> 的流程</a></li>
+        <li><a href="#102-dockerfile-stopsignal">10.2 Dockerfile STOPSIGNAL</a></li>
+        <li><a href="#103-compose-stop_grace_period">10.3 Compose stop_grace_period</a></li>
+        <li><a href="#104-exec-form-vs-shell-form信号能不能到达应用">10.4 exec form vs shell form：信号能不能到达应用</a></li>
+        <li><a href="#105-tini--dumb-init信号转发--僵尸回收">10.5 tini / dumb-init：信号转发 + 僵尸回收</a></li>
+        <li><a href="#106-优雅退出清单">10.6 优雅退出清单</a></li>
+        <li><a href="#107-验证实验">10.7 验证实验</a></li>
+      </ol>
+    </li>
+    <li><a href="#11-restart-policy-与-oom">11. restart policy 与 OOM</a></li>
+    <li><a href="#12-如何选择策略">12. 如何选择策略</a></li>
+    <li><a href="#13-一套可复现的实验">13. 一套可复现的实验</a></li>
+    <li><a href="#14-restart-policy-排障清单">14. restart policy 排障清单</a></li>
+    <li><a href="#15-本篇小结">15. 本篇小结</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><blockquote>
+<p><strong>本篇较长，按需跳转：</strong>
+<a href="#1-%e9%87%8d%e5%90%af%e7%ad%96%e7%95%a5%e5%ae%b9%e5%99%a8%e9%80%80%e5%87%ba%e5%90%8e%e5%88%b0%e5%ba%95%e4%bc%9a%e5%8f%91%e7%94%9f%e4%bb%80%e4%b9%88" rel="">四种策略</a> · <a href="#2-%e6%8c%89%e4%ba%8b%e4%bb%b6%e6%af%94%e8%be%83%e7%ad%96%e7%95%a5" rel="">按事件比较</a> · <a href="#3-on-failure-%e5%a6%82%e4%bd%95%e5%88%a4%e6%96%ad%e5%a4%b1%e8%b4%a5" rel="">on-failure 判断</a> · <a href="#4-restart-policy-%e5%8f%aa%e5%85%b3%e6%b3%a8-pid-1" rel="">PID 1</a> · <a href="#5-docker-restart-%e5%91%bd%e4%bb%a4%e4%b8%8d%e6%98%af-restart-policy" rel="">docker restart 命令</a> · <a href="#6-compose-%e4%b8%ad%e7%9a%84%e4%b8%89%e7%a7%8drestart%e4%b8%8d%e8%a6%81%e6%b7%b7%e6%b7%86" rel="">Compose 三种 restart</a> · <a href="#7-restart-policy-%e4%b8%8e%e5%81%a5%e5%ba%b7%e6%a3%80%e6%9f%a5" rel="">策略与健康检查</a> · <a href="#8-healthcheck-%e6%b7%b1%e5%85%a5dockerfile-vs-compose" rel="">HEALTHCHECK 深入</a> · <a href="#9-depends_on-%e4%b8%8e-service_healthy%e5%ae%8c%e6%95%b4%e5%90%af%e5%8a%a8%e9%a1%ba%e5%ba%8f%e6%8e%a7%e5%88%b6" rel="">depends_on 启动顺序</a> · <a href="#10-%e4%bf%a1%e5%8f%b7%e4%bc%a0%e9%80%92%e4%b8%8e%e4%bc%98%e9%9b%85%e9%80%80%e5%87%ba" rel="">信号与优雅退出</a> · <a href="#11-restart-policy-%e4%b8%8e-oom" rel="">OOM</a> · <a href="#12-%e5%a6%82%e4%bd%95%e9%80%89%e6%8b%a9%e7%ad%96%e7%95%a5" rel="">如何选择</a> · <a href="#13-%e4%b8%80%e5%a5%97%e5%8f%af%e5%a4%8d%e7%8e%b0%e7%9a%84%e5%ae%9e%e9%aa%8c" rel="">实验</a> · <a href="#14-restart-policy-%e6%8e%92%e9%9a%9c%e6%b8%85%e5%8d%95" rel="">排障清单</a></p>
+</blockquote>
+<h1 id="1-重启策略容器退出后到底会发生什么">1. 重启策略：容器退出后到底会发生什么</h1>
+<p>Docker restart policy 是 daemon 针对<strong>容器主进程退出</strong>所执行的生命周期策略。它解决的是单机上&quot;进程退出后是否重新启动&quot;，不等于健康检查、故障转移、高可用或滚动发布。</p>
+<p>创建容器时设置：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker run -d --name api <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --restart unless-stopped <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  example/api:1.0.0
+</span></span></code></pre></div><p>也可以更新已有容器，不需要重新创建：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker update --restart always api
+</span></span><span class="line"><span class="cl">docker inspect api --format <span class="s1">&#39;{{.HostConfig.RestartPolicy.Name}} {{.HostConfig.RestartPolicy.MaximumRetryCount}}&#39;</span>
+</span></span></code></pre></div><h2 id="11-四种-restart-policy">1.1 四种 restart policy</h2>
+<table>
+<thead>
+<tr>
+<th>策略</th>
+<th>触发条件</th>
+<th>daemon 重启后</th>
+<th>典型用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>no</code></td>
+<td>从不自动重启，默认值</td>
+<td>不启动</td>
+<td>一次性任务、由外部系统调度的容器</td>
+</tr>
+<tr>
+<td><code>on-failure[:N]</code></td>
+<td>主进程以非 0 状态退出</td>
+<td>不因为 daemon 重启而启动</td>
+<td>有限次数重试的批处理、临时任务</td>
+</tr>
+<tr>
+<td><code>always</code></td>
+<td>不论退出码都重启</td>
+<td>会重新启动；之前手动停止的容器也会启动</td>
+<td>必须随 daemon 恢复的常驻服务</td>
+</tr>
+<tr>
+<td><code>unless-stopped</code></td>
+<td>不论退出码都重启</td>
+<td>会启动，但之前被手动停止的容器保持停止</td>
+<td>最常见的单机常驻服务</td>
+</tr>
+</tbody>
+</table>
+<p><code>N</code> 是最大重试次数：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker run --restart on-failure:5 example/job:1.0.0
+</span></span></code></pre></div><p>没有写 <code>N</code> 的 <code>on-failure</code> 会持续重试非 0 退出。它只关心退出状态，不知道业务操作是否安全；会产生重复写入的任务必须自己保证幂等。</p>
+<h1 id="2-按事件比较策略">2. 按事件比较策略</h1>
+<p>下面的&quot;自动重启&quot;指 restart policy 的正常行为；显式执行 <code>docker start</code> 永远可以启动未删除的容器。</p>
+<table>
+<thead>
+<tr>
+<th>事件</th>
+<th><code>no</code></th>
+<th><code>on-failure</code></th>
+<th><code>always</code></th>
+<th><code>unless-stopped</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>主进程 <code>exit 0</code></td>
+<td>否</td>
+<td>否</td>
+<td>是</td>
+<td>是</td>
+</tr>
+<tr>
+<td>主进程 <code>exit 1</code></td>
+<td>否</td>
+<td>是</td>
+<td>是</td>
+<td>是</td>
+</tr>
+<tr>
+<td>进程因 OOM/SIGKILL 以非 0 退出</td>
+<td>否</td>
+<td>是</td>
+<td>是</td>
+<td>是</td>
+</tr>
+<tr>
+<td>执行 <code>docker stop</code></td>
+<td>保持停止</td>
+<td>保持停止</td>
+<td>当下保持停止</td>
+<td>保持停止</td>
+</tr>
+<tr>
+<td>手动停止后重启 dockerd</td>
+<td>保持停止</td>
+<td>保持停止</td>
+<td>重新启动</td>
+<td>保持停止</td>
+</tr>
+<tr>
+<td>宿主机重启，关机前容器在运行</td>
+<td>保持停止</td>
+<td>通常不因 daemon 启动恢复</td>
+<td>启动</td>
+<td>启动</td>
+</tr>
+<tr>
+<td>healthcheck 变成 <code>unhealthy</code></td>
+<td>否</td>
+<td>否</td>
+<td>否</td>
+<td>否</td>
+</tr>
+<tr>
+<td>容器被删除</td>
+<td>不存在，无法重启</td>
+<td>不存在</td>
+<td>不存在</td>
+<td>不存在</td>
+</tr>
+</tbody>
+</table>
+<p>这里最容易答错的是三点：</p>
+<ol>
+<li><code>always</code> 不是&quot;执行 <code>docker stop</code> 后马上和你对抗&quot;。显式停止会抑制当前 daemon 生命周期中的自动重启；daemon 再启动时，<code>always</code> 会恢复它。</li>
+<li><code>unless-stopped</code> 会记住显式停止状态，所以 daemon 或宿主机重启后仍保持停止。</li>
+<li><code>unhealthy</code> 只是健康状态，不会触发 Docker Engine restart policy。需要自动替换不健康实例，应由编排平台、外部 watchdog 或应用故障退出策略负责。</li>
+</ol>
+<p>不同 Engine 版本、live-restore 和 daemon 关闭路径会影响边缘时序。生产环境应该在目标版本上做故障演练，而不是只依赖表格推断。</p>
+<h1 id="3-on-failure-如何判断失败">3. <code>on-failure</code> 如何判断失败</h1>
+<p>restart manager 只观察容器主进程的退出码：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker run --name job-ok --restart on-failure:3 <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  alpine:3.20 sh -c <span class="s1">&#39;sleep 11; exit 0&#39;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">docker run --name job-fail --restart on-failure:3 <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  alpine:3.20 sh -c <span class="s1">&#39;date; sleep 11; exit 1&#39;</span>
+</span></span></code></pre></div><p>检查结果：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker inspect job-fail --format <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  <span class="s1">&#39;status={{.State.Status}} exit={{.State.ExitCode}} restarts={{.RestartCount}}&#39;</span>
+</span></span><span class="line"><span class="cl">docker logs --timestamps job-fail
+</span></span></code></pre></div><p>Docker 会对连续崩溃使用逐步增加的重启等待，避免毫无间隔地占满 CPU 和日志；容器稳定运行一段时间后，退避状态会重置。具体等待上限属于 Engine 实现细节，不要让业务逻辑依赖精确毫秒数。</p>
+<p>Docker 文档还把&quot;容器已成功启动&quot;定义为至少稳定运行约 10 秒，目的是避免一个从未正常启动的容器被无限快速拉起。实验中使用 <code>sleep 11</code>，可以避免不同版本边缘行为干扰观察。</p>
+<h1 id="4-restart-policy-只关注-pid-1">4. restart policy 只关注 PID 1</h1>
+<p>如果容器内的 worker 子进程崩溃，但 PID 1 的 shell 或 supervisor 仍然存活，Docker 认为容器仍在运行，不会触发重启：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-dockerfile" data-lang="dockerfile"><span class="line"><span class="cl"><span class="k">CMD</span> myserver <span class="p">&amp;</span> tail -f /dev/null<span class="err">
+</span></span></span></code></pre></div><p>更好的方式是让服务直接成为 PID 1：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-dockerfile" data-lang="dockerfile"><span class="line"><span class="cl"><span class="k">ENTRYPOINT</span> <span class="p">[</span><span class="s2">&#34;/usr/local/bin/myserver&#34;</span><span class="p">]</span><span class="err">
+</span></span></span></code></pre></div><p>确实需要多个子进程时，使用能正确转发信号、回收子进程并在关键进程失败时退出的 init/process supervisor，同时明确谁决定容器退出状态。</p>
+<h1 id="5-docker-restart-命令不是-restart-policy">5. <code>docker restart</code> 命令不是 restart policy</h1>
+<p>名称相似，但两者完全不同：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker restart -t <span class="m">30</span> api
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">docker update --restart unless-stopped api
+</span></span></code></pre></div><p><code>docker restart</code> 对运行中的容器执行 stop/start：先发送容器配置的停止信号，等待 timeout，再在需要时 SIGKILL，然后重新启动。它不会改变 <code>HostConfig.RestartPolicy</code>。</p>
+<p>查看停止信号和超时：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker inspect api --format <span class="s1">&#39;signal={{.Config.StopSignal}} timeout={{.Config.StopTimeout}}&#39;</span>
+</span></span></code></pre></div><p>镜像可用 <code>STOPSIGNAL</code> 指定默认信号；容器创建时也可用 <code>--stop-signal</code>、<code>--stop-timeout</code> 覆盖。应用应在 timeout 内完成摘流、在途请求处理、连接关闭和日志刷新。</p>
+<h1 id="6-compose-中的三种restart不要混淆">6. Compose 中的三种&quot;restart&quot;不要混淆</h1>
+<h2 id="容器-restart-policy">容器 restart policy</h2>
+<p>普通 <code>docker compose up</code> 使用服务级 <code>restart</code>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-yaml" data-lang="yaml"><span class="line"><span class="cl"><span class="nt">services</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="nt">api</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">image</span><span class="p">:</span><span class="w"> </span><span class="l">example/api:1.0.0</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">restart</span><span class="p">:</span><span class="w"> </span><span class="l">unless-stopped</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="nt">worker</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">image</span><span class="p">:</span><span class="w"> </span><span class="l">example/worker:1.0.0</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">restart</span><span class="p">:</span><span class="w"> </span><span class="s2">&#34;on-failure:5&#34;</span><span class="w">
+</span></span></span></code></pre></div><p>最终仍写进 Docker 容器的 <code>HostConfig.RestartPolicy</code>。验证：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker compose up -d
+</span></span><span class="line"><span class="cl">docker compose ps -q api <span class="p">|</span> xargs docker inspect <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --format <span class="s1">&#39;{{json .HostConfig.RestartPolicy}}&#39;</span>
+</span></span></code></pre></div><h2 id="depends_onrestart"><code>depends_on.restart</code></h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-yaml" data-lang="yaml"><span class="line"><span class="cl"><span class="nt">services</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="nt">api</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">depends_on</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">      </span><span class="nt">db</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">        </span><span class="nt">condition</span><span class="p">:</span><span class="w"> </span><span class="l">service_healthy</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">        </span><span class="nt">restart</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="w">
+</span></span></span></code></pre></div><p>这里的 <code>restart: true</code> 不是容器退出策略。它表示 Compose 显式更新/重启依赖服务 <code>db</code> 时，也重启依赖它的 <code>api</code>，让 API 重新建连接；它不表示数据库崩溃一次，Compose 就永久驻留并替你重启 API。</p>
+<h2 id="deployrestart_policy"><code>deploy.restart_policy</code></h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-yaml" data-lang="yaml"><span class="line"><span class="cl"><span class="nt">services</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="nt">worker</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">image</span><span class="p">:</span><span class="w"> </span><span class="l">example/worker:1.0.0</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">deploy</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">      </span><span class="nt">restart_policy</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">        </span><span class="nt">condition</span><span class="p">:</span><span class="w"> </span><span class="kc">on</span>-<span class="l">failure</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">        </span><span class="nt">delay</span><span class="p">:</span><span class="w"> </span><span class="l">5s</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">        </span><span class="nt">max_attempts</span><span class="p">:</span><span class="w"> </span><span class="m">3</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">        </span><span class="nt">window</span><span class="p">:</span><span class="w"> </span><span class="l">120s</span><span class="w">
+</span></span></span></code></pre></div><p>这是 Compose Deploy Specification/编排层策略，语义包括 <code>condition</code>、<code>delay</code>、<code>max_attempts</code>、<code>window</code>。它与普通容器级 <code>restart</code> 不是同一个字段；实际是否以及如何生效取决于部署目标和 Compose 实现。使用前必须执行 <code>docker compose config</code>，并在目标平台验证。</p>
+<h1 id="7-restart-policy-与健康检查">7. restart policy 与健康检查</h1>
+<p>下面的服务即使持续 <code>unhealthy</code>，PID 1 没退出就不会因 <code>restart: always</code> 自动重启：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-yaml" data-lang="yaml"><span class="line"><span class="cl"><span class="nt">services</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="nt">api</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">image</span><span class="p">:</span><span class="w"> </span><span class="l">example/api:1.0.0</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">restart</span><span class="p">:</span><span class="w"> </span><span class="l">always</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">healthcheck</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">      </span><span class="nt">test</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&#34;CMD&#34;</span><span class="p">,</span><span class="w"> </span><span class="s2">&#34;/app/healthcheck&#34;</span><span class="p">]</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">      </span><span class="nt">interval</span><span class="p">:</span><span class="w"> </span><span class="l">10s</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">      </span><span class="nt">timeout</span><span class="p">:</span><span class="w"> </span><span class="l">3s</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">      </span><span class="nt">retries</span><span class="p">:</span><span class="w"> </span><span class="m">3</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">      </span><span class="nt">start_period</span><span class="p">:</span><span class="w"> </span><span class="l">30s</span><span class="w">
+</span></span></span></code></pre></div><p>健康检查的主要消费者是人、监控和编排平台。常见设计有两种：</p>
+<ol>
+<li>单机 Docker：应用检测到不可恢复状态后主动退出，由 restart policy 拉起；可恢复故障只报 unhealthy/指标并继续重试。</li>
+<li>编排平台：应用保持运行并报告 readiness/liveness，由平台摘流、重启或替换实例。</li>
+</ol>
+<p>不要让探针因为一个短暂的下游超时就杀掉整个服务，否则故障期间所有副本可能同步重启，形成重启风暴。</p>
+<h1 id="8-healthcheck-深入dockerfile-vs-compose">8. HEALTHCHECK 深入：Dockerfile vs Compose</h1>
+<h2 id="81-dockerfile-healthcheck">8.1 Dockerfile HEALTHCHECK</h2>
+<p>Dockerfile 中用 <code>HEALTHCHECK</code> 指令为镜像内嵌健康检查：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-dockerfile" data-lang="dockerfile"><span class="line"><span class="cl"><span class="err">HEALTHCHECK --interval=15s --timeout=3s </span>--start-period<span class="o">=</span>30s --retries<span class="o">=</span><span class="m">3</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  CMD curl -fsS http://localhost:8080/healthz <span class="o">||</span> <span class="nb">exit</span> <span class="m">1</span><span class="err">
+</span></span></span></code></pre></div><p>参数含义：</p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>默认值</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--interval</code></td>
+<td>30s</td>
+<td>两次探测之间的间隔</td>
+</tr>
+<tr>
+<td><code>--timeout</code></td>
+<td>30s</td>
+<td>单次探测超时，超时视为失败</td>
+</tr>
+<tr>
+<td><code>--start-period</code></td>
+<td>0s</td>
+<td>容器启动后的宽限期，期间失败不计入 retries</td>
+</tr>
+<tr>
+<td><code>--start-interval</code></td>
+<td>5s</td>
+<td>start_period 内的探测间隔（Engine 25+）</td>
+</tr>
+<tr>
+<td><code>--retries</code></td>
+<td>3</td>
+<td>连续失败多少次后标记为 unhealthy</td>
+</tr>
+</tbody>
+</table>
+<p>探测命令的退出码决定结果：<code>0</code> 表示健康，<code>1</code> 表示不健康，其他值保留。</p>
+<p><code>HEALTHCHECK NONE</code> 可以在子镜像中取消父镜像的健康检查。一个 Dockerfile 只保留最后一条 <code>HEALTHCHECK</code>。</p>
+<h2 id="82-compose-healthcheck">8.2 Compose healthcheck</h2>
+<p>Compose 中直接在服务级别声明，会覆盖镜像内嵌的 <code>HEALTHCHECK</code>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-yaml" data-lang="yaml"><span class="line"><span class="cl"><span class="nt">services</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="nt">api</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">image</span><span class="p">:</span><span class="w"> </span><span class="l">example/api:1.0.0</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">healthcheck</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">      </span><span class="nt">test</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&#34;CMD-SHELL&#34;</span><span class="p">,</span><span class="w"> </span><span class="s2">&#34;curl -fsS http://localhost:8080/healthz || exit 1&#34;</span><span class="p">]</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">      </span><span class="nt">interval</span><span class="p">:</span><span class="w"> </span><span class="l">15s</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">      </span><span class="nt">timeout</span><span class="p">:</span><span class="w"> </span><span class="l">3s</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">      </span><span class="nt">retries</span><span class="p">:</span><span class="w"> </span><span class="m">3</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">      </span><span class="nt">start_period</span><span class="p">:</span><span class="w"> </span><span class="l">30s</span><span class="w">
+</span></span></span></code></pre></div><p><code>test</code> 的三种写法：</p>
+<table>
+<thead>
+<tr>
+<th>写法</th>
+<th>示例</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>CMD</code></td>
+<td><code>[&quot;CMD&quot;, &quot;curl&quot;, &quot;-fsS&quot;, &quot;http://localhost:8080/healthz&quot;]</code></td>
+<td>exec form，直接执行，不经过 shell</td>
+</tr>
+<tr>
+<td><code>CMD-SHELL</code></td>
+<td><code>[&quot;CMD-SHELL&quot;, &quot;curl -fsS ... || exit 1&quot;]</code></td>
+<td>经过 <code>/bin/sh -c</code>，支持管道和逻辑运算符</td>
+</tr>
+<tr>
+<td>字符串</td>
+<td><code>&quot;curl -fsS http://localhost:8080/healthz&quot;</code></td>
+<td>等同于 CMD-SHELL</td>
+</tr>
+</tbody>
+</table>
+<p>如果需要禁用镜像中内嵌的 HEALTHCHECK：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-yaml" data-lang="yaml"><span class="line"><span class="cl"><span class="nt">services</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="nt">api</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">healthcheck</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">      </span><span class="nt">disable</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="w">
+</span></span></span></code></pre></div><h2 id="83-健康状态转换">8.3 健康状态转换</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">容器启动
+</span></span><span class="line"><span class="cl">   ↓
+</span></span><span class="line"><span class="cl">starting ──(start_period 内探测失败不计数)──→ starting
+</span></span><span class="line"><span class="cl">   │                                              │
+</span></span><span class="line"><span class="cl">   ├─ 探测成功 ─→ healthy                         │
+</span></span><span class="line"><span class="cl">   │               │                              │
+</span></span><span class="line"><span class="cl">   │               ├─ 连续 retries 次失败 ─→ unhealthy
+</span></span><span class="line"><span class="cl">   │               │                              │
+</span></span><span class="line"><span class="cl">   │               └─ 下次成功 ─→ healthy          │
+</span></span><span class="line"><span class="cl">   │                                              │
+</span></span><span class="line"><span class="cl">   └─ start_period 后连续 retries 次失败 ─→ unhealthy
+</span></span></code></pre></div><p>查看当前健康状态：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker inspect api --format <span class="s1">&#39;{{json .State.Health}}&#39;</span>
+</span></span><span class="line"><span class="cl">docker inspect api --format <span class="s1">&#39;{{.State.Health.Status}}&#39;</span>
+</span></span><span class="line"><span class="cl">docker ps --format <span class="s1">&#39;table {{.Names}}\t{{.Status}}&#39;</span>
+</span></span></code></pre></div><p><code>docker inspect</code> 的 <code>.State.Health.Log</code> 保留最近若干次探测的 stdout/stderr 和退出码，排障时先看这里。</p>
+<h2 id="84-参数调优建议">8.4 参数调优建议</h2>
+<p><strong>start_period</strong> 要覆盖应用的冷启动时间。Java 应用可能需要 60-120 秒加载 class 和预热连接池；如果 <code>start_period</code> 只有 5 秒，容器还没就绪就被标记为 unhealthy。</p>
+<p><strong>interval</strong> 不要太短。每次探针都会 fork 进程并执行命令，如果 interval=1s 且探针涉及 HTTP 请求或数据库查询，可能产生不必要的负载。对大多数服务 10-30 秒够用。</p>
+<p><strong>timeout</strong> 要留给慢响应，不是网络抖动。如果应用正常响应需要 2 秒，timeout 设成 3 秒只留 1 秒余量，GC pause 或磁盘抖动就会误判。</p>
+<p><strong>retries</strong> 至少 2-3 次，避免单次偶发超时就翻转状态。</p>
+<h2 id="85-探针设计原则">8.5 探针设计原则</h2>
+<p>探针应该只检查<strong>本进程是否可服务</strong>，不要级联检查所有下游：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 好：只检查自己的 HTTP 端口</span>
+</span></span><span class="line"><span class="cl">curl -fsS http://localhost:8080/healthz
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 不好：检查自己 + 数据库 + Redis + 外部 API</span>
+</span></span><span class="line"><span class="cl">curl -fsS http://localhost:8080/deep-health
+</span></span></code></pre></div><p>如果探针包含对 Redis、数据库、外部 API 的连通性检查，任何一个下游故障都会导致所有上游服务报 unhealthy。在编排平台中，这意味着一个 Redis 短暂不可达，会导致所有依赖它的服务同时被摘流或重启。</p>
+<p>把下游检查留给专门的监控系统或 readiness probe；liveness/healthcheck 只验证进程自身能接受请求。</p>
+<h2 id="86-实际示例">8.6 实际示例</h2>
+<p>一个 Go 服务在 <code>/healthz</code> 返回 200 表示可以处理请求，在 <code>/readyz</code> 额外检查数据库连接（用于监控，不用于 Docker 健康检查）：</p>
+<p>Dockerfile：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-dockerfile" data-lang="dockerfile"><span class="line"><span class="cl"><span class="k">FROM</span><span class="s"> golang:1.23-alpine AS build</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span><span class="k">WORKDIR</span><span class="s"> /src</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span><span class="k">COPY</span> . .<span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span><span class="k">RUN</span> <span class="nv">CGO_ENABLED</span><span class="o">=</span><span class="m">0</span> go build -o /app/server .<span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span><span class="k">FROM</span><span class="s"> alpine:3.20</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span><span class="k">RUN</span> apk add --no-cache curl<span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span><span class="k">COPY</span> --from<span class="o">=</span>build /app/server /app/server<span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span><span class="k">EXPOSE</span><span class="s"> 8080</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err">HEALTHCHECK --interval=15s --timeout=3s </span>--start-period<span class="o">=</span>20s --retries<span class="o">=</span><span class="m">3</span> <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  CMD curl -fsS http://localhost:8080/healthz <span class="o">||</span> <span class="nb">exit</span> <span class="m">1</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span><span class="k">ENTRYPOINT</span> <span class="p">[</span><span class="s2">&#34;/app/server&#34;</span><span class="p">]</span><span class="err">
+</span></span></span></code></pre></div><p>Compose：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-yaml" data-lang="yaml"><span class="line"><span class="cl"><span class="nt">services</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="nt">api</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">build</span><span class="p">:</span><span class="w"> </span><span class="l">.</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">ports</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">      </span>- <span class="s2">&#34;127.0.0.1:8080:8080&#34;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">restart</span><span class="p">:</span><span class="w"> </span><span class="l">unless-stopped</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">healthcheck</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">      </span><span class="nt">test</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&#34;CMD-SHELL&#34;</span><span class="p">,</span><span class="w"> </span><span class="s2">&#34;curl -fsS http://localhost:8080/healthz || exit 1&#34;</span><span class="p">]</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">      </span><span class="nt">interval</span><span class="p">:</span><span class="w"> </span><span class="l">15s</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">      </span><span class="nt">timeout</span><span class="p">:</span><span class="w"> </span><span class="l">3s</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">      </span><span class="nt">retries</span><span class="p">:</span><span class="w"> </span><span class="m">3</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">      </span><span class="nt">start_period</span><span class="p">:</span><span class="w"> </span><span class="l">20s</span><span class="w">
+</span></span></span></code></pre></div><p>如果镜像没有 curl，可以使用 <code>wget -qO- ...</code> 或在应用中内置一个 <code>/healthz</code> 的自检客户端避免额外安装工具。</p>
+<h1 id="9-depends_on-与-service_healthy完整启动顺序控制">9. <code>depends_on</code> 与 <code>service_healthy</code>：完整启动顺序控制</h1>
+<h2 id="91-三种-condition">9.1 三种 condition</h2>
+<p>Compose 的 <code>depends_on</code> 支持三种启动条件：</p>
+<table>
+<thead>
+<tr>
+<th>condition</th>
+<th>等待什么</th>
+<th>适合场景</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>service_started</code></td>
+<td>容器启动（默认值）</td>
+<td>不关心是否真正就绪</td>
+</tr>
+<tr>
+<td><code>service_healthy</code></td>
+<td>健康检查变为 healthy</td>
+<td>需要等数据库/中间件真正可用</td>
+</tr>
+<tr>
+<td><code>service_completed_successfully</code></td>
+<td>容器以 exit 0 结束</td>
+<td>一次性初始化任务（迁移、seed）</td>
+</tr>
+</tbody>
+</table>
+<h2 id="92-典型用法api-等数据库就绪后再启动">9.2 典型用法：API 等数据库就绪后再启动</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-yaml" data-lang="yaml"><span class="line"><span class="cl"><span class="nt">services</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="nt">db</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">image</span><span class="p">:</span><span class="w"> </span><span class="l">postgres:16-alpine</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">environment</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">      </span><span class="nt">POSTGRES_PASSWORD</span><span class="p">:</span><span class="w"> </span><span class="l">dev-only</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">healthcheck</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">      </span><span class="nt">test</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&#34;CMD-SHELL&#34;</span><span class="p">,</span><span class="w"> </span><span class="s2">&#34;pg_isready -U postgres&#34;</span><span class="p">]</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">      </span><span class="nt">interval</span><span class="p">:</span><span class="w"> </span><span class="l">5s</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">      </span><span class="nt">timeout</span><span class="p">:</span><span class="w"> </span><span class="l">3s</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">      </span><span class="nt">retries</span><span class="p">:</span><span class="w"> </span><span class="m">5</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">      </span><span class="nt">start_period</span><span class="p">:</span><span class="w"> </span><span class="l">30s</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="nt">migrate</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">image</span><span class="p">:</span><span class="w"> </span><span class="l">example/api:1.0.0</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">command</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&#34;./migrate&#34;</span><span class="p">,</span><span class="w"> </span><span class="s2">&#34;up&#34;</span><span class="p">]</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">depends_on</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">      </span><span class="nt">db</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">        </span><span class="nt">condition</span><span class="p">:</span><span class="w"> </span><span class="l">service_healthy</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="nt">api</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">image</span><span class="p">:</span><span class="w"> </span><span class="l">example/api:1.0.0</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">depends_on</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">      </span><span class="nt">db</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">        </span><span class="nt">condition</span><span class="p">:</span><span class="w"> </span><span class="l">service_healthy</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">      </span><span class="nt">migrate</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">        </span><span class="nt">condition</span><span class="p">:</span><span class="w"> </span><span class="l">service_completed_successfully</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">restart</span><span class="p">:</span><span class="w"> </span><span class="l">unless-stopped</span><span class="w">
+</span></span></span></code></pre></div><p>启动顺序：db 先启动 → db healthy 后 migrate 执行 → migrate exit 0 后 api 启动。</p>
+<h2 id="93-depends_onrestart-true-的含义">9.3 <code>depends_on.restart: true</code> 的含义</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-yaml" data-lang="yaml"><span class="line"><span class="cl"><span class="nt">services</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="nt">api</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">depends_on</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">      </span><span class="nt">db</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">        </span><span class="nt">condition</span><span class="p">:</span><span class="w"> </span><span class="l">service_healthy</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">        </span><span class="nt">restart</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="w">
+</span></span></span></code></pre></div><p><code>restart: true</code> 表示当你执行 <code>docker compose restart db</code> 或 <code>docker compose up -d db</code>（导致 db 重建）时，Compose 也会重启 api。它<strong>不是</strong>自动故障恢复机制：如果 db 的进程崩溃后被 restart policy 拉起，Compose 不会检测到并级联重启 api。</p>
+<h2 id="94-depends_on-的边界">9.4 depends_on 的边界</h2>
+<p>depends_on 只控制 <code>docker compose up</code> 和 <code>docker compose stop</code> 时的启动/停止顺序，不提供运行时保证：</p>
+<ul>
+<li>数据库 healthy 不等于连接永远畅通。网络分区、连接池耗尽、权限变更都可能在运行中断开连接。</li>
+<li>生产应用必须在代码中实现连接重试、超时、断路器和降级逻辑。</li>
+<li>depends_on 不支持跨 Compose 项目的依赖。</li>
+</ul>
+<p>验证启动顺序：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker compose up -d
+</span></span><span class="line"><span class="cl">docker compose ps
+</span></span><span class="line"><span class="cl">docker compose logs --since 1m
+</span></span></code></pre></div><h1 id="10-信号传递与优雅退出">10. 信号传递与优雅退出</h1>
+<h2 id="101-docker-stop-的流程">10.1 <code>docker stop</code> 的流程</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">docker stop api
+</span></span><span class="line"><span class="cl">    ↓
+</span></span><span class="line"><span class="cl">发送 STOPSIGNAL（默认 SIGTERM）给容器 PID 1
+</span></span><span class="line"><span class="cl">    ↓
+</span></span><span class="line"><span class="cl">等待 stop_timeout（默认 10 秒）
+</span></span><span class="line"><span class="cl">    ↓
+</span></span><span class="line"><span class="cl">进程仍未退出 → 发送 SIGKILL
+</span></span></code></pre></div><p>如果应用在 10 秒内无法完成清理（大量在途请求、慢 SQL、大文件刷盘），要么优化退出逻辑，要么调整超时。</p>
+<h2 id="102-dockerfile-stopsignal">10.2 Dockerfile STOPSIGNAL</h2>
+<p>某些进程不使用 SIGTERM 作为优雅退出信号。例如 Nginx 使用 SIGQUIT 做 graceful shutdown：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-dockerfile" data-lang="dockerfile"><span class="line"><span class="cl"><span class="k">STOPSIGNAL</span><span class="s"> SIGQUIT</span><span class="err">
+</span></span></span></code></pre></div><p>创建容器时也可以覆盖：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker run --stop-signal SIGQUIT nginx:alpine
+</span></span></code></pre></div><h2 id="103-compose-stop_grace_period">10.3 Compose stop_grace_period</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-yaml" data-lang="yaml"><span class="line"><span class="cl"><span class="nt">services</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="nt">api</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">image</span><span class="p">:</span><span class="w"> </span><span class="l">example/api:1.0.0</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">stop_grace_period</span><span class="p">:</span><span class="w"> </span><span class="l">30s</span><span class="w">
+</span></span></span></code></pre></div><p>这会把 <code>docker stop</code> 等待时间从默认 10 秒改为 30 秒。设置过长会拖慢部署和滚动更新；设置过短会导致 SIGKILL 强杀，丢失在途请求。</p>
+<h2 id="104-exec-form-vs-shell-form信号能不能到达应用">10.4 exec form vs shell form：信号能不能到达应用</h2>
+<p>这是容器信号问题最常见的根因。</p>
+<p><strong>exec form</strong> — 应用直接成为 PID 1，接收信号：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-dockerfile" data-lang="dockerfile"><span class="line"><span class="cl"><span class="k">CMD</span> <span class="p">[</span><span class="s2">&#34;./server&#34;</span><span class="p">]</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span><span class="k">ENTRYPOINT</span> <span class="p">[</span><span class="s2">&#34;./server&#34;</span><span class="p">]</span><span class="err">
+</span></span></span></code></pre></div><p>进程树：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">PID 1: ./server  ← 直接收到 SIGTERM
+</span></span></code></pre></div><p><strong>shell form</strong> — 被 <code>/bin/sh -c</code> 包裹，sh 不转发信号：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-dockerfile" data-lang="dockerfile"><span class="line"><span class="cl"><span class="k">CMD</span> ./server<span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span><span class="k">ENTRYPOINT</span> ./server<span class="err">
+</span></span></span></code></pre></div><p>进程树：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">PID 1: /bin/sh -c &#34;./server&#34;  ← 收到 SIGTERM，但 sh 默认不转发
+</span></span><span class="line"><span class="cl">  └── PID 2: ./server         ← 收不到 SIGTERM
+</span></span></code></pre></div><p>结果：<code>docker stop</code> 发送 SIGTERM 给 PID 1（sh），sh 不处理也不转发，等待 10 秒后 SIGKILL 强杀整个 cgroup。应用没有机会做优雅退出。</p>
+<p>修复方式：</p>
+<ol>
+<li>使用 exec form（推荐）。</li>
+<li>如果必须用 shell form，使用 <code>exec</code> 替换 shell 进程：<code>CMD exec ./server</code>。</li>
+<li>使用 init 进程。</li>
+</ol>
+<h2 id="105-tini--dumb-init信号转发--僵尸回收">10.5 tini / dumb-init：信号转发 + 僵尸回收</h2>
+<p>容器内的 PID 1 还有一个特殊职责：回收孤儿进程（zombie reaping）。普通应用通常不处理 <code>wait()</code> 系统调用来回收子进程，导致僵尸积累。</p>
+<p>tini 和 dumb-init 是轻量 init 进程，解决两个问题：</p>
+<ol>
+<li>转发信号给子进程。</li>
+<li>回收孤儿僵尸进程。</li>
+</ol>
+<p>使用 <code>--init</code> 注入 Docker 内置的 tini：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker run --init example/api:1.0.0
+</span></span></code></pre></div><p>或在 Dockerfile 中显式安装：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-dockerfile" data-lang="dockerfile"><span class="line"><span class="cl"><span class="k">RUN</span> apk add --no-cache tini<span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span><span class="k">ENTRYPOINT</span> <span class="p">[</span><span class="s2">&#34;tini&#34;</span><span class="p">,</span> <span class="s2">&#34;--&#34;</span><span class="p">]</span><span class="err">
+</span></span></span><span class="line"><span class="cl"><span class="err"></span><span class="k">CMD</span> <span class="p">[</span><span class="s2">&#34;./server&#34;</span><span class="p">]</span><span class="err">
+</span></span></span></code></pre></div><p>Compose：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-yaml" data-lang="yaml"><span class="line"><span class="cl"><span class="nt">services</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="nt">api</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">image</span><span class="p">:</span><span class="w"> </span><span class="l">example/api:1.0.0</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">init</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="w">
+</span></span></span></code></pre></div><p>进程树变为：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">PID 1: tini -- ./server
+</span></span><span class="line"><span class="cl">  └── PID 2: ./server  ← tini 转发 SIGTERM 到这里
+</span></span></code></pre></div><p>不是所有应用都需要 tini。如果应用直接用 exec form 运行、自己处理信号、不产生子进程，可以不加。但如果不确定，加 <code>--init</code> 几乎没有副作用。</p>
+<h2 id="106-优雅退出清单">10.6 优雅退出清单</h2>
+<p>一个生产服务收到终止信号后应该按顺序执行：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">1. 从负载均衡器/服务注册中摘除自己
+</span></span><span class="line"><span class="cl">2. 停止接受新请求/新任务
+</span></span><span class="line"><span class="cl">3. 等待在途请求完成（设置截止时间）
+</span></span><span class="line"><span class="cl">4. 关闭数据库连接池、消息队列消费者
+</span></span><span class="line"><span class="cl">5. 刷新日志缓冲区和指标
+</span></span><span class="line"><span class="cl">6. exit 0
+</span></span></code></pre></div><p>整个过程必须在 <code>stop_grace_period</code> 内完成，否则会被 SIGKILL。</p>
+<h2 id="107-验证实验">10.7 验证实验</h2>
+<p>测试信号传递和退出时间：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker run --name signal-test -d <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  alpine sh -c <span class="s1">&#39;trap &#34;echo caught SIGTERM; exit 0&#34; TERM; while true; do sleep 1; done&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="nb">time</span> docker stop signal-test
+</span></span><span class="line"><span class="cl">docker logs signal-test
+</span></span></code></pre></div><p>预期：容器在 1-2 秒内退出（trap 捕获 SIGTERM 后立即 exit），日志中出现 <code>caught SIGTERM</code>。</p>
+<p>对比没有 trap 的情况：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker run --name signal-no-trap -d <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  alpine sh -c <span class="s1">&#39;while true; do sleep 1; done&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="nb">time</span> docker stop signal-no-trap
+</span></span></code></pre></div><p>预期：等满 10 秒后被 SIGKILL，因为 sh 不处理 SIGTERM。</p>
+<p>对比使用 <code>--init</code> 的情况：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker run --name signal-init -d --init <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  alpine sh -c <span class="s1">&#39;while true; do sleep 1; done&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="nb">time</span> docker stop signal-init
+</span></span></code></pre></div><p>预期：tini 收到 SIGTERM 后转发给子进程并退出，不需要等满 10 秒。</p>
+<p>清理：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker rm signal-test signal-no-trap signal-init
+</span></span></code></pre></div><h1 id="11-restart-policy-与-oom">11. restart policy 与 OOM</h1>
+<p>容器超过 cgroup 内存上限时，内核可能选择进程并发送 SIGKILL。主进程退出通常显示 137，符合 <code>on-failure</code>/<code>always</code>/<code>unless-stopped</code> 的重启条件：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker inspect api --format <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  <span class="s1">&#39;oom={{.State.OOMKilled}} exit={{.State.ExitCode}} restart={{.RestartCount}}&#39;</span>
+</span></span><span class="line"><span class="cl">docker stats --no-stream api
+</span></span><span class="line"><span class="cl">docker <span class="nb">exec</span> api cat /sys/fs/cgroup/memory.events
+</span></span></code></pre></div><p>自动重启只能恢复进程，不能修复内存泄漏或过低 limit。反复 OOM 会变成 crash loop，并可能打爆日志、数据库连接和下游服务。正确做法是限制并发、分析堆和堆外内存、为运行时留余量并设置告警。</p>
+<h1 id="12-如何选择策略">12. 如何选择策略</h1>
+<table>
+<thead>
+<tr>
+<th>工作负载</th>
+<th>建议起点</th>
+<th>原因</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>本地长期运行的 API、代理</td>
+<td><code>unless-stopped</code></td>
+<td>异常退出恢复，同时尊重人工停机状态</td>
+</tr>
+<tr>
+<td>必须随 daemon 恢复的基础代理</td>
+<td><code>always</code></td>
+<td>即使之前显式停止，daemon 重启后也恢复</td>
+</tr>
+<tr>
+<td>允许有限重试的批处理</td>
+<td><code>on-failure:N</code></td>
+<td>正常完成不重跑，失败有上限</td>
+</tr>
+<tr>
+<td>数据迁移、一次性管理命令</td>
+<td><code>no</code> 或外部 job controller</td>
+<td>避免非幂等操作被自动重复执行</td>
+</tr>
+<tr>
+<td>Kubernetes/其他编排管理的容器</td>
+<td>由编排平台声明</td>
+<td>避免两层控制器产生冲突和错误假设</td>
+</tr>
+</tbody>
+</table>
+<p>生产常驻服务通常从 <code>unless-stopped</code> 开始，但必须同时具备健康检查、优雅退出、资源限制、日志轮转和外部监控。</p>
+<h1 id="13-一套可复现的实验">13. 一套可复现的实验</h1>
+<p>创建 <code>compose.restart.yaml</code>：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-yaml" data-lang="yaml"><span class="line"><span class="cl"><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l">restart-lab</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="nt">services</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="nt">no-restart</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">image</span><span class="p">:</span><span class="w"> </span><span class="l">alpine:3.20</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">command</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&#34;sh&#34;</span><span class="p">,</span><span class="w"> </span><span class="s2">&#34;-c&#34;</span><span class="p">,</span><span class="w"> </span><span class="s2">&#34;echo no-restart; sleep 11; exit 1&#34;</span><span class="p">]</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">restart</span><span class="p">:</span><span class="w"> </span><span class="s2">&#34;no&#34;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="nt">retry-three</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">image</span><span class="p">:</span><span class="w"> </span><span class="l">alpine:3.20</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">command</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&#34;sh&#34;</span><span class="p">,</span><span class="w"> </span><span class="s2">&#34;-c&#34;</span><span class="p">,</span><span class="w"> </span><span class="s2">&#34;date; sleep 11; exit 1&#34;</span><span class="p">]</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">restart</span><span class="p">:</span><span class="w"> </span><span class="s2">&#34;on-failure:3&#34;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="nt">always</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">image</span><span class="p">:</span><span class="w"> </span><span class="l">alpine:3.20</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">command</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&#34;sh&#34;</span><span class="p">,</span><span class="w"> </span><span class="s2">&#34;-c&#34;</span><span class="p">,</span><span class="w"> </span><span class="s2">&#34;date; sleep 11; exit 0&#34;</span><span class="p">]</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">restart</span><span class="p">:</span><span class="w"> </span><span class="l">always</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="nt">unless-stopped</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">image</span><span class="p">:</span><span class="w"> </span><span class="l">alpine:3.20</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">command</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&#34;sh&#34;</span><span class="p">,</span><span class="w"> </span><span class="s2">&#34;-c&#34;</span><span class="p">,</span><span class="w"> </span><span class="s2">&#34;date; sleep 11; exit 0&#34;</span><span class="p">]</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">restart</span><span class="p">:</span><span class="w"> </span><span class="l">unless-stopped</span><span class="w">
+</span></span></span></code></pre></div><p>观察状态和计数：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker compose -f compose.restart.yaml up -d
+</span></span><span class="line"><span class="cl">watch <span class="s1">&#39;docker compose -f compose.restart.yaml ps -a&#39;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">for</span> id in <span class="k">$(</span>docker compose -f compose.restart.yaml ps -aq<span class="k">)</span><span class="p">;</span> <span class="k">do</span>
+</span></span><span class="line"><span class="cl">  docker inspect <span class="s2">&#34;</span><span class="nv">$id</span><span class="s2">&#34;</span> --format <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>    <span class="s1">&#39;{{.Name}} policy={{.HostConfig.RestartPolicy.Name}} exit={{.State.ExitCode}} restarts={{.RestartCount}}&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="k">done</span>
+</span></span></code></pre></div><p>然后分别执行 <code>docker stop</code>、重启 Docker daemon、重启宿主机，记录四种服务的状态。实验结束：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker compose -f compose.restart.yaml down
+</span></span></code></pre></div><p>不要在远程生产 Docker context 中做这个实验；执行前用 <code>docker context show</code> 确认目标。</p>
+<h1 id="14-restart-policy-排障清单">14. restart policy 排障清单</h1>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">没有重启
+</span></span><span class="line"><span class="cl">├── RestartPolicy 是否真写入容器？      docker inspect
+</span></span><span class="line"><span class="cl">├── 是不是 exit 0 + on-failure？        State.ExitCode
+</span></span><span class="line"><span class="cl">├── 是否被显式 docker stop？            events + 运维记录
+</span></span><span class="line"><span class="cl">├── 容器是否已经被删除？                docker ps -a
+</span></span><span class="line"><span class="cl">└── 是否由另一个编排器接管？             Compose/Swarm/K8s 配置
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">持续重启
+</span></span><span class="line"><span class="cl">├── 主进程为何退出？                     logs + State.Error/ExitCode
+</span></span><span class="line"><span class="cl">├── 是否 OOM？                          OOMKilled + memory.events
+</span></span><span class="line"><span class="cl">├── entrypoint/配置/权限是否错误？        inspect + 镜像验证
+</span></span><span class="line"><span class="cl">├── 下游是否不可达？                     DNS/TCP/TLS/认证
+</span></span><span class="line"><span class="cl">└── 重试是否造成副作用？                 数据幂等、日志、连接风暴
+</span></span></code></pre></div><p>保留现场的命令：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker inspect api &gt; api.inspect.json
+</span></span><span class="line"><span class="cl">docker logs --timestamps api &gt; api.log 2&gt;<span class="p">&amp;</span><span class="m">1</span>
+</span></span><span class="line"><span class="cl">docker events --since 30m --until 0s &gt; docker.events.log
+</span></span></code></pre></div><h1 id="15-本篇小结">15. 本篇小结</h1>
+<p>restart policy 解决的是单机&quot;进程退出后是否自动拉起&quot;，健康检查解决的是&quot;怎么知道服务能不能用&quot;，信号与优雅退出解决的是&quot;怎么让服务安全地停下来&quot;。三者配合才能让服务在正确的时候恢复、在需要的时候停止、在异常时暴露状态。生产服务还需要编排平台的摘流/滚动更新、外部监控告警和应用内的重试/断路器，restart policy 只是底线，不是全部。</p>
+<hr>
+<table>
+<thead>
+<tr>
+<th style="text-align:left">上一篇</th>
+<th style="text-align:right">下一篇</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:left"><a href="../docker_03_%e9%95%9c%e5%83%8f%e5%ae%b9%e5%99%a8%e4%b8%8e%e5%b8%b8%e7%94%a8%e5%91%bd%e4%bb%a4/" rel="">03-镜像容器与常用命令</a></td>
+<td style="text-align:right"><a href="../docker_05_%e8%b5%84%e6%ba%90%e7%ae%a1%e7%90%86%e4%b8%8edocker_update/" rel="">05-资源管理与 docker update</a></td>
+</tr>
+</tbody>
+</table>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2026-09-11</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/docker/">docker</a>,&nbsp;<a href="/tags/%E9%87%8D%E5%90%AF%E7%AD%96%E7%95%A5/">重启策略</a>,&nbsp;<a href="/tags/%E5%81%A5%E5%BA%B7%E6%A3%80%E6%9F%A5/">健康检查</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/docker/docker_03_%E9%95%9C%E5%83%8F%E5%AE%B9%E5%99%A8%E4%B8%8E%E5%B8%B8%E7%94%A8%E5%91%BD%E4%BB%A4/" class="prev" rel="prev" title="Docker-03 镜像、容器与常用命令：把生命周期跑通"><i class="fas fa-angle-left fa-fw"></i>Docker-03 镜像、容器与常用命令：把生命周期跑通</a>
+            <a href="/posts/docker/docker_05_%E8%B5%84%E6%BA%90%E7%AE%A1%E7%90%86%E4%B8%8Edocker_update/" class="next" rel="next" title="Docker-05 资源管理与 docker update：在线调整 CPU、内存与进程限制">Docker-05 资源管理与 docker update：在线调整 CPU、内存与进程限制<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2026-09-11T09:40:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Docker-04 重启策略与健康检查：让服务在正确的时候自动恢复"}},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>

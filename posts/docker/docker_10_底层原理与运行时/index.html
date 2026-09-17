@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noodp" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge, chrome=1">
+        <title>Docker-10 底层原理：namespace、cgroup、overlayfs、containerd 与 runc - xingliuhua博客</title><meta name="Description" content="从 docker run 的调用链深入 Linux namespace、cgroup v2、overlayfs、OCI bundle、containerd、shim 和 runc 的实现边界。"><meta property="og:title" content="Docker-10 底层原理：namespace、cgroup、overlayfs、containerd 与 runc" />
+<meta property="og:description" content="从 docker run 的调用链深入 Linux namespace、cgroup v2、overlayfs、OCI bundle、containerd、shim 和 runc 的实现边界。" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://xingliuhua.github.io/posts/docker/docker_10_%E5%BA%95%E5%B1%82%E5%8E%9F%E7%90%86%E4%B8%8E%E8%BF%90%E8%A1%8C%E6%97%B6/" /><meta property="og:image" content="https://xingliuhua.github.io/logo.png"/><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2026-09-11T10:40:00+08:00" />
+<meta property="article:modified_time" content="2026-09-11T10:40:00+08:00" />
+
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://xingliuhua.github.io/logo.png"/>
+
+<meta name="twitter:title" content="Docker-10 底层原理：namespace、cgroup、overlayfs、containerd 与 runc"/>
+<meta name="twitter:description" content="从 docker run 的调用链深入 Linux namespace、cgroup v2、overlayfs、OCI bundle、containerd、shim 和 runc 的实现边界。"/>
+<meta name="application-name" content="xingliuhua博客">
+<meta name="apple-mobile-web-app-title" content="xingliuhua博客"><meta name="theme-color" content="#101A2B"><link rel="icon" href="/favicon.svg"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="mask-icon" href="/safari-pinned-tab.svg" color="#55D6BE"><link rel="manifest" href="/site.webmanifest"><link rel="canonical" href="https://xingliuhua.github.io/posts/docker/docker_10_%E5%BA%95%E5%B1%82%E5%8E%9F%E7%90%86%E4%B8%8E%E8%BF%90%E8%A1%8C%E6%97%B6/" /><link rel="prev" href="https://xingliuhua.github.io/posts/docker/docker_09_Compose%E5%A4%9A%E5%AE%B9%E5%99%A8%E7%BC%96%E6%8E%92/" /><link rel="next" href="https://xingliuhua.github.io/posts/docker/docker_11_%E5%AE%89%E5%85%A8%E6%80%A7%E8%83%BD%E4%B8%8E%E5%8F%AF%E8%A7%82%E6%B5%8B%E6%80%A7/" /><link rel="stylesheet" href="/lib/normalize/normalize.min.css"><link rel="stylesheet" href="/css/style.min.css"><link rel="stylesheet" href="/lib/fontawesome-free/all.min.css"><link rel="stylesheet" href="/lib/animate/animate.min.css"><script type="application/ld+json">
+    {
+        "@context": "http://schema.org",
+        "@type": "BlogPosting",
+        "headline": "Docker-10 底层原理：namespace、cgroup、overlayfs、containerd 与 runc",
+        "inLanguage": "zh-CN",
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": "https:\/\/xingliuhua.github.io\/posts\/docker\/docker_10_%E5%BA%95%E5%B1%82%E5%8E%9F%E7%90%86%E4%B8%8E%E8%BF%90%E8%A1%8C%E6%97%B6\/"
+        },"genre": "posts","keywords": "docker, 原理, Linux","wordcount":  3554 ,
+        "url": "https:\/\/xingliuhua.github.io\/posts\/docker\/docker_10_%E5%BA%95%E5%B1%82%E5%8E%9F%E7%90%86%E4%B8%8E%E8%BF%90%E8%A1%8C%E6%97%B6\/","datePublished": "2026-09-11T10:40:00+08:00","dateModified": "2026-09-11T10:40:00+08:00","publisher": {
+            "@type": "Organization",
+            "name": "xingliuhua"},"author": {
+                "@type": "Person",
+                "name": "xingliuhua"
+            },"description": "从 docker run 的调用链深入 Linux namespace、cgroup v2、overlayfs、OCI bundle、containerd、shim 和 runc 的实现边界。"
+    }
+    </script></head>
+    <body header-desktop="fixed" header-mobile="auto"><script type="text/javascript">(window.localStorage && localStorage.getItem('theme') ? localStorage.getItem('theme') === 'dark' : ('auto' === 'auto' ? window.matchMedia('(prefers-color-scheme: dark)').matches : 'auto' === 'dark')) && document.body.setAttribute('theme', 'dark');</script>
+
+        <div id="mask"></div><div class="wrapper"><header class="desktop" id="header-desktop">
+    <div class="header-wrapper">
+        <div class="header-title">
+            <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.svg"
+        data-srcset="/logo.svg, /logo.svg 1.5x, /logo.svg 2x"
+        data-sizes="auto"
+        alt="/logo.svg"
+        title="/logo.svg" />xingliuhua</a>
+        </div>
+        <div class="menu">
+            <div class="menu-inner"><a class="menu-item" href="/posts/"> 文章 </a><a class="menu-item" href="/tags/"> 标签 </a><a class="menu-item" href="/categories/"> 分类 </a><span class="menu-item delimiter"></span><span class="menu-item search" id="search-desktop">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-desktop">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-desktop" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-desktop" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-desktop">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </span><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                    <i class="fas fa-adjust fa-fw"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</header><header class="mobile" id="header-mobile">
+    <div class="header-container">
+        <div class="header-wrapper">
+            <div class="header-title">
+                <a href="/" title="xingliuhua博客"><img
+        class="lazyload logo"
+        src="/svg/loading.min.svg"
+        data-src="/logo.svg"
+        data-srcset="/logo.svg, /logo.svg 1.5x, /logo.svg 2x"
+        data-sizes="auto"
+        alt="/logo.svg"
+        title="/logo.svg" />xingliuhua</a>
+            </div>
+            <div class="menu-toggle" id="menu-toggle-mobile">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+        <div class="menu" id="menu-mobile"><div class="search-wrapper">
+                    <div class="search mobile" id="search-mobile">
+                        <input type="text" placeholder="搜索文章标题或内容..." id="search-input-mobile">
+                        <a href="javascript:void(0);" class="search-button search-toggle" id="search-toggle-mobile" title="搜索">
+                            <i class="fas fa-search fa-fw"></i>
+                        </a>
+                        <a href="javascript:void(0);" class="search-button search-clear" id="search-clear-mobile" title="清空">
+                            <i class="fas fa-times-circle fa-fw"></i>
+                        </a>
+                        <span class="search-button search-loading" id="search-loading-mobile">
+                            <i class="fas fa-spinner fa-fw fa-spin"></i>
+                        </span>
+                    </div>
+                    <a href="javascript:void(0);" class="search-cancel" id="search-cancel-mobile">
+                        取消
+                    </a>
+                </div><a class="menu-item" href="/posts/" title="">文章</a><a class="menu-item" href="/tags/" title="">标签</a><a class="menu-item" href="/categories/" title="">分类</a><a href="javascript:void(0);" class="menu-item theme-switch" title="切换主题">
+                <i class="fas fa-adjust fa-fw"></i>
+            </a></div>
+    </div>
+</header>
+<div class="search-dropdown desktop">
+    <div id="search-dropdown-desktop"></div>
+</div>
+<div class="search-dropdown mobile">
+    <div id="search-dropdown-mobile"></div>
+</div>
+<main class="main">
+                <div class="container"><div class="toc" id="toc-auto">
+            <h2 class="toc-title">目录</h2>
+            <div class="toc-content" id="toc-content-auto"></div>
+        </div><article class="page single"><h1 class="single-title animated flipInX">Docker-10 底层原理：namespace、cgroup、overlayfs、containerd 与 runc</h1><div class="post-meta">
+            <div class="post-meta-line"><span class="post-author"><a href="https://xingliuhua/github.com.io" title="Author" target="_blank" rel="noopener noreffer author" class="author"><i class="fas fa-user-circle fa-fw"></i>xingliuhua</a></span>&nbsp;<span class="post-category">收录于 <a href="/categories/Docker/"><i class="far fa-folder fa-fw"></i>Docker</a></span></div>
+            <div class="post-meta-line"><i class="far fa-calendar-alt fa-fw"></i>&nbsp;<time datetime="2026-09-11">2026-09-11</time>&nbsp;<i class="fas fa-pencil-alt fa-fw"></i>&nbsp;约 3554 字&nbsp;
+                <i class="far fa-clock fa-fw"></i>&nbsp;预计阅读 8 分钟&nbsp;</div>
+        </div><div class="details toc" id="toc-static"  kept="">
+                <div class="details-summary toc-title">
+                    <span>目录</span>
+                    <span><i class="details-icon fas fa-angle-right"></i></span>
+                </div>
+                <div class="details-content toc-content" id="toc-content-static"><nav id="TableOfContents">
+  <ol>
+    <li><a href="#1-容器不是内核对象而是机制组合">1. 容器不是内核对象，而是机制组合</a></li>
+    <li><a href="#2-namespace改变进程看到的世界">2. namespace：改变进程看到的世界</a>
+      <ol>
+        <li><a href="#21-pid-namespace-的-pid-1">2.1 PID namespace 的 PID 1</a></li>
+      </ol>
+    </li>
+    <li><a href="#3-cgroup限制和统计资源">3. cgroup：限制和统计资源</a>
+      <ol>
+        <li><a href="#31-oom-的两种层级">3.1 OOM 的两种层级</a></li>
+      </ol>
+    </li>
+    <li><a href="#4-overlayfs镜像层如何合成">4. overlayfs：镜像层如何合成</a></li>
+    <li><a href="#5-一次-docker-run-的运行时调用链">5. 一次 <code>docker run</code> 的运行时调用链</a>
+      <ol>
+        <li><a href="#51-oci-bundle">5.1 OCI bundle</a></li>
+      </ol>
+    </li>
+    <li><a href="#6-capabilityseccomp-和-lsm">6. capability、seccomp 和 LSM</a></li>
+    <li><a href="#7-rootless-的原理和代价">7. rootless 的原理和代价</a></li>
+    <li><a href="#8-为什么-daemon-重启后容器可能继续运行">8. 为什么 daemon 重启后容器可能继续运行</a></li>
+    <li><a href="#9-从原理回到排障">9. 从原理回到排障</a></li>
+    <li><a href="#10-用-linux-证据重建容器">10. 用 Linux 证据重建容器</a>
+      <ol>
+        <li><a href="#101-同一进程的宿主视图和容器视图">10.1 同一进程的宿主视图和容器视图</a></li>
+        <li><a href="#102-观察-cgroup-v2-资源限制">10.2 观察 cgroup v2 资源限制</a></li>
+        <li><a href="#103-观察-overlayfs-的-copy-up">10.3 观察 overlayfs 的 copy-up</a></li>
+      </ol>
+    </li>
+    <li><a href="#11-runcoci-层的调试边界">11. runc/OCI 层的调试边界</a></li>
+    <li><a href="#12-rootless-与-rootful-的对照实验">12. rootless 与 rootful 的对照实验</a></li>
+    <li><a href="#13-本篇小结">13. 本篇小结</a></li>
+  </ol>
+</nav></div>
+            </div><div class="content" id="content"><h1 id="1-容器不是内核对象而是机制组合">1. 容器不是内核对象，而是机制组合</h1>
+<p>Linux 内核没有一个叫“container”的单独系统调用。容器运行时把多个内核机制组合起来：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">namespace    决定进程能看见什么
+</span></span><span class="line"><span class="cl">cgroup       决定进程最多能用多少资源
+</span></span><span class="line"><span class="cl">mount/overlayfs  拼出容器根文件系统
+</span></span><span class="line"><span class="cl">capability/seccomp/LSM  限制进程能做什么
+</span></span><span class="line"><span class="cl">veth/bridge/netfilter   连接容器网络
+</span></span></code></pre></div><p>因此，“容器隔离”要拆开讨论：PID 隔离不等于资源隔离，资源限制不等于安全沙箱，根文件系统隔离也不等于不能访问宿主设备。</p>
+<h1 id="2-namespace改变进程看到的世界">2. namespace：改变进程看到的世界</h1>
+<p>常见 namespace：</p>
+<table>
+<thead>
+<tr>
+<th>类型</th>
+<th>隔离内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>PID</td>
+<td>进程 ID 视图，容器内主进程可见为 PID 1</td>
+</tr>
+<tr>
+<td>Mount</td>
+<td>挂载点和根文件系统视图</td>
+</tr>
+<tr>
+<td>Network</td>
+<td>网卡、地址、路由、端口、netfilter</td>
+</tr>
+<tr>
+<td>UTS</td>
+<td>hostname 和 domain name</td>
+</tr>
+<tr>
+<td>IPC</td>
+<td>System V IPC、POSIX 消息队列、共享内存</td>
+</tr>
+<tr>
+<td>User</td>
+<td>UID/GID 和 capability 映射</td>
+</tr>
+<tr>
+<td>Cgroup</td>
+<td>进程看到的 cgroup 层级视图</td>
+</tr>
+<tr>
+<td>Time</td>
+<td>部分时钟偏移</td>
+</tr>
+</tbody>
+</table>
+<p>查看当前进程的 namespace：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">readlink /proc/<span class="nv">$$</span>/ns/*
+</span></span><span class="line"><span class="cl">lsns
+</span></span><span class="line"><span class="cl"><span class="nv">PID</span><span class="o">=</span><span class="k">$(</span>docker inspect -f <span class="s1">&#39;{{.State.Pid}}&#39;</span> api<span class="k">)</span>
+</span></span><span class="line"><span class="cl">sudo nsenter -t <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span> -a readlink /proc/self/ns/*
+</span></span></code></pre></div><p>namespace 通过 <code>clone()</code>、<code>unshare()</code> 和 <code>setns()</code> 创建/加入。运行时先创建隔离环境，再在其中挂载 proc、sysfs、rootfs 等文件系统，最后执行应用。</p>
+<h2 id="21-pid-namespace-的-pid-1">2.1 PID namespace 的 PID 1</h2>
+<p>容器内的第一个进程是该 PID namespace 的 PID 1。它有两个特殊责任：</p>
+<ol>
+<li>收到终止信号时要正确处理，或者由 init 代理转发。</li>
+<li>回收孤儿进程，避免僵尸积累。</li>
+</ol>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker run --init example/api:dev
+</span></span></code></pre></div><p><code>--init</code> 注入轻量 init（通常是 tini 类程序），不能替代应用自己的优雅关闭逻辑。</p>
+<h1 id="3-cgroup限制和统计资源">3. cgroup：限制和统计资源</h1>
+<p>cgroup 通过层级组织进程，对 CPU、内存、IO、PIDs 等资源进行限制、统计和事件通知。现代 Linux 主要使用 cgroup v2：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">stat -fc %T /sys/fs/cgroup
+</span></span><span class="line"><span class="cl">cat /proc/self/cgroup
+</span></span><span class="line"><span class="cl">docker <span class="nb">exec</span> api cat /sys/fs/cgroup/memory.max
+</span></span><span class="line"><span class="cl">docker <span class="nb">exec</span> api cat /sys/fs/cgroup/memory.current
+</span></span></code></pre></div><p>常见概念：</p>
+<ul>
+<li><code>memory.max</code>：硬上限，超过可能触发 cgroup OOM kill。</li>
+<li><code>memory.high</code>：压力阈值，超出后进行回收和节流，但不一定马上杀进程。</li>
+<li><code>cpu.max</code>：周期/配额，表达 CPU 带宽上限。</li>
+<li><code>pids.max</code>：进程/线程数量上限，防 fork bomb。</li>
+<li><code>io.max</code>：块设备 I/O 限制，具体能力依内核和存储设备而定。</li>
+</ul>
+<p>Docker 的 <code>--memory</code>、<code>--cpus</code>、<code>--pids-limit</code> 最终会映射到 cgroup 控制器。CPU 限制是配额/带宽，和“绑定某几个 CPU 核”不是一回事；<code>--cpuset-cpus</code> 才是 CPU 集合约束。</p>
+<h2 id="31-oom-的两种层级">3.1 OOM 的两种层级</h2>
+<p>宿主机全局内存不足和容器 cgroup 超限不是一回事：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker inspect api --format <span class="s1">&#39;{{.State.OOMKilled}} {{.State.ExitCode}}&#39;</span>
+</span></span><span class="line"><span class="cl">docker stats --no-stream api
+</span></span><span class="line"><span class="cl">sudo dmesg -T <span class="p">|</span> grep -iE <span class="s1">&#39;oom|killed process|memory cgroup&#39;</span>
+</span></span></code></pre></div><p>退出码 137 只说明收到 SIGKILL，常见但不唯一的原因是 OOM。要结合 <code>memory.events</code>、应用日志、宿主机 dmesg 和进程现场判断。</p>
+<h1 id="4-overlayfs镜像层如何合成">4. overlayfs：镜像层如何合成</h1>
+<p>overlayfs 用 lowerdir、upperdir、workdir 和 merged 目录组成一个联合视图：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">lowerdir：镜像只读层（多个）
+</span></span><span class="line"><span class="cl">upperdir：容器可写层
+</span></span><span class="line"><span class="cl">workdir ：overlayfs 工作目录
+</span></span><span class="line"><span class="cl">merged  ：进程看到的根文件系统
+</span></span></code></pre></div><p>读取文件时，overlayfs 从上层向下层查找；修改 lowerdir 中的文件时会发生 copy-up，把文件复制到 upperdir 后再修改；删除下层文件会记录 whiteout。大量小文件修改可能带来 copy-up 开销和额外磁盘占用。</p>
+<p>查看存储驱动：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker info --format <span class="s1">&#39;{{.Driver}}&#39;</span>
+</span></span><span class="line"><span class="cl">mount <span class="p">|</span> grep overlay
+</span></span><span class="line"><span class="cl">docker inspect api --format <span class="s1">&#39;{{json .GraphDriver.Data}}&#39;</span>
+</span></span></code></pre></div><p>不要直接操作 Docker 内部的 layer 目录。驱动、rootless 和 Desktop VM 的目录结构可能不同，手工修改会破坏元数据。</p>
+<h1 id="5-一次-docker-run-的运行时调用链">5. 一次 <code>docker run</code> 的运行时调用链</h1>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">CLI
+</span></span><span class="line"><span class="cl"> ↓ Engine API
+</span></span><span class="line"><span class="cl">dockerd
+</span></span><span class="line"><span class="cl"> ↓ 生命周期请求
+</span></span><span class="line"><span class="cl">containerd
+</span></span><span class="line"><span class="cl"> ↓ 创建 task / snapshot / shim
+</span></span><span class="line"><span class="cl">containerd-shim
+</span></span><span class="line"><span class="cl"> ↓ OCI bundle + config.json
+</span></span><span class="line"><span class="cl">runc create/start
+</span></span><span class="line"><span class="cl"> ↓ clone/unshare、mount、pivot_root、cgroup、seccomp
+</span></span><span class="line"><span class="cl">容器 PID 1
+</span></span></code></pre></div><p><code>runc create</code> 通常创建并配置容器环境，<code>runc start</code> 才启动用户进程。具体调用细节会随版本、rootless 模式和 runtime 配置变化，但边界大致稳定：Docker 做产品层管理，containerd 做生命周期，runc 做一次性的低层隔离设置。</p>
+<h2 id="51-oci-bundle">5.1 OCI bundle</h2>
+<p>OCI runtime 需要一个 bundle，里面包括：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">bundle/
+</span></span><span class="line"><span class="cl">├── config.json   # root、namespace、mount、process、linux.resources 等
+</span></span><span class="line"><span class="cl">└── rootfs/       # 已准备好的容器根文件系统
+</span></span></code></pre></div><p><code>config.json</code> 不是 Dockerfile，也不是镜像本身；它是某次容器启动时由上层运行时生成的执行配置。</p>
+<h1 id="6-capabilityseccomp-和-lsm">6. capability、seccomp 和 LSM</h1>
+<p>传统 root 权限被拆成多个 capability。Docker 默认会丢弃一部分高风险 capability，但容器仍不是普通用户进程：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker run --rm --cap-drop<span class="o">=</span>ALL <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --cap-add<span class="o">=</span>NET_BIND_SERVICE <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  example/api:dev
+</span></span></code></pre></div><p>seccomp 通过系统调用过滤器限制进程能调用的 syscall；AppArmor/SELinux 等 LSM 根据安全策略限制对象访问：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker run --rm --security-opt no-new-privileges:true example/api:dev
+</span></span><span class="line"><span class="cl">docker run --rm alpine sh -c <span class="s1">&#39;grep Seccomp /proc/self/status&#39;</span>
+</span></span></code></pre></div><p><code>--privileged</code> 会显著放宽 capability、设备和安全限制，不能把它当作“调试开关”长期保留。需要某一项权限时，使用最小的 <code>--cap-add</code>、设备白名单和只读挂载。</p>
+<h1 id="7-rootless-的原理和代价">7. rootless 的原理和代价</h1>
+<p>rootless Docker 使用 user namespace 把容器内 UID 0 映射为宿主机普通用户 UID，并以非 root 身份运行 daemon。这样 daemon 被利用后直接修改宿主 root 文件的路径变少，但不是绝对沙箱：</p>
+<ul>
+<li>低端口绑定需要额外机制。</li>
+<li>网络常使用 slirp4netns/pasta，性能和特性不同。</li>
+<li>cgroup 管理依赖 systemd delegation 和内核配置。</li>
+<li>overlayfs、设备、挂载和 NFS 等能力可能受限。</li>
+</ul>
+<p>rootless 适合降低共享开发机和部分 CI 场景风险，是否用于生产要以业务需要、内核和运行时支持矩阵为准。</p>
+<h1 id="8-为什么-daemon-重启后容器可能继续运行">8. 为什么 daemon 重启后容器可能继续运行</h1>
+<p>containerd-shim 把容器任务与 containerd/dockerd 的管理进程解耦。daemon 重启时，shim 仍可持有容器进程和 IO；daemon 恢复后再重新同步状态。<code>live-restore</code> 可以减少 daemon 重启对容器的影响，但：</p>
+<ul>
+<li>内核重启、宿主机断电和存储损坏仍会中断容器。</li>
+<li>版本升级、runtime 变化和网络重建可能有额外影响。</li>
+<li>它不是跨主机高可用，也不替代多副本和持久化数据。</li>
+</ul>
+<h1 id="9-从原理回到排障">9. 从原理回到排障</h1>
+<p>容器启动失败时按层定位：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-text" data-lang="text"><span class="line"><span class="cl">镜像层：镜像架构、entrypoint、动态库、权限
+</span></span><span class="line"><span class="cl">rootfs：overlayfs、挂载点、只读层、磁盘
+</span></span><span class="line"><span class="cl">namespace：PID、mount、network 是否符合预期
+</span></span><span class="line"><span class="cl">cgroup：memory.max、cpu.max、pids.max 是否触发
+</span></span><span class="line"><span class="cl">安全：capability、seccomp、SELinux/AppArmor 拒绝
+</span></span><span class="line"><span class="cl">运行时：containerd、shim、runc、dockerd 日志
+</span></span><span class="line"><span class="cl">应用：配置、端口、依赖、优雅退出
+</span></span></code></pre></div><p>证据命令：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker info
+</span></span><span class="line"><span class="cl">docker inspect api
+</span></span><span class="line"><span class="cl">docker events --since 15m
+</span></span><span class="line"><span class="cl">sudo journalctl -u docker -u containerd --since 15m
+</span></span><span class="line"><span class="cl">sudo crictl ps 2&gt;/dev/null <span class="o">||</span> <span class="nb">true</span>
+</span></span></code></pre></div><h1 id="10-用-linux-证据重建容器">10. 用 Linux 证据重建容器</h1>
+<h2 id="101-同一进程的宿主视图和容器视图">10.1 同一进程的宿主视图和容器视图</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker run -d --name internals-lab <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  --memory 256m --cpus 0.5 <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  alpine:3.20 sh -c <span class="s1">&#39;while true; do sleep 60; done&#39;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="nv">PID</span><span class="o">=</span><span class="k">$(</span>docker inspect -f <span class="s1">&#39;{{.State.Pid}}&#39;</span> internals-lab<span class="k">)</span>
+</span></span><span class="line"><span class="cl"><span class="nb">echo</span> <span class="s2">&#34;host pid=</span><span class="nv">$PID</span><span class="s2">&#34;</span>
+</span></span><span class="line"><span class="cl">readlink /proc/<span class="nv">$PID</span>/ns/<span class="o">{</span>pid,mnt,net,user,cgroup<span class="o">}</span>
+</span></span><span class="line"><span class="cl">sudo nsenter -t <span class="s2">&#34;</span><span class="nv">$PID</span><span class="s2">&#34;</span> -p -m -n -u -i sh -c <span class="s1">&#39;
+</span></span></span><span class="line"><span class="cl"><span class="s1">  echo &#34;container pid=$$&#34;;
+</span></span></span><span class="line"><span class="cl"><span class="s1">  readlink /proc/self/ns/{pid,mnt,net,user,cgroup};
+</span></span></span><span class="line"><span class="cl"><span class="s1">  grep -E &#34;^(Name|Pid|NSpid|Cap|Seccomp)&#34; /proc/1/status;
+</span></span></span><span class="line"><span class="cl"><span class="s1">  ip route;
+</span></span></span><span class="line"><span class="cl"><span class="s1">  findmnt -R /
+</span></span></span><span class="line"><span class="cl"><span class="s1">&#39;</span>
+</span></span></code></pre></div><p><code>NSpid</code> 可以显示一个进程在嵌套 PID namespace 中的多个编号；<code>/proc/&lt;pid&gt;/ns/*</code> 的 inode 相同意味着位于同一个 namespace。进入 mount namespace 后仍要正确挂载 proc，单纯 <code>nsenter -t PID -p</code> 可能看到旧的 <code>/proc</code> 视图。</p>
+<h2 id="102-观察-cgroup-v2-资源限制">10.2 观察 cgroup v2 资源限制</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker inspect internals-lab --format <span class="s1">&#39;{{json .HostConfig}}&#39;</span> <span class="p">|</span> jq <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>  <span class="s1">&#39;{memory: .Memory, nano_cpus: .NanoCpus, pids: .PidsLimit}&#39;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">sudo cat /proc/<span class="nv">$PID</span>/cgroup
+</span></span><span class="line"><span class="cl"><span class="nv">CGROUP_PATH</span><span class="o">=</span><span class="k">$(</span>awk -F: <span class="s1">&#39;$1==&#34;0&#34; {print $3}&#39;</span> /proc/<span class="nv">$PID</span>/cgroup<span class="k">)</span>
+</span></span><span class="line"><span class="cl">sudo cat <span class="s2">&#34;/sys/fs/cgroup</span><span class="si">${</span><span class="nv">CGROUP_PATH</span><span class="si">}</span><span class="s2">/memory.max&#34;</span>
+</span></span><span class="line"><span class="cl">sudo cat <span class="s2">&#34;/sys/fs/cgroup</span><span class="si">${</span><span class="nv">CGROUP_PATH</span><span class="si">}</span><span class="s2">/memory.current&#34;</span>
+</span></span><span class="line"><span class="cl">sudo cat <span class="s2">&#34;/sys/fs/cgroup</span><span class="si">${</span><span class="nv">CGROUP_PATH</span><span class="si">}</span><span class="s2">/cpu.max&#34;</span>
+</span></span><span class="line"><span class="cl">sudo cat <span class="s2">&#34;/sys/fs/cgroup</span><span class="si">${</span><span class="nv">CGROUP_PATH</span><span class="si">}</span><span class="s2">/cpu.stat&#34;</span>
+</span></span></code></pre></div><p>容器内看到的 cgroup namespace 可能隐藏宿主完整路径；需要把容器 PID、<code>/proc/&lt;pid&gt;/cgroup</code> 和宿主 cgroup mount 对照起来。CPU limit 是配额，不是保证应用永远获得某个固定 CPU；memory limit 也不代表应用可以安全使用到同样大小的 heap。</p>
+<h2 id="103-观察-overlayfs-的-copy-up">10.3 观察 overlayfs 的 copy-up</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker <span class="nb">exec</span> internals-lab sh -c <span class="s1">&#39;dd if=/dev/zero of=/tmp/big bs=1M count=16&#39;</span>
+</span></span><span class="line"><span class="cl">docker diff internals-lab
+</span></span><span class="line"><span class="cl">docker inspect internals-lab --format <span class="s1">&#39;{{json .GraphDriver.Data}}&#39;</span>
+</span></span><span class="line"><span class="cl">docker system df -v
+</span></span></code></pre></div><p>应用修改镜像层文件时，overlayfs 需要把文件复制到 upperdir；如果文件很大，即使只改一个字节也可能产生明显写放大。<code>docker diff</code> 只展示文件变化，不等同于完整磁盘成本；实际目录和层引用由 storage driver 管理，不要手工删除。</p>
+<h1 id="11-runcoci-层的调试边界">11. runc/OCI 层的调试边界</h1>
+<p>当容器连 entrypoint 都没有启动时，应用日志往往为空，应优先查 runtime 和 daemon：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker events --since 10m
+</span></span><span class="line"><span class="cl">sudo journalctl -u docker -u containerd --since 10m
+</span></span><span class="line"><span class="cl">docker inspect internals-lab
+</span></span><span class="line"><span class="cl">containerd --version
+</span></span><span class="line"><span class="cl">runc --version
+</span></span></code></pre></div><p>常见层次：</p>
+<table>
+<thead>
+<tr>
+<th>症状</th>
+<th>优先怀疑</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>exec format error</code></td>
+<td>镜像架构/二进制架构不匹配</td>
+</tr>
+<tr>
+<td><code>no such file or directory</code> 但文件存在</td>
+<td>动态链接器或 shebang 指向的解释器缺失</td>
+</tr>
+<tr>
+<td><code>permission denied</code></td>
+<td>用户、挂载、SELinux/AppArmor、capability</td>
+</tr>
+<tr>
+<td><code>operation not permitted</code></td>
+<td>namespace、seccomp、capability、rootless 限制</td>
+</tr>
+<tr>
+<td><code>failed to mount</code></td>
+<td>rootfs、overlayfs、挂载传播、文件系统或权限</td>
+</tr>
+<tr>
+<td>容器瞬间退出且无日志</td>
+<td>entrypoint、PID 1、runtime 创建阶段或 stdout 配置</td>
+</tr>
+</tbody>
+</table>
+<p>不要只把所有 runtime 错误归因于 Dockerfile；同一个镜像在不同内核、架构、rootless 和安全策略下可能表现不同。</p>
+<h1 id="12-rootless-与-rootful-的对照实验">12. rootless 与 rootful 的对照实验</h1>
+<p>在支持 rootless 的 Linux 用户环境中，比较：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker info <span class="p">|</span> grep -iE <span class="s1">&#39;rootless|security|storage driver|cgroup&#39;</span>
+</span></span><span class="line"><span class="cl">docker run --rm alpine:3.20 id
+</span></span><span class="line"><span class="cl">docker run --rm alpine:3.20 sh -c <span class="s1">&#39;cat /proc/self/uid_map; cat /proc/self/gid_map&#39;</span>
+</span></span></code></pre></div><p>rootless 容器内看到的 UID 0 可能映射到宿主普通 UID；不是所有设备、低端口、cgroup controller 和存储驱动都可用。安全收益来自减少宿主 root 直接权限，不等于忽略内核漏洞、网络和应用安全。</p>
+<p>清理：</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">docker rm -f internals-lab
+</span></span></code></pre></div><h1 id="13-本篇小结">13. 本篇小结</h1>
+<p>Docker 的“轻量”来自复用宿主机内核，而不是少了一套神奇的操作系统。namespace 负责视图，cgroup 负责资源，overlayfs 负责镜像层，containerd/runc 负责把这些机制组装成进程。理解每一层的边界，才能解释 OOM、端口、权限、容器逃逸和 daemon 重启等问题。</p>
+<hr>
+<table>
+<thead>
+<tr>
+<th style="text-align:left">上一篇</th>
+<th style="text-align:right">下一篇</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:left"><a href="../docker_09_Compose%e5%a4%9a%e5%ae%b9%e5%99%a8%e7%bc%96%e6%8e%92/" rel="">09-Compose 多容器编排</a></td>
+<td style="text-align:right"><a href="../docker_11_%e5%ae%89%e5%85%a8%e6%80%a7%e8%83%bd%e4%b8%8e%e5%8f%af%e8%a7%82%e6%b5%8b%e6%80%a7/" rel="">11-安全性能与可观测性</a></td>
+</tr>
+</tbody>
+</table>
+</div><div class="post-footer" id="post-footer">
+    <div class="post-info">
+        <div class="post-info-line">
+            <div class="post-info-mod">
+                <span>更新于 2026-09-11</span>
+            </div>
+            <div class="post-info-license"></div>
+        </div>
+        <div class="post-info-line">
+            <div class="post-info-md"></div>
+            <div class="post-info-share">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="post-info-more">
+        <section class="post-tags"><i class="fas fa-tags fa-fw"></i>&nbsp;<a href="/tags/docker/">docker</a>,&nbsp;<a href="/tags/%E5%8E%9F%E7%90%86/">原理</a>,&nbsp;<a href="/tags/Linux/">Linux</a></section>
+        <section>
+            <span><a href="javascript:void(0);" onclick="window.history.back();">返回</a></span>&nbsp;|&nbsp;<span><a href="/">主页</a></span>
+        </section>
+    </div>
+
+    <div class="post-nav"><a href="/posts/docker/docker_09_Compose%E5%A4%9A%E5%AE%B9%E5%99%A8%E7%BC%96%E6%8E%92/" class="prev" rel="prev" title="Docker-09 Compose 从入门到实战：多容器、网络、宿主机访问与生产排障"><i class="fas fa-angle-left fa-fw"></i>Docker-09 Compose 从入门到实战：多容器、网络、宿主机访问与生产排障</a>
+            <a href="/posts/docker/docker_11_%E5%AE%89%E5%85%A8%E6%80%A7%E8%83%BD%E4%B8%8E%E5%8F%AF%E8%A7%82%E6%B5%8B%E6%80%A7/" class="next" rel="next" title="Docker-11 安全、性能与可观测性：从能跑到敢上线">Docker-11 安全、性能与可观测性：从能跑到敢上线<i class="fas fa-angle-right fa-fw"></i></a></div>
+</div>
+<div id="comments"><div id="gitalk" class="comment"></div><noscript>
+                Please enable JavaScript to view the comments powered by <a href="https://github.com/gitalk/gitalk"></a>Gitalk</a>.
+            </noscript></div></article></div>
+            </main><footer class="footer">
+        <div class="footer-container"><div class="footer-line">由 <a href="https://gohugo.io/" target="_blank" rel="noopener noreffer" title="Hugo 0.101.0">Hugo</a> 强力驱动 | 主题 - <a href="https://github.com/dillonzq/LoveIt" target="_blank" rel="noopener noreffer" title="LoveIt 0.2.10"><i class="far fa-kiss-wink-heart fa-fw"></i> LoveIt</a>
+                </div><div class="footer-line"><i class="far fa-copyright fa-fw"></i><span itemprop="copyrightYear">2026</span><span class="author" itemprop="copyrightHolder">&nbsp;<a href="https://xingliuhua/github.com.io" target="_blank">xingliuhua</a></span></div>
+        </div>
+    </footer></div>
+
+        <div id="fixed-buttons"><a href="#" id="back-to-top" class="fixed-button" title="回到顶部">
+                <i class="fas fa-arrow-up fa-fw"></i>
+            </a><a href="#" id="view-comments" class="fixed-button" title="查看评论">
+                <i class="fas fa-comment fa-fw"></i>
+            </a>
+        </div><link rel="stylesheet" href="/lib/gitalk/gitalk.min.css"><script type="text/javascript" src="/lib/gitalk/gitalk.min.js"></script><script type="text/javascript" src="/lib/smooth-scroll/smooth-scroll.min.js"></script><script type="text/javascript" src="/lib/autocomplete/autocomplete.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.stemmer.support.min.js"></script><script type="text/javascript" src="/lib/lunr/lunr.zh.min.js"></script><script type="text/javascript" src="/lib/lazysizes/lazysizes.min.js"></script><script type="text/javascript" src="/lib/clipboard/clipboard.min.js"></script><script type="text/javascript">window.config={"code":{"copyTitle":"复制到剪贴板","maxShownLines":15},"comment":{"gitalk":{"admin":["xingliuhua"],"clientID":"c0161bf1d93ccdd5f765","clientSecret":"3782f9a39ee0849148faa2ec75bb19d9964dda16","id":"2026-09-11T10:40:00+08:00","owner":"xingliuhua","repo":"xingliuhua.github.io","title":"Docker-10 底层原理：namespace、cgroup、overlayfs、containerd 与 runc"}},"search":{"highlightTag":"em","lunrIndexURL":"/index.json","lunrLanguageCode":"zh","lunrSegmentitURL":"/lib/lunr/lunr.segmentit.js","maxResultLength":10,"noResultsFound":"没有找到结果","snippetLength":50,"type":"lunr"}};</script><script type="text/javascript" src="/js/theme.min.js"></script><script type="text/javascript" src="/js/toc-collapse.min.js"></script></body>
+</html>
